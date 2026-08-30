@@ -123,8 +123,9 @@ final class SystemNotificationService: ObservableObject {
     }
 
     func forgetAgent(_ id: UUID) {
-        agentDecider.forget(agentID: id.uuidString)
-        agentBadgeCount = dockBadgeProjector.forget(id: id.uuidString)
+        let agentID = id.uuidString.lowercased()
+        agentDecider.forget(agentID: agentID)
+        agentBadgeCount = dockBadgeProjector.forget(id: agentID)
         refreshDockBadge()
     }
 
