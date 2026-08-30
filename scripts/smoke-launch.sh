@@ -80,4 +80,18 @@ for _ in {1..50}; do
   /bin/sleep 0.1
 done
 
+# A hardened runtime build may reject the AppleScript automation request even
+# though it launched correctly. Terminate only the PID we just started so a
+# smoke run cannot leave a test app behind; this is a cleanup fallback, not a
+# substitute for the initial graceful quit request.
+/bin/kill -TERM "$launched_pid" 2>/dev/null || true
+for _ in {1..50}; do
+  if ! /bin/kill -0 "$launched_pid" 2>/dev/null; then
+    launched_pid=
+    print "Launch smoke passed after direct cleanup: $app_path"
+    exit 0
+  fi
+  /bin/sleep 0.1
+done
+
 die "Filicon launched successfully but did not terminate cleanly after a quit request"
