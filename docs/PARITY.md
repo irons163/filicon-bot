@@ -1,8 +1,8 @@
 # Filicon / Grok Bot 0.18 功能 parity matrix（current implementation）
 
-本矩陣保留固定的 48 個 parity ID，對照目前 macOS Swift 實作。`complete` 表示現行程式碼已提供並接線該能力；`partial` 表示核心程式與發佈流程已完成，但目前仍缺少可宣稱的 production artifact；`NA` 表示該列是來源 runtime 的實作細節，不是 macOS 產品行為。
+本矩陣保留固定的 48 個 parity ID，對照目前 macOS Swift 實作。`complete` 表示現行程式碼已提供並接線該能力；`partial` 表示核心程式已完成，但仍缺少可宣稱的 production artifact 或外部驗證；`NA` 表示該列是來源 runtime 的實作細節，不是 macOS 產品行為。
 
-目前狀態為 46 筆 `complete`、1 筆 `partial`（`UPD-03`）、1 筆 `NA`（`UPD-04`）。表內驗證欄記錄已完成的本地 verification gates；`UPD-03` 另標示尚待外部 production attestations。
+目前狀態為 47 筆 `complete`、0 筆 `partial`、1 筆 `NA`（`UPD-04`）。表內驗證欄記錄已完成的本地與外部 verification gates。
 
 ## Matrix
 
@@ -111,9 +111,9 @@
 |---|---|---|---|
 | UPD-01 | `scripts/package-app.sh`、`scripts/verify-package.sh`、`Package.swift` 與 signed app bundle 提供 clean build/package、nested helper/XPC assembly、metadata、hardened runtime flags 與 strict verification。 | complete | final gates passed |
 | UPD-02 | `FiliconUpdater/UpdateService.swift`、`UpdateManager.swift`、`UpdateConfigurationResolver.swift`、`BackendUpdateRequirement.swift`、`UpdatePresentation.swift` 與 `UpdateIdleMonitor.swift` 提供 channel/default/runtime checks、signed feed resolution、download/verify/stage/install、idle/required UI；runtime/default/backend requirement signal 已接線。 | complete | final gates passed |
-| UPD-03 | `scripts/release-macos.sh`、`generate-update-feed.swift`、`generate-update-feed-key.swift`、`read-update-feed-key.swift`、`verify-release-artifacts.sh` 與 updater verifier/install pipeline 已完成；本機 signing key 已安全存入 Keychain，`filicon-notary` 已以 App Store Connect Team Key/issuer 驗證，但尚未指定可公開 ZIP/feed 的正式 HTTPS hosting URL，因此尚無可宣稱的 signed-feed production artifact。 | partial | local + Apple credential gates passed; feed hosting/publication pending |
+| UPD-03 | `scripts/release-macos.sh`、`generate-update-feed.swift`、`generate-update-feed-key.swift`、`read-update-feed-key.swift`、`verify-release-artifacts.sh` 與 updater verifier/install pipeline 已完成；本機 signing key 已安全存入 Keychain，`filicon-notary` 已以 App Store Connect Team Key/issuer 驗證；`v0.18.0` 已發布 notarized/stapled ZIP、DMG 與 signed update feed 至 [GitHub Release](https://github.com/irons163/filicon-bot/releases/tag/v0.18.0)。 | complete | Apple notarization + Gatekeeper/stapler + remote checksum/feed signature passed |
 | UPD-04 | Electron/ASAR/preload、Windows installer/overlay 與來源 daemon wiring 是來源 runtime 細節，不是 macOS 原生產品行為；Swift package 以原生 targets 取代它們。 | NA | final gates passed |
 
 ## Verification note
 
-最終 verifier evidence：553 tests（420 Swift Testing、133 XCTest）全數通過；WAE pass；release build pass；local release `0.18.0-180` verify+smoke pass。除上列 UPD-03 的 production-input 缺口外，本矩陣不另列待補功能。
+最終 verifier evidence：553 tests（420 Swift Testing、133 XCTest）全數通過；WAE pass；release build pass；`v0.18.0` release `0.18.0-184` 的 app/DMG notarization、stapling、Gatekeeper、clean-install、remote SHA-256 checksum 與公開 feed signature 全數通過。本矩陣沒有剩餘的 macOS product-behavior parity gap；`UPD-04` 維持 NA。

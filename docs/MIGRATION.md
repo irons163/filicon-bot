@@ -89,15 +89,16 @@ are never silently replayed after a crash.
 
 ## Release and verification state
 
-`UPD-01` and `UPD-02` cover the current package, updater state machine, default
-feed resolution, runtime/idle signals, required-update UI, backend requirement
-signal, staging, installation and rollback checks. `UPD-03` remains partial:
-the release/feed pipeline is implemented, but this checkout has no current
-notarized/stapled signed-feed production artifact because the notary profile,
-feed signing key and feed base URL are absent. `UPD-04` is `NA` because
-Electron/ASAR/preload/Windows runtime wiring is not a macOS product behavior.
+`UPD-01`, `UPD-02`, and `UPD-03` cover the current package, updater state machine,
+default feed resolution, runtime/idle signals, required-update UI, backend
+requirement signal, staging, installation and rollback checks. `UPD-03` is
+complete: the `v0.18.0` GitHub Release contains the notarized/stapled ZIP and
+DMG, signed update feed, and SHA-256 manifest. App/DMG notarization, Gatekeeper
+and stapler validation, clean-install checks, remote checksums, and public feed
+signature verification all passed. `UPD-04` is `NA` because Electron/ASAR/
+preload/Windows runtime wiring is not a macOS product behavior.
 
 Final verifier evidence: 553 tests (420 Swift Testing and 133 XCTest) pass;
-WAE passes; the release build passes; and local release `0.18.0-180` passes
-verification and launch smoke. No additional test-count claim is made beyond
-that verifier result.
+WAE and release build pass; release `0.18.0-184` passes notarization, stapling,
+Gatekeeper, clean-install, launch smoke, remote checksum, and feed-signature
+verification. No additional parity gap remains for the macOS product.

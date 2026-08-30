@@ -22,9 +22,11 @@ Ed25519 update-feed signing key in the Keychain under service
 `com.filicon.app.update-feed-signing-key` and account `production`; its private
 material is not in the repository. The `filicon-notary` Keychain profile has
 also been validated against App Store Connect using the existing Team API Key
-and issuer. A real HTTPS feed base URL and publication destination are still
-absent, so no signed-feed production artifact is claimed and `UPD-03` remains
-the sole partial parity row. External release values are never committed.
+and issuer. Release `v0.18.0` is published at
+https://github.com/irons163/filicon-bot/releases/tag/v0.18.0 with the immutable
+ZIP/DMG, signed `stable.json`, and `SHA256SUMS`; the feed base URL is the
+release's download endpoint. External release values and private key material
+are never committed.
 
 ## Production prerequisites
 
@@ -82,5 +84,6 @@ run without those credentials can validate packaging mechanics, but cannot be
 reported as a notarized production release.
 
 The final verifier recorded 553 passing tests (420 Swift Testing and 133
-XCTest), WAE pass, release build pass, and local release `0.18.0-180`
-verification plus launch smoke pass.
+XCTest), WAE and release-build pass, plus release `0.18.0-184` notarization,
+stapling, Gatekeeper, clean-install, launch-smoke, remote-checksum, and public
+feed-signature verification.

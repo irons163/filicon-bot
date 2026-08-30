@@ -580,6 +580,7 @@ facades; each target owns its contracts, persistence and error normalization:
    update-required handling.
 
 Completion evidence is tracked in `docs/PARITY.md`. Final verifier evidence is
-553 tests (420 Swift Testing and 133 XCTest) passing, WAE passing, the release
-build passing, and local release `0.18.0-180` passing verification and launch
-smoke. The production artifact prerequisite gap remains limited to `UPD-03`.
+553 tests (420 Swift Testing and 133 XCTest) passing, WAE and release build
+passing, and release `0.18.0-184` passing notarization, stapling, Gatekeeper,
+clean-install, launch smoke, remote checksum, and public feed-signature checks.
+The macOS product has no remaining parity gap; `UPD-04` is intentionally `NA`.

@@ -70,6 +70,8 @@ acceptance boundaries and security invariants.
 Live cloud-provider, account, MCP, Shared Room, publishing, remote-computer, and
 Apple notarization checks require credentials and services not stored in this
 repository. Contract and integration tests therefore use deterministic local
-fixtures; live smoke tests remain explicit and opt-in. Production publication
-still requires completing every gate in `docs/RELEASING.md` with the intended
-Developer ID and Apple notarization account.
+fixtures; live smoke tests remain explicit and opt-in. The notarized/stapled
+production `v0.18.0` artifacts and signed feed are publicly available from the
+[GitHub Release](https://github.com/irons163/filicon-bot/releases/tag/v0.18.0);
+future releases still require the complete procedure in
+`docs/RELEASING.md`.
