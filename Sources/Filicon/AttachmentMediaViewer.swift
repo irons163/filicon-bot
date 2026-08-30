@@ -1,0 +1,501 @@
+import AppKit
+import AVKit
+import CryptoKit
+import Foundation
+import PDFKit
+import SwiftUI
+import UniformTypeIdentifiers
+
+enum AttachmentViewerKind: Equatable {
+    case image
+    case audiovisual
+    case pdf
+    case spreadsheet
+    case quickLook
+
+    static func classify(filename: String, mimeType: String?) -> Self {
+        let ext = URL(fileURLWithPath: filename).pathExtension.lowercased()
+        let mime = mimeType?.lowercased() ?? ""
+        if mime.hasPrefix("image/") || ["png", "jpg", "jpeg", "gif", "heic", "heif", "tif", "tiff", "bmp", "webp"].contains(ext) {
+            return .image
+        }
+        if mime.hasPrefix("video/") || mime.hasPrefix("audio/") || ["mov", "mp4", "m4v", "mp3", "m4a", "aac", "wav", "aiff", "caf"].contains(ext) {
+            return .audiovisual
+        }
+        if mime == "application/pdf" || ext == "pdf" { return .pdf }
+        if ["csv", "tsv", "xlsx"].contains(ext) || [
+            "text/csv", "text/tab-separated-values",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ].contains(mime) { return .spreadsheet }
+        return .quickLook
+    }
+}
+
+enum AttachmentFileIntegrityError: LocalizedError, Equatable {
+    case unsafeFile
+    case changed
+
+    var errorDescription: String? {
+        switch self {
+        case .unsafeFile: "The preview copy is no longer a safe regular file."
+        case .changed: "The preview copy no longer matches its verified attachment."
+        }
+    }
+}
+
+struct AttachmentFileIntegrity {
+    func verifiedData(for file: AttachmentPreviewFile) throws -> Data {
+        let values = try file.fileURL.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+        guard values.isRegularFile == true, values.isSymbolicLink != true else {
+            throw AttachmentFileIntegrityError.unsafeFile
+        }
+        let data = try Data(contentsOf: file.fileURL, options: [.mappedIfSafe])
+        if let metadata = file.metadata {
+            let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+            guard digest == metadata.id, Int64(data.count) == metadata.byteCount else {
+                throw AttachmentFileIntegrityError.changed
+            }
+        }
+        return data
+    }
+}
+
+struct AttachmentMediaViewerSheet: View {
+    let item: AttachmentPreviewItem
+    let onClose: () -> Void
+
+    @State private var selectedFileID: UUID
+    @State private var showsMetadata = false
+    @State private var actionError: String?
+
+    init(item: AttachmentPreviewItem, onClose: @escaping () -> Void) {
+        self.item = item
+        self.onClose = onClose
+        _selectedFileID = State(initialValue: item.initialFileID)
+    }
+
+    private var selectedFile: AttachmentPreviewFile {
+        item.files.first(where: { $0.id == selectedFileID }) ?? item.files[0]
+    }
+
+    private var selectedIndex: Int {
+        item.files.firstIndex(where: { $0.id == selectedFileID }) ?? 0
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            toolbar
+            Divider()
+            viewer(for: selectedFile)
+                .id(selectedFile.id)
+            if item.files.count > 1 {
+                Divider()
+                galleryStrip
+            }
+        }
+        .frame(minWidth: 760, idealWidth: 980, minHeight: 560, idealHeight: 720)
+        .alert("Attachment", isPresented: Binding(
+            get: { actionError != nil },
+            set: { if !$0 { actionError = nil } }
+        )) { Button("OK") { actionError = nil } } message: { Text(actionError ?? "") }
+    }
+
+    private var toolbar: some View {
+        HStack(spacing: 10) {
+            if item.files.count > 1 {
+                Button { select(offset: -1) } label: { Image(systemName: "chevron.left") }
+                    .disabled(selectedIndex == 0)
+                Button { select(offset: 1) } label: { Image(systemName: "chevron.right") }
+                    .disabled(selectedIndex == item.files.count - 1)
+                Text("\(selectedIndex + 1) of \(item.files.count)")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Text(selectedFile.filename).font(.headline).lineLimit(1)
+            Spacer()
+            Button { showsMetadata.toggle() } label: { Label("Info", systemImage: "info.circle") }
+                .popover(isPresented: $showsMetadata) { AttachmentMetadataView(file: selectedFile) }
+            Button("Save a Copy…", action: saveOriginal)
+            Button("Open Externally", action: openExternally)
+            Button("Close", action: onClose).keyboardShortcut(.cancelAction)
+        }
+        .padding(12)
+    }
+
+    @ViewBuilder private func viewer(for file: AttachmentPreviewFile) -> some View {
+        AttachmentIntegrityGate(file: file) {
+            switch AttachmentViewerKind.classify(filename: file.filename, mimeType: file.metadata?.mimeType) {
+            case .image: AttachmentImageView(fileURL: file.fileURL)
+            case .audiovisual: AttachmentAVPlayerView(fileURL: file.fileURL)
+            case .pdf: AttachmentPDFView(file: file)
+            case .spreadsheet: AttachmentSpreadsheetView(file: file)
+            case .quickLook: AttachmentQuickLookView(fileURL: file.fileURL)
+            }
+        }
+    }
+
+    private var galleryStrip: some View {
+        ScrollView(.horizontal) {
+            HStack(spacing: 8) {
+                ForEach(item.files) { file in
+                    Button { selectedFileID = file.id } label: {
+                        VStack(spacing: 4) {
+                            AttachmentThumbnail(file: file)
+                                .frame(width: 72, height: 52)
+                            Text(file.filename).font(.caption2).lineLimit(1).frame(width: 88)
+                        }
+                        .padding(5)
+                        .background(file.id == selectedFileID ? Color.accentColor.opacity(0.2) : .clear, in: RoundedRectangle(cornerRadius: 7))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(8)
+        }
+        .frame(height: 92)
+    }
+
+    private func select(offset: Int) {
+        let next = selectedIndex + offset
+        guard item.files.indices.contains(next) else { return }
+        selectedFileID = item.files[next].id
+    }
+
+    private func saveOriginal() {
+        do {
+            let data = try AttachmentFileIntegrity().verifiedData(for: selectedFile)
+            let panel = NSSavePanel()
+            panel.nameFieldStringValue = selectedFile.filename
+            panel.canCreateDirectories = true
+            guard panel.runModal() == .OK, let destination = panel.url else { return }
+            try data.write(to: destination, options: [.atomic])
+        } catch { actionError = error.localizedDescription }
+    }
+
+    private func openExternally() {
+        do {
+            _ = try AttachmentFileIntegrity().verifiedData(for: selectedFile)
+            guard NSWorkspace.shared.open(selectedFile.fileURL) else {
+                throw CocoaError(.fileNoSuchFile)
+            }
+        } catch { actionError = error.localizedDescription }
+    }
+}
+
+/// No native parser or Quick Look generator receives a materialized CAS file
+/// until its digest and byte count have been checked again. This closes the
+/// gap between the store check in `AppModel` and opening the preview sheet.
+private struct AttachmentIntegrityGate<Content: View>: View {
+    let file: AttachmentPreviewFile
+    @ViewBuilder let content: () -> Content
+    @State private var isVerified = false
+    @State private var error: String?
+
+    var body: some View {
+        Group {
+            if isVerified {
+                content()
+            } else if let error {
+                ContentUnavailableView(
+                    "Attachment unavailable",
+                    systemImage: "lock.trianglebadge.exclamationmark",
+                    description: Text(error)
+                )
+            } else {
+                ProgressView("Verifying attachment…")
+            }
+        }
+        .task(id: file.id) {
+            isVerified = false
+            error = nil
+            do {
+                let previewFile = file
+                _ = try await Task.detached(priority: .userInitiated) {
+                    try AttachmentFileIntegrity().verifiedData(for: previewFile)
+                }.value
+                guard !Task.isCancelled else { return }
+                isVerified = true
+            } catch {
+                guard !Task.isCancelled else { return }
+                self.error = error.localizedDescription
+            }
+        }
+    }
+}
+
+private struct AttachmentMetadataView: View {
+    let file: AttachmentPreviewFile
+
+    var body: some View {
+        Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 8) {
+            row("Name", file.filename)
+            row("Type", file.metadata?.mimeType ?? "Unknown")
+            row("Size", file.metadata.map { ByteCountFormatter.string(fromByteCount: $0.byteCount, countStyle: .file) } ?? "Unknown")
+            if let identifier = file.metadata?.id {
+                row("SHA-256", identifier)
+                Button("Copy SHA-256") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(identifier, forType: .string)
+                }
+                .gridCellColumns(2)
+            }
+        }
+        .textSelection(.enabled)
+        .padding(16)
+        .frame(width: 430)
+    }
+
+    @ViewBuilder private func row(_ label: String, _ value: String) -> some View {
+        GridRow {
+            Text(label).foregroundStyle(.secondary)
+            Text(value).lineLimit(3)
+        }
+    }
+}
+
+private struct AttachmentThumbnail: View {
+    let file: AttachmentPreviewFile
+
+    var body: some View {
+        if AttachmentViewerKind.classify(filename: file.filename, mimeType: file.metadata?.mimeType) == .image,
+           let image = NSImage(contentsOf: file.fileURL) {
+            Image(nsImage: image).resizable().scaledToFit()
+        } else {
+            Image(systemName: icon).resizable().scaledToFit().padding(12).foregroundStyle(.secondary)
+        }
+    }
+
+    private var icon: String {
+        switch AttachmentViewerKind.classify(filename: file.filename, mimeType: file.metadata?.mimeType) {
+        case .image: "photo"
+        case .audiovisual: "play.rectangle"
+        case .pdf: "doc.richtext"
+        case .spreadsheet: "tablecells"
+        case .quickLook: "doc"
+        }
+    }
+}
+
+private struct AttachmentImageView: View {
+    let fileURL: URL
+    @State private var magnification = 1.0
+
+    var body: some View {
+        if let image = NSImage(contentsOf: fileURL) {
+            ScrollView([.horizontal, .vertical]) {
+                Image(nsImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .scaleEffect(magnification)
+                    .padding(24)
+                    .gesture(MagnifyGesture().onChanged { magnification = min(8, max(0.1, $0.magnification)) })
+            }
+            .background(Color(nsColor: .windowBackgroundColor))
+        } else {
+            ContentUnavailableView("Image unavailable", systemImage: "photo.badge.exclamationmark")
+        }
+    }
+}
+
+private struct AttachmentAVPlayerView: View {
+    let player: AVPlayer
+
+    init(fileURL: URL) { player = AVPlayer(url: fileURL) }
+
+    var body: some View {
+        VideoPlayer(player: player)
+            .background(.black)
+            .onDisappear { player.pause() }
+    }
+}
+
+private struct AttachmentPDFView: View {
+    let file: AttachmentPreviewFile
+    @State private var searchQuery = ""
+    @State private var showsText = false
+    @State private var documentText = ""
+    @State private var pageCount = 0
+    @State private var error: String?
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                TextField("Search PDF", text: $searchQuery).textFieldStyle(.roundedBorder).frame(maxWidth: 280)
+                Text("\(pageCount) page\(pageCount == 1 ? "" : "s")").foregroundStyle(.secondary)
+                Spacer()
+                Toggle("Text", isOn: $showsText).toggleStyle(.button)
+                Button("Export Text…", action: exportText).disabled(documentText.isEmpty)
+            }
+            .padding(8)
+            Divider()
+            if let error {
+                ContentUnavailableView("PDF unavailable", systemImage: "doc.badge.ellipsis", description: Text(error))
+            } else if showsText {
+                ScrollView { Text(documentText).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading).padding() }
+            } else {
+                PDFNativeView(fileURL: file.fileURL, searchQuery: searchQuery)
+            }
+        }
+        .task(id: file.id) { loadDocumentMetadata() }
+    }
+
+    private func loadDocumentMetadata() {
+        guard let document = PDFDocument(url: file.fileURL) else { error = "The PDF document is malformed."; return }
+        pageCount = document.pageCount
+        var parts: [String] = []
+        var characters = 0
+        for index in 0..<document.pageCount {
+            guard let text = document.page(at: index)?.string else { continue }
+            characters += text.count
+            if characters > SpreadsheetPreviewLimits.totalCharacters {
+                parts.append("\n[Text preview truncated]")
+                break
+            }
+            parts.append(text)
+        }
+        documentText = parts.joined(separator: "\n\n")
+    }
+
+    private func exportText() {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = URL(fileURLWithPath: file.filename).deletingPathExtension().lastPathComponent + ".txt"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            // Export is an attachment-derived save operation. Fail closed if
+            // the isolated preview changed since its original CAS check.
+            _ = try AttachmentFileIntegrity().verifiedData(for: file)
+            try Data(documentText.utf8).write(to: url, options: [.atomic])
+        }
+        catch { self.error = error.localizedDescription }
+    }
+}
+
+private struct PDFNativeView: NSViewRepresentable {
+    let fileURL: URL
+    let searchQuery: String
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeNSView(context: Context) -> PDFView {
+        let view = PDFView()
+        view.autoScales = true
+        view.displayMode = .singlePageContinuous
+        view.displaysPageBreaks = true
+        view.document = PDFDocument(url: fileURL)
+        return view
+    }
+
+    func updateNSView(_ view: PDFView, context: Context) {
+        if view.document?.documentURL != fileURL { view.document = PDFDocument(url: fileURL) }
+        guard context.coordinator.lastQuery != searchQuery else { return }
+        context.coordinator.lastQuery = searchQuery
+        let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { view.highlightedSelections = []; return }
+        let selections = view.document?.findString(query, withOptions: .caseInsensitive) ?? []
+        view.highlightedSelections = Array(selections.prefix(1_000))
+        if let first = selections.first { view.go(to: first) }
+    }
+
+    final class Coordinator { var lastQuery = "" }
+}
+
+private struct AttachmentSpreadsheetView: View {
+    let file: AttachmentPreviewFile
+    @State private var preview: SpreadsheetPreview?
+    @State private var selectedSheetID: String?
+    @State private var error: String?
+
+    var body: some View {
+        Group {
+            if let preview {
+                VStack(spacing: 0) {
+                    if preview.sheets.count > 1 {
+                        Picker("Sheet", selection: Binding(
+                            get: { selectedSheetID ?? preview.sheets.first?.id },
+                            set: { selectedSheetID = $0 }
+                        )) {
+                            ForEach(preview.sheets) { Text($0.name).tag(Optional($0.id)) }
+                        }
+                        .pickerStyle(.segmented).padding(8)
+                        Divider()
+                    }
+                    if let sheet = selectedSheet(in: preview) { SpreadsheetGrid(sheet: sheet) }
+                    else { ContentUnavailableView("Empty workbook", systemImage: "tablecells") }
+                }
+            } else if let error {
+                VStack(spacing: 12) {
+                    ContentUnavailableView("Table preview unavailable", systemImage: "tablecells.badge.ellipsis", description: Text(error))
+                    Text("Quick Look remains available for unsupported system spreadsheet formats.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            } else {
+                ProgressView("Parsing table safely…")
+            }
+        }
+        .task(id: file.id) { await load() }
+    }
+
+    private func selectedSheet(in preview: SpreadsheetPreview) -> SpreadsheetPreview.Sheet? {
+        preview.sheets.first(where: { $0.id == selectedSheetID }) ?? preview.sheets.first
+    }
+
+    private func load() async {
+        let url = file.fileURL
+        let name = file.filename
+        do {
+            let result = try await Task.detached(priority: .userInitiated) {
+                switch url.pathExtension.lowercased() {
+                case "csv":
+                    return try DelimitedTextPreviewParser().parse(fileURL: url, delimiter: ",", name: name)
+                case "tsv":
+                    return try DelimitedTextPreviewParser().parse(fileURL: url, delimiter: "\t", name: name)
+                case "xlsx":
+                    return try XLSXPreviewParser().parse(fileURL: url)
+                default:
+                    throw SpreadsheetPreviewError.malformedWorkbook
+                }
+            }.value
+            preview = result
+            selectedSheetID = result.sheets.first?.id
+        } catch { self.error = error.localizedDescription }
+    }
+}
+
+private struct SpreadsheetGrid: View {
+    let sheet: SpreadsheetPreview.Sheet
+
+    private var columnCount: Int { sheet.rows.map(\.count).max() ?? 0 }
+
+    var body: some View {
+        ScrollView([.horizontal, .vertical]) {
+            LazyVStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(sheet.rows.enumerated()), id: \.offset) { rowIndex, row in
+                    HStack(spacing: 0) {
+                        Text("\(rowIndex + 1)")
+                            .foregroundStyle(.secondary)
+                            .frame(width: 48, alignment: .trailing).padding(.trailing, 8)
+                        ForEach(0..<columnCount, id: \.self) { column in
+                            SpreadsheetCell(value: column < row.count ? row[column] : "", isHeader: rowIndex == 0)
+                        }
+                    }
+                }
+            }
+            .padding(8)
+        }
+    }
+}
+
+private struct SpreadsheetCell: View {
+    let value: String
+    let isHeader: Bool
+
+    var body: some View {
+        Text(value)
+                                .textSelection(.enabled)
+                                .lineLimit(4)
+                                .frame(width: 180, alignment: .leading)
+                                .frame(minHeight: 28)
+                                .padding(.horizontal, 6)
+                                .background(isHeader ? Color.secondary.opacity(0.12) : .clear)
+                                .overlay(Rectangle().stroke(Color.secondary.opacity(0.16), lineWidth: 0.5))
+    }
+}

@@ -1,0 +1,17 @@
+.build/
+.swiftpm/
+DerivedData/
+dist/
+*.xcuserstate
+.DS_Store
+
+# Local release credentials and signing material. Public keys and signatures
+# may be committed; private key containers and environment files must not.
+.env
+.env.*
+!.env.example
+*.p8
+*.p12
+*.pfx
+*.pem
+*.key
