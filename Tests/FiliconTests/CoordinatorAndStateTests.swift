@@ -53,6 +53,41 @@ private struct CancellableProbeProvider: AIProvider {
     }
 }
 
+private actor ToolSchemaProbe {
+    private(set) var receivedRequests: [InferenceRequest] = []
+
+    func record(_ request: InferenceRequest) { receivedRequests.append(request) }
+}
+
+private struct NoopToolExecutor: ToolExecutor {
+    let descriptor = ToolDescriptor(name: "read")
+
+    func execute(_ call: NormalizedToolCall, context: ToolContext) async throws -> NormalizedToolResult {
+        .init(callID: call.id, content: [.text("ok")])
+    }
+}
+
+private struct NoToolCallingProvider: AIProvider {
+    let descriptor = ProviderDescriptor(
+        id: "no-tools", displayName: "No tools", requiresAPIKey: false, supportsToolCalling: false
+    )
+    let probe: ToolSchemaProbe
+
+    func models() async throws -> [AIModel] { [.init(id: "probe")] }
+
+    func stream(_ request: InferenceRequest) -> AsyncThrowingStream<InferenceEvent, any Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                await probe.record(request)
+                continuation.yield(.textDelta("ok"))
+                continuation.yield(.completed(.stop))
+                continuation.finish()
+            }
+            continuation.onTermination = { @Sendable _ in task.cancel() }
+        }
+    }
+}
+
 private func waitUntil(
     timeout: Duration = .seconds(1),
     condition: @escaping @Sendable () async -> Bool
@@ -117,6 +152,21 @@ private func waitUntil(
     #expect(await probe.starts == 0)
     #expect(await coordinator.isActive(conversationID: conversationID) == false)
     send.cancel()
+}
+
+@Test func coordinatorDoesNotInjectToolSchemasIntoProvidersThatOptOut() async throws {
+    let probe = ToolSchemaProbe()
+    let registry = ProviderRegistry()
+    await registry.register(NoToolCallingProvider(probe: probe))
+    let executor = NoopToolExecutor()
+    let coordinator = TurnCoordinator(registry: registry, toolCatalog: ToolCatalog([executor]))
+    let request = InferenceRequest(conversationID: UUID(), modelID: "probe", messages: [])
+
+    try await coordinator.send(request: request, providerID: "no-tools") { _ in }
+
+    let received = await probe.receivedRequests
+    #expect(received.count == 1)
+    #expect(received.first?.tools.isEmpty == true)
 }
 
 @Test func modelRefreshGuardRejectsStaleConversationAndGeneration() {

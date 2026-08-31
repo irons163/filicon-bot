@@ -2,7 +2,9 @@ import Foundation
 import FiliconDomain
 
 public struct CodexCLIProvider: AIProvider {
-    public let descriptor = ProviderDescriptor(id: "codex-cli", displayName: "Codex CLI", requiresAPIKey: false)
+    public let descriptor = ProviderDescriptor(
+        id: "codex-cli", displayName: "Codex CLI", requiresAPIKey: false, supportsToolCalling: false
+    )
     public let executableURL: URL?
     private let runner: any CLIProcessRunning
 
@@ -50,7 +52,9 @@ public struct CodexCLIProvider: AIProvider {
 }
 
 public struct ClaudeCodeCLIProvider: AIProvider {
-    public let descriptor = ProviderDescriptor(id: "claude-code-cli", displayName: "Claude Code CLI", requiresAPIKey: false)
+    public let descriptor = ProviderDescriptor(
+        id: "claude-code-cli", displayName: "Claude Code CLI", requiresAPIKey: false, supportsToolCalling: false
+    )
     public let executableURL: URL?
     private let runner: any CLIProcessRunning
 

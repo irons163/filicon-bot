@@ -330,7 +330,21 @@ public struct ProviderDescriptor: Identifiable, Hashable, Sendable {
     public var id: ProviderID
     public var displayName: String
     public var requiresAPIKey: Bool
-    public init(id: ProviderID, displayName: String, requiresAPIKey: Bool) { self.id = id; self.displayName = displayName; self.requiresAPIKey = requiresAPIKey }
+    /// Whether Filicon may add its own tool catalog to requests for this provider.
+    /// Providers that own their own tool runtime (or accept text only) should set
+    /// this to false so the app does not inject incompatible tool schemas.
+    public var supportsToolCalling: Bool
+    public init(
+        id: ProviderID,
+        displayName: String,
+        requiresAPIKey: Bool,
+        supportsToolCalling: Bool = true
+    ) {
+        self.id = id
+        self.displayName = displayName
+        self.requiresAPIKey = requiresAPIKey
+        self.supportsToolCalling = supportsToolCalling
+    }
 }
 
 public struct AIModel: Identifiable, Hashable, Sendable {

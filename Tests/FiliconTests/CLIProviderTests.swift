@@ -57,6 +57,11 @@ private func collectCLI(_ provider: any AIProvider, _ request: InferenceRequest)
 
 @Suite(.serialized)
 struct CLIProviderTests {
+    @Test func cliProvidersDoNotReceiveFiliconToolSchemas() {
+        #expect(CodexCLIProvider(executableURL: nil, runner: FixtureCLIRunner("")).descriptor.supportsToolCalling == false)
+        #expect(ClaudeCodeCLIProvider(executableURL: nil, runner: FixtureCLIRunner("")).descriptor.supportsToolCalling == false)
+    }
+
     @Test func codexJSONLinesAreNormalizedAndArgumentsAreDirect() async throws {
         let fixture = """
         {"type":"thread.started","thread_id":"thread-1"}

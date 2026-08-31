@@ -129,7 +129,7 @@ public actor TurnCoordinator {
         let catalog = toolCatalog
         let task = Task {
             let stream: AsyncThrowingStream<InferenceEvent, Error>
-            if let catalog {
+            if let catalog, submission.provider.descriptor.supportsToolCalling {
                 stream = await ToolLoop(provider: submission.provider, catalog: catalog).run(
                     submission.request,
                     context: ToolContext(conversationID: conversationID)
