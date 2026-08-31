@@ -947,8 +947,14 @@ private struct ChatDetailView: View {
                 }.padding(.horizontal).padding(.top, 6)
             }
             HStack(alignment: .bottom) {
-                Button { showingImporter = true } label: { Label("Attach", systemImage: "paperclip") }.labelStyle(.iconOnly).disabled(model.isImportingAttachments)
-                Button { model.pasteAttachments() } label: { Label("Paste files", systemImage: "doc.on.clipboard") }.labelStyle(.iconOnly)
+                Button { showingImporter = true } label: { Label("Attach", systemImage: "paperclip") }
+                    .labelStyle(.iconOnly)
+                    .disabled(model.isImportingAttachments || !model.selectedModelSupportsAttachments)
+                    .help(model.selectedModelAttachmentError ?? "Attach a file")
+                Button { model.pasteAttachments() } label: { Label("Paste files", systemImage: "doc.on.clipboard") }
+                    .labelStyle(.iconOnly)
+                    .disabled(!model.selectedModelSupportsAttachments)
+                    .help(model.selectedModelAttachmentError ?? "Paste a file or image")
                 TextField("Message", text: $model.draft, axis: .vertical).lineLimit(1...8).textFieldStyle(.roundedBorder)
                     .onSubmit { if !model.running.contains(conversation.id) { model.send() } }
                     .help("Type / after a space to reference an enabled workflow")
@@ -957,8 +963,14 @@ private struct ChatDetailView: View {
                 else {
                     Button("Send", action: model.send)
                         .keyboardShortcut(.return, modifiers: .command)
-                        .disabled(model.selectedConversationConfigurationError != nil)
-                        .help(model.selectedConversationConfigurationError ?? "Send message")
+                        .disabled(
+                            model.selectedConversationConfigurationError != nil
+                                || (model.selectedModelAttachmentError != nil && !model.pendingAttachments.isEmpty)
+                        )
+                        .help(
+                            model.selectedConversationConfigurationError
+                                ?? (model.pendingAttachments.isEmpty ? "Send message" : model.selectedModelAttachmentError ?? "Send message")
+                        )
                 }
             }.padding().disabled(!model.isBootstrapped)
         }.navigationTitle(conversation.title).task(id: conversation.id) { await model.refreshModels() }

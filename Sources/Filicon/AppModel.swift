@@ -500,6 +500,14 @@ final class AppModel: ObservableObject {
         let modelID = conversation.modelID
         return availableModels.first { $0.id == modelID }
     }
+    var selectedModelSupportsAttachments: Bool {
+        guard let model = selectedModel else { return true }
+        return !model.capabilities.inputModalities.isDisjoint(with: [.image, .audio, .video, .document])
+    }
+    var selectedModelAttachmentError: String? {
+        guard let model = selectedModel, !selectedModelSupportsAttachments else { return nil }
+        return "\(model.displayName) does not accept attachments. Choose a model with image, audio, video, or document input."
+    }
     var supportedReasoningEfforts: [ReasoningEffort] {
         ProviderCatalogPresentation.reasoningEfforts(for: selectedModel)
     }
@@ -1005,6 +1013,10 @@ final class AppModel: ObservableObject {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard isBootstrapped, (!text.isEmpty || !pendingAttachments.isEmpty), let id = selection, !running.contains(id), conversations.contains(where: { $0.id == id }) else { return }
         guard let conversation = selectedConversation else { return }
+        if !pendingAttachments.isEmpty, let attachmentError = selectedModelAttachmentError {
+            errorMessage = attachmentError
+            return
+        }
         if let validationError = ProviderCatalogPresentation.validationError(
             conversation: conversation,
             models: availableModels,
@@ -1093,6 +1105,10 @@ final class AppModel: ObservableObject {
 
     func acceptVoiceResult() {
         guard let result = voiceComposer.result else { return }
+        guard selectedModelAttachmentError == nil else {
+            errorMessage = selectedModelAttachmentError
+            return
+        }
         isImportingAttachments = true
         Task {
             defer { isImportingAttachments = false }
@@ -1117,6 +1133,10 @@ final class AppModel: ObservableObject {
     }
 
     func pasteAttachments() {
+        guard selectedModelAttachmentError == nil else {
+            errorMessage = selectedModelAttachmentError
+            return
+        }
         let values = NSPasteboard.general.readObjects(forClasses: [NSURL.self], options: [
             .urlReadingFileURLsOnly: true,
         ]) as? [URL] ?? []
@@ -1746,6 +1766,10 @@ final class AppModel: ObservableObject {
 
     func importAttachments(_ urls: [URL]) {
         guard !urls.isEmpty else { return }
+        guard selectedModelAttachmentError == nil else {
+            errorMessage = selectedModelAttachmentError
+            return
+        }
         isImportingAttachments = true
         Task {
             defer { isImportingAttachments = false }
@@ -2163,6 +2187,10 @@ final class AppModel: ObservableObject {
     func retryRootConnection() {
         rootResilience.retry { [weak self] ticket in await self?.performRootRetry(ticket: ticket) }
         rootConnection = rootResilience.connection
+    }
+
+    func dismissStartupBanner() {
+        startupBanner = nil
     }
 
     func reloadRootWorkspace() async {

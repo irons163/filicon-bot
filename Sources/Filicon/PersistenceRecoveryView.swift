@@ -17,6 +17,14 @@ struct PersistenceRecoveryBanner: View {
                 }
                 Button("Reload") { Task { await model.reloadRootWorkspace() } }
                 Button("Copy Diagnostics", action: model.copyRootDiagnostics)
+                Button {
+                    model.dismissStartupBanner()
+                } label: {
+                    Image(systemName: "xmark")
+                }
+                .buttonStyle(.plain)
+                .help("Dismiss this notice")
+                .accessibilityLabel("Dismiss storage notice")
             }
             .padding(.horizontal, 12).padding(.vertical, 8)
             .background(Color.orange.opacity(0.14))
