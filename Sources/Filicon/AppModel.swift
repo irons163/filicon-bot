@@ -504,9 +504,17 @@ final class AppModel: ObservableObject {
         guard let model = selectedModel else { return true }
         return !model.capabilities.inputModalities.isDisjoint(with: [.image, .audio, .video, .document])
     }
+    var selectedModelSupportsAudio: Bool {
+        guard let model = selectedModel else { return true }
+        return model.capabilities.inputModalities.contains(.audio)
+    }
     var selectedModelAttachmentError: String? {
         guard let model = selectedModel, !selectedModelSupportsAttachments else { return nil }
         return "\(model.displayName) does not accept attachments. Choose a model with image, audio, video, or document input."
+    }
+    var selectedModelAudioError: String? {
+        guard let model = selectedModel, !selectedModelSupportsAudio else { return nil }
+        return "\(model.displayName) does not accept audio. Choose a model with audio input to use voice messages."
     }
     var supportedReasoningEfforts: [ReasoningEffort] {
         ProviderCatalogPresentation.reasoningEfforts(for: selectedModel)
@@ -1105,8 +1113,8 @@ final class AppModel: ObservableObject {
 
     func acceptVoiceResult() {
         guard let result = voiceComposer.result else { return }
-        guard selectedModelAttachmentError == nil else {
-            errorMessage = selectedModelAttachmentError
+        guard selectedModelAudioError == nil else {
+            errorMessage = selectedModelAudioError
             return
         }
         isImportingAttachments = true

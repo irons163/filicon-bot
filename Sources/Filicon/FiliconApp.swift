@@ -958,7 +958,12 @@ private struct ChatDetailView: View {
                 TextField("Message", text: $model.draft, axis: .vertical).lineLimit(1...8).textFieldStyle(.roundedBorder)
                     .onSubmit { if !model.running.contains(conversation.id) { model.send() } }
                     .help("Type / after a space to reference an enabled workflow")
-                VoiceComposerControls(controller: model.voiceComposer, accept: model.acceptVoiceResult)
+                VoiceComposerControls(
+                    controller: model.voiceComposer,
+                    accept: model.acceptVoiceResult,
+                    supportsAudio: model.selectedModelSupportsAudio,
+                    unsupportedAudioHelp: model.selectedModelAudioError
+                )
                 if model.running.contains(conversation.id) { Button("Stop", action: model.cancel) }
                 else {
                     Button("Send", action: model.send)
@@ -1081,13 +1086,18 @@ private struct ChatDetailView: View {
 private struct VoiceComposerControls: View {
     @ObservedObject var controller: VoiceComposerController
     let accept: () -> Void
+    let supportsAudio: Bool
+    let unsupportedAudioHelp: String?
 
     var body: some View {
         switch controller.phase {
         case .idle:
             Button(action: controller.startRecording) {
                 Label("Record voice message", systemImage: "mic")
-            }.labelStyle(.iconOnly).help("Record voice message")
+            }
+            .labelStyle(.iconOnly)
+            .disabled(!supportsAudio)
+            .help(unsupportedAudioHelp ?? "Record voice message")
         case .requestingMicrophonePermission:
             ProgressView().controlSize(.small).help("Requesting microphone access…")
             Button("Cancel", action: controller.cancel).controlSize(.small)
