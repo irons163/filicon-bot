@@ -88,58 +88,12 @@ struct ContentView: View {
             PersistenceRecoveryBanner()
             UpdateStatusPill()
         NavigationSplitView {
-            List(selection: Binding<WorkspaceRoute?>(
-                get: { model.route },
-                set: { value in model.selectRoute(value) }
-            )) {
-                Section("Chats") {
-                    Label("Search", systemImage: "magnifyingglass").tag(WorkspaceRoute.search)
-                    ForEach(model.visibleConversations) { conversation in
-                        ConversationSidebarRow(conversation: conversation).tag(WorkspaceRoute.conversation(conversation.id))
-                    }
-                    if model.hasMoreConversations {
-                        Button {
-                            Task { await model.loadMoreConversations() }
-                        } label: {
-                            if model.isLoadingMoreConversations {
-                                ProgressView().controlSize(.small).frame(maxWidth: .infinity)
-                            } else {
-                                Label("Load more chats", systemImage: "arrow.down.circle")
-                            }
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(model.isLoadingMoreConversations)
-                    }
-                    Label("Hidden Chats", systemImage: "archivebox").tag(WorkspaceRoute.hiddenChats)
-                }
-                Section("Workspace") {
-                    Label("Agents", systemImage: "person.2").tag(WorkspaceRoute.agents)
-                    Label("Groups", systemImage: "person.3").tag(WorkspaceRoute.groups)
-                    Label("Automations", systemImage: "clock.arrow.circlepath").tag(WorkspaceRoute.automations)
-                    Label("Channels", systemImage: "number").tag(WorkspaceRoute.channels)
-                    Label("Shared Rooms", systemImage: "person.3.sequence").tag(WorkspaceRoute.sharedRooms)
-                    Label("MCP Servers", systemImage: "server.rack").tag(WorkspaceRoute.mcp)
-                    Label("Computer", systemImage: "display").tag(WorkspaceRoute.computer)
-                    Label("Plugins", systemImage: "puzzlepiece.extension").tag(WorkspaceRoute.plugins)
-                    Label("Account", systemImage: "person.crop.circle").tag(WorkspaceRoute.account)
-                }
-            }
-            .navigationTitle("Filicon")
-            .toolbar {
-                ToolbarItemGroup {
-                    Button(action: model.goBack) { Label("Back", systemImage: "chevron.left") }
-                        .disabled(!model.canGoBack)
-                        .accessibilityIdentifier("workspace-back")
-                    Button(action: model.goForward) { Label("Forward", systemImage: "chevron.right") }
-                        .disabled(!model.canGoForward)
-                        .accessibilityIdentifier("workspace-forward")
-                    Button(action: model.addConversation) { Label("New Conversation", systemImage: "square.and.pencil") }
-                        .disabled(!model.isBootstrapped)
-                }
-            }
+            FiliconSidebar()
+                .navigationSplitViewColumnWidth(min: 232, ideal: 274, max: 350)
         } detail: {
             workspaceDetail
         }
+        .background(FiliconTheme.canvas)
         }
         .alert("Filicon", isPresented: Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } })) { Button("OK") { model.errorMessage = nil } } message: { Text(model.errorMessage ?? "") }
         .sheet(item: Binding(
@@ -205,6 +159,149 @@ struct ContentView: View {
     }
 }
 
+private struct FiliconSidebar: View {
+    @EnvironmentObject private var model: AppModel
+    @State private var showingSearchField = false
+    @FocusState private var searchFocused: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 9) {
+                FiliconAvatar(title: "Filicon", systemName: "sparkles", size: 29)
+                Text("Filicon")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(FiliconTheme.textPrimary)
+                    .fixedSize(horizontal: true, vertical: false)
+                Spacer(minLength: 4)
+                FiliconIconButton(label: "Back", systemName: "chevron.left", size: 27, action: model.goBack)
+                    .disabled(!model.canGoBack)
+                    .accessibilityIdentifier("workspace-back")
+                FiliconIconButton(label: "Forward", systemName: "chevron.right", size: 27, action: model.goForward)
+                    .disabled(!model.canGoForward)
+                    .accessibilityIdentifier("workspace-forward")
+                FiliconIconButton(label: "New Conversation", systemName: "square.and.pencil", size: 28, isProminent: true, action: model.addConversation)
+                    .disabled(!model.isBootstrapped)
+            }
+            .padding(.horizontal, 14)
+            .padding(.top, 13)
+            .padding(.bottom, 10)
+
+            if showingSearchField {
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.caption)
+                        .foregroundStyle(FiliconTheme.textTertiary)
+                    TextField("Search chats", text: $model.searchQuery)
+                        .textFieldStyle(.plain)
+                        .focused($searchFocused)
+                        .onSubmit { model.focusGlobalSearch() }
+                    FiliconIconButton(label: "Close search", systemName: "xmark", size: 24) {
+                        showingSearchField = false
+                        model.searchQuery = ""
+                    }
+                }
+                .padding(.horizontal, 10)
+                .frame(height: 32)
+                .background(FiliconTheme.input, in: RoundedRectangle(cornerRadius: 9))
+                .overlay(RoundedRectangle(cornerRadius: 9).stroke(FiliconTheme.border, lineWidth: 0.8))
+                .padding(.horizontal, 12)
+                .padding(.bottom, 7)
+            } else {
+                Button {
+                    showingSearchField = true
+                    model.focusGlobalSearch()
+                    DispatchQueue.main.async { searchFocused = true }
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: "magnifyingglass")
+                        Text("Search")
+                        Spacer()
+                        Text("⌘K").font(.caption2.monospaced()).foregroundStyle(FiliconTheme.textTertiary)
+                    }
+                    .font(.system(size: 13.5))
+                    .foregroundStyle(FiliconTheme.textSecondary)
+                    .padding(.horizontal, 12)
+                    .frame(height: 33)
+                    .background(FiliconTheme.surfaceRaised.opacity(0.55), in: RoundedRectangle(cornerRadius: 9))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Search")
+                .padding(.horizontal, 12)
+                .padding(.bottom, 7)
+            }
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 1) {
+                    FiliconSectionLabel(title: "Chats")
+                    ForEach(model.visibleConversations) { conversation in
+                        ConversationSidebarRow(conversation: conversation)
+                    }
+                    if model.hasMoreConversations {
+                        Button {
+                            Task { await model.loadMoreConversations() }
+                        } label: {
+                            HStack(spacing: 10) {
+                                if model.isLoadingMoreConversations { ProgressView().controlSize(.small) }
+                                else { Image(systemName: "arrow.down.circle") }
+                                Text("Load more chats")
+                            }
+                            .font(.caption)
+                            .foregroundStyle(FiliconTheme.textTertiary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 12)
+                            .frame(height: 30)
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(model.isLoadingMoreConversations)
+                    }
+                    FiliconSidebarRow(title: "Hidden Chats", systemName: "archivebox", selected: model.route == .hiddenChats) {
+                        model.selectRoute(.hiddenChats)
+                    }
+
+                    FiliconSectionLabel(title: "Workspace")
+                    workspaceRow("Agents", "person.2", .agents)
+                    workspaceRow("Groups", "person.3", .groups)
+                    workspaceRow("Automations", "clock.arrow.circlepath", .automations)
+                    workspaceRow("Channels", "number", .channels)
+                    workspaceRow("Shared Rooms", "person.3.sequence", .sharedRooms)
+                    workspaceRow("MCP Servers", "server.rack", .mcp)
+                    workspaceRow("Computer", "display", .computer)
+                    workspaceRow("Plugins", "puzzlepiece.extension", .plugins)
+                    workspaceRow("Account", "person.crop.circle", .account)
+                }
+                .padding(.horizontal, 8)
+                .padding(.bottom, 12)
+            }
+            .scrollIndicators(.hidden)
+
+            Divider().overlay(FiliconTheme.border)
+            HStack(spacing: 10) {
+                Circle()
+                    .fill(FiliconTheme.accent.opacity(0.22))
+                    .frame(width: 28, height: 28)
+                    .overlay(Image(systemName: "person.fill").font(.caption).foregroundStyle(FiliconTheme.accent))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Local workspace").font(.caption.weight(.semibold)).foregroundStyle(FiliconTheme.textPrimary)
+                    Text(model.dataRoot.lastPathComponent).font(.caption2).foregroundStyle(FiliconTheme.textTertiary).lineLimit(1)
+                }
+                Spacer()
+                FiliconIconButton(label: "Account", systemName: "gearshape", size: 26) { model.selectRoute(.account) }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 11)
+        }
+        .background(FiliconTheme.sidebar)
+        .foregroundStyle(FiliconTheme.textPrimary)
+    }
+
+    @ViewBuilder
+    private func workspaceRow(_ title: String, _ symbolName: String, _ route: WorkspaceRoute) -> some View {
+        FiliconSidebarRow(title: title, systemName: symbolName, selected: model.route == route) {
+            model.selectRoute(route)
+        }
+    }
+}
+
 private struct UpdateStatusPill: View {
     @EnvironmentObject private var model: AppModel
 
@@ -220,13 +317,14 @@ private struct UpdateStatusPill: View {
                 .buttonStyle(.bordered)
                 .controlSize(.small)
                 .disabled(presentation.action == nil)
-                .foregroundStyle(presentation.isError ? Color.red : Color.primary)
+                .tint(presentation.isError ? Color.red : FiliconTheme.accent)
+                .foregroundStyle(presentation.isError ? Color.red : FiliconTheme.textPrimary)
                 .accessibilityIdentifier("update-status-pill")
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 5)
-            .background(.bar)
-            .overlay(alignment: .bottom) { Divider() }
+            .background(FiliconTheme.surface)
+            .overlay(alignment: .bottom) { Rectangle().fill(FiliconTheme.border).frame(height: 0.7) }
         }
     }
 
@@ -294,15 +392,46 @@ private struct ConversationSidebarRow: View {
     @State private var title = ""
 
     var body: some View {
-        HStack {
-            Label(conversation.title, systemImage: "bubble.left")
-            Spacer()
+        HStack(spacing: 2) {
+            Button {
+                model.selectRoute(.conversation(conversation.id))
+            } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: "bubble.left")
+                        .font(.system(size: 13, weight: .semibold))
+                        .frame(width: 18)
+                    Text(conversation.title)
+                        .font(.system(size: 13.5, weight: model.route == .conversation(conversation.id) ? .semibold : .regular))
+                        .lineLimit(1)
+                    Spacer(minLength: 2)
+                }
+                .foregroundStyle(model.route == .conversation(conversation.id) ? FiliconTheme.textPrimary : FiliconTheme.textSecondary)
+                .padding(.leading, 11)
+                .frame(height: 34)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
             Menu {
                 Button("Rename…") { title = conversation.title; showingRename = true }
                 Button("Hide") { model.setConversationHidden(id: conversation.id, hidden: true) }
                 Divider()
                 Button("Delete", role: .destructive) { model.deleteConversation(id: conversation.id) }
-            } label: { Image(systemName: "ellipsis") }.menuStyle(.borderlessButton).fixedSize()
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(FiliconTheme.textTertiary)
+                    .frame(width: 27, height: 27)
+                    .background(FiliconTheme.surfaceRaised.opacity(0.6), in: Circle())
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .padding(.trailing, 4)
+        }
+        .background(model.route == .conversation(conversation.id) ? FiliconTheme.surfaceRaised : .clear, in: RoundedRectangle(cornerRadius: 9))
+        .overlay {
+            if model.route == .conversation(conversation.id) {
+                RoundedRectangle(cornerRadius: 9).stroke(FiliconTheme.border, lineWidth: 0.7)
+            }
         }
         .sheet(isPresented: $showingRename) {
             VStack(alignment: .leading, spacing: 14) {
@@ -745,12 +874,132 @@ private struct ComputerWorkspaceView: View {
     }
 }
 
+private struct FiliconChatHeader: View {
+    let title: String
+    let providerName: String
+    let modelName: String
+    let isWorking: Bool
+    let isLoadingCatalog: Bool
+    let onConfiguration: () -> Void
+    let onFind: () -> Void
+    let onOutline: () -> Void
+
+    var body: some View {
+        HStack(spacing: 11) {
+            FiliconAvatar(title: title, systemName: "sparkles", size: 32)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 14.5, weight: .semibold))
+                    .foregroundStyle(FiliconTheme.textPrimary)
+                    .lineLimit(1)
+                HStack(spacing: 5) {
+                    Text(providerName).lineLimit(1)
+                    Text("·").foregroundStyle(FiliconTheme.textTertiary)
+                    Text(modelName).lineLimit(1)
+                    if isWorking {
+                        Text("· Working")
+                            .foregroundStyle(FiliconTheme.accent)
+                    } else if isLoadingCatalog {
+                        ProgressView().controlSize(.mini)
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(FiliconTheme.textSecondary)
+            }
+            Spacer(minLength: 10)
+            FiliconIconButton(label: "Model and provider settings", systemName: "slider.horizontal.3", action: onConfiguration)
+            FiliconIconButton(label: "Find in Chat (⌘F)", systemName: "magnifyingglass", action: onFind)
+            FiliconIconButton(label: "Full conversation", systemName: "list.bullet", action: onOutline)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 11)
+        .background(FiliconTheme.surface)
+        .overlay(alignment: .bottom) { Rectangle().fill(FiliconTheme.border).frame(height: 0.7) }
+    }
+}
+
+private struct ChatConfigurationPopover: View {
+    @EnvironmentObject private var model: AppModel
+    let conversation: Conversation
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Text("Model settings").font(.headline)
+                Spacer()
+                Button {
+                    Task { await model.refreshModels(forceRefresh: true) }
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .buttonStyle(.plain)
+                .disabled(model.isLoadingModels)
+                .help("Refresh model catalog")
+            }
+            Picker("Provider", selection: Binding(
+                get: { conversation.providerID },
+                set: { model.updateRoute(providerID: $0) }
+            )) {
+                ForEach(model.descriptors) { descriptor in
+                    Text(descriptor.displayName).tag(descriptor.id)
+                }
+            }
+            .pickerStyle(.menu)
+            Picker("Model", selection: Binding(
+                get: { conversation.modelID },
+                set: { model.updateRoute(providerID: conversation.providerID, modelID: $0) }
+            )) {
+                ForEach(model.availableModels) { model in
+                    Text(ProviderCatalogPresentation.modelLabel(model)).tag(model.id)
+                }
+            }
+            .pickerStyle(.menu)
+            Picker("Reasoning", selection: Binding(
+                get: { conversation.reasoningEffort },
+                set: { model.setReasoningEffort($0) }
+            )) {
+                ForEach(model.supportedReasoningEfforts, id: \.self) { effort in
+                    Text(effort.rawValue.capitalized).tag(effort)
+                }
+            }
+            .pickerStyle(.menu)
+            .disabled(model.selectedModel == nil)
+            HStack(spacing: 5) {
+                if model.isLoadingModels { ProgressView().controlSize(.small) }
+                Text(model.modelCatalogStatusLabel)
+                if let updated = model.modelCatalogLastUpdated {
+                    Text(updated, style: .relative)
+                }
+            }
+            .font(.caption)
+            .foregroundStyle(model.modelCatalogError == nil && !model.isModelCatalogStale ? FiliconTheme.textTertiary : FiliconTheme.warning)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Model catalog status: \(model.modelCatalogStatusLabel)")
+            if let configurationError = model.selectedConversationConfigurationError, !model.isLoadingModels {
+                Text(configurationError)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let usage = model.selectedProviderUsage, usage.requests > 0 {
+                Text("\(usage.requests.formatted()) requests · \(usage.inputTokens.formatted()) in / \(usage.outputTokens.formatted()) out")
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(FiliconTheme.textTertiary)
+            }
+        }
+        .padding(16)
+        .frame(width: 310)
+        .background(FiliconTheme.surface)
+    }
+}
+
 private struct ChatDetailView: View {
     @EnvironmentObject private var model: AppModel
     let conversation: Conversation
     @State private var showingImporter = false
     @State private var showingFind = false
     @State private var showingOutline = false
+    @State private var showingConfiguration = false
     @State private var transcript: TranscriptPresentationState
     @State private var replyJumpTargetID: UUID?
     @FocusState private var findFieldFocused: Bool
@@ -762,67 +1011,28 @@ private struct ChatDetailView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 5) {
-                HStack {
-                    Picker("Provider", selection: Binding(get: { conversation.providerID }, set: { model.updateRoute(providerID: $0) })) {
-                        ForEach(model.descriptors) { Text($0.displayName).tag($0.id) }
-                    }.frame(maxWidth: 220)
-                    Picker("Model", selection: Binding(get: { conversation.modelID }, set: { model.updateRoute(providerID: conversation.providerID, modelID: $0) })) {
-                        ForEach(model.availableModels) {
-                            Text(ProviderCatalogPresentation.modelLabel($0)).tag($0.id)
-                        }
-                    }.frame(maxWidth: 320)
-                    Picker("Reasoning", selection: Binding(
-                        get: { conversation.reasoningEffort },
-                        set: { model.setReasoningEffort($0) }
-                    )) {
-                        ForEach(model.supportedReasoningEfforts, id: \.self) { Text($0.rawValue.capitalized).tag($0) }
-                    }
-                    .frame(maxWidth: 170)
-                    .disabled(model.selectedModel == nil)
-                    Button { Task { await model.refreshModels(forceRefresh: true) } } label: {
-                        Label("Refresh model catalog", systemImage: "arrow.clockwise")
-                    }
-                    .labelStyle(.iconOnly)
-                    .disabled(model.isLoadingModels)
-                    .help("Refresh model catalog")
-                    .accessibilityLabel("Refresh model catalog")
-                    Spacer()
-                    Button { openFind() } label: { Label("Find in Chat", systemImage: "magnifyingglass") }
-                        .labelStyle(.iconOnly)
-                        .help("Find in Chat (⌘F)")
-                    Button { showingOutline = true } label: { Label("Full conversation", systemImage: "list.bullet") }
-                        .labelStyle(.iconOnly)
-                        .help("Full conversation")
-                }
-                HStack(spacing: 6) {
-                    if model.isLoadingModels { ProgressView().controlSize(.small) }
-                    Text(model.modelCatalogStatusLabel)
-                        .font(.caption)
-                        .foregroundStyle(model.modelCatalogError == nil && !model.isModelCatalogStale ? Color.secondary : Color.orange)
-                    if let updated = model.modelCatalogLastUpdated {
-                        Text(updated, style: .relative).font(.caption).foregroundStyle(.tertiary)
-                    }
-                    if let usage = model.selectedProviderUsage, usage.requests > 0 {
-                        Text("\(usage.requests.formatted()) requests · \(usage.inputTokens.formatted()) in / \(usage.outputTokens.formatted()) out")
-                            .font(.caption.monospacedDigit()).foregroundStyle(.tertiary)
-                            .accessibilityLabel("Provider usage: \(usage.requests) requests, \(usage.inputTokens) input tokens, \(usage.outputTokens) output tokens")
-                    }
-                    if let configurationError = model.selectedConversationConfigurationError, !model.isLoadingModels {
-                        Text(configurationError).font(.caption).foregroundStyle(.red).lineLimit(1)
-                    }
-                }
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel("Model catalog status: \(model.modelCatalogStatusLabel)")
-            }.padding(10)
-            Divider()
+            FiliconChatHeader(
+                title: conversation.title,
+                providerName: model.descriptors.first(where: { $0.id == conversation.providerID })?.displayName ?? conversation.providerID.rawValue,
+                modelName: model.availableModels.first(where: { $0.id == conversation.modelID })?.displayName ?? conversation.modelID.rawValue,
+                isWorking: model.running.contains(conversation.id),
+                isLoadingCatalog: model.isLoadingModels,
+                onConfiguration: { showingConfiguration.toggle() },
+                onFind: openFind,
+                onOutline: { showingOutline = true }
+            )
+            .popover(isPresented: $showingConfiguration, arrowEdge: .bottom) {
+                ChatConfigurationPopover(conversation: conversation)
+                    .environmentObject(model)
+            }
             if showingFind {
                 findBar
-                Divider()
             }
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 12) {
+                    HStack(alignment: .top, spacing: 0) {
+                        Spacer(minLength: 16)
+                        LazyVStack(alignment: .leading, spacing: 16) {
                         if conversation.messages.isEmpty && model.loadingMessageHistory.contains(conversation.id) {
                             ProgressView("Loading messages…")
                                 .frame(maxWidth: .infinity)
@@ -864,9 +1074,14 @@ private struct ChatDetailView: View {
                             )
                             .id(message.id)
                         }
+                        }
+                        .frame(maxWidth: 690)
+                        Spacer(minLength: 16)
                     }
-                    .padding()
+                    .padding(.top, 26)
+                    .padding(.bottom, 28)
                 }
+                .background(FiliconTheme.canvas)
                 .onChange(of: transcript.activeMatchID) { _, id in
                     guard let id else { return }
                     DispatchQueue.main.async {
@@ -881,7 +1096,7 @@ private struct ChatDetailView: View {
                     performGlobalJump(id, proxy: proxy)
                 }
             }
-            Divider()
+            Rectangle().fill(FiliconTheme.border).frame(height: 0.7)
             MCPApprovalPanel()
             if !model.pendingAttachments.isEmpty {
                 ScrollView(.horizontal) {
@@ -946,16 +1161,21 @@ private struct ChatDetailView: View {
                     }
                 }.padding(.horizontal).padding(.top, 6)
             }
-            HStack(alignment: .bottom) {
-                Button { showingImporter = true } label: { Label("Attach", systemImage: "paperclip") }
-                    .labelStyle(.iconOnly)
+            HStack(alignment: .bottom, spacing: 8) {
+                FiliconIconButton(label: "Attach", systemName: "paperclip", size: 32) { showingImporter = true }
                     .disabled(model.isImportingAttachments || !model.selectedModelSupportsAttachments)
                     .help(model.selectedModelAttachmentError ?? "Attach a file")
-                Button { model.pasteAttachments() } label: { Label("Paste files", systemImage: "doc.on.clipboard") }
-                    .labelStyle(.iconOnly)
+                FiliconIconButton(label: "Paste files", systemName: "doc.on.clipboard", size: 32) { model.pasteAttachments() }
                     .disabled(!model.selectedModelSupportsAttachments)
                     .help(model.selectedModelAttachmentError ?? "Paste a file or image")
-                TextField("Message", text: $model.draft, axis: .vertical).lineLimit(1...8).textFieldStyle(.roundedBorder)
+                TextField("Message", text: $model.draft, axis: .vertical)
+                    .lineLimit(1...4)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 14))
+                    .foregroundStyle(FiliconTheme.textPrimary)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 6)
+                    .frame(minHeight: 34, maxHeight: 54)
                     .onSubmit { if !model.running.contains(conversation.id) { model.send() } }
                     .help("Type / after a space to reference an enabled workflow")
                 VoiceComposerControls(
@@ -964,20 +1184,38 @@ private struct ChatDetailView: View {
                     supportsAudio: model.selectedModelSupportsAudio,
                     unsupportedAudioHelp: model.selectedModelAudioError
                 )
-                if model.running.contains(conversation.id) { Button("Stop", action: model.cancel) }
-                else {
-                    Button("Send", action: model.send)
-                        .keyboardShortcut(.return, modifiers: .command)
-                        .disabled(
-                            model.selectedConversationConfigurationError != nil
-                                || (model.selectedModelAttachmentError != nil && !model.pendingAttachments.isEmpty)
-                        )
-                        .help(
-                            model.selectedConversationConfigurationError
-                                ?? (model.pendingAttachments.isEmpty ? "Send message" : model.selectedModelAttachmentError ?? "Send message")
-                        )
+                if model.running.contains(conversation.id) {
+                    FiliconIconButton(label: "Stop", systemName: "stop.fill", size: 32, isDestructive: true, action: model.cancel)
+                } else {
+                    FiliconIconButton(
+                        label: "Send",
+                        systemName: "arrow.up",
+                        size: 32,
+                        isProminent: true,
+                        action: model.send
+                    )
+                    .keyboardShortcut(.return, modifiers: .command)
+                    .disabled(
+                        model.selectedConversationConfigurationError != nil
+                            || (model.selectedModelAttachmentError != nil && !model.pendingAttachments.isEmpty)
+                    )
+                    .help(
+                        model.selectedConversationConfigurationError
+                            ?? (model.pendingAttachments.isEmpty ? "Send message" : model.selectedModelAttachmentError ?? "Send message")
+                    )
                 }
-            }.padding().disabled(!model.isBootstrapped)
+            }
+            .padding(9)
+            .background(FiliconTheme.input, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(FiliconTheme.borderStrong, lineWidth: 0.8))
+            .shadow(color: .black.opacity(0.12), radius: 12, y: 4)
+            .frame(maxWidth: 760)
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 18)
+            .padding(.top, 10)
+            .padding(.bottom, 17)
+            .background(FiliconTheme.canvas)
+            .disabled(!model.isBootstrapped)
         }.navigationTitle(conversation.title).task(id: conversation.id) { await model.refreshModels() }
             .onChange(of: conversation.id) { _, _ in
                 transcript.reset(messages: conversation.messages)
@@ -1092,10 +1330,7 @@ private struct VoiceComposerControls: View {
     var body: some View {
         switch controller.phase {
         case .idle:
-            Button(action: controller.startRecording) {
-                Label("Record voice message", systemImage: "mic")
-            }
-            .labelStyle(.iconOnly)
+            FiliconIconButton(label: "Record voice message", systemName: "mic", size: 32, action: controller.startRecording)
             .disabled(!supportsAudio)
             .help(unsupportedAudioHelp ?? "Record voice message")
         case .requestingMicrophonePermission:
@@ -1174,48 +1409,80 @@ private struct TranscriptMessageView: View {
     var isActiveFindMatch = false
     var isReplyJumpTarget = false
     let onJumpToMessage: (UUID) -> Void
+    @State private var isHovered = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack(spacing: 6) {
-                Text(roleLabel).font(.caption).foregroundStyle(.secondary)
-                if message.deliveryStatus != .succeeded {
-                    Label(statusLabel, systemImage: statusIcon).font(.caption2).foregroundStyle(statusColor)
-                }
-                Spacer()
-                Text(message.createdAt, style: .time).font(.caption2).foregroundStyle(.tertiary)
+        let isUser = message.role == .user
+        HStack(alignment: .bottom, spacing: 8) {
+            if !isUser {
+                FiliconAvatar(title: roleLabel, systemName: message.role == .tool ? "wrench.and.screwdriver.fill" : "sparkles", size: 25)
             }
+            VStack(alignment: isUser ? .trailing : .leading, spacing: 5) {
+                messageBubble
+                if !message.reactions.isEmpty {
+                    HStack(spacing: 5) {
+                        ForEach(groupedReactions, id: \.emoji) { group in
+                            Button("\(group.emoji) \(group.count)") {
+                                model.toggleReaction(messageID: message.id, emoji: group.emoji)
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.mini)
+                        }
+                    }
+                }
+                messageActions
+            }
+            if isUser { Spacer(minLength: 25) }
+        }
+        .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
+        .onHover { isHovered = $0 }
+    }
+
+    @ViewBuilder
+    private var messageBubble: some View {
+        if message.role == .user {
+            messageBubbleContent.fixedSize(horizontal: true, vertical: false)
+        } else {
+            messageBubbleContent.frame(maxWidth: 640, alignment: .leading)
+        }
+    }
+
+    private var messageBubbleContent: some View {
+        VStack(alignment: .leading, spacing: 8) {
             if let replyID = message.replyToMessageID {
                 let preview = ReplyPreviewPresentation.make(for: conversation.messages.first(where: { $0.id == replyID }))
                 Button { onJumpToMessage(replyID) } label: {
                     HStack(spacing: 6) {
-                        Image(systemName: preview.symbolName).foregroundStyle(.secondary)
+                        Image(systemName: preview.symbolName).foregroundStyle(FiliconTheme.textTertiary)
                         VStack(alignment: .leading, spacing: 1) {
-                            Text(preview.label).font(.caption2.bold()).foregroundStyle(.secondary)
-                            Text(preview.detail).lineLimit(1).font(.caption).foregroundStyle(.secondary)
+                            Text(preview.label).font(.caption2.bold()).foregroundStyle(FiliconTheme.textSecondary)
+                            Text(preview.detail).lineLimit(1).font(.caption).foregroundStyle(FiliconTheme.textTertiary)
                         }
                         Spacer(minLength: 0)
-                        Image(systemName: "arrow.up.left").font(.caption2).foregroundStyle(.tertiary)
+                        Image(systemName: "arrow.up.left").font(.caption2).foregroundStyle(FiliconTheme.textTertiary)
                     }
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .help("Jump to replied message")
-                .padding(6)
+                .padding(7)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
+                .background(FiliconTheme.surfaceRaised.opacity(0.72), in: RoundedRectangle(cornerRadius: 10))
             }
             if !message.reasoningText.isEmpty {
                 DisclosureGroup("Reasoning") {
                     MarkdownText(source: message.reasoningText)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(FiliconTheme.textSecondary)
                         .padding(.top, 4)
-                }.font(.callout)
+                }
+                .font(.callout)
             }
             if !message.text.isEmpty {
                 MarkdownText(source: message.text)
+                    .foregroundStyle(FiliconTheme.textPrimary)
             } else if message.reasoningText.isEmpty && message.toolActivities.isEmpty && message.transcriptCards.isEmpty {
-                Text(message.deliveryStatus == .failed ? "No response was delivered." : "…").foregroundStyle(.secondary)
+                Text(message.deliveryStatus == .failed ? "No response was delivered." : "…")
+                    .foregroundStyle(FiliconTheme.textSecondary)
             }
             ForEach(message.toolActivities) { activity in
                 ToolActivityRow(activity: activity)
@@ -1226,45 +1493,65 @@ private struct TranscriptMessageView: View {
             if !message.attachments.isEmpty {
                 ScrollView(.horizontal) {
                     HStack { ForEach(message.attachments) { attachment in AttachmentCard(attachment: attachment) } }
-                }.scrollIndicators(.hidden)
+                }
+                .scrollIndicators(.hidden)
+            }
+            if message.deliveryStatus != .succeeded {
+                HStack(spacing: 5) {
+                    Label(statusLabel, systemImage: statusIcon)
+                    Text(message.createdAt, style: .time)
+                }
+                .font(.caption2)
+                .foregroundStyle(statusColor)
             }
             if let error = message.deliveryError, !error.isEmpty {
                 Label(error, systemImage: "exclamationmark.triangle.fill")
-                    .font(.caption).foregroundStyle(.red).textSelection(.enabled)
+                    .font(.caption2)
+                    .foregroundStyle(.red)
+                    .textSelection(.enabled)
             }
-            if !message.reactions.isEmpty {
-                HStack(spacing: 5) {
-                    ForEach(groupedReactions, id: \.emoji) { group in
-                        Button("\(group.emoji) \(group.count)") {
-                            model.toggleReaction(messageID: message.id, emoji: group.emoji)
-                        }
-                        .buttonStyle(.bordered).controlSize(.mini)
-                    }
-                }
-            }
-            HStack(spacing: 10) {
-                Button { model.beginReply(to: message.id) } label: { Label("Reply", systemImage: "arrowshape.turn.up.left") }
-                Button { TranscriptPasteboard.copy(TranscriptClipboardContent.messageText(message)) } label: { Label("Copy Message", systemImage: "doc.on.doc") }
-                Menu { ForEach(["👍", "❤️", "😂", "🎉", "👀"], id: \.self) { emoji in Button(emoji) { model.toggleReaction(messageID: message.id, emoji: emoji) } } } label: { Label("React", systemImage: "face.smiling") }
-                if message.role == .assistant && [.failed, .cancelled].contains(message.deliveryStatus) {
-                    Button { model.resend(messageID: message.id) } label: { Label("Resend", systemImage: "arrow.clockwise") }
-                }
-                Spacer()
-                Button(role: .destructive) { model.deleteMessage(id: message.id) } label: { Label("Delete", systemImage: "trash") }
-            }
-            .labelStyle(.iconOnly).buttonStyle(.plain).foregroundStyle(.secondary)
         }
-        .frame(maxWidth: .infinity, alignment: .leading).padding(10)
-        .background(message.role == .user ? Color.accentColor.opacity(0.10) : Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(message.role == .user ? FiliconTheme.userBubble : FiliconTheme.surface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(FiliconTheme.border.opacity(0.75), lineWidth: 0.7))
         .overlay {
             if isReplyJumpTarget {
-                RoundedRectangle(cornerRadius: 10)
-                    .stroke(Color.accentColor, lineWidth: 3)
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .stroke(FiliconTheme.accent, lineWidth: 3)
             } else if isFindMatch {
-                RoundedRectangle(cornerRadius: 10)
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
                     .stroke(isActiveFindMatch ? Color.orange : Color.orange.opacity(0.35), lineWidth: isActiveFindMatch ? 3 : 1)
             }
         }
+    }
+
+    private var messageActions: some View {
+        HStack(spacing: 3) {
+            FiliconIconButton(label: "Reply", systemName: "arrowshape.turn.up.left", size: 25) { model.beginReply(to: message.id) }
+            FiliconIconButton(label: "Copy Message", systemName: "doc.on.doc", size: 25) {
+                TranscriptPasteboard.copy(TranscriptClipboardContent.messageText(message))
+            }
+            Menu {
+                ForEach(["👍", "❤️", "😂", "🎉", "👀"], id: \.self) { emoji in
+                    Button(emoji) { model.toggleReaction(messageID: message.id, emoji: emoji) }
+                }
+            } label: {
+                Image(systemName: "face.smiling")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(FiliconTheme.textTertiary)
+                    .frame(width: 25, height: 25)
+            }
+            .menuStyle(.borderlessButton)
+            if message.role == .assistant && [.failed, .cancelled].contains(message.deliveryStatus) {
+                FiliconIconButton(label: "Resend", systemName: "arrow.clockwise", size: 25) { model.resend(messageID: message.id) }
+            }
+            Spacer(minLength: 3)
+            FiliconIconButton(label: "Delete", systemName: "trash", size: 25, isDestructive: true) { model.deleteMessage(id: message.id) }
+        }
+        .opacity(isHovered || message.deliveryStatus != .succeeded ? 1 : 0)
+        .animation(.easeOut(duration: 0.12), value: isHovered)
+        .accessibilityElement(children: .contain)
     }
 
     private var roleLabel: String { message.role == .user ? "You" : message.role == .assistant ? "Assistant" : message.role.rawValue.capitalized }

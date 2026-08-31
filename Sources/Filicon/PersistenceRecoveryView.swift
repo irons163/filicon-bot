@@ -7,16 +7,17 @@ struct PersistenceRecoveryBanner: View {
         if let message = model.startupBanner {
             HStack(alignment: .top, spacing: 10) {
                 Image(systemName: model.rootConnection.phase == .unreachable ? "externaldrive.badge.exclamationmark" : "externaldrive.badge.checkmark")
+                    .foregroundStyle(FiliconTheme.warning)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(message).font(.callout).fontWeight(.semibold)
-                    Text("Data root: \(model.dataRoot.path)").font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                    Text(message).font(.caption.weight(.semibold)).foregroundStyle(FiliconTheme.textPrimary)
+                    Text("Data root: \(model.dataRoot.path)").font(.caption2).foregroundStyle(FiliconTheme.textSecondary).lineLimit(1)
                 }
                 Spacer()
                 if model.rootConnection.phase == .unreachable || model.rootConnection.phase == .reconnecting {
-                    Button("Retry", action: model.retryRootConnection)
+                    Button("Retry", action: model.retryRootConnection).controlSize(.small)
                 }
-                Button("Reload") { Task { await model.reloadRootWorkspace() } }
-                Button("Copy Diagnostics", action: model.copyRootDiagnostics)
+                Button("Reload") { Task { await model.reloadRootWorkspace() } }.controlSize(.small)
+                Button("Copy Diagnostics", action: model.copyRootDiagnostics).controlSize(.small)
                 Button {
                     model.dismissStartupBanner()
                 } label: {
@@ -26,12 +27,13 @@ struct PersistenceRecoveryBanner: View {
                 .help("Dismiss this notice")
                 .accessibilityLabel("Dismiss storage notice")
             }
-            .padding(.horizontal, 12).padding(.vertical, 8)
-            .background(Color.orange.opacity(0.14))
+            .padding(.horizontal, 14).padding(.vertical, 7)
+            .background(FiliconTheme.warning.opacity(0.10))
+            .overlay(alignment: .bottom) { Rectangle().fill(FiliconTheme.warning.opacity(0.24)).frame(height: 0.7) }
             .accessibilityIdentifier("persistence-recovery-banner")
         } else if model.rootConnection.phase == .loading || model.rootConnection.phase == .reconnecting {
             HStack { ProgressView().controlSize(.small); Text(model.rootConnection.phase == .loading ? "Opening workspace…" : "Reconnecting workspace…") }
-                .font(.caption).padding(6).frame(maxWidth: .infinity).background(Color.accentColor.opacity(0.08))
+                .font(.caption).foregroundStyle(FiliconTheme.textSecondary).padding(6).frame(maxWidth: .infinity).background(FiliconTheme.accent.opacity(0.08))
         }
     }
 }

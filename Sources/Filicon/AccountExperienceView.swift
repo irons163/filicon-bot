@@ -128,15 +128,17 @@ struct AccountConnectionBanner: View {
         if ![ConnectionPhase.hidden, .connected].contains(model.accountConnection.phase) {
             HStack(spacing: 8) {
                 if model.accountConnection.isRetrying || model.accountConnection.phase == .loading { ProgressView().controlSize(.small) }
-                else { Image(systemName: "network.slash").foregroundStyle(.orange) }
-                Text(message).font(.callout)
+                else { Image(systemName: "network.slash").foregroundStyle(FiliconTheme.warning) }
+                Text(message).font(.caption).foregroundStyle(FiliconTheme.textPrimary)
                 Spacer()
                 Button("Retry") { Task { await model.retryAccountConnection() } }
+                    .controlSize(.small)
                     .disabled(model.accountConnection.isRetrying)
-                Button("Account") { model.selectRoute(.account) }
+                Button("Account") { model.selectRoute(.account) }.controlSize(.small)
             }
-            .padding(.horizontal, 12).padding(.vertical, 7)
-            .background(Color.orange.opacity(0.12))
+            .padding(.horizontal, 14).padding(.vertical, 7)
+            .background(FiliconTheme.warning.opacity(0.10))
+            .overlay(alignment: .bottom) { Rectangle().fill(FiliconTheme.warning.opacity(0.24)).frame(height: 0.7) }
         }
     }
 
