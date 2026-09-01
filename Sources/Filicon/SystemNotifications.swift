@@ -10,6 +10,11 @@ extension Notification.Name {
 @MainActor
 final class FiliconApplicationDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // `swift run Filicon` launches the executable without an enclosing
+        // `.app` bundle. UserNotifications requires an app bundle proxy, so
+        // keep the development executable usable while retaining notifications
+        // for packaged macOS builds.
+        guard Bundle.main.bundleURL.pathExtension.lowercased() == "app" else { return }
         UNUserNotificationCenter.current().delegate = self
     }
 
