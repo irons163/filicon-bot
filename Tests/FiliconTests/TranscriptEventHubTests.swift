@@ -63,6 +63,19 @@ final class TranscriptEventHubTests: XCTestCase {
         XCTAssertEqual(snapshot.fence, TranscriptFence(generation: secondGeneration, throughSequence: 0))
     }
 
+    func testReopenAfterClearAcceptsEmptyCheckpointAndJournal() async throws {
+        let url = try directory()
+        let conversationID = UUID()
+        let hub = try TranscriptEventHub(conversationID: conversationID, replicaDirectoryURL: url)
+        _ = try await hub.append(message("temporary"))
+        _ = try await hub.clear()
+
+        let reopened = try TranscriptEventHub(conversationID: conversationID, replicaDirectoryURL: url)
+        let snapshot = await reopened.snapshot()
+        XCTAssertTrue(snapshot.messages.isEmpty)
+        XCTAssertEqual(snapshot.fence.throughSequence, 0)
+    }
+
     func testCrashAfterJournalReplaysExactlyOnce() async throws {
         let url = try directory()
         let conversationID = UUID()

@@ -307,7 +307,13 @@ public actor TranscriptEventHub {
             guard checkpoint.replicaKey == replicaKey else {
                 throw TranscriptHubError.foreignReplica(expected: replicaKey, received: checkpoint.replicaKey)
             }
-            _ = try applying(checkpoint.messages.map(TranscriptMutation.append), to: [])
+            // An empty checkpoint is the normal durable representation after
+            // clearing a conversation.  There is no transaction to validate
+            // in that case, so do not route it through `applying`, which
+            // deliberately rejects empty transactions.
+            if !checkpoint.messages.isEmpty {
+                _ = try applying(checkpoint.messages.map(TranscriptMutation.append), to: [])
+            }
         } else {
             checkpoint = Checkpoint(formatVersion: 1, conversationID: conversationID, replicaKey: replicaKey, generation: nil, throughSequence: 0, messages: [])
         }
