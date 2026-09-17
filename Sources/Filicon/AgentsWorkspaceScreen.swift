@@ -240,9 +240,13 @@ struct AgentEditorView: View {
     @State private var colorHexValue: String
     @State private var selectedAvatarShape: AgentAvatarShape
     @State private var selectedPet: AgentPetAvatar
+    @State private var saving = false
+    @State private var saveError: String?
     let isNew: Bool
+    let showsSharedAgentNotice: Bool
+    let onSaved: ((AgentProfile) -> Void)?
 
-    init(profile: AgentProfile, isNew: Bool) {
+    init(profile: AgentProfile, isNew: Bool, showsSharedAgentNotice: Bool = false, onSaved: ((AgentProfile) -> Void)? = nil) {
         _profile = State(initialValue: profile)
         _selectedAvatarKind = State(initialValue: profile.avatar?.kind ?? .character)
         _characterValue = State(initialValue: profile.avatar?.character ?? String(profile.name.prefix(2)))
@@ -250,11 +254,17 @@ struct AgentEditorView: View {
         _selectedAvatarShape = State(initialValue: profile.avatar?.shape ?? .circle)
         _selectedPet = State(initialValue: profile.avatar?.petID.flatMap(AgentPetAvatar.init(rawValue:)) ?? .codex)
         self.isNew = isNew
+        self.showsSharedAgentNotice = showsSharedAgentNotice
+        self.onSaved = onSaved
     }
 
     var body: some View {
         let _ = uiLocale.identifier
         Form {
+            if showsSharedAgentNotice {
+                Text(l10n("Changes to this agent apply to every group."))
+                    .font(.callout).foregroundStyle(.secondary)
+            }
             Section(agentString("Identity")) {
                 HStack(alignment: .top, spacing: 16) {
                     AgentAvatarIcon(profile: profile, dimension: 72)
@@ -306,6 +316,7 @@ struct AgentEditorView: View {
                     }
                 }
                 TextField(agentString("Name"), text: $profile.name)
+                    .accessibilityIdentifier("agent-editor-name")
                 TextField(agentString("Title"), text: $profile.title)
                 TextField(agentString("Summary"), text: $profile.summary, axis: .vertical).lineLimit(2...4)
             }
@@ -313,18 +324,27 @@ struct AgentEditorView: View {
                 Picker(agentString("Provider"), selection: $profile.providerID) {
                     ForEach(model.descriptors) { Text($0.displayName).tag($0.id) }
                 }
-                TextField(agentString("Model ID"), text: Binding(get: { profile.modelID.rawValue }, set: { profile.modelID = ModelID(rawValue: $0) }))
+                TextField(agentString("Model ID"), text: $profile.modelID.editorText)
                 TextField(agentString("Instructions"), text: $profile.instructions, axis: .vertical).lineLimit(6...14)
+                    .accessibilityIdentifier("agent-editor-instructions")
+            }
+            if let saveError {
+                Text(saveError).font(.callout).foregroundStyle(.red)
+                    .accessibilityIdentifier("agent-editor-error")
             }
             HStack {
-                Button(agentString("Cancel")) { dismiss() }
+                Button(agentString("Cancel")) { dismiss() }.keyboardShortcut(.cancelAction)
                 Spacer()
-                Button(agentString(isNew ? l10n("Create") : l10n("Save"))) { save() }
+                if saving { ProgressView().controlSize(.small) }
+                Button(agentString(isNew ? l10n("Create") : l10n("Save"))) { Task { await saveButtonTapped() } }
                     .keyboardShortcut(.defaultAction)
                     .disabled(profile.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || profile.modelID.rawValue.isEmpty)
+                    .accessibilityIdentifier("agent-editor-save")
             }
         }
         .formStyle(.grouped).padding().frame(minWidth: 560, minHeight: 620)
+        .disabled(saving)
+        .interactiveDismissDisabled(saving)
         .onChange(of: selectedAvatarKind) { _, kind in avatarKindChanged(kind) }
         .fileImporter(isPresented: $importingImage, allowedContentTypes: [.image]) { result in
             guard case .success(let url) = result else { return }
@@ -354,20 +374,36 @@ struct AgentEditorView: View {
         }
     }
 
-    private func save() {
+    private func saveButtonTapped() async {
+        guard !saving else { return }
+        saving = true
+        saveError = nil
+        defer { saving = false }
         var value = profile
         if selectedAvatarKind == .character {
             value.avatar = .character(String(characterValue.prefix(2)), colorHex: colorHexValue, shape: selectedAvatarShape)
         } else if selectedAvatarKind == .pet {
             value.avatar = .pet(selectedPet, shape: selectedAvatarShape)
         }
-        Task {
-            if isNew {
-                await model.createAgent(name: value.name, title: value.title, summary: value.summary, instructions: value.instructions,
-                                        providerID: value.providerID, modelID: value.modelID, avatar: value.avatar)
-            } else { await model.updateAgent(value) }
-            if model.errorMessage == nil { dismiss() }
+        let saved: AgentProfile?
+        if isNew {
+            saved = await model.createAgent(name: value.name, title: value.title, summary: value.summary, instructions: value.instructions,
+                                            providerID: value.providerID, modelID: value.modelID, avatar: value.avatar)
+        } else if await model.updateAgent(value) {
+            saved = model.agents.first { $0.id == value.id }
+        } else {
+            saved = nil
         }
+        guard let saved else { saveError = model.errorMessage; return }
+        onSaved?(saved)
+        dismiss()
+    }
+}
+
+private extension ModelID {
+    var editorText: String {
+        get { rawValue }
+        set { self = ModelID(rawValue: newValue) }
     }
 }
 

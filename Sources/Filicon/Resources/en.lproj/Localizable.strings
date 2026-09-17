@@ -1362,3 +1362,8 @@
 "Add members to start chatting." = "Add members to start chatting.";
 "No routines for this group yet." = "No routines for this group yet.";
 "Paused" = "Paused";
+"New member" = "New member";
+"Edit {0}" = "Edit {0}";
+"Changes to this agent apply to every group." = "Changes to this agent apply to every group.";
+"Groups can have up to {0} members." = "Groups can have up to {0} members.";
+"New members are selected automatically. Save to apply membership changes." = "New members are selected automatically. Save to apply membership changes.";

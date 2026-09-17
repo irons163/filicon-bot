@@ -2344,23 +2344,27 @@ final class AppModel: ObservableObject {
         return result
     }
 
-    func createAgent(name: String, title: String = "", summary: String, instructions: String, providerID: ProviderID, modelID: ModelID, avatar: AgentAvatar? = nil) async {
-        guard let agentService else { errorMessage = l10n("Agent storage is unavailable."); return }
+    @discardableResult
+    func createAgent(name: String, title: String = "", summary: String, instructions: String, providerID: ProviderID, modelID: ModelID, avatar: AgentAvatar? = nil) async -> AgentProfile? {
+        guard let agentService else { errorMessage = l10n("Agent storage is unavailable."); return nil }
         do {
             let payload = try JSONEncoder().encode(["name": name, "title": title, "summary": summary, "instructions": instructions, "provider": providerID.rawValue, "model": modelID.rawValue])
-            _ = try await quotaWrite(scope: "workflow", key: "agent-\(name)", data: payload) { [agentService, name, summary, instructions, providerID, modelID, title, avatar] in
+            let profile = try await quotaWrite(scope: "workflow", key: "agent-\(name)", data: payload) { [agentService, name, summary, instructions, providerID, modelID, title, avatar] in
                 try await agentService.create(name: name, summary: summary, instructions: instructions, providerID: providerID, modelID: modelID, title: title, avatar: avatar)
             }
             agents = await agentService.list(includeArchived: true)
-        } catch { errorMessage = error.localizedDescription }
+            return profile
+        } catch { errorMessage = error.localizedDescription; return nil }
     }
 
-    func updateAgent(_ profile: AgentProfile) async {
-        guard let agentService else { errorMessage = l10n("Agent storage is unavailable."); return }
+    @discardableResult
+    func updateAgent(_ profile: AgentProfile) async -> Bool {
+        guard let agentService else { errorMessage = l10n("Agent storage is unavailable."); return false }
         do {
             try await agentService.update(profile)
             agents = await agentService.list(includeArchived: true)
-        } catch { errorMessage = error.localizedDescription }
+            return true
+        } catch { errorMessage = error.localizedDescription; return false }
     }
 
     func archiveAgent(id: UUID) async {

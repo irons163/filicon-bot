@@ -1362,3 +1362,8 @@
 "Add members to start chatting." = "멤버를 추가하여 대화를 시작하세요.";
 "No routines for this group yet." = "이 그룹에는 아직 루틴이 없습니다.";
 "Paused" = "일시 중지됨";
+"New member" = "새 멤버";
+"Edit {0}" = "{0} 편집";
+"Changes to this agent apply to every group." = "이 에이전트의 변경 사항은 모든 그룹에 적용됩니다.";
+"Groups can have up to {0} members." = "그룹에는 최대 {0}명의 멤버를 추가할 수 있습니다.";
+"New members are selected automatically. Save to apply membership changes." = "새 멤버는 자동으로 선택됩니다. 저장하여 멤버 변경 사항을 적용하세요.";

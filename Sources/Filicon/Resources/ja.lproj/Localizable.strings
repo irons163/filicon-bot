@@ -1362,3 +1362,8 @@
 "Add members to start chatting." = "メンバーを追加して会話を始めましょう。";
 "No routines for this group yet." = "このグループにはまだルーチンがありません。";
 "Paused" = "一時停止中";
+"New member" = "メンバーを作成";
+"Edit {0}" = "{0}を編集";
+"Changes to this agent apply to every group." = "このエージェントの変更はすべてのグループに適用されます。";
+"Groups can have up to {0} members." = "グループには最大{0}人のメンバーを追加できます。";
+"New members are selected automatically. Save to apply membership changes." = "新しいメンバーは自動的に選択されます。「保存」でメンバーの変更を適用します。";

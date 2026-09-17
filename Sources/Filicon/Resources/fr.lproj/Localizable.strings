@@ -1362,3 +1362,8 @@
 "Add members to start chatting." = "Ajoutez des membres pour commencer à discuter.";
 "No routines for this group yet." = "Aucune routine pour ce groupe.";
 "Paused" = "En pause";
+"New member" = "Nouveau membre";
+"Edit {0}" = "Modifier {0}";
+"Changes to this agent apply to every group." = "Les modifications de cet agent s’appliquent à tous les groupes.";
+"Groups can have up to {0} members." = "Un groupe peut compter jusqu’à {0} membres.";
+"New members are selected automatically. Save to apply membership changes." = "Les nouveaux membres sont sélectionnés automatiquement. Enregistrez pour appliquer les changements.";

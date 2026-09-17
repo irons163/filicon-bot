@@ -1362,3 +1362,8 @@
 "Add members to start chatting." = "加入成員後即可開始聊天。";
 "No routines for this group yet." = "這個群組尚無自動化排程。";
 "Paused" = "已暫停";
+"New member" = "新增成員";
+"Edit {0}" = "編輯 {0}";
+"Changes to this agent apply to every group." = "此代理人的變更會套用到所有群組。";
+"Groups can have up to {0} members." = "每個群組最多可有 {0} 位成員。";
+"New members are selected automatically. Save to apply membership changes." = "新增成員後會自動勾選；按「儲存」套用成員變更。";

@@ -67,7 +67,11 @@ struct ConversationDesignTests {
         let message = try await service.postUserMessage("Keep this history", groupID: group.id)
         try await service.update(groupID: group.id, name: "After", summary: "Updated", memberIDs: [])
         let reopened = try GroupService(agents: agents, storeURL: root.appending(path: "groups.json"))
-        #expect(await reopened.messages(groupID: group.id).contains(message))
+        // Millisecond JSON timestamps can lose sub-millisecond floating-point precision.
+        let restored = try #require(await reopened.messages(groupID: group.id).first { $0.id == message.id })
+        #expect(restored.text == message.text)
+        #expect(restored.senderID == message.senderID)
+        #expect(abs(restored.createdAt.timeIntervalSince(message.createdAt)) < 0.001)
 
         let first = AgentProfile(name: "First")
         let second = AgentProfile(name: "Second")

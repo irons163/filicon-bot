@@ -329,10 +329,8 @@ struct GroupInspector: View {
                         inspectorField(l10n("Name"), text: $draft.name)
                         inspectorField(l10n("Description"), text: $draft.summary, multiline: true)
                     }
-                    VStack(alignment: .leading, spacing: 10) {
-                        caption(l10n("Members"))
-                        GroupMemberPicker(selection: $draft.memberIDs)
-                    }
+                    GroupMembersEditor(selection: $draft.memberIDs, showsSaveHint: true)
+                        .disabled(saving)
                     Button(action: save) {
                         HStack { Spacer(); if saving { ProgressView().controlSize(.mini) }; Text(l10n("Save")); Spacer() }
                     }
@@ -400,18 +398,91 @@ struct GroupInspector: View {
 struct GroupMemberPicker: View {
     @EnvironmentObject private var model: AppModel
     @Binding var selection: Set<UUID>
+    var onEdit: ((AgentProfile) -> Void)? = nil
 
     var body: some View {
         VStack(spacing: 10) {
             ForEach(model.agents.filter { $0.archivedAt == nil || selection.contains($0.id) }) { agent in
-                Toggle(isOn: $selection[includes: agent.id]) {
-                    HStack(spacing: 8) {
-                        AgentAvatarIcon(profile: agent, dimension: 28)
-                        Text(agent.name).font(.system(size: 12)).lineLimit(1)
+                HStack(spacing: 8) {
+                    Toggle(isOn: $selection[includes: agent.id]) {
+                        HStack(spacing: 8) {
+                            AgentAvatarIcon(profile: agent, dimension: 28)
+                            Text(agent.name).font(.system(size: 12)).lineLimit(1)
+                        }
+                    }
+                    .toggleStyle(.checkbox)
+                    .disabled(!selection.contains(agent.id) && selection.count >= GroupService.maximumMembers)
+                    .accessibilityIdentifier("group-member-\(agent.id)")
+                    Spacer(minLength: 0)
+                    if let onEdit {
+                        Button { onEdit(agent) } label: {
+                            Image(systemName: "pencil").frame(width: 24, height: 28)
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(FiliconTheme.textSecondary)
+                        .help(l10n("Edit \(agent.name)"))
+                        .accessibilityLabel(l10n("Edit \(agent.name)"))
+                        .accessibilityIdentifier("edit-group-member-\(agent.id)")
                     }
                 }
-                .toggleStyle(.checkbox)
-                .disabled(!selection.contains(agent.id) && selection.count >= GroupService.maximumMembers)
+            }
+        }
+    }
+}
+
+/// The exact saved profile is returned by the editor; names are not unique identifiers.
+struct GroupMemberEditorDestination: Identifiable {
+    let profile: AgentProfile
+    let isNew: Bool
+    var id: UUID { profile.id }
+
+    func memberSaved(_ saved: AgentProfile, selection: inout Set<UUID>) {
+        guard isNew, selection.count < GroupService.maximumMembers else { return }
+        selection.insert(saved.id)
+    }
+}
+
+struct GroupMembersEditor: View {
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.locale) private var locale
+    @Binding var selection: Set<UUID>
+    var showsSaveHint = false
+    @State private var editor: GroupMemberEditorDestination?
+
+    private var isFull: Bool { selection.count >= GroupService.maximumMembers }
+
+    var body: some View {
+        let _ = locale.identifier
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(l10n("Members")).font(.system(size: 10.5)).foregroundStyle(FiliconTheme.textTertiary)
+                Spacer(minLength: 8)
+                Button { editor = GroupMemberEditorDestination(profile: AgentProfile(name: "", avatar: .pet(.codex)), isNew: true) } label: {
+                    Label(l10n("New member"), systemImage: "plus").font(.system(size: 11, weight: .medium))
+                }
+                .buttonStyle(.plain)
+                .disabled(isFull)
+                .accessibilityIdentifier("new-group-member")
+            }
+            GroupMemberPicker(selection: $selection) { agent in
+                editor = GroupMemberEditorDestination(profile: agent, isNew: false)
+            }
+            if model.agents.allSatisfy({ $0.archivedAt != nil }) && selection.isEmpty {
+                Text(l10n("Create an agent to give it instructions and a model."))
+                    .font(.system(size: 11)).foregroundStyle(FiliconTheme.textSecondary)
+            }
+            if isFull {
+                Text(l10n("Groups can have up to \(GroupService.maximumMembers) members."))
+                    .font(.system(size: 10.5)).foregroundStyle(FiliconTheme.textSecondary)
+            }
+            if showsSaveHint {
+                Text(l10n("New members are selected automatically. Save to apply membership changes."))
+                    .font(.system(size: 10.5)).foregroundStyle(FiliconTheme.textTertiary)
+            }
+        }
+        .sheet(item: $editor) { destination in
+            AgentEditorView(profile: destination.profile, isNew: destination.isNew, showsSharedAgentNotice: !destination.isNew) { saved in
+                destination.memberSaved(saved, selection: &selection)
             }
         }
     }
@@ -422,7 +493,6 @@ struct CreateGroupSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var draft = GroupSettingsDraft()
     @State private var creating = false
-    @State private var creatingAgent = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
@@ -433,17 +503,8 @@ struct CreateGroupSheet: View {
             }
             TextField(l10n("Name"), text: $draft.name).textFieldStyle(.roundedBorder)
             TextField(l10n("Summary"), text: $draft.summary, axis: .vertical).lineLimit(2...4).textFieldStyle(.roundedBorder)
-            HStack {
-                Text(l10n("Members")).font(.headline)
-                Spacer()
-                Button(l10n("New Agent")) { creatingAgent = true }.buttonStyle(.borderless)
-            }
-            ScrollView { GroupMemberPicker(selection: $draft.memberIDs).frame(maxWidth: .infinity, alignment: .leading) }
+            ScrollView { GroupMembersEditor(selection: $draft.memberIDs).frame(maxWidth: .infinity, alignment: .leading) }
                 .frame(minHeight: 70, maxHeight: 200)
-            if model.agents.isEmpty {
-                Text(l10n("Create an agent to give it instructions and a model."))
-                    .font(.caption).foregroundStyle(FiliconTheme.textSecondary)
-            }
             HStack {
                 Spacer()
                 Button(l10n("Cancel")) { dismiss() }.keyboardShortcut(.cancelAction)
@@ -454,7 +515,6 @@ struct CreateGroupSheet: View {
         }
         .padding(28).frame(width: 420)
         .background(FiliconTheme.canvas)
-        .sheet(isPresented: $creatingAgent) { AgentEditorView(profile: AgentProfile(name: ""), isNew: true) }
     }
 
     private func create() {

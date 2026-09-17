@@ -18,6 +18,8 @@ The group inspector saves name, description and membership together. Validation 
 
 Creating a group uses a separate sheet. A group can create its first agent through the existing editor, including the built-in pet picker. Existing conversations, provider controls, attachments, search and keyboard shortcuts remain available. Unsent group drafts survive switching between groups in the workspace.
 
+The Members section in both the inspector and new-group sheet provides **New member** and a pencil button beside each agent. Successful creation selects the returned persisted agent ID, even when another agent has the same name. Press **Save** in the inspector (or **Create group** in the new-group sheet) to apply membership changes; creation alone does not silently save other group drafts. Canceling group changes does not delete the already-created agent. Editing an agent saves its shared profile across groups, with an explicit notice; it never changes membership. The six-member cap disables new-member creation and unchecked rows while leaving editing and deselection available. Save failures remain visible in the editor, and saving cannot be submitted twice.
+
 ## Verification
 
 `ConversationDesignTests` covers the responsive breakpoint, draft separation, membership binding, persistence validation, transcript preservation and native SwiftUI rendering. To export review PNGs without changing the user's data:
