@@ -57,8 +57,8 @@ private func collectCLI(_ provider: any AIProvider, _ request: InferenceRequest)
 
 @Suite(.serialized)
 struct CLIProviderTests {
-    @Test func cliProvidersDoNotReceiveFiliconToolSchemas() {
-        #expect(CodexCLIProvider(executableURL: nil, runner: FixtureCLIRunner("")).descriptor.supportsToolCalling == false)
+    @Test func onlyCodexHasAnInteractiveToolBridge() {
+        #expect(CodexCLIProvider(executableURL: nil, runner: FixtureCLIRunner("")).descriptor.supportsToolCalling)
         #expect(ClaudeCodeCLIProvider(executableURL: nil, runner: FixtureCLIRunner("")).descriptor.supportsToolCalling == false)
     }
 

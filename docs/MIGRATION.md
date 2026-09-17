@@ -101,4 +101,8 @@ preload/Windows runtime wiring is not a macOS product behavior.
 Final verifier evidence: 553 tests (420 Swift Testing and 133 XCTest) pass;
 WAE and release build pass; release `0.18.0-184` passes notarization, stapling,
 Gatekeeper, clean-install, launch smoke, remote checksum, and feed-signature
-verification. No additional parity gap remains for the macOS product.
+verification. These are historical release checks, not proof of full current
+source parity. The September 18 reconstructed-source audit found group
+collaboration gaps; see AGENT-02/AGENT-04 in PARITY.md and the group collaboration
+and bounded SendToAgent repair in Conversation-design.md. Permanent background
+agent sessions and the reference's full messaging variants remain partial.

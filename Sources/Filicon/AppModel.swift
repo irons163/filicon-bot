@@ -139,6 +139,7 @@ final class AppModel: ObservableObject {
     @Published var localToolPermissions: [LocalToolAction: LocalToolPermission] = [:]
     @Published var workspaceAuthorizations: [WorkspaceAuthorization] = []
     @Published var pendingToolApprovals: [ToolApprovalRequest] = []
+    @Published var pendingWorkspaceFolders: [WorkspaceFolderRequest] = []
     @Published var settings = FiliconSettings()
     @Published private(set) var autoReviewInstructions = AutoReviewInstructions()
     @Published private(set) var pendingAutoReviewApprovals: [PendingApproval] = []
@@ -259,6 +260,7 @@ final class AppModel: ObservableObject {
     private let rootResilience = WorkspaceRootResilience()
     private let agentService: AgentService?
     private let agentMessenger: AgentMessenger?
+    private var agentMessagingSessions: [UUID: AgentMessagingSession] = [:]
     private let subagentService: SubagentService?
     private let agentAvatarStore: AgentAvatarStore
     private let groupService: GroupService?
@@ -350,6 +352,9 @@ final class AppModel: ObservableObject {
     private lazy var localToolApprovalBroker = ToolApprovalBroker { [weak self] requests in
         Task { @MainActor in self?.pendingToolApprovals = requests }
     }
+    lazy var workspaceFolders: WorkspaceFolderCoordinator = WorkspaceFolderCoordinator(store: localToolRuntime.workspaceStore, onChange: { [weak self] requests in
+        self?.pendingWorkspaceFolders = requests
+    })
 
     convenience init(
         applicationSupportRoot: URL,
@@ -1593,6 +1598,7 @@ final class AppModel: ObservableObject {
         reasoningEffort: ReasoningEffort
     ) {
         running.insert(id)
+        workspaceFolders.beginTurn(conversationID: id)
         let turnTask = Task {
             var succeeded = false
             do {
@@ -1668,6 +1674,7 @@ final class AppModel: ObservableObject {
     func cancel() {
         guard isBootstrapped, let selection else { return }
         turnTasks[selection]?.cancel()
+        workspaceFolders.cancel(conversationID: selection)
         Task {
             await cancelAutoReviewApprovals(conversationID: selection, lifecycle: .cancelled)
             await localToolApprovalBroker.cancel(conversationID: selection)
@@ -2722,7 +2729,21 @@ final class AppModel: ObservableObject {
         guard !text.isEmpty else { return }
         // Reserve before the first suspension so two sends cannot race.
         runningGroups.insert(groupID)
+        workspaceFolders.beginTurn(conversationID: groupID)
+        let messaging: AgentMessagingSession?
+        if let agentService, let agentMessenger {
+            messaging = AgentMessagingSession(
+                originConversationID: groupID, agents: agentService, messenger: agentMessenger,
+                registry: registry, coordinator: coordinator,
+                authorize: { [weak self] sender, recipient, text, call, context in
+                    guard let self else { throw CancellationError() }
+                    try await self.authorizeAgentDelegation(sender: sender, recipient: recipient, text: text, call: call, context: context)
+                }, onChange: { [weak self] in await self?.reloadAgentMessages() }
+            )
+        } else { messaging = nil }
+        agentMessagingSessions[groupID] = messaging
         defer {
+            agentMessagingSessions[groupID] = nil
             runningGroups.remove(groupID)
             cancelledGroupRuns.remove(groupID)
             thinkingGroupMembers[groupID] = nil
@@ -2733,7 +2754,7 @@ final class AppModel: ObservableObject {
             guard !cancelledGroupRuns.contains(groupID) else { return }
             _ = try await groupService.run(
                 groupID: groupID,
-                responder: GroupConversationResponder(groupID: groupID, registry: registry, coordinator: coordinator),
+                responder: GroupConversationResponder(groupID: groupID, registry: registry, coordinator: coordinator, messaging: messaging),
                 onAgentChange: { [weak self] agentID in
                     await MainActor.run { self?.thinkingGroupMembers[groupID] = agentID }
                 }
@@ -2745,6 +2766,14 @@ final class AppModel: ObservableObject {
                     } else { self.groupMessages[groupID, default: []].append(message) }
                 }
             }
+            if !cancelledGroupRuns.contains(groupID) {
+                try await messaging?.drain(onAgentChange: { [weak self] agentID in
+                    await MainActor.run { self?.thinkingGroupMembers[groupID] = agentID }
+                }, onUpdate: { [weak self] message in
+                    guard let self else { throw CancellationError() }
+                    try await self.recordDelegatedGroupMessage(message)
+                })
+            }
             groupMessages[groupID] = await groupService.messages(groupID: groupID)
         } catch is CancellationError {
             groupMessages[groupID] = await groupService.messages(groupID: groupID)
@@ -2752,13 +2781,18 @@ final class AppModel: ObservableObject {
             groupMessages[groupID] = await groupService.messages(groupID: groupID)
             if !stoppingGroups.contains(groupID) { errorMessage = error.localizedDescription }
         }
+        do { try await messaging?.close() }
+        catch { errorMessage = error.localizedDescription }
         await cancelAutoReviewApprovals(conversationID: groupID, lifecycle: .cancelled)
     }
 
     func stopGroup(id: UUID) async {
         guard runningGroups.contains(id), stoppingGroups.insert(id).inserted else { return }
         cancelledGroupRuns.insert(id)
+        workspaceFolders.cancel(conversationID: id)
         defer { stoppingGroups.remove(id) }
+        do { try await agentMessagingSessions[id]?.close() }
+        catch { errorMessage = error.localizedDescription }
         await groupService?.stop(groupID: id)
         await coordinator.cancel(conversationID: id)
         await cancelAutoReviewApprovals(conversationID: id, lifecycle: .cancelled)
@@ -2767,6 +2801,39 @@ final class AppModel: ObservableObject {
         await localToolRuntime.cancel(conversationID: id)
         await invalidateMCPAuthorization(conversationID: id)
         thinkingGroupMembers[id] = nil
+    }
+
+    private func recordDelegatedGroupMessage(_ message: RoomMessage) async throws {
+        guard let groupService, runningGroups.contains(message.groupID), !cancelledGroupRuns.contains(message.groupID) else {
+            throw CancellationError()
+        }
+        try await groupService.recordDelegatedMessage(message)
+        groupMessages[message.groupID] = await groupService.messages(groupID: message.groupID)
+    }
+
+    private func authorizeAgentDelegation(sender: AgentProfile, recipient: AgentProfile, text: String,
+                                           call: NormalizedToolCall, context: ToolContext) async throws {
+        guard runningGroups.contains(context.conversationID), !cancelledGroupRuns.contains(context.conversationID) else {
+            throw CancellationError()
+        }
+        let fence = ApprovalFence(accountID: settings.accountScope ?? "local", agentID: context.conversationID.uuidString.lowercased(),
+                                  runID: context.runID, generation: autoReviewAccountGeneration)
+        await autoReviewBroker.activate(fence)
+        let action = AutoReviewAction(
+            summary: "\(sender.name) → \(recipient.name)", target: .recipient(identifier: recipient.id.uuidString),
+            risks: [.sensitive], context: .init(fence: fence, conversationID: context.conversationID,
+                                             toolCallID: call.id.rawValue, metadata: ["tool": "SendToAgent", "agentMessage": text])
+        )
+        // Always show the exact recipient and payload. General auto-review allow
+        // rules never authorize expanding the participating agent set implicitly.
+        let pending = PendingApproval(action: action, reason: l10n("Approval required"), expiresAt: Date().addingTimeInterval(300))
+        try await autoReviewBroker.waitForApprovalToExecute(pending) { [weak self] pending in
+            await self?.registerAutoReviewApproval(pending)
+        }
+        try Task.checkCancellation()
+        guard runningGroups.contains(context.conversationID), !cancelledGroupRuns.contains(context.conversationID) else {
+            throw CancellationError()
+        }
     }
 
     func toggleGroupReaction(groupID: UUID, messageID: UUID, emoji: String) async {
@@ -3735,8 +3802,8 @@ final class AppModel: ObservableObject {
             policy: localToolPermissionPolicy,
             approvals: localToolApprovalBroker
         ))
-        let reviewed: [any ToolExecutor] = executors.map { executor in
-            ReviewingToolExecutor(
+        var reviewed: [any ToolExecutor] = executors.map { executor in
+            let checked = ReviewingToolExecutor(
                 wrapping: executor,
                 broker: autoReviewBroker,
                 instructions: { [autoReviewInstructionsStore] in
@@ -3750,7 +3817,12 @@ final class AppModel: ObservableObject {
                     await self?.registerAutoReviewApproval(pending)
                 }
             )
+            if WorkspaceScopedToolExecutor.scopedNames.contains(executor.descriptor.name.rawValue) {
+                return WorkspaceScopedToolExecutor(wrapped: checked, store: localToolRuntime.workspaceStore, folders: workspaceFolders, policy: localToolPermissionPolicy)
+            }
+            return checked
         }
+        reviewed.append(WorkspaceFoldersToolExecutor(store: localToolRuntime.workspaceStore, folders: workspaceFolders, policy: localToolPermissionPolicy))
         await toolCatalog.replace(with: reviewed)
     }
 
@@ -3927,6 +3999,8 @@ final class AppModel: ObservableObject {
     }
 
     private func cancelAutoReviewApprovals(nextAccountID: String) async {
+        // Queued peer work is scoped to the account that approved the exchange.
+        for groupID in Array(agentMessagingSessions.keys) { await stopGroup(id: groupID) }
         autoReviewAccountGeneration &+= 1
         let agentIDs = Set(pendingAutoReviewByID.values.map(\.fence.agentID))
         for agentID in agentIDs { await autoReviewBroker.cancelAll(agentID: agentID) }

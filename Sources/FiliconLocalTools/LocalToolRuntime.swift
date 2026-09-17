@@ -8,7 +8,7 @@ import FiliconDomain
 /// one exact operation before forwarding it to the helper.
 public actor LocalToolRuntime {
     public let generation: UUID
-    public let workspaceStore: WorkspaceAuthorizationStore
+    public nonisolated let workspaceStore: WorkspaceAuthorizationStore
 
     private let helper: any LocalToolHelperProtocol
     private let authenticator: LocalSessionAuthenticator
@@ -52,10 +52,7 @@ public actor LocalToolRuntime {
         let target = try Self.canonicalTarget(for: operation)
         let bookmarks: [Data]
         if let root = Self.root(for: operation) {
-            guard let authorization = await workspaceStore.authorization(forExactRoot: root) else {
-                throw LocalToolError.permissionMismatch
-            }
-            bookmarks = [authorization.bookmarkData]
+            bookmarks = [try await workspaceStore.transportBookmark(forExactRoot: root)]
         } else {
             bookmarks = []
         }

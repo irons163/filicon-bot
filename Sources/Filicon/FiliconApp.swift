@@ -1039,6 +1039,8 @@ struct ChatDetailView: View {
                     performGlobalJump(id, proxy: proxy)
                 }
             }
+            WorkspaceFolderAccessPanel(conversationID: conversation.id)
+                .padding(.horizontal, 24)
             MCPApprovalPanel()
             if !model.pendingAttachments.isEmpty {
                 ScrollView(.horizontal) {

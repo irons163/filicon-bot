@@ -1384,3 +1384,12 @@
 "No matching group members" = "找不到符合的群組成員";
 "All group members" = "所有群組成員";
 "↑↓ Select · Enter Insert · Esc Close" = "↑↓ 選擇 · Enter 插入 · Esc 關閉";
+"Choose a workspace folder" = "選擇工作資料夾";
+"Choose a folder to continue this task. File changes and commands still require permission." = "選擇資料夾後，這項工作會接著進行。修改檔案與執行指令仍須取得許可。";
+"Choose Folder…" = "選擇資料夾⋯";
+"Requested folder: {0}" = "要求存取的資料夾：{0}";
+"Reauthorize workspace folder" = "重新授權工作資料夾";
+"The saved folder authorization is no longer valid. Choose the folder again to continue. Your files and chats have not been changed." = "儲存的資料夾授權已失效。請重新選擇資料夾以繼續；你的檔案與聊天內容都未被更動。";
+"Waiting for folder selection" = "等待選擇資料夾";
+"Member response failed. Send a message to retry." = "成員回應失敗。傳送訊息可重試。";
+"No new contribution this turn." = "本輪沒有新的補充。";

@@ -182,6 +182,10 @@
 "Choose a plugin catalog" = "Choose a plugin catalog";
 "Choose a team before publishing the skill." = "Choose a team before publishing the skill.";
 "Choose a workspace" = "Choose a workspace";
+"Choose a workspace folder" = "Choose a workspace folder";
+"Choose a folder to continue this task. File changes and commands still require permission." = "Choose a folder to continue this task. File changes and commands still require permission.";
+"Choose Folder…" = "Choose Folder…";
+"Requested folder: {0}" = "Requested folder: {0}";
 "Choose an export folder" = "Choose an export folder";
 "Choose image…" = "Choose image…";
 "Choose useful capabilities" = "Choose useful capabilities";
@@ -1384,3 +1388,8 @@
 "No matching group members" = "No matching group members";
 "All group members" = "All group members";
 "↑↓ Select · Enter Insert · Esc Close" = "↑↓ Select · Enter Insert · Esc Close";
+"Reauthorize workspace folder" = "Reauthorize workspace folder";
+"The saved folder authorization is no longer valid. Choose the folder again to continue. Your files and chats have not been changed." = "The saved folder authorization is no longer valid. Choose the folder again to continue. Your files and chats have not been changed.";
+"Waiting for folder selection" = "Waiting for folder selection";
+"Member response failed. Send a message to retry." = "Member response failed. Send a message to retry.";
+"No new contribution this turn." = "No new contribution this turn.";

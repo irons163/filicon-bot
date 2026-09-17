@@ -3,6 +3,7 @@ import FiliconDomain
 import FiliconProviderKit
 
 public enum ToolLoopError: LocalizedError, Equatable, Sendable {
+    case duplicateTool(ToolName)
     case duplicateCallID(ToolCallID)
     case unknownTool(ToolName)
     case malformedArguments(ToolCallID)
@@ -12,6 +13,7 @@ public enum ToolLoopError: LocalizedError, Equatable, Sendable {
 
     public var errorDescription: String? {
         switch self {
+        case .duplicateTool(let name): "A scoped tool cannot replace an existing tool: \(name.rawValue)."
         case .duplicateCallID(let id): "Duplicate tool call ID: \(id.rawValue)."
         case .unknownTool(let name): "Unknown tool: \(name.rawValue)."
         case .malformedArguments(let id): "Tool \(id.rawValue) did not provide one complete JSON object."
@@ -27,13 +29,38 @@ public actor ToolCatalog {
     public init(_ executors: [any ToolExecutor] = []) { self.executors = Dictionary(uniqueKeysWithValues: executors.map { ($0.descriptor.name, $0) }) }
     public func register(_ executor: any ToolExecutor) { executors[executor.descriptor.name] = executor }
     public func replace(with values: [any ToolExecutor]) { executors = Dictionary(uniqueKeysWithValues: values.map { ($0.descriptor.name, $0) }) }
-    public func snapshot(for context: ToolContext) -> ToolCatalogSnapshot { ToolCatalogSnapshot(executors: executors) }
+    public func snapshot(for context: ToolContext, additionalTools: [any ToolExecutor] = []) throws -> ToolCatalogSnapshot {
+        var scoped = executors
+        for executor in additionalTools {
+            guard scoped[executor.descriptor.name] == nil else { throw ToolLoopError.duplicateTool(executor.descriptor.name) }
+            scoped[executor.descriptor.name] = executor
+        }
+        return ToolCatalogSnapshot(executors: scoped)
+    }
 }
 
 public struct ToolCatalogSnapshot: Sendable {
     fileprivate let executors: [ToolName: any ToolExecutor]
     public var descriptors: [ToolDescriptor] { executors.values.map(\.descriptor).sorted { $0.name.rawValue < $1.name.rawValue } }
     fileprivate func executor(named name: ToolName) -> (any ToolExecutor)? { executors[name] }
+
+    fileprivate func messages(addingRuntimeContextTo messages: [ChatMessage], context: ToolContext) async throws -> [ChatMessage] {
+        var live: [ChatMessage] = []
+        for descriptor in descriptors {
+            if let source = executors[descriptor.name] as? any ToolRuntimeContextProviding {
+                live.append(.init(role: .system, text: try await source.runtimeContext(for: context)))
+            }
+        }
+        var result = messages
+        result.insert(contentsOf: live, at: result.firstIndex { $0.role != .system } ?? result.endIndex)
+        return result
+    }
+}
+
+/// Implemented by trusted host executors, never sourced from conversation text
+/// or remote tool output. Reports current capabilities without granting access.
+public protocol ToolRuntimeContextProviding: Sendable {
+    func runtimeContext(for context: ToolContext) async throws -> String
 }
 
 public protocol ToolLoopTransactionHook: Sendable {
@@ -50,9 +77,11 @@ public actor ToolLoop {
     private let provider: any AIProvider
     private let catalog: ToolCatalog
     private let transactionHook: any ToolLoopTransactionHook
+    private let additionalTools: [any ToolExecutor]
 
-    public init(provider: any AIProvider, catalog: ToolCatalog, transactionHook: any ToolLoopTransactionHook = NoopToolLoopTransactionHook()) {
+    public init(provider: any AIProvider, catalog: ToolCatalog, transactionHook: any ToolLoopTransactionHook = NoopToolLoopTransactionHook(), additionalTools: [any ToolExecutor] = []) {
         self.provider = provider; self.catalog = catalog; self.transactionHook = transactionHook
+        self.additionalTools = additionalTools
     }
 
     public func run(_ request: InferenceRequest, context: ToolContext) -> AsyncThrowingStream<InferenceEvent, Error> {
@@ -66,13 +95,18 @@ public actor ToolLoop {
     }
 
     private func execute(_ initial: InferenceRequest, context: ToolContext, continuation: AsyncThrowingStream<InferenceEvent, Error>.Continuation) async throws {
-        let snapshot = await catalog.snapshot(for: context)
+        let snapshot = try await catalog.snapshot(for: context, additionalTools: additionalTools)
+        if let interactive = provider as? any InteractiveToolProvider {
+            try await executeInteractive(interactive, initial: initial, snapshot: snapshot, context: context, continuation: continuation)
+            return
+        }
         var exchanges = initial.toolExchanges
         var seen = Set<ToolCallID>()
 
         for step in 1...Self.maximumSteps {
             try Task.checkCancellation()
-            let request = InferenceRequest(conversationID: initial.conversationID, modelID: initial.modelID, messages: initial.messages, tools: snapshot.descriptors, toolExchanges: exchanges, attachmentsByMessageID: initial.attachmentsByMessageID, reasoningEffort: initial.reasoningEffort)
+            let messages = try await snapshot.messages(addingRuntimeContextTo: initial.messages, context: context)
+            let request = InferenceRequest(conversationID: initial.conversationID, modelID: initial.modelID, messages: messages, tools: snapshot.descriptors, toolExchanges: exchanges, attachmentsByMessageID: initial.attachmentsByMessageID, reasoningEffort: initial.reasoningEffort)
             var calls: [NormalizedToolCall] = []
             var assistantText = ""
             var pending = Set<ToolCallID>()
@@ -112,6 +146,44 @@ public actor ToolLoop {
             for result in results { continuation.yield(.toolResult(result)) }
             exchanges.append(ToolExchange(assistantText: assistantText, calls: calls, results: results))
         }
+    }
+
+    private func executeInteractive(_ provider: any InteractiveToolProvider, initial: InferenceRequest,
+                                    snapshot: ToolCatalogSnapshot, context: ToolContext,
+                                    continuation: AsyncThrowingStream<InferenceEvent, Error>.Continuation) async throws {
+        let messages = try await snapshot.messages(addingRuntimeContextTo: initial.messages, context: context)
+        let request = InferenceRequest(conversationID: initial.conversationID, modelID: initial.modelID,
+            messages: messages, tools: snapshot.descriptors, toolExchanges: initial.toolExchanges,
+            attachmentsByMessageID: initial.attachmentsByMessageID, reasoningEffort: initial.reasoningEffort)
+        let calls = InteractiveCallLedger()
+        for try await event in provider.stream(request, executeTool: { [self] call in
+            try Task.checkCancellation()
+            let step = try await calls.claim(call.id)
+            return try await executeInteractiveCall(call, step: step, snapshot: snapshot, context: context, continuation: continuation)
+        }) {
+            try Task.checkCancellation()
+            // All tool events come from the host callback, not provider assertions.
+            switch event {
+            case .toolCallStarted, .toolCallArgumentsDelta, .toolCallCompleted, .toolResult:
+                throw ProviderError.invalidResponse
+            default: continuation.yield(event)
+            }
+        }
+    }
+
+    private func executeInteractiveCall(_ call: NormalizedToolCall, step: Int, snapshot: ToolCatalogSnapshot,
+                                        context: ToolContext,
+                                        continuation: AsyncThrowingStream<InferenceEvent, Error>.Continuation) async throws -> NormalizedToolResult {
+        guard let executor = snapshot.executor(named: call.name) else { throw ToolLoopError.unknownTool(call.name) }
+        try validate(arguments: call.argumentsJSON, schema: executor.descriptor.inputSchema, callID: call.id)
+        continuation.yield(.toolCallStarted(id: call.id, name: call.name))
+        continuation.yield(.toolCallCompleted(call))
+        let result = try await executor.execute(call, context: context)
+        try Task.checkCancellation()
+        guard result.callID == call.id else { throw ToolLoopError.resultCallIDMismatch(expected: call.id, actual: result.callID) }
+        try await transactionHook.persist(step: step, calls: [call], results: [result], context: context)
+        continuation.yield(.toolResult(result))
+        return result
     }
 
     private func executeSequential(_ work: [(NormalizedToolCall, any ToolExecutor)], context: ToolContext) async throws -> [NormalizedToolResult] {
@@ -168,5 +240,14 @@ public actor ToolLoop {
         case "null": return value is NSNull
         default: return false
         }
+    }
+}
+
+private actor InteractiveCallLedger {
+    private var seen = Set<ToolCallID>()
+    func claim(_ id: ToolCallID) throws -> Int {
+        guard seen.insert(id).inserted else { throw ToolLoopError.duplicateCallID(id) }
+        guard seen.count < ToolLoop.maximumSteps else { throw ToolLoopError.toolStepLimit(maximum: ToolLoop.maximumSteps) }
+        return seen.count
     }
 }

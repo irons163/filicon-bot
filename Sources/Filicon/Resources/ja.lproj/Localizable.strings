@@ -1384,3 +1384,12 @@
 "No matching group members" = "一致するグループメンバーはいません";
 "All group members" = "グループの全員";
 "↑↓ Select · Enter Insert · Esc Close" = "↑↓ 選択 · Enter 挿入 · Esc 閉じる";
+"Choose a workspace folder" = "作業フォルダを選択";
+"Choose a folder to continue this task. File changes and commands still require permission." = "フォルダを選択すると、このタスクを続行します。ファイルの変更とコマンドの実行には引き続き許可が必要です。";
+"Choose Folder…" = "フォルダを選択…";
+"Requested folder: {0}" = "アクセスを要求されたフォルダ：{0}";
+"Reauthorize workspace folder" = "作業フォルダを再認証";
+"The saved folder authorization is no longer valid. Choose the folder again to continue. Your files and chats have not been changed." = "保存されたフォルダのアクセス許可は無効になりました。続行するにはフォルダを選び直してください。ファイルやチャットは変更されていません。";
+"Waiting for folder selection" = "フォルダの選択待ち";
+"Member response failed. Send a message to retry." = "メンバーの応答に失敗しました。メッセージを送信して再試行してください。";
+"No new contribution this turn." = "このターンでは新しい補足はありません。";

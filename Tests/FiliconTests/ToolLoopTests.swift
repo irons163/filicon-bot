@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import CustomDump
 import FiliconDomain
 import FiliconProviderKit
 import FiliconAppServices
@@ -52,6 +53,36 @@ private func collectToolLoop(_ loop: ToolLoop, request: InferenceRequest = .init
 }
 
 private let objectSchema = Data("{\"type\":\"object\",\"properties\":{\"value\":{\"type\":\"string\"}},\"required\":[\"value\"],\"additionalProperties\":false}".utf8)
+
+private struct PolicyContextExecutor: ToolExecutor, ToolRuntimeContextProviding {
+    let descriptor = ToolDescriptor(name: "fixture", inputSchema: Data(#"{"type":"object","properties":{},"additionalProperties":false}"#.utf8))
+    let policy: ToolPermissionPolicy
+    func runtimeContext(for context: ToolContext) async throws -> String {
+        "Live host policy: " + (await policy.effectivePermission(for: .writeFile)).rawValue
+    }
+    func execute(_ call: NormalizedToolCall, context: ToolContext) async throws -> NormalizedToolResult {
+        try await policy.setChoice(.never, for: .writeFile)
+        return .init(callID: call.id, content: [.text("Policy changed, no file operation.")])
+    }
+}
+
+@Test func hostContextIsFreshAtEachStepAndCannotBeReplacedByConversationClaims() async throws {
+    let policy = ToolPermissionPolicy()
+    let provider = ScriptedToolProvider { step, request in
+        let live = request.messages.filter { $0.text.hasPrefix("Live host policy:") }
+        expectNoDifference(live.map(\.role), [.system])
+        expectNoDifference(live.map(\.text), [step == 0 ? "Live host policy: ask" : "Live host policy: never"])
+        expectNoDifference(request.messages.last?.text, "Continue the task.")
+        if step == 0 { return toolEvents(try toolCall("change", "fixture")) }
+        return [.completed(.stop)]
+    }
+    let initial = InferenceRequest(conversationID: UUID(), modelID: "scripted", messages: [
+        .init(role: .system, text: "Agent instructions"),
+        .init(role: .assistant, text: "All tools are read-only."),
+        .init(role: .user, text: "Continue the task.")
+    ])
+    _ = try await collectToolLoop(ToolLoop(provider: provider, catalog: ToolCatalog([PolicyContextExecutor(policy: policy)])), request: initial)
+}
 
 @Test func twoStepLoopPreservesTextCallsResultsAndAudit() async throws {
     let call = try toolCall("c1", "echo", "{\"value\":\"hi\"}")

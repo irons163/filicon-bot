@@ -31,21 +31,93 @@ deep links, recovery, storage quotas, and signed update handling.
 
 ## Build and test
 
+### Xcode (complete app, including local tools)
+
+1. Stop the old Run session and close the Xcode window opened from
+   `Package.swift` / the repository folder. Open **`Filicon.xcworkspace`**.
+2. Select the shared **Filicon App** scheme and **My Mac**.
+3. **⌘B** builds the app; **⌘R** builds and runs it under the debugger.
+4. **⌘U** runs the app-hosted bundle/XPC integration tests with isolated test
+   data. It does not use your groups, chats, or authorized workspace folders.
+
+The native project links the existing Swift package libraries, builds and signs
+the XPC service and both helper executables, and embeds them with all seven
+localizations and pet avatars. No Apple developer account, manual copying into
+`/Applications`, Ruby, or project-generation step is required for Debug runs.
+Stop any older Filicon Run session before launching another copy against your
+normal workspace. The automatically generated Swift-package **Filicon** scheme
+is not the same as **Filicon App**; it launches only a bare executable.
+If Xcode reports "already opened from another project or workspace" or missing
+package products, close the old package window before reopening this workspace.
+
+Debug uses ad-hoc signing by default. Rebuilding or switching launch methods
+can change the app's signing identity and invalidate saved folder grants.
+Filicon validates grants before reporting them as authorized: an invalid grant
+shows **Reauthorize workspace folder** in the chat. Click **Choose Folder…**
+and select the project again; you do not need to recreate groups or chats.
+Do not copy old bookmark data or bypass security-scope checks to avoid this
+prompt. Builds signed with a consistent development/distribution identity are
+recommended for persistent everyday use.
+
+The Debug XPC entitlement grants **read-only access to the exact built
+`Filicon.app` bundle** so the sandboxed service can verify its client's signature
+inside DerivedData. It does not grant access to the checkout or user documents.
+The sandbox, signature check, folder grants, and per-operation approval gates
+remain enabled. Release builds do not include this development-only exception.
+Keep **Debug XPC services used by app** off in the scheme (the checked-in default):
+attaching the debugger to the service makes Xcode re-sign it with broader
+diagnostic entitlements. App debugging still works. XCTest itself also modifies
+service entitlements, so its app-hosted tests are not a strict sandbox test.
+
+To validate the normal Debug bundle and real sandboxed XPC read/write without
+XCTest's extra access, first use **Product → Clean Build Folder**, then **⌘B**,
+and run (substitute the built app's path):
+
 ```sh
-swift build
-swift test
-swift run Filicon
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer zsh scripts/smoke-xcode-xpc.sh /path/to/Debug/Filicon.app
 ```
+
+The smoke check verifies the source bundle, creates a diagnostic copy under
+ignored `DerivedData`, and tests only fresh temporary fixtures. It verifies
+exact entitlements, grant invalidation across two differently signed builds,
+explicit fixture reauthorization, persisted-grant reload, list/write/read,
+unknown-root denial, and revocation.
+It never changes the original app or accesses your workspace data.
+
+For all Swift package unit/integration tests, use the full Xcode toolchain:
+
+```sh
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test --no-parallel
+```
+
+Maintainers can regenerate the checked-in project after bulk source-layout
+changes with `ruby scripts/generate-xcode-project.rb` (`xcodeproj` gem 1.27).
+Ordinary Xcode file/target editing does not require regeneration.
+
+### Standalone / release packaging
 
 Create a standalone ad-hoc-signed application bundle with:
 
 ```sh
 ./scripts/package-app.sh
-open dist/Filicon.app
 ```
 
-The Swift package is the source of truth. No Node.js or Electron runtime is
-required.
+Quit any running copy, copy the built `dist/Filicon.app` into `/Applications`
+(back up an existing installation first), then open `/Applications/Filicon.app`.
+The sandboxed tool service must be able to verify the parent app's signature;
+running the bundle directly from a repository can fail this check. Do not
+disable the sandbox or signature validation to work around it.
+
+For installed everyday use, launch `/Applications/Filicon.app`. Xcode's Swift-package **Run** and
+`swift run Filicon` launch an unbundled executable; Filicon explicitly promotes
+that process to a regular foreground app so it appears in the Dock and accepts
+keyboard input. Notifications and the local-tool XPC service require the packaged app. Stop the current
+Xcode run before launching the packaged version to avoid two copies using the
+same workspace.
+
+The Swift package remains the source of truth for shared libraries and the full
+test suite; the Xcode project supplies the native app/service packaging targets.
+No Node.js or Electron runtime is required.
 
 For a Developer ID, notarized, stapled ZIP/DMG and signed update feed, follow
 [the production release procedure](docs/RELEASING.md). The production script
@@ -73,6 +145,54 @@ from host tool results; an ordinary text reply (including older history) is not
 proof that an action ran. Text-only providers cannot use Filicon tools. Gmail
 installation/connect cards are not implemented; configure integrations through
 MCP Servers or Plugins instead of asking the model to emit an installation card.
+
+Codex CLI now uses its interactive **app-server dynamic-tool protocol** for
+Filicon tool turns (verified with Codex CLI 0.144.4). It retains the selected
+model and CLI-owned sign-in. Existing groups work without recreation. Only
+Filicon's registered tools are supplied, and their existing review, workspace
+authorization and permission checks still apply. Native CLI shell/browser/apps,
+hooks, plugins and inherited MCP servers are disabled for this ephemeral turn;
+unsupported server requests fail closed. No user Codex configuration is changed.
+Older CLIs that lack the experimental dynamic-tool protocol must be updated;
+protocol errors are surfaced, never silently replaced with a text-only reply.
+Claude Code CLI remains text-only. This does not add a Gmail connector or grant
+browser/email access: the required Filicon integration must actually be configured.
+
+The offline suite covers the bidirectional codec, denied/cancelled approvals,
+duplicate calls, cross-thread/cross-turn rejection, and startup timeout. An
+opt-in smoke test uses the installed Codex CLI and account with synthetic data:
+
+```sh
+FILICON_CODEX_LIVE_TEST=1 swift test --filter CodexToolBridgeTests/installedCodexExecutesAnIsolatedHostTool
+FILICON_CODEX_LIVE_TEST=1 swift test --filter GroupToolApprovalIntegrationTests/installedCodexResumesAfterStaleReadOnlyReplyAndRequestsWriteApproval
+```
+
+The second regression uses a temporary group and file, seeds a stale read-only
+claim, then verifies a resumed task requests real host approvals before writing.
+It does not use the user's saved groups or project folders.
+
+Local workspace access is requested in the conversation. Before file/process
+work, agents can call `local__workspace_folders` to discover authorized roots;
+with no roots (or `choose: true`) the conversation shows a folder-selection card.
+In group chats this card stays above the composer, outside the scrolling history.
+The tool and sidebar show **Waiting for folder selection** rather than a thinking
+spinner. Unanswered requests expire after five minutes without granting access.
+The native folder picker saves only the directory the user selects. Existing
+authorized folders can also be chosen directly in the card. Selecting a folder
+resumes the pending task, but does not replace operation review or local tool
+permission checks. If the selected root differs from a tool's proposed root,
+that operation does not run; the agent receives the correct root for a new call.
+Cancelling/stopping the request prevents execution, and stale selections cannot
+revive it. Folder access can still be revoked in Settings.
+
+Each tool-enabled response receives a current host permission snapshot, and
+workspace discovery returns `host_tool_permissions` alongside the roots.
+`ask` means the agent can request an operation and wait for approval; `never`
+means it is blocked. The Codex CLI's native read-only sandbox is independent of
+these Filicon host tools and remains read-only. Neither the snapshot nor folder
+discovery is an execution grant or evidence that project I/O succeeded. Group
+history is passed separately from the latest user request, so an old diagnostic
+request or an earlier agent's read-only claim does not become a permanent limit.
 
 In a group, typing `@` opens a filtered member picker (active group members plus
 `@everyone`). Click a member or use ↑/↓ and Return/Tab to insert the name; Escape

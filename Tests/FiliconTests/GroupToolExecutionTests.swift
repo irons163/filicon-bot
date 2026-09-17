@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import CustomDump
 @testable import FiliconAgents
 import FiliconAppServices
 import FiliconDomain
@@ -43,8 +44,206 @@ private func groupCallEvents(name: ToolName = "fixture_read") throws -> [Inferen
     return [.textDelta("I will read it."), .toolCallStarted(id: call.id, name: name), .toolCallCompleted(call), .completed(.toolUse)]
 }
 
+private actor CollaborationResponder: GroupAgentResponder {
+    struct Turn: Sendable {
+        let agent: AgentProfile
+        let history: [RoomMessage]
+        let context: GroupTurnContext
+    }
+    struct Failure: Error {}
+    private(set) var turns: [Turn] = []
+    let scripts: [String: [[String]]]
+    let failingNames: Set<String>
+    init(_ scripts: [String: [[String]]], failingNames: Set<String> = []) {
+        self.scripts = scripts; self.failingNames = failingNames
+    }
+    func respond(agent: AgentProfile, history: [RoomMessage]) async throws -> [String] {
+        Issue.record("GroupService must provide collaboration context")
+        return []
+    }
+    func respond(agent: AgentProfile, history: [RoomMessage], context: GroupTurnContext, onTools: @escaping @Sendable ([RoomToolActivity]) async throws -> Void) async throws -> [String] {
+        let index = turns.filter { $0.agent.id == agent.id }.count
+        turns.append(.init(agent: agent, history: history, context: context))
+        if failingNames.contains(agent.name) { throw Failure() }
+        let script = scripts[agent.name] ?? []
+        return index < script.count ? script[index] : ["PASS"]
+    }
+}
+
+@Suite("Group collaboration", .timeLimit(.minutes(1)))
+struct GroupCollaborationTests {
+    private func fixture() async throws -> (URL, AgentService, GroupService, AgentGroup) {
+        let root = FileManager.default.temporaryDirectory.appending(path: "filicon-collaboration-\(UUID())")
+        let agents = try AgentService(storeURL: root.appending(path: "agents.json"))
+        let engineer = try await agents.create(name: "Engineer", summary: "Implement and test", providerID: "group-test", modelID: "test")
+        let designer = try await agents.create(name: "Designer", summary: "Review layout and usability", providerID: "group-test", modelID: "test")
+        let service = try GroupService(agents: agents, storeURL: root.appending(path: "groups.json"))
+        let group = try await service.create(name: "Product team", summary: "Build an accessible inventory website", memberIDs: [engineer.id, designer.id])
+        _ = try await service.postUserMessage("Build the website together and review the result.", groupID: group.id)
+        return (root, agents, service, group)
+    }
+
+    @Test func engineerDesignerHandoffContinuesAcrossRoundsWithNewContext() async throws {
+        let (root, _, service, group) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let responder = CollaborationResponder([
+            "Engineer": [["Implemented the layout."], ["Fixed the contrast based on the review."]],
+            "Designer": [["Reviewed the layout: improve button contrast."], ["Reviewed the fix: contrast is now correct."]]
+        ])
+        let result = try await service.run(groupID: group.id, responder: responder)
+        let turns = await responder.turns
+        expectNoDifference(turns.map { $0.agent.name }, ["Engineer", "Designer", "Engineer", "Designer"])
+        expectNoDifference(turns.map { $0.context.round }, [0, 0, 1, 2])
+        expectNoDifference(result.map(\.senderID), [group.memberIDs[0], group.memberIDs[1], group.memberIDs[0], group.memberIDs[1]])
+        expectNoDifference(turns[2].context.group.summary, group.summary)
+        expectNoDifference(turns[2].context.members.map(\.summary), ["Implement and test", "Review layout and usability"])
+        expectNoDifference(turns[2].history.filter { turns[2].context.newMessageIDs.contains($0.id) }.map(\.text), [result[1].text])
+        expectNoDifference(turns[3].history.filter { turns[3].context.newMessageIDs.contains($0.id) }.map(\.text), [result[2].text])
+    }
+
+    @Test func passIsVisibleAndCanBeFollowedByUsefulWork() async throws {
+        let (root, _, service, group) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let responder = CollaborationResponder([
+            "Engineer": [["PASS"], ["Implemented the new design."]],
+            "Designer": [["Here is the design specification."], ["Checked the implementation."]]
+        ])
+        let result = try await service.run(groupID: group.id, responder: responder)
+        expectNoDifference(result.map(\.text), ["Here is the design specification.", "Implemented the new design.", "Checked the implementation."])
+        let notices = await service.messages(groupID: group.id).filter { $0.memberOutcome != nil }
+        expectNoDifference(notices.map(\.memberOutcome), [.passed])
+        expectNoDifference(notices.map(\.senderID), [group.memberIDs[0]])
+    }
+
+    @Test func allPassStopsAndStartingMemberRotatesOnNextRequest() async throws {
+        let (root, agents, service, group) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let first = CollaborationResponder([:])
+        let result = try await service.run(groupID: group.id, responder: first)
+        let firstTurns = await first.turns
+        expectNoDifference(result, [])
+        expectNoDifference(firstTurns.map { $0.agent.name }, ["Engineer", "Designer"])
+        let reopened = try GroupService(agents: agents, storeURL: root.appending(path: "groups.json"))
+        let notices = await reopened.messages(groupID: group.id).compactMap(\.memberOutcome)
+        expectNoDifference(notices, [.passed, .passed])
+        _ = try await reopened.postUserMessage("Another task", groupID: group.id)
+        let second = CollaborationResponder([:])
+        _ = try await reopened.run(groupID: group.id, responder: second)
+        let secondTurns = await second.turns
+        expectNoDifference(secondTurns.map { $0.agent.name }, ["Designer", "Engineer"])
+    }
+
+    @Test func partialFailureIsPersistedAndPublishedWithoutRetryingFailedMember() async throws {
+        let (root, agents, service, group) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let responder = CollaborationResponder(["Engineer": [["Implemented."]]], failingNames: ["Designer"])
+        let probe = GroupToolProbe()
+        let result = try await service.run(groupID: group.id, responder: responder, onMessage: { await probe.record($0) })
+        expectNoDifference(result.map(\.text), ["Implemented."])
+        let turns = await responder.turns
+        expectNoDifference(turns.map { $0.agent.name }, ["Engineer", "Designer"])
+        let failure = try #require(await probe.messages.last)
+        expectNoDifference(failure.senderID, group.memberIDs[1])
+        expectNoDifference(failure.memberOutcome, .failed)
+        expectNoDifference(failure.text, "")
+        let reopened = try GroupService(agents: agents, storeURL: root.appending(path: "groups.json"))
+        let restored = try #require(await reopened.messages(groupID: group.id).last)
+        expectNoDifference(restored.id, failure.id)
+        expectNoDifference(restored.memberOutcome, .failed)
+        expectNoDifference(restored.senderID, group.memberIDs[1])
+    }
+
+    @Test func duplicatesDoNotKeepConversationAlive() async throws {
+        let (root, _, service, group) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let responder = CollaborationResponder([
+            "Engineer": [["Done."], ["  Done.  "]],
+            "Designer": [["Reviewed."]]
+        ])
+        let result = try await service.run(groupID: group.id, responder: responder)
+        expectNoDifference(result.map(\.text), ["Done.", "Reviewed."])
+        let turns = await responder.turns
+        expectNoDifference(turns.count, 3)
+    }
+
+    @Test func messageAndPerTurnCapsRemainBounded() async throws {
+        let (root, agents, service, group) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        var ids = group.memberIDs
+        for index in 2..<6 { ids.append(try await agents.create(name: "Member \(index)").id) }
+        try await service.updateMembers(groupID: group.id, memberIDs: ids)
+        let names = ["Engineer", "Designer"] + (2..<6).map { "Member \($0)" }
+        let responder = CollaborationResponder(Dictionary(uniqueKeysWithValues: names.map { ($0, [["\($0) one", "\($0) two", "never published"]]) }))
+        let result = try await service.run(groupID: group.id, responder: responder)
+        expectNoDifference(result.count, 10)
+        let turns = await responder.turns
+        expectNoDifference(turns.count, 5)
+        #expect(!result.contains { $0.text == "never published" })
+    }
+
+    @Test func roleMetadataAndNamedIncrementalHistoryReachProviderWithoutPrivateInstructions() async throws {
+        let (root, agents, service, group) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        var engineer = try #require(await agents.profile(id: group.memberIDs[0]))
+        engineer.instructions = "PRIVATE-ENGINEER-INSTRUCTIONS"
+        try await agents.update(engineer)
+        let registry = ProviderRegistry()
+        await registry.register(GroupScriptProvider { request in
+            let metadataText = try #require(request.messages.first { $0.text.hasPrefix("Room metadata") }?.text)
+            let metadata = try #require(JSONSerialization.jsonObject(with: Data(metadataText.split(separator: "\n", maxSplits: 1)[1].utf8)) as? [String: Any])
+            expectNoDifference(metadata["name"] as? String, group.name)
+            expectNoDifference(metadata["goal"] as? String, group.summary)
+            let members = try #require(metadata["members"] as? [[String: Any]])
+            expectNoDifference(members.compactMap { $0["summary"] as? String }, ["Implement and test", "Review layout and usability"])
+            #expect(members.allSatisfy { $0["instructions"] == nil })
+            let isEngineer = request.messages[0].text.contains("Your name is Engineer")
+            if !isEngineer {
+                #expect(!request.messages.contains { $0.text.contains("PRIVATE-ENGINEER-INSTRUCTIONS") })
+                let transcript = try #require(request.messages.first { $0.text.hasPrefix("Group conversation context") })
+                #expect(transcript.text.contains("Engineer"))
+                #expect(transcript.text.contains("isNewSinceYourLastTurn"))
+            }
+            expectNoDifference(request.messages.last?.text, "Build the website together and review the result.")
+            let round = metadata["round"] as? Int
+            return [.textDelta(round == 1 ? (isEngineer ? "Implementation ready." : "Design reviewed.") : "PASS"), .completed(.stop)]
+        })
+        let responder = GroupConversationResponder(groupID: group.id, registry: registry, coordinator: .init(registry: registry, toolCatalog: ToolCatalog()))
+        let result = try await service.run(groupID: group.id, responder: responder)
+        expectNoDifference(result.map(\.text), ["Implementation ready.", "Design reviewed."])
+    }
+}
+
 @Suite("Group tool execution", .timeLimit(.minutes(1)))
 struct GroupToolExecutionTests {
+    @Test func latestRequestIsSeparateFromOldDiagnosticAndPeerReplies() async throws {
+        let groupID = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
+        let agent = AgentProfile(name: "Engineer", providerID: "group-test", modelID: "test")
+        let latest = RoomMessage(groupID: groupID, senderID: nil, text: "Continue building the website; request approval for changes.")
+        let history: [RoomMessage] = [
+            .init(groupID: groupID, senderID: nil, text: "Only test authorization; do not read or write during this test."),
+            .init(groupID: groupID, senderID: agent.id, text: "This workspace is read-only."),
+            latest,
+            .init(groupID: groupID, senderID: UUID(), text: "I already inspected the layout.")
+        ]
+        let registry = ProviderRegistry()
+        await registry.register(GroupScriptProvider { request in
+            expectNoDifference(request.messages.last?.text, latest.text)
+            expectNoDifference(request.messages.last?.role, .user)
+            expectNoDifference(request.messages.last?.id, latest.id)
+            let context = try #require(request.messages.first { $0.text.hasPrefix("Group conversation context") })
+            let payload = try #require(context.text.split(separator: "\n", maxSplits: 1).last)
+            let entries = try #require(JSONSerialization.jsonObject(with: Data(payload.utf8)) as? [[String: Any]])
+            expectNoDifference(entries.compactMap { $0["text"] as? String }, [history[0].text, history[1].text, history[3].text])
+            expectNoDifference(entries.compactMap { $0["repliesToLatestUserRequest"] as? Bool }, [false, false, true])
+            #expect(!request.messages.filter { $0.role == .system }.contains { $0.text.contains(history[1].text) })
+            return [.textDelta("Ready for the task."), .completed(.stop)]
+        })
+        let responder = GroupConversationResponder(groupID: groupID, registry: registry,
+                                                     coordinator: .init(registry: registry, toolCatalog: ToolCatalog()))
+        let result = try await responder.respond(agent: agent, history: history)
+        expectNoDifference(result, ["Ready for the task."])
+    }
+
     private func fixture() async throws -> (URL, AgentService, GroupService, AgentGroup) {
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-group-tools-\(UUID())")
         let agents = try AgentService(storeURL: root.appending(path: "agents.json"))

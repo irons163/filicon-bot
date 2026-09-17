@@ -280,7 +280,9 @@ struct AgentTests {
         let cappedResponder = RecordingGroupResponder(outputs: ["one", "two", "ignored"])
         let capped = try await groups.run(groupID: group.id, responder: cappedResponder)
         #expect(capped.count == 4)
-        #expect(await cappedResponder.order == ["Alpha Agent", "Beta"])
+        // Alpha sees Beta's new contribution, but repeating the same text does
+        // not publish it again or keep the group alive.
+        #expect(await cappedResponder.order == ["Alpha Agent", "Beta", "Alpha Agent"])
 
         _ = try await groups.postUserMessage("late", groupID: group.id)
         let blocker = BlockingGroupResponder()

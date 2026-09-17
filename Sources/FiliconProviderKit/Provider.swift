@@ -7,6 +7,14 @@ public protocol AIProvider: Sendable {
     func stream(_ request: InferenceRequest) -> AsyncThrowingStream<InferenceEvent, Error>
 }
 
+/// A provider with an interactive protocol that waits for host-owned tool results.
+/// The executor is supplied by ToolLoop, never by the model or CLI.
+public protocol InteractiveToolProvider: AIProvider {
+    func stream(_ request: InferenceRequest,
+                executeTool: @escaping @Sendable (NormalizedToolCall) async throws -> NormalizedToolResult)
+        -> AsyncThrowingStream<InferenceEvent, Error>
+}
+
 public enum ProviderError: LocalizedError, Sendable, Equatable {
     case missingCredential(ProviderID)
     case authentication(String)

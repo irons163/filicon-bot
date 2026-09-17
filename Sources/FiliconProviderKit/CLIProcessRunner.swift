@@ -5,13 +5,15 @@ public struct CLIProcessRequest: Sendable, Equatable {
     public var arguments: [String]
     public var standardInput: Data
     public var maximumOutputBytes: Int
+    public var workingDirectoryURL: URL?
 
     public init(executableURL: URL, arguments: [String], standardInput: Data,
-                maximumOutputBytes: Int = 8 * 1_024 * 1_024) {
+                maximumOutputBytes: Int = 8 * 1_024 * 1_024, workingDirectoryURL: URL? = nil) {
         self.executableURL = executableURL
         self.arguments = arguments
         self.standardInput = standardInput
         self.maximumOutputBytes = maximumOutputBytes
+        self.workingDirectoryURL = workingDirectoryURL
     }
 }
 
@@ -33,6 +35,13 @@ public struct CLIProcessFailure: LocalizedError, Sendable, Equatable {
 
 public protocol CLIProcessRunning: Sendable {
     func events(for request: CLIProcessRequest) -> AsyncThrowingStream<CLIProcessEvent, Error>
+    func events(for request: CLIProcessRequest, input: AsyncStream<Data>) -> AsyncThrowingStream<CLIProcessEvent, Error>
+}
+
+public extension CLIProcessRunning {
+    func events(for request: CLIProcessRequest, input: AsyncStream<Data>) -> AsyncThrowingStream<CLIProcessEvent, Error> {
+        AsyncThrowingStream { $0.finish(throwing: ProviderError.transport("Interactive CLI transport is unavailable.")) }
+    }
 }
 
 /// Launches an executable directly. It never invokes a shell and never inspects another
@@ -41,6 +50,14 @@ public struct FoundationCLIProcessRunner: CLIProcessRunning {
     public init() {}
 
     public func events(for request: CLIProcessRequest) -> AsyncThrowingStream<CLIProcessEvent, Error> {
+        let input = AsyncStream<Data> { continuation in
+            continuation.yield(request.standardInput)
+            continuation.finish()
+        }
+        return events(for: request, input: input)
+    }
+
+    public func events(for request: CLIProcessRequest, input: AsyncStream<Data>) -> AsyncThrowingStream<CLIProcessEvent, Error> {
         AsyncThrowingStream { continuation in
             let process = Process()
             let stdout = Pipe()
@@ -50,6 +67,7 @@ public struct FoundationCLIProcessRunner: CLIProcessRunning {
 
             process.executableURL = request.executableURL
             process.arguments = request.arguments
+            process.currentDirectoryURL = request.workingDirectoryURL
             process.standardOutput = stdout
             process.standardError = stderr
             process.standardInput = stdin
@@ -71,14 +89,23 @@ public struct FoundationCLIProcessRunner: CLIProcessRunning {
             process.terminationHandler = { terminated in
                 state.processExited(terminated.terminationStatus)
             }
-            continuation.onTermination = { @Sendable _ in state.cancel() }
-
             do {
                 try process.run()
-                try stdin.fileHandleForWriting.write(contentsOf: request.standardInput)
-                try stdin.fileHandleForWriting.close()
             } catch {
                 state.fail(error)
+            }
+            let writer = Task {
+                do {
+                    for await data in input {
+                        try Task.checkCancellation()
+                        try stdin.fileHandleForWriting.write(contentsOf: data)
+                    }
+                    try stdin.fileHandleForWriting.close()
+                } catch { state.fail(error) }
+            }
+            continuation.onTermination = { @Sendable _ in
+                writer.cancel()
+                state.cancel()
             }
         }
     }

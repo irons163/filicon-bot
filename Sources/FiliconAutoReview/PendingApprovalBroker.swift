@@ -131,7 +131,7 @@ public actor PendingApprovalBroker {
     /// Used by execution gates. An approval is not enough by itself: the
     /// approved request must still belong to the active fence when the waiter
     /// resumes and atomically consumes its single-use execution grant.
-    func waitForApprovalToExecute(
+    public func waitForApprovalToExecute(
         _ request: PendingApproval,
         onRegistered: @escaping RegistrationHandler = { _ in }
     ) async throws {

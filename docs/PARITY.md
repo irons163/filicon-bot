@@ -2,7 +2,7 @@
 
 本矩陣保留固定的 48 個 parity ID，對照目前 macOS Swift 實作。`complete` 表示現行程式碼已提供並接線該能力；`partial` 表示核心程式已完成，但仍缺少可宣稱的 production artifact 或外部驗證；`NA` 表示該列是來源 runtime 的實作細節，不是 macOS 產品行為。
 
-目前狀態為 47 筆 `complete`、0 筆 `partial`、1 筆 `NA`（`UPD-04`）。表內驗證欄記錄已完成的本地與外部 verification gates。
+2026-09-18 核對 reconstructed 原始碼後，修正為 45 筆 `complete`、2 筆 `partial`、1 筆 `NA`（`UPD-04`）。`partial` 也包含尚未接線的原始協作能力；不能因服務層存在就宣稱模型已能使用。其他列的驗證欄保留歷史紀錄，不表示本次重新驗證。
 
 ## Matrix
 
@@ -56,9 +56,9 @@
 | ID | 現行實作（authoritative evidence） | 狀態 | 驗證 |
 |---|---|---|---|
 | AGENT-01 | `FiliconAgents/AgentService.swift`、`Models.swift`、`AgentsWorkspaceScreen.swift` 與 `AgentAvatarStore.swift` 提供 profile CRUD、purpose/model、roster status、archive、avatar、empty/error/retry。 | complete | final gates passed |
-| AGENT-02 | `GroupService.swift`、agent models 與 `FiliconApp.swift` group workspace 提供 member validation、六人上限、bounded round-robin、pass/stop/cancel、group persistence 與 reactions。 | complete | final gates passed |
+| AGENT-02 | `GroupService.swift`、`GroupConversationResponder.swift` 恢復最多三輪接續、群組目標/同伴角色、增量訊息、去重、可見 PASS/失敗、stop/cancel。只依使用者 mention 選擇參與者；最終文字由 host 發送，未提供原版 `SendMessage` 工具。 | partial | `GroupCollaborationTests`、`GroupToolExecutionTests`、`GroupToolApprovalIntegrationTests`；詳見 Conversation-design.md |
 | AGENT-03 | `FiliconSharedRooms` 的 file/HTTPS transports、`SharedRoomsWorkspaceView.swift`、`FiliconChannels/ChannelService.swift` 與 REST connectors 提供 room invite/approval/member lifecycle、channel inbound/outbound、attachments、reactions、OAuth 與 delivery retry。 | complete | final gates passed |
-| AGENT-04 | `CloudAgentRuntime.swift`、`SubagentService.swift`、`AgentMessenger.swift` 與 `AgentWorkspaceModels.swift` 提供 cloud lifecycle/poll/reconnect/cancel、scoped subagents、agent-to-agent messages、org-chart projection 與 durable wakes。 | complete | final gates passed |
+| AGENT-04 | 群組模型已接上 `AgentMessagingSession` 的 `SendToAgent`：固定寄件者、完整訊息核准、持久入列、獨立上下文喚醒、回信再喚醒、原權限閘門、停止/逾時/防循環。仍非原版永久個人對話與背景工作階段；未含群組廣播、圖片與優先中斷。 | partial | `AgentMessagingSessionTests`、`SendToAgentAppIntegrationTests` 驗證實際模型工具 dispatch 與 App 核准流程；仍不宣稱完整原版 parity |
 
 ### 7. Automations
 

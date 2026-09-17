@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.app-sandbox</key>
+    <true/>
+    <key>com.apple.security.files.user-selected.read-write</key>
+    <true/>
+    <!-- Debug only: verify the client signature in DerivedData, without
+         granting access to the checkout, other products, or user documents.
+         Xcode expands this build setting before signing the XPC service. -->
+    <key>com.apple.security.temporary-exception.files.absolute-path.read-only</key>
+    <array>
+        <string>$(BUILT_PRODUCTS_DIR)/Filicon.app/</string>
+    </array>
+</dict>
+</plist>

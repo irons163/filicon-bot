@@ -1384,3 +1384,12 @@
 "No matching group members" = "No hay miembros coincidentes";
 "All group members" = "Todos los miembros del grupo";
 "↑↓ Select · Enter Insert · Esc Close" = "↑↓ Seleccionar · Intro Insertar · Esc Cerrar";
+"Choose a workspace folder" = "Elegir una carpeta de trabajo";
+"Choose a folder to continue this task. File changes and commands still require permission." = "Elige una carpeta para continuar esta tarea. Modificar archivos y ejecutar comandos sigue requiriendo permiso.";
+"Choose Folder…" = "Elegir carpeta…";
+"Requested folder: {0}" = "Carpeta solicitada: {0}";
+"Reauthorize workspace folder" = "Volver a autorizar la carpeta de trabajo";
+"The saved folder authorization is no longer valid. Choose the folder again to continue. Your files and chats have not been changed." = "La autorización guardada para esta carpeta ya no es válida. Selecciona la carpeta de nuevo para continuar. No se han modificado tus archivos ni conversaciones.";
+"Waiting for folder selection" = "Esperando la selección de carpeta";
+"Member response failed. Send a message to retry." = "La respuesta del miembro falló. Envía un mensaje para reintentar.";
+"No new contribution this turn." = "No hay nuevas aportaciones en este turno.";

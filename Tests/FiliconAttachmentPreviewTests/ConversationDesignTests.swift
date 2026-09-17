@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import Testing
+import CustomDump
 import FiliconAgents
 import FiliconDomain
 @testable import Filicon
@@ -8,6 +9,42 @@ import FiliconDomain
 @Suite("Conversation design", .serialized)
 @MainActor
 struct ConversationDesignTests {
+    @Test func groupOutcomeNoticesAreLocalizedAndRender() throws {
+        let agent = AgentProfile(name: "設計師", avatar: .pet(.dewey))
+        let groupID = UUID()
+        let output = ProcessInfo.processInfo.environment["FILICON_UI_REVIEW_OUTPUT"].map { URL(fileURLWithPath: $0, isDirectory: true) }
+        if let output { try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true) }
+        for language in ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"] {
+            try FiliconLocalization.$languageOverride.withValue(language) {
+                for key in ["Member response failed. Send a message to retry.", "No new contribution this turn."] {
+                    let translated = FiliconLocalization.string(key)
+                    #expect(!translated.isEmpty)
+                    if language != "en" { #expect(translated != key) }
+                    if language == "zh-Hant", key.hasPrefix("Member") {
+                        expectNoDifference(translated, "成員回應失敗。傳送訊息可重試。")
+                    }
+                }
+                let view = VStack(spacing: 24) {
+                    GroupMessageBubble(message: .init(groupID: groupID, senderID: agent.id, text: "", memberOutcome: .passed), agent: agent, onReaction: {})
+                    GroupMessageBubble(message: .init(groupID: groupID, senderID: agent.id, text: "", memberOutcome: .failed), agent: agent, onReaction: {})
+                }
+                .padding(24).frame(width: 520, height: 240)
+                .background(FiliconTheme.canvas)
+                .environment(\.locale, Locale(identifier: language))
+                .environment(\.colorScheme, .light)
+                let host = NSHostingView(rootView: view)
+                host.appearance = NSAppearance(named: .aqua)
+                host.frame = NSRect(x: 0, y: 0, width: 520, height: 240)
+                host.layoutSubtreeIfNeeded()
+                let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                host.cacheDisplay(in: host.bounds, to: bitmap)
+                let png = try #require(bitmap.representation(using: .png, properties: [:]))
+                #expect(!png.isEmpty)
+                if let output { try png.write(to: output.appending(path: "group-outcomes-\(language).png")) }
+            }
+        }
+    }
+
     @Test func inspectorCollapsesBeforeChatBecomesTooNarrow() {
         #expect(!ConversationLayout.showsInlineInspector(detailWidth: 779))
         #expect(ConversationLayout.showsInlineInspector(detailWidth: 780))

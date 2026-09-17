@@ -59,9 +59,13 @@ struct GroupConversationView: View {
     @State private var composerComposing = false
     @State private var dismissedMention: GroupMentionCompletion.Query?
     @State private var selectedMention = 0
+    @State private var folderPromptHeight: CGFloat = 180
 
     private var messages: [RoomMessage] { model.groupMessages[group.id] ?? [] }
     private var isRunning: Bool { model.runningGroups.contains(group.id) }
+    private var folderRequests: [WorkspaceFolderRequest] {
+        model.pendingWorkspaceFolders.filter { $0.conversationID == group.id }
+    }
     private var mentionMemberNames: [String] {
         model.agents.filter { group.memberIDs.contains($0.id) && $0.archivedAt == nil }.map(\.name)
     }
@@ -84,6 +88,19 @@ struct GroupConversationView: View {
                 VStack(spacing: 0) {
                     header(inline: inline)
                     transcript
+                    if !folderRequests.isEmpty {
+                        // Required input is not transcript history. Keep it
+                        // mounted and reachable even while history is scrolled.
+                        ScrollView {
+                            VStack(spacing: 8) {
+                                WorkspaceFolderAccessPanel(conversationID: group.id)
+                            }
+                            .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { folderPromptHeight = $0 }
+                        }
+                        .frame(height: min(folderPromptHeight, 280, geometry.size.height * 0.45))
+                        .padding(.horizontal, 24).padding(.top, 8)
+                        .accessibilityIdentifier("group-workspace-folder-actions")
+                    }
                     composer
                 }.frame(maxWidth: .infinity)
                 if inline && inspectorVisible {
@@ -139,14 +156,17 @@ struct GroupConversationView: View {
                         GroupMessageBubble(
                             message: message,
                             agent: model.agents.first { $0.id == message.senderID },
+                            waitingForFolderCallIDs: Set(folderRequests.map { $0.toolCallID.rawValue }),
                             onReaction: { Task { await model.toggleGroupReaction(groupID: group.id, messageID: message.id, emoji: "👍") } }
                         ).id(message.id)
                     }
-                    if let agentID = model.thinkingGroupMembers[group.id],
-                       let agent = model.agents.first(where: { $0.id == agentID }) {
-                        GroupThinkingIndicator(agentName: agent.name)
-                    } else if isRunning {
-                        GroupThinkingIndicator(agentName: group.name)
+                    if folderRequests.isEmpty {
+                        if let agentID = model.thinkingGroupMembers[group.id],
+                           let agent = model.agents.first(where: { $0.id == agentID }) {
+                            GroupThinkingIndicator(agentName: agent.name)
+                        } else if isRunning {
+                            GroupThinkingIndicator(agentName: group.name)
+                        }
                     }
                     GroupToolApprovalPanel(groupID: group.id)
                     MCPApprovalPanel(conversationID: group.id)
@@ -314,6 +334,7 @@ struct GroupConversationView: View {
 struct GroupMessageBubble: View {
     let message: RoomMessage
     let agent: AgentProfile?
+    var waitingForFolderCallIDs: Set<String> = []
     let onReaction: () -> Void
     @State private var hovering = false
     private var isUser: Bool { message.senderID == nil }
@@ -344,24 +365,33 @@ struct GroupMessageBubble: View {
                     }
                 }
                 ForEach(message.toolActivities) { tool in
+                    let waitingForFolder = tool.status == .pending && waitingForFolderCallIDs.contains(tool.id)
                     HStack(spacing: 7) {
-                        if tool.status == .pending { ProgressView().controlSize(.small) }
+                        if waitingForFolder { Image(systemName: "folder.badge.questionmark") }
+                        else if tool.status == .pending { ProgressView().controlSize(.small) }
                         else { Image(systemName: tool.status == .succeeded ? "checkmark.circle" : "xmark.circle") }
                         Text(tool.name).font(.caption.monospaced()).lineLimit(2)
                         Spacer(minLength: 4)
-                        Text(toolStatus(tool.status)).font(.caption)
+                        Text(waitingForFolder ? l10n("Waiting for folder selection") : toolStatus(tool.status)).font(.caption)
                     }
                     .padding(10)
                     .background(FiliconTheme.input, in: RoundedRectangle(cornerRadius: 10))
                     .accessibilityIdentifier("group-tool-\(tool.id)")
                 }
-                if !isUser && message.toolActivities.isEmpty {
+                if let outcome = message.memberOutcome {
+                    Label(
+                        l10n(outcome == .failed ? "Member response failed. Send a message to retry." : "No new contribution this turn."),
+                        systemImage: outcome == .failed ? "exclamationmark.triangle" : "minus.circle"
+                    )
+                    .font(.caption).foregroundStyle(FiliconTheme.textSecondary)
+                    .accessibilityIdentifier("group-member-outcome-\(outcome.rawValue)")
+                } else if !isUser && message.toolActivities.isEmpty {
                     Text(l10n("Text reply · no tools used"))
                         .font(.system(size: 10)).foregroundStyle(FiliconTheme.textTertiary)
                 }
                 HStack(spacing: 8) {
                     Text(message.createdAt, style: .time).font(.system(size: 9))
-                    if !isUser { Button("👍", action: onReaction).buttonStyle(.plain).font(.system(size: 10)) }
+                    if !isUser && message.memberOutcome == nil { Button("👍", action: onReaction).buttonStyle(.plain).font(.system(size: 10)) }
                 }
                 .foregroundStyle(FiliconTheme.textTertiary)
                 .opacity(hovering ? 1 : 0)
@@ -399,6 +429,12 @@ private struct GroupToolApprovalPanel: View {
                 Label(l10n("Approval required"), systemImage: "checkmark.shield")
                     .font(.headline)
                 Text(approval.action.summary).font(.callout).textSelection(.enabled)
+                if approval.action.context.metadata["tool"] == "SendToAgent",
+                   let text = approval.action.context.metadata["agentMessage"] {
+                    // The summary is bounded to 2,000 characters; the actual
+                    // outgoing payload must be visible in full before approval.
+                    Text(verbatim: text).font(.callout).textSelection(.enabled)
+                }
                 Text(approval.reason).font(.caption).foregroundStyle(FiliconTheme.textSecondary)
                 HStack {
                     Button(l10n("Approve")) { Task { await resolve(approval, approve: true) } }

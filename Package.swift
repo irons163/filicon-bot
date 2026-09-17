@@ -30,6 +30,9 @@ let package = Package(
         .executable(name: "FiliconUpdateHelper", targets: ["FiliconUpdateHelper"]),
         .executable(name: "Filicon", targets: ["Filicon"]),
     ],
+    dependencies: [
+        .package(url: "https://github.com/pointfreeco/swift-custom-dump", from: "1.3.3"),
+    ],
     targets: [
         .target(name: "FiliconDomain"),
         .target(name: "FiliconProviderKit", dependencies: ["FiliconDomain"]),
@@ -63,7 +66,7 @@ let package = Package(
             dependencies: ["FiliconDomain", "FiliconProviderKit", "FiliconAppServices", "FiliconAgents", "FiliconChannels", "FiliconAutomations", "FiliconMCP", "FiliconVoice", "FiliconLocalTools", "FiliconUpdater", "FiliconSettings", "FiliconComputer", "FiliconPlugins", "FiliconSharedRooms", "FiliconAccount", "FiliconAutoReview", "FiliconRichContent", "FiliconSecurityKey"],
             resources: [.process("Resources")]
         ),
-        .testTarget(name: "FiliconTests", dependencies: ["FiliconDomain", "FiliconProviderKit", "FiliconPersistence", "FiliconAppServices", "FiliconAgents", "CSQLite"]),
+        .testTarget(name: "FiliconTests", dependencies: ["FiliconDomain", "FiliconProviderKit", "FiliconPersistence", "FiliconAppServices", "FiliconAgents", "CSQLite", .product(name: "CustomDump", package: "swift-custom-dump")]),
         .testTarget(name: "FiliconMCPTests", dependencies: ["FiliconMCP"]),
         .testTarget(name: "FiliconAgentsTests", dependencies: ["FiliconAgents", "FiliconDomain"]),
         .testTarget(name: "FiliconChannelsTests", dependencies: ["FiliconChannels"]),
@@ -77,7 +80,7 @@ let package = Package(
         .testTarget(name: "FiliconSharedRoomsTests", dependencies: ["FiliconSharedRooms"]),
         .testTarget(name: "FiliconAccountTests", dependencies: ["FiliconAccount"]),
         .testTarget(name: "FiliconAutoReviewTests", dependencies: ["FiliconAutoReview", "FiliconDomain"]),
-        .testTarget(name: "FiliconAttachmentPreviewTests", dependencies: ["Filicon", "FiliconDomain", "FiliconProviderKit", "FiliconAppServices", "FiliconPersistence", "FiliconAgents", "FiliconRichContent", "FiliconAutoReview", "FiliconMCP", "FiliconSecurityKey"]),
+        .testTarget(name: "FiliconAttachmentPreviewTests", dependencies: ["Filicon", "FiliconDomain", "FiliconProviderKit", "FiliconAppServices", "FiliconPersistence", "FiliconAgents", "FiliconRichContent", "FiliconAutoReview", "FiliconMCP", "FiliconSecurityKey", .product(name: "CustomDump", package: "swift-custom-dump")]),
         .testTarget(name: "FiliconRichContentTests", dependencies: ["FiliconRichContent"]),
         .testTarget(name: "FiliconSecurityKeyTests", dependencies: ["FiliconSecurityKey"]),
     ]

@@ -10,13 +10,14 @@ die() {
 }
 
 usage() {
-  print -u2 -- "usage: $script_name --app PATH --version VERSION --build BUILD_NUMBER"
+  print -u2 -- "usage: $script_name --app PATH --version VERSION --build BUILD_NUMBER [--xcode-debug]"
   exit 2
 }
 
 app_input=
 expected_version=
 expected_build=
+xcode_debug=false
 while (( $# > 0 )); do
   case "$1" in
     --app)
@@ -34,8 +35,12 @@ while (( $# > 0 )); do
       expected_build=$2
       shift 2
       ;;
+    --xcode-debug)
+      xcode_debug=true
+      shift
+      ;;
     -h|--help)
-      print "usage: $script_name --app PATH --version VERSION --build BUILD_NUMBER"
+      print "usage: $script_name --app PATH --version VERSION --build BUILD_NUMBER [--xcode-debug]"
       exit 0
       ;;
     *)
@@ -162,6 +167,29 @@ for entitlement_key in \
   com.apple.security.files.user-selected.read-write; do
   expect_signed_entitlement "$xpc_signed_entitlements" "$xpc_entitlements_source" "$entitlement_key"
 done
+
+# Do not ship DerivedData access exceptions or debugger attachment rights.
+# Native Xcode Debug is the only mode allowed to carry the exact read-only
+# app-bundle exception; it still must pass all the normal checks above.
+python3 - "$app_signed_entitlements" "$xpc_signed_entitlements" "$app_path" "$xcode_debug" <<'PY'
+import plistlib
+import sys
+
+with open(sys.argv[1], "rb") as stream:
+    app = plistlib.load(stream)
+with open(sys.argv[2], "rb") as stream:
+    xpc = plistlib.load(stream)
+development = sys.argv[4] == "true"
+exception = "com.apple.security.temporary-exception.files.absolute-path.read-only"
+exceptions = {key: value for key, value in xpc.items() if key.startswith("com.apple.security.temporary-exception.")}
+expected = {exception: [sys.argv[3] + "/"]} if development else {}
+if exceptions != expected:
+    sys.exit("XPC sandbox exceptions do not match the requested build mode")
+if any(key.startswith("com.apple.security.temporary-exception.") for key in app):
+    sys.exit("Unexpected app sandbox exception")
+if not development and any(entitlements.get("com.apple.security.get-task-allow", False) for entitlements in (app, xpc)):
+    sys.exit("Shipping bundle must not allow debugger attachment")
+PY
 
 /usr/bin/codesign --verify --deep --strict --verbose=1 "$app_path" \
   || die "deep strict code-signature verification failed: $app_path"

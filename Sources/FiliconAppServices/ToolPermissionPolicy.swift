@@ -63,6 +63,11 @@ public actor ToolPermissionPolicy {
         (choices[action] ?? .ask).constrained(by: ceilings[action])
     }
 
+    /// Advisory snapshot only. Does not issue or consume any execution grant.
+    public func effectivePermissions() -> [LocalToolAction: LocalToolPermission] {
+        Dictionary(uniqueKeysWithValues: LocalToolAction.allCases.map { ($0, effectivePermission(for: $0)) })
+    }
+
     public func evaluate(
         action: LocalToolAction,
         conversationID: UUID,

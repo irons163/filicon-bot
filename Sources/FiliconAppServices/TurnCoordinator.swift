@@ -46,6 +46,8 @@ public actor TurnCoordinator {
         let token: UUID
         let request: InferenceRequest
         let provider: any AIProvider
+        let additionalTools: [any ToolExecutor]
+        let toolContext: ToolContext
         let onEvent: @Sendable (InferenceEvent) async throws -> Void
         let continuation: CheckedContinuation<Void, any Error>
     }
@@ -66,6 +68,8 @@ public actor TurnCoordinator {
     public func send(
         request: InferenceRequest,
         providerID: ProviderID,
+        additionalTools: [any ToolExecutor] = [],
+        toolContext: ToolContext? = nil,
         onEvent: @escaping @Sendable (InferenceEvent) async throws -> Void
     ) async throws {
         guard let provider = await registry.provider(id: providerID) else {
@@ -83,6 +87,8 @@ public actor TurnCoordinator {
                     token: token,
                     request: request,
                     provider: provider,
+                    additionalTools: additionalTools,
+                    toolContext: toolContext ?? ToolContext(conversationID: request.conversationID),
                     onEvent: onEvent,
                     continuation: continuation
                 )
@@ -130,9 +136,9 @@ public actor TurnCoordinator {
         let task = Task {
             let stream: AsyncThrowingStream<InferenceEvent, Error>
             if let catalog, submission.provider.descriptor.supportsToolCalling {
-                stream = await ToolLoop(provider: submission.provider, catalog: catalog).run(
+                stream = await ToolLoop(provider: submission.provider, catalog: catalog, additionalTools: submission.additionalTools).run(
                     submission.request,
-                    context: ToolContext(conversationID: conversationID)
+                    context: submission.toolContext
                 )
             } else {
                 stream = submission.provider.stream(submission.request)

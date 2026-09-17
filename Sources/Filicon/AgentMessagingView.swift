@@ -128,6 +128,12 @@ struct AgentMessagingView: View {
                     Text(message.createdAt.formatted(date: .abbreviated, time: .shortened)).font(.caption).foregroundStyle(.secondary)
                 }
                 Text(message.text).textSelection(.enabled)
+                if let delivery = message.delivery {
+                    Text(deliveryTitle(delivery.state)).font(.caption).foregroundStyle(.secondary)
+                    if let response = delivery.response, !response.isEmpty, response.uppercased() != "PASS" {
+                        Text(response).font(.callout).textSelection(.enabled)
+                    }
+                }
             }
             Button(agentMessageString("Reply")) {
                 senderID = message.recipientID
@@ -145,6 +151,16 @@ struct AgentMessagingView: View {
     private var canSend: Bool {
         guard let senderID, let recipientID else { return false }
         return senderID != recipientID && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private func deliveryTitle(_ state: AgentMessageDelivery.State) -> String {
+        switch state {
+        case .queued: agentMessageString("Queued")
+        case .running: agentMessageString("Running")
+        case .completed: agentMessageString("Completed")
+        case .failed: agentMessageString("Failed")
+        case .cancelled: agentMessageString("Cancelled")
+        }
     }
 
     private var emptyDescription: String {

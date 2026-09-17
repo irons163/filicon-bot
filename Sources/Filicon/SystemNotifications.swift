@@ -8,8 +8,36 @@ extension Notification.Name {
 }
 
 @MainActor
+protocol FiliconApplicationActivating: AnyObject {
+    @discardableResult func setActivationPolicy(_ activationPolicy: NSApplication.ActivationPolicy) -> Bool
+    func activate(ignoringOtherApps flag: Bool)
+}
+
+extension NSApplication: FiliconApplicationActivating {}
+
+@MainActor
 final class FiliconApplicationDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
+    private let application: any FiliconApplicationActivating
+
+    override convenience init() { self.init(application: NSApplication.shared) }
+
+    init(application: any FiliconApplicationActivating) {
+        self.application = application
+        super.init()
+    }
+
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        // Xcode's Swift-package Run and `swift run` launch an unbundled binary.
+        // macOS defaults those to .prohibited, even when SwiftUI draws a window:
+        // no Dock entry, app activation, or keyboard focus. Filicon is always a
+        // foreground app, regardless of whether it has an enclosing .app bundle.
+        application.setActivationPolicy(.regular)
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Do this once at launch, not on view updates (which would steal focus).
+        // It must precede the unbundled-build notification guard below.
+        application.activate(ignoringOtherApps: true)
         // `swift run Filicon` launches the executable without an enclosing
         // `.app` bundle. UserNotifications requires an app bundle proxy, so
         // keep the development executable usable while retaining notifications

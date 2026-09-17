@@ -1384,3 +1384,12 @@
 "No matching group members" = "일치하는 그룹 멤버가 없습니다";
 "All group members" = "모든 그룹 멤버";
 "↑↓ Select · Enter Insert · Esc Close" = "↑↓ 선택 · Enter 삽입 · Esc 닫기";
+"Choose a workspace folder" = "작업 폴더 선택";
+"Choose a folder to continue this task. File changes and commands still require permission." = "폴더를 선택하면 이 작업을 계속합니다. 파일 변경 및 명령 실행에는 여전히 승인이 필요합니다.";
+"Choose Folder…" = "폴더 선택…";
+"Requested folder: {0}" = "접근 요청 폴더: {0}";
+"Reauthorize workspace folder" = "작업 폴더 다시 승인";
+"The saved folder authorization is no longer valid. Choose the folder again to continue. Your files and chats have not been changed." = "저장된 폴더 접근 권한이 더 이상 유효하지 않습니다. 계속하려면 폴더를 다시 선택하세요. 파일과 채팅은 변경되지 않았습니다.";
+"Waiting for folder selection" = "폴더 선택 대기 중";
+"Member response failed. Send a message to retry." = "멤버 응답에 실패했습니다. 메시지를 보내 다시 시도하세요.";
+"No new contribution this turn." = "이번 차례에는 새로운 의견이 없습니다.";

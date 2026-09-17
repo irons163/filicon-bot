@@ -172,7 +172,7 @@ struct LocalToolsTests {
         let workspace = root.appendingPathComponent("workspace")
         try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: false)
         let store = WorkspaceAuthorizationStore(fileURL: storage)
-        _ = try await store.registerBookmarkData(Data([4, 2]), url: workspace)
+        let authorization = try await store.authorize(workspace)
         let helper = RecordingHelper()
         let key = Data(repeating: 9, count: 32)
         let first = LocalToolRuntime(workspaceStore: store, sessionKey: key, helper: helper)
@@ -189,7 +189,15 @@ struct LocalToolsTests {
         )
         #expect(result == .file(Data("fixture".utf8)))
         let captured = await helper.lastRequest
-        #expect(captured?.scope.securityScopedBookmarks == [Data([4, 2])])
+        #expect(captured?.scope.securityScopedBookmarks.count == 1)
+        let bookmark = try #require(captured?.scope.securityScopedBookmarks.first)
+        #expect(bookmark != authorization.bookmarkData)
+        var stale = false
+        let transported = try URL(resolvingBookmarkData: bookmark,
+                                  options: [.withoutImplicitStartAccessing, .withoutUI],
+                                  relativeTo: nil, bookmarkDataIsStale: &stale)
+        #expect(!stale)
+        #expect(transported.standardizedFileURL.path == workspace.standardizedFileURL.path)
         #expect(captured?.scope.permissionReceipt?.canonicalTarget.hasSuffix("/workspace/README.md") == true)
         if let receipt = captured?.scope.permissionReceipt {
             #expect(LocalSessionAuthenticator(sessionKey: key).verify(receipt))
@@ -232,6 +240,49 @@ struct LocalToolsTests {
                 conversationID: conversation, agentID: UUID(), runID: UUID(), toolCallID: "read-2"
             )
         }
+    }
+
+    @Test func transportBookmarksRequireAValidExactUnrevokedAuthorization() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = WorkspaceAuthorizationStore(fileURL: root.appendingPathComponent("bookmarks.json"))
+        await #expect(throws: LocalToolError.permissionMismatch) {
+            try await store.transportBookmark(forExactRoot: root.path)
+        }
+        let authorization = try await store.authorize(root)
+        _ = try await store.transportBookmark(forExactRoot: root.path)
+        await #expect(throws: LocalToolError.permissionMismatch) {
+            try await store.transportBookmark(forExactRoot: root.deletingLastPathComponent().path)
+        }
+        try await store.remove(id: authorization.id)
+        await #expect(throws: LocalToolError.permissionMismatch) {
+            try await store.transportBookmark(forExactRoot: root.path)
+        }
+        _ = try await store.registerBookmarkData(Data([4, 2]), url: root)
+        await #expect(throws: LocalToolError.workspaceAuthorizationNeedsRenewal) {
+            try await store.transportBookmark(forExactRoot: root.path)
+        }
+    }
+
+    @Test func shippingHostRejectsMissingOrDifferentRootBookmark() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let selected = root.appendingPathComponent("selected")
+        let other = root.appendingPathComponent("other")
+        try FileManager.default.createDirectory(at: selected, withIntermediateDirectories: false)
+        try FileManager.default.createDirectory(at: other, withIntermediateDirectories: false)
+        let store = WorkspaceAuthorizationStore(fileURL: root.appendingPathComponent("bookmarks.json"))
+        _ = try await store.authorize(selected)
+        let bookmark = try await store.transportBookmark(forExactRoot: selected.path)
+        let host = LocalToolProcessHost(generation: generation, requiresSecurityScopedRoots: true,
+                                        authenticate: { _ in true })
+        let operation = LocalOperation.writeFile(root: other.path, relativePath: "must-not-exist", data: Data([1]), replace: false)
+        #expect((await host.perform(request(operation))).error == .permissionMismatch)
+        let scope = LocalRequestScope(generation: generation, agentID: UUID(), runID: UUID(),
+                                      toolCallID: "wrong-root", expiresAt: .distantFuture,
+                                      securityScopedBookmarks: [bookmark])
+        #expect((await host.perform(.init(scope: scope, operation: operation))).error == .permissionMismatch)
+        #expect(!FileManager.default.fileExists(atPath: other.appendingPathComponent("must-not-exist").path))
     }
 
     private func trustedHost() -> LocalToolProcessHost {

@@ -1,11 +1,42 @@
 import Foundation
 
+/// Public room identity only. Never include another member's private instructions
+/// or one-to-one history in the shared roster.
+public struct GroupMemberIdentity: Codable, Equatable, Sendable {
+    public let id: UUID
+    public let name: String
+    public let title: String
+    public let summary: String
+
+    public init(_ profile: AgentProfile) {
+        id = profile.id; name = profile.name; title = profile.title; summary = profile.summary
+    }
+}
+
+public struct GroupTurnContext: Sendable {
+    public let group: AgentGroup
+    public let members: [GroupMemberIdentity]
+    public let respondingMemberIDs: [UUID]
+    public let round: Int
+    public let newMessageIDs: Set<UUID>
+
+    public init(group: AgentGroup, members: [GroupMemberIdentity], respondingMemberIDs: [UUID], round: Int, newMessageIDs: Set<UUID>) {
+        self.group = group; self.members = members; self.respondingMemberIDs = respondingMemberIDs
+        self.round = round; self.newMessageIDs = newMessageIDs
+    }
+}
+
 public protocol GroupAgentResponder: Sendable {
     func respond(agent: AgentProfile, history: [RoomMessage]) async throws -> [String]
     func respond(agent: AgentProfile, history: [RoomMessage], onTools: @escaping @Sendable ([RoomToolActivity]) async throws -> Void) async throws -> [String]
+    func respond(agent: AgentProfile, history: [RoomMessage], context: GroupTurnContext, onTools: @escaping @Sendable ([RoomToolActivity]) async throws -> Void) async throws -> [String]
 }
 
 public extension GroupAgentResponder {
+    func respond(agent: AgentProfile, history: [RoomMessage], context: GroupTurnContext, onTools: @escaping @Sendable ([RoomToolActivity]) async throws -> Void) async throws -> [String] {
+        try await respond(agent: agent, history: history, onTools: onTools)
+    }
+
     func respond(agent: AgentProfile, history: [RoomMessage], onTools: @escaping @Sendable ([RoomToolActivity]) async throws -> Void) async throws -> [String] {
         try await respond(agent: agent, history: history)
     }
@@ -47,6 +78,19 @@ public actor GroupService {
     }
 
     public func list() -> [AgentGroup] { state.groups }
+
+    /// Host-only reports from approved cross-agent wakes. The app fences these
+    /// to the originating request; they are not new user messages or @mentions.
+    public func recordDelegatedMessage(_ message: RoomMessage) throws {
+        guard message.senderID != nil, state.groups.contains(where: { $0.id == message.groupID }) else {
+            throw AgentServiceError.unknownGroup(message.groupID)
+        }
+        let previous = state.roomMessages
+        if let index = state.roomMessages.firstIndex(where: { $0.id == message.id && $0.groupID == message.groupID }) {
+            state.roomMessages[index] = message
+        } else { state.roomMessages.append(message) }
+        do { try persist() } catch { state.roomMessages = previous; throw error }
+    }
 
     /// Save the inspector's fields together, after validating the entire draft.
     public func update(groupID: UUID, name: String, summary: String, memberIDs: [UUID]) async throws {
@@ -107,12 +151,21 @@ public actor GroupService {
         var produced: [RoomMessage] = []
         var total = 0
         var successfulTurns = 0
-        var attemptedMemberIDs: Set<UUID> = []
+        // A successful member can return when a peer has contributed something
+        // new. Failed members are not retried automatically in the same run.
+        var failedMemberIDs: Set<UUID> = []
+        var seenMessageCounts: [UUID: Int] = [:]
+        var publishedTexts: [UUID: Set<String>] = [:]
         var firstFailure: (any Error)?
+        let initialHistory = state.roomMessages.filter { $0.groupID == groupID }
+        let responderIDs = Self.resolveResponderIDs(members: members, history: initialHistory)
+        guard !responderIDs.isEmpty else { return [] }
+        // Rotate the starting member between requests as well as between rounds.
+        state.groups[groupIndex].nextSpeakerOffset = (group.nextSpeakerOffset + 1) % responderIDs.count
+        try persist()
         for round in 0..<Self.maximumRounds {
             guard epochs[groupID] == epoch, !Task.isCancelled else { return produced }
-            let responderIDs = Self.resolveResponderIDs(members: members, history: state.roomMessages.filter { $0.groupID == groupID })
-            let rotation = Self.rotated(responderIDs, by: round).filter { !attemptedMemberIDs.contains($0) }
+            let rotation = Self.rotated(responderIDs, by: group.nextSpeakerOffset + round).filter { !failedMemberIDs.contains($0) }
             guard !rotation.isEmpty else { break }
             var messagesThisRound = 0
             for memberID in rotation {
@@ -120,8 +173,18 @@ public actor GroupService {
                       epochs[groupID] == epoch,
                       !Task.isCancelled,
                       let agent = members.first(where: { $0.id == memberID }) else { return produced }
-                attemptedMemberIDs.insert(memberID)
                 let history = state.roomMessages.filter { $0.groupID == groupID }
+                let previousSpeech = history.lastIndex { $0.senderID == memberID && !$0.text.isEmpty }
+                let unread = history.dropFirst(seenMessageCounts[memberID] ?? previousSpeech.map { $0 + 1 } ?? 0)
+                if seenMessageCounts[memberID] != nil,
+                   !unread.contains(where: { $0.senderID != memberID && (!$0.text.isEmpty || !$0.toolActivities.isEmpty) }) {
+                    continue
+                }
+                let context = GroupTurnContext(
+                    group: group, members: members.map(GroupMemberIdentity.init),
+                    respondingMemberIDs: responderIDs, round: round,
+                    newMessageIDs: Set(unread.map(\.id))
+                )
                 let responses: [String]
                 let activityMessage = RoomMessage(groupID: groupID, senderID: memberID, text: "")
                 await onAgentChange(agent.id)
@@ -131,7 +194,7 @@ public actor GroupService {
                 }
                 let responseTask = Task {
                     try Task.checkCancellation()
-                    return try await responder.respond(agent: agent, history: history) { tools in
+                    return try await responder.respond(agent: agent, history: history, context: context) { tools in
                         try await self.recordTools(tools, message: activityMessage, epoch: epoch, onMessage: onMessage)
                     }
                 }
@@ -145,6 +208,9 @@ public actor GroupService {
                     try await finishPendingTools(messageID: activityMessage.id, cancelled: error is CancellationError || epochs[groupID] != epoch || Task.isCancelled, onMessage: onMessage)
                     await onAgentChange(nil)
                     guard epochs[groupID] == epoch, !Task.isCancelled else { return produced }
+                    activeResponses[groupID] = nil
+                    failedMemberIDs.insert(memberID)
+                    try await recordOutcome(.failed, message: activityMessage, onMessage: onMessage)
                     if firstFailure == nil { firstFailure = error }
                     continue
                 }
@@ -156,10 +222,13 @@ public actor GroupService {
                 await onAgentChange(nil)
                 guard epochs[groupID] == epoch, !Task.isCancelled else { return produced }
                 var sentThisTurn = 0
-                for text in responses {
+                for text in responses.filter({ !Self.isPass($0) }).prefix(Self.maximumMessagesPerMemberTurn) {
                     let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
                     guard !Self.isPass(trimmed) else { continue }
-                    var message = RoomMessage(groupID: groupID, senderID: memberID, text: String(trimmed.prefix(8_000)))
+                    let boundedText = String(trimmed.prefix(8_000))
+                    let fingerprint = boundedText.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+                    guard publishedTexts[memberID, default: []].insert(fingerprint).inserted else { continue }
+                    var message = RoomMessage(groupID: groupID, senderID: memberID, text: boundedText)
                     if sentThisTurn == 0, let index = state.roomMessages.firstIndex(where: { $0.id == activityMessage.id }) {
                         state.roomMessages[index].text = message.text
                         message = state.roomMessages[index]
@@ -172,6 +241,16 @@ public actor GroupService {
                     sentThisTurn += 1
                     if total >= Self.maximumMemberMessages || sentThisTurn >= Self.maximumMessagesPerMemberTurn { break }
                 }
+                // Tool-only work is still useful input for peers. A genuine PASS
+                // is visible once, but never feeds back as new work for the loop.
+                if sentThisTurn == 0 {
+                    if state.roomMessages.contains(where: { $0.id == activityMessage.id && !$0.toolActivities.isEmpty }) {
+                        messagesThisRound += 1
+                    } else if seenMessageCounts[memberID] == nil {
+                        try await recordOutcome(.passed, message: activityMessage, onMessage: onMessage)
+                    }
+                }
+                seenMessageCounts[memberID] = state.roomMessages.filter { $0.groupID == groupID }.count
             }
             if messagesThisRound == 0 || total >= Self.maximumMemberMessages { break }
         }
@@ -205,6 +284,19 @@ public actor GroupService {
         }
         try persist()
         await onMessage(state.roomMessages[index])
+    }
+
+    private func recordOutcome(_ outcome: RoomMemberOutcome, message: RoomMessage, onMessage: @Sendable (RoomMessage) async -> Void) async throws {
+        var updated = message
+        if let index = state.roomMessages.firstIndex(where: { $0.id == message.id }) {
+            state.roomMessages[index].memberOutcome = outcome
+            updated = state.roomMessages[index]
+        } else {
+            updated.memberOutcome = outcome
+            state.roomMessages.append(updated)
+        }
+        try persist()
+        await onMessage(updated)
     }
 
     public func toggleReaction(messageID: UUID, actorID: UUID, emoji: String) throws -> Bool {

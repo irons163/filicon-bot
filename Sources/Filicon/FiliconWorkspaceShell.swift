@@ -109,10 +109,11 @@ struct FiliconSidebar: View {
                         Button { model.selectGroup(id: group.id) } label: {
                             ChatListRow(
                                 title: group.name,
-                                subtitle: model.groupMessages[group.id]?.last?.text ?? group.summary,
+                                subtitle: groupPreview(group),
                                 date: model.groupMessages[group.id]?.last?.createdAt,
                                 selected: model.route == .groups && (model.selectedGroupID == group.id || model.selectedGroupID == nil && model.groups.first?.id == group.id),
-                                isWorking: model.runningGroups.contains(group.id)
+                                isWorking: model.runningGroups.contains(group.id),
+                                needsFolderSelection: model.pendingWorkspaceFolders.contains { $0.conversationID == group.id }
                             ) {
                                 GroupAvatar(group: group, agents: model.agents, size: 36)
                             }
@@ -185,6 +186,15 @@ struct FiliconSidebar: View {
         }.background(FiliconTheme.sidebar)
     }
 
+    private func groupPreview(_ group: AgentGroup) -> String {
+        guard let message = model.groupMessages[group.id]?.last else { return group.summary }
+        switch message.memberOutcome {
+        case .passed: return l10n("No new contribution this turn.")
+        case .failed: return l10n("Member response failed. Send a message to retry.")
+        case nil: return message.text
+        }
+    }
+
     private func sidebarCaption(_ title: String) -> some View {
         Text(title).font(.system(size: 10, weight: .medium))
             .foregroundStyle(FiliconTheme.textTertiary).padding(.horizontal, 12).padding(.bottom, 4)
@@ -211,6 +221,7 @@ struct ChatListRow<Avatar: View>: View {
     var date: Date?
     var selected = false
     var isWorking = false
+    var needsFolderSelection = false
     @ViewBuilder var avatar: Avatar
 
     var body: some View {
@@ -225,10 +236,15 @@ struct ChatListRow<Avatar: View>: View {
                     }
                 }
                 HStack(spacing: 4) {
-                    Text(subtitle.isEmpty ? FiliconLocalization.string("No messages") : subtitle)
+                    Text(needsFolderSelection ? l10n("Waiting for folder selection") : subtitle.isEmpty ? FiliconLocalization.string("No messages") : subtitle)
                         .font(.system(size: 11.5)).foregroundStyle(FiliconTheme.textTertiary).lineLimit(1)
                     Spacer(minLength: 0)
-                    if isWorking { ProgressView().controlSize(.mini) }
+                    if needsFolderSelection {
+                        Image(systemName: "folder.badge.questionmark")
+                            .help(l10n("Waiting for folder selection"))
+                    } else if isWorking {
+                        ProgressView().controlSize(.mini)
+                    }
                 }
             }
         }

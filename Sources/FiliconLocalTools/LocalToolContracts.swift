@@ -164,6 +164,7 @@ public enum LocalToolError: Error, Codable, Hashable, Sendable, LocalizedError {
     case staleGeneration
     case replayedRequest
     case permissionMismatch
+    case workspaceAuthorizationNeedsRenewal
     case pathEscape
     case unsupportedFileType
     case processNotFound
@@ -172,7 +173,12 @@ public enum LocalToolError: Error, Codable, Hashable, Sendable, LocalizedError {
     case timedOut
     case ioFailure(String)
 
-    public var errorDescription: String? { String(describing: self) }
+    public var errorDescription: String? {
+        if self == .workspaceAuthorizationNeedsRenewal {
+            return "The saved workspace authorization is no longer valid for this app. Ask the user to choose the folder again in the chat. No file operation ran; this is not a project file format error."
+        }
+        return String(describing: self)
+    }
 }
 
 /// Same semantic surface as the eventual NSXPC interface, kept free of XPC

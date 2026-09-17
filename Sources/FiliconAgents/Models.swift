@@ -301,6 +301,20 @@ public struct PendingAgentWake: Identifiable, Codable, Hashable, Sendable {
 
 public enum AgentMessagePriority: String, Codable, Hashable, Sendable { case normal, priority }
 
+/// Execution state is separate from the mailbox's read/unread marker.
+public struct AgentMessageDelivery: Codable, Hashable, Sendable {
+    public enum State: String, Codable, Sendable { case queued, running, completed, failed, cancelled }
+    public let chainID: UUID
+    public let originConversationID: UUID
+    public var state: State
+    public var response: String?
+
+    public init(chainID: UUID, originConversationID: UUID, state: State = .queued, response: String? = nil) {
+        self.chainID = chainID; self.originConversationID = originConversationID
+        self.state = state; self.response = response
+    }
+}
+
 public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
     public let id: UUID
     public let senderID: UUID
@@ -309,11 +323,14 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
     public let priority: AgentMessagePriority
     public let createdAt: Date
     public var deliveredAt: Date?
+    public var delivery: AgentMessageDelivery?
 
     public init(id: UUID = UUID(), senderID: UUID, recipientID: UUID, text: String,
-                priority: AgentMessagePriority = .normal, createdAt: Date = Date(), deliveredAt: Date? = nil) {
+                priority: AgentMessagePriority = .normal, createdAt: Date = Date(), deliveredAt: Date? = nil,
+                delivery: AgentMessageDelivery? = nil) {
         self.id = id; self.senderID = senderID; self.recipientID = recipientID
         self.text = text; self.priority = priority; self.createdAt = createdAt; self.deliveredAt = deliveredAt
+        self.delivery = delivery
     }
 }
 
@@ -342,6 +359,9 @@ public struct RoomToolActivity: Identifiable, Codable, Hashable, Sendable {
     }
 }
 
+/// Host-authored status, separate from model prose and tool results.
+public enum RoomMemberOutcome: String, Codable, Hashable, Sendable { case passed, failed }
+
 public struct RoomMessage: Identifiable, Codable, Hashable, Sendable {
     public let id: UUID
     public let groupID: UUID
@@ -349,12 +369,14 @@ public struct RoomMessage: Identifiable, Codable, Hashable, Sendable {
     public var text: String
     public let createdAt: Date
     public var toolActivities: [RoomToolActivity]
-    public init(id: UUID = UUID(), groupID: UUID, senderID: UUID?, text: String, createdAt: Date = Date(), toolActivities: [RoomToolActivity] = []) {
+    public var memberOutcome: RoomMemberOutcome?
+    public init(id: UUID = UUID(), groupID: UUID, senderID: UUID?, text: String, createdAt: Date = Date(), toolActivities: [RoomToolActivity] = [], memberOutcome: RoomMemberOutcome? = nil) {
         self.id = id; self.groupID = groupID; self.senderID = senderID; self.text = text; self.createdAt = createdAt
         self.toolActivities = toolActivities
+        self.memberOutcome = memberOutcome
     }
 
-    private enum CodingKeys: String, CodingKey { case id, groupID, senderID, text, createdAt, toolActivities }
+    private enum CodingKeys: String, CodingKey { case id, groupID, senderID, text, createdAt, toolActivities, memberOutcome }
     public init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         id = try values.decode(UUID.self, forKey: .id)
@@ -363,6 +385,7 @@ public struct RoomMessage: Identifiable, Codable, Hashable, Sendable {
         text = try values.decode(String.self, forKey: .text)
         createdAt = try values.decode(Date.self, forKey: .createdAt)
         toolActivities = try values.decodeIfPresent([RoomToolActivity].self, forKey: .toolActivities) ?? []
+        memberOutcome = try values.decodeIfPresent(RoomMemberOutcome.self, forKey: .memberOutcome)
     }
 }
 

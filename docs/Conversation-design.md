@@ -22,6 +22,94 @@ The Members section in both the inspector and new-group sheet provides **New mem
 
 ## Verification
 
+### Group collaboration (September 18 correction)
+
+The reference `grok-bot-0.18-reconstructed` has bounded multi-round collaboration,
+not a fixed designer → engineer → reviewer workflow. Filicon now passes the group
+name/goal, public member names/titles/descriptions, and named shared history to
+each responder. Private instructions and private chats are not shared with peers.
+History identifies new messages since the member's previous turn; the latest
+user request remains separate from old diagnostic instructions.
+
+Each request allows at most three rounds and ten published messages (two per
+member turn). A member may continue after new peer text/tool activity, including
+after an earlier PASS; they are not called again just to react to their own
+output. Starting order rotates between requests and rounds. Repeated text from
+the same member is suppressed within the request. PASS and member failures are
+host-authored, localized notices, not fabricated assistant replies. Failed
+members are not automatically retried within the same request. Existing groups
+and histories need no recreation or migration.
+
+Safety differences from the reference remain deliberate: only the latest user's
+mentions choose the participating set; an assistant cannot expand it by writing
+`@everyone`. Peer messages are not fresh user authorization. Existing host-tool
+permissions, approval receipts, cancellations, and tool evidence remain in force.
+Multi-round work does not grant new permissions or guarantee a particular model
+will always make a useful contribution.
+
+This repairs group turn-taking/context, not full original-runtime parity.
+Filicon posts final responses itself instead of exposing the reference's
+`SendMessage` tool.
+
+### Cross-agent SendToAgent
+
+Group inference now receives a real, request-scoped `SendToAgent` executor. The
+host fixes the sender identity; the model supplies only an active recipient UUID
+and a bounded message. It is not registered globally for anonymous direct chats.
+New delegations require a real approval card showing the recipient and **entire**
+outgoing payload, even when auto-review has a general allow rule. This is also
+how a user can explicitly approve help from an agent outside the participating
+group. A plain `@mention` still cannot expand the participant set.
+
+Approval → durable enqueue → immediate queued acknowledgement → foreground group
+responses finish → recipient wake in an independent inference context → explicit
+SendToAgent reply → sender wake. Only that agent's own current-request history and
+the explicitly delivered peer message enter a wake; the sender's private persona
+or complete conversation is never copied to a different agent. Incoming peer
+messages have assistant role, not new user authority. A single reply to the
+approved sender is part of the exchange; new handoffs require new approval.
+Final wake reports and real tool activity are visible in the originating group.
+The Agents > Messages view also shows queued/running/completed/failed/cancelled
+delivery state separately from read/unread state.
+
+Each user request has at most six queued messages/wakes in addition to the bounded
+group rounds, with duplicate suppression, exact-call idempotency and a 180-second
+deadline per wake. PASS never creates an automatic courtesy reply. Stop and
+account changes fence queued work and cancel the active wake. Restart preserves
+the mailbox but cancels unfinished deliveries instead of replaying old approvals.
+Recipient tools use a fresh run ID and retain the originating conversation's
+existing folder, local-tool, MCP and auto-review approval gates; delegation does
+not grant file-write or external-action permission.
+
+This is deliberately narrower than the reference's full background session
+runtime: it has request-scoped agent contexts, not a permanent personal agent
+conversation/memory service; it does not interrupt user work, wake arbitrary
+closed conversations, broadcast to group targets, attach images, or accept a
+priority-interruption flag. Manual mailbox composition remains a stored message,
+not an inference trigger. These differences remain tracked as partial parity.
+
+`AgentMessagingSessionTests` exercises real tool-loop dispatch with scripted
+providers, reply wakes, context isolation, permissions scope, denial, spoofed
+sender rejection, duplicate/replay protection, the six-message cap, timeout,
+cancellation, persistence failure and restart compatibility.
+`SendToAgentAppIntegrationTests` exercises the actual AppModel group path and
+approval broker, including an outside-group recipient, approval/denial and a
+late approval after Stop. These tests do not contact a paid/live model or alter
+the user's groups.
+
+`GroupCollaborationTests` covers handoffs, incremental context, privacy, PASS,
+failure visibility, rotation, duplicate suppression and caps.
+`GroupToolApprovalIntegrationTests/engineerAndDesignerPerformApprovedFileHandoffsInTheExistingGroup`
+uses scripted providers but real local file tools, permission receipts and both
+approval layers in an isolated workspace: create → design read → revise → reread.
+It does not contact a live model or modify the user's project.
+
+Validation including SendToAgent: `swift test --no-parallel` reported 134 XCTest
+tests and a 548-test Swift Testing run with no failures. The two opt-in live
+Codex tests were skipped. Native `Filicon App` Debug build succeeded. All seven
+catalogs passed the localization audit; PASS/failure notices rendered in all
+seven languages, with Traditional Chinese and French PNGs visually inspected.
+
 `ConversationDesignTests` covers the responsive breakpoint, draft separation, membership binding, persistence validation, transcript preservation and native SwiftUI rendering. To export review PNGs without changing the user's data:
 
 ```sh

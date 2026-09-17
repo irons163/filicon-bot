@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import CustomDump
 import FiliconAppServices
 import FiliconDomain
 import FiliconProviderKit
@@ -63,8 +64,15 @@ struct TurnMemoryAppIntegrationTests {
             return !model.running.contains(conversationID) && requestCount == 2
         })
         let requests = await probe.values()
-        #expect(requests[1].messages.map(\.role) == [.user, .assistant, .user])
-        #expect(requests[1].messages.map(\.text) == ["first question", "durable answer", "second question"])
+        // Live host metadata accompanies inference, not durable conversation
+        // memory. It must occur once and must not duplicate hydrated messages.
+        let hostContext = requests[1].messages.filter { $0.role == .system }
+        expectNoDifference(hostContext.count, 1)
+        #expect(hostContext.first?.text.hasPrefix("Current Filicon host-tool permissions") == true)
+        let transcript = requests[1].messages.filter { $0.role != .system }
+        expectNoDifference(transcript.map(\.role), [.user, .assistant, .user])
+        expectNoDifference(transcript.map(\.text), ["first question", "durable answer", "second question"])
+        #expect(!model.conversations[index].messages.contains { $0.role == .system })
         let reopenedStore = ConversationStore(fileURL: root.appending(path: "conversations.json"))
         #expect(try await reopenedStore.recentTurnMemory(conversationID: conversationID).count == 2)
     }

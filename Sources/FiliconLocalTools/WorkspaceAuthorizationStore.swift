@@ -18,6 +18,11 @@ public struct WorkspaceAuthorization: Codable, Hashable, Identifiable, Sendable 
 /// an arbitrary path without supplying bookmark data created from an
 /// NSOpenPanel result.
 public actor WorkspaceAuthorizationStore {
+    public enum AccessState: Equatable, Sendable {
+        case missing
+        case ready
+        case needsRenewal
+    }
     private let fileURL: URL
     private var values: [WorkspaceAuthorization]
 
@@ -72,6 +77,50 @@ public actor WorkspaceAuthorizationStore {
     public func authorization(forExactRoot path: String) -> WorkspaceAuthorization? {
         let canonical = URL(fileURLWithPath: path).standardizedFileURL.path
         return values.first { $0.path == canonical }
+    }
+
+    /// A stored path is not proof that its app-scoped grant is still usable.
+    /// Revalidate on use: app signing changes can invalidate a persisted grant.
+    /// Never fall back to resolving without security scope or mint a grant
+    /// from the saved path; renewal requires a new explicit user selection.
+    public func accessState(forExactRoot path: String) throws -> AccessState {
+        guard authorization(forExactRoot: path) != nil else { return .missing }
+        do {
+            _ = try transportBookmark(forExactRoot: path)
+            return .ready
+        } catch LocalToolError.workspaceAuthorizationNeedsRenewal {
+            return .needsRenewal
+        }
+    }
+
+    /// Persistent app-scoped bookmarks belong to the app that created them,
+    /// not its separately signed XPC service. Resolve here, then issue an
+    /// ephemeral bookmark for transport while access is active. Never mint
+    /// a capability from an unregistered model-supplied path.
+    public func transportBookmark(forExactRoot path: String) throws -> Data {
+        guard let authorization = authorization(forExactRoot: path) else {
+            throw LocalToolError.permissionMismatch
+        }
+        var stale = false
+        let url: URL
+        do {
+            url = try URL(resolvingBookmarkData: authorization.bookmarkData,
+                          options: [.withSecurityScope, .withoutUI],
+                          relativeTo: nil, bookmarkDataIsStale: &stale)
+        } catch {
+            // Cocoa's error 259 misleadingly describes a file format error.
+            // This failure concerns a saved grant, before any project I/O.
+            throw LocalToolError.workspaceAuthorizationNeedsRenewal
+        }
+        guard !stale, url.standardizedFileURL.path == authorization.path else {
+            throw LocalToolError.workspaceAuthorizationNeedsRenewal
+        }
+        let accessed = url.startAccessingSecurityScopedResource()
+        defer { if accessed { url.stopAccessingSecurityScopedResource() } }
+        // The main app is not sandboxed, so startAccessing may return false
+        // even for an accessible URL. Bookmark creation must still succeed;
+        // the sandboxed recipient requires an actual extension before use.
+        return try url.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil)
     }
 
     private func persist() throws {

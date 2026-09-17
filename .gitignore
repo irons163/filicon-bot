@@ -3,6 +3,7 @@
 DerivedData/
 dist/
 *.xcuserstate
+xcuserdata/
 .DS_Store
 
 # Local release credentials and signing material. Public keys and signatures

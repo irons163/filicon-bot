@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import OSLog
 
 public struct LocalSessionAuthenticator: Sendable {
     private let key: SymmetricKey
@@ -65,6 +66,7 @@ public actor LocalToolProcessHost: LocalToolHelperProtocol {
     private let verifyReceipt: (@Sendable (LocalPermissionReceipt) -> Bool)?
     private let fileSystem = SafeFileSystem()
     private let processes = LocalProcessSupervisor()
+    private let logger = Logger(subsystem: "com.filicon.app", category: "WorkspaceAuthorization")
 
     public init(
         generation: UUID,
@@ -103,14 +105,24 @@ public actor LocalToolProcessHost: LocalToolHelperProtocol {
             var stale = false
             guard let url = try? URL(
                 resolvingBookmarkData: bookmark,
-                options: [.withSecurityScope, .withoutUI],
+                options: [.withoutImplicitStartAccessing, .withoutUI],
                 relativeTo: nil,
                 bookmarkDataIsStale: &stale
-            ), !stale else { continue }
-            let standardized = url.standardizedFileURL
-            guard standardized.path == URL(fileURLWithPath: requiredRoot).standardizedFileURL.path,
-                  standardized.startAccessingSecurityScopedResource() else { continue }
-            opened.append(standardized)
+            ) else { logger.error("Transport bookmark could not be resolved"); continue }
+            guard url.standardizedFileURL.path == URL(fileURLWithPath: requiredRoot).standardizedFileURL.path else {
+                logger.error("Transport bookmark does not match the requested root")
+                continue
+            }
+            guard url.startAccessingSecurityScopedResource() else {
+                logger.error("Transport bookmark did not grant a sandbox extension")
+                continue
+            }
+            // `stale` describes bookmark metadata, not the sandbox capability.
+            // This fresh, authenticated transport bookmark is never persisted
+            // by the service; inaccessible ancestor metadata can mark it stale.
+            // Authority comes from the exact root and successful scope above.
+            // Persistent bookmarks are validated by their owning app.
+            opened.append(url)
         }
         if requiresSecurityScopedRoots, opened.isEmpty {
             throw LocalToolError.permissionMismatch

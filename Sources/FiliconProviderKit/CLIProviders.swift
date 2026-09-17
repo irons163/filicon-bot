@@ -1,9 +1,9 @@
 import Foundation
 import FiliconDomain
 
-public struct CodexCLIProvider: AIProvider {
+public struct CodexCLIProvider: InteractiveToolProvider {
     public let descriptor = ProviderDescriptor(
-        id: "codex-cli", displayName: "Codex CLI", requiresAPIKey: false, supportsToolCalling: false
+        id: "codex-cli", displayName: "Codex CLI", requiresAPIKey: false, supportsToolCalling: true
     )
     public let executableURL: URL?
     private let runner: any CLIProcessRunning
@@ -34,6 +34,12 @@ public struct CodexCLIProvider: AIProvider {
 
     public func stream(_ request: InferenceRequest) -> AsyncThrowingStream<InferenceEvent, Error> {
         CLIProviderStream.make(request: request) { try invocation(for: request) }
+    }
+
+    public func stream(_ request: InferenceRequest,
+                       executeTool: @escaping @Sendable (NormalizedToolCall) async throws -> NormalizedToolResult)
+        -> AsyncThrowingStream<InferenceEvent, Error> {
+        CodexAppServerBridge(executableURL: executableURL, runner: runner).stream(request, executeTool: executeTool)
     }
 
     private func invocation(for request: InferenceRequest) throws -> CLIInvocation {
