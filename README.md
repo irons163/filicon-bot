@@ -67,6 +67,25 @@ acceptance boundaries and security invariants.
 
 ## Current limitations
 
+Group chat uses the same registered local/MCP tools and approval gates as direct
+chat when the selected provider supports tool calling. Execution badges come
+from host tool results; an ordinary text reply (including older history) is not
+proof that an action ran. Text-only providers cannot use Filicon tools. Gmail
+installation/connect cards are not implemented; configure integrations through
+MCP Servers or Plugins instead of asking the model to emit an installation card.
+
+In a group, typing `@` opens a filtered member picker (active group members plus
+`@everyone`). Click a member or use ↑/↓ and Return/Tab to insert the name; Escape
+closes the picker without changing the draft. Return selects while the picker is
+open and sends when it is closed. Option–Return inserts a newline. IME composition
+keys are left to the input method so choosing Chinese/Japanese/Korean text does
+not send a message.
+
+In a group, `@name` addresses an existing member and `@everyone` addresses all
+members. Unknown names are rejected before sending, with the draft preserved.
+Stopping a group cancels pending tool execution and approvals; cancelled
+approvals cannot authorize a later turn.
+
 Live cloud-provider, account, MCP, Shared Room, publishing, remote-computer, and
 Apple notarization checks require credentials and services not stored in this
 repository. Contract and integration tests therefore use deterministic local

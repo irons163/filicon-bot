@@ -46,7 +46,7 @@ public actor TurnCoordinator {
         let token: UUID
         let request: InferenceRequest
         let provider: any AIProvider
-        let onEvent: @Sendable (InferenceEvent) async -> Void
+        let onEvent: @Sendable (InferenceEvent) async throws -> Void
         let continuation: CheckedContinuation<Void, any Error>
     }
 
@@ -66,7 +66,7 @@ public actor TurnCoordinator {
     public func send(
         request: InferenceRequest,
         providerID: ProviderID,
-        onEvent: @escaping @Sendable (InferenceEvent) async -> Void
+        onEvent: @escaping @Sendable (InferenceEvent) async throws -> Void
     ) async throws {
         guard let provider = await registry.provider(id: providerID) else {
             throw ProviderError.invalidResponse
@@ -139,7 +139,7 @@ public actor TurnCoordinator {
             }
             for try await event in stream {
                 try Task.checkCancellation()
-                await submission.onEvent(event)
+                try await submission.onEvent(event)
             }
         }
         active[conversationID] = ActiveTurn(

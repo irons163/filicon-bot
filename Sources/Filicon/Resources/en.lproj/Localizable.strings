@@ -1370,3 +1370,17 @@
 "Filicon could not open its data folder." = "Filicon could not open its data folder.";
 "No workspace data was opened or moved. Check folder permissions, then restart Filicon." = "No workspace data was opened or moved. Check folder permissions, then restart Filicon.";
 "Quit Filicon" = "Quit Filicon";
+/* Group tool execution */
+"Tools & connections" = "Tools & connections";
+"Integrations are managed in MCP Servers and Plugins. Gmail installation cards are not supported in chat." = "Integrations are managed in MCP Servers and Plugins. Gmail installation cards are not supported in chat.";
+"Text-only providers cannot use Filicon tools." = "Text-only providers cannot use Filicon tools.";
+"Awaiting approval or result" = "Awaiting approval or result";
+"No group member matches @{0}. Add the member or choose an existing name." = "No group member matches @{0}. Add the member or choose an existing name.";
+"Approval required" = "Approval required";
+"Reject" = "Reject";
+"Text reply · no tools used" = "Text reply · no tools used";
+/* Group mention completion */
+"Mention a group member" = "Mention a group member";
+"No matching group members" = "No matching group members";
+"All group members" = "All group members";
+"↑↓ Select · Enter Insert · Esc Close" = "↑↓ Select · Enter Insert · Esc Close";

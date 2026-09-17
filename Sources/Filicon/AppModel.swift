@@ -106,6 +106,8 @@ final class AppModel: ObservableObject {
     @Published var selectedGroupID: UUID?
     @Published var groupMessages: [UUID: [RoomMessage]] = [:]
     @Published var runningGroups: Set<UUID> = []
+    private var stoppingGroups: Set<UUID> = []
+    private var cancelledGroupRuns: Set<UUID> = []
     @Published var thinkingGroupMembers: [UUID: UUID] = [:]
     @Published var automations: [Automation] = []
     @Published var automationHistory: [UUID: [AutomationRun]] = [:]
@@ -352,6 +354,7 @@ final class AppModel: ObservableObject {
     convenience init(
         applicationSupportRoot: URL,
         bootstrapImmediately: Bool = true,
+        localToolRuntime: LocalToolRuntime? = nil,
         mcpOAuthTransport: any MCPOAuthTokenTransport = URLSessionMCPOAuthTokenTransport(),
         mcpOAuthBrowserOpener: @escaping @MainActor @Sendable (URL) -> Bool = { NSWorkspace.shared.open($0) }
     ) {
@@ -360,6 +363,7 @@ final class AppModel: ObservableObject {
         self.init(
             startupContext: context,
             bootstrapImmediately: bootstrapImmediately,
+            localToolRuntime: localToolRuntime,
             mcpOAuthTransport: mcpOAuthTransport,
             mcpOAuthBrowserOpener: mcpOAuthBrowserOpener
         )
@@ -368,6 +372,7 @@ final class AppModel: ObservableObject {
     init(
         startupContext: AppStartupContext,
         bootstrapImmediately: Bool = true,
+        localToolRuntime: LocalToolRuntime? = nil,
         mcpOAuthTransport: any MCPOAuthTokenTransport = URLSessionMCPOAuthTokenTransport(),
         mcpOAuthBrowserOpener: @escaping @MainActor @Sendable (URL) -> Bool = { NSWorkspace.shared.open($0) }
     ) {
@@ -389,7 +394,7 @@ final class AppModel: ObservableObject {
             })
         )
         let workspaceStore = WorkspaceAuthorizationStore(fileURL: root.appending(path: "workspace-bookmarks.json"))
-        localToolRuntime = LocalToolRuntime(workspaceStore: workspaceStore)
+        self.localToolRuntime = localToolRuntime ?? LocalToolRuntime(workspaceStore: workspaceStore)
         localToolPermissionPolicy = ToolPermissionPolicy(persistenceURL: root.appending(path: "local-tool-permissions.json"))
         computerController = ComputerSessionController(backend: LocalMacComputerBackend())
         let teachBackend = ScreenCaptureKitBackend()
@@ -2694,6 +2699,7 @@ final class AppModel: ObservableObject {
     func saveGroupSettings(groupID: UUID, name: String, summary: String, memberIDs: [UUID]) async -> Bool {
         guard let groupService else { errorMessage = l10n("Group storage is unavailable."); return false }
         do {
+            if runningGroups.contains(groupID) { await stopGroup(id: groupID) }
             try await groupService.update(groupID: groupID, name: name, summary: summary, memberIDs: memberIDs)
             groups = await groupService.list()
             return true
@@ -2705,43 +2711,61 @@ final class AppModel: ObservableObject {
 
     func updateGroupMembers(groupID: UUID, memberIDs: [UUID]) async {
         guard let groupService else { return }
+        if runningGroups.contains(groupID) { await stopGroup(id: groupID) }
         do { try await groupService.updateMembers(groupID: groupID, memberIDs: memberIDs); groups = await groupService.list() }
         catch { errorMessage = error.localizedDescription }
     }
 
     func sendGroupMessage(groupID: UUID, text: String) async {
-        guard let groupService, !runningGroups.contains(groupID) else { return }
+        guard let groupService, !runningGroups.contains(groupID), !stoppingGroups.contains(groupID) else { return }
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
+        // Reserve before the first suspension so two sends cannot race.
+        runningGroups.insert(groupID)
+        defer {
+            runningGroups.remove(groupID)
+            cancelledGroupRuns.remove(groupID)
+            thinkingGroupMembers[groupID] = nil
+        }
         do {
             _ = try await groupService.postUserMessage(text, groupID: groupID)
             groupMessages[groupID] = await groupService.messages(groupID: groupID)
-            runningGroups.insert(groupID)
-            defer {
-                runningGroups.remove(groupID)
-                thinkingGroupMembers[groupID] = nil
-            }
+            guard !cancelledGroupRuns.contains(groupID) else { return }
             _ = try await groupService.run(
                 groupID: groupID,
-                responder: AppGroupResponder(registry: registry),
+                responder: GroupConversationResponder(groupID: groupID, registry: registry, coordinator: coordinator),
                 onAgentChange: { [weak self] agentID in
                     await MainActor.run { self?.thinkingGroupMembers[groupID] = agentID }
                 }
             ) { [weak self] message in
                 await MainActor.run {
                     guard let self else { return }
-                    if self.groupMessages[groupID, default: []].contains(where: { $0.id == message.id }) == false {
-                        self.groupMessages[groupID, default: []].append(message)
-                    }
+                    if let index = self.groupMessages[groupID, default: []].firstIndex(where: { $0.id == message.id }) {
+                        self.groupMessages[groupID]?[index] = message
+                    } else { self.groupMessages[groupID, default: []].append(message) }
                 }
             }
             groupMessages[groupID] = await groupService.messages(groupID: groupID)
-        } catch { errorMessage = error.localizedDescription }
+        } catch is CancellationError {
+            groupMessages[groupID] = await groupService.messages(groupID: groupID)
+        } catch {
+            groupMessages[groupID] = await groupService.messages(groupID: groupID)
+            if !stoppingGroups.contains(groupID) { errorMessage = error.localizedDescription }
+        }
+        await cancelAutoReviewApprovals(conversationID: groupID, lifecycle: .cancelled)
     }
 
     func stopGroup(id: UUID) async {
+        guard runningGroups.contains(id), stoppingGroups.insert(id).inserted else { return }
+        cancelledGroupRuns.insert(id)
+        defer { stoppingGroups.remove(id) }
         await groupService?.stop(groupID: id)
-        runningGroups.remove(id)
+        await coordinator.cancel(conversationID: id)
+        await cancelAutoReviewApprovals(conversationID: id, lifecycle: .cancelled)
+        await localToolApprovalBroker.cancel(conversationID: id)
+        await localToolPermissionPolicy.revokePendingGrants(conversationID: id)
+        await localToolRuntime.cancel(conversationID: id)
+        await invalidateMCPAuthorization(conversationID: id)
         thinkingGroupMembers[id] = nil
     }
 
@@ -3818,6 +3842,20 @@ final class AppModel: ObservableObject {
 
     private func registerAutoReviewApproval(_ pending: PendingApproval) async {
         let conversationID = pending.action.context.conversationID
+        if groups.contains(where: { $0.id == conversationID }) {
+            guard runningGroups.contains(conversationID), !cancelledGroupRuns.contains(conversationID),
+                  pendingAutoReviewByID[pending.id] == nil else {
+                await autoReviewBroker.cancel(reviewID: pending.id, fence: pending.fence)
+                return
+            }
+            pendingAutoReviewByID[pending.id] = pending
+            pendingAutoReviewApprovals = pendingAutoReviewByID.values.sorted { $0.createdAt < $1.createdAt }
+            Task { [weak self] in
+                try? await Task.sleep(for: .seconds(max(0, pending.expiresAt.timeIntervalSinceNow)))
+                await self?.expireAutoReviewApproval(reviewID: pending.id, fence: pending.fence)
+            }
+            return
+        }
         guard let index = conversations.firstIndex(where: { $0.id == conversationID }),
               pendingAutoReviewByID[pending.id] == nil else {
             await autoReviewBroker.cancel(reviewID: pending.id, fence: pending.fence)
@@ -3857,6 +3895,17 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func resolveGroupApproval(_ pending: PendingApproval, groupID: UUID, approve: Bool) async {
+        guard pending.action.context.conversationID == groupID,
+              pendingAutoReviewByID[pending.id] == pending,
+              runningGroups.contains(groupID), !cancelledGroupRuns.contains(groupID) else { return }
+        do {
+            try await autoReviewBroker.resolve(reviewID: pending.id, resolution: approve ? .approve : .deny, fence: pending.fence)
+        } catch { errorMessage = error.localizedDescription }
+        pendingAutoReviewByID.removeValue(forKey: pending.id)
+        pendingAutoReviewApprovals = pendingAutoReviewByID.values.sorted { $0.createdAt < $1.createdAt }
+    }
+
     func setAutoReviewEnabled(_ enabled: Bool) async {
         var updated = autoReviewInstructions
         updated.isEnabled = enabled
@@ -3892,7 +3941,6 @@ final class AppModel: ObservableObject {
         let requests = pendingAutoReviewByID.values.filter {
             $0.action.context.conversationID == conversationID
         }
-        guard !requests.isEmpty else { return }
         await autoReviewBroker.cancelAll(agentID: conversationID.uuidString.lowercased())
         for request in requests {
             pendingAutoReviewByID.removeValue(forKey: request.id)
@@ -3912,7 +3960,9 @@ final class AppModel: ObservableObject {
         pendingAutoReviewApprovals = pendingAutoReviewByID.values.sorted { $0.createdAt < $1.createdAt }
         let conversationID = pending.action.context.conversationID
         setAutoReviewCardLifecycle(reviewID: reviewID, conversationID: conversationID, lifecycle: .failed)
-        try? await persistTranscriptCardConversation(conversationID)
+        if conversations.contains(where: { $0.id == conversationID }) {
+            try? await persistTranscriptCardConversation(conversationID)
+        }
     }
 
     private func setAutoReviewCardLifecycle(
@@ -5782,35 +5832,6 @@ private struct AppAutomationExecutor: AutomationExecutor {
             if case .usage(let value) = event { usage = value }
         }
         return .init(detail: text, inputTokens: usage?.inputTokens, outputTokens: usage?.outputTokens)
-    }
-}
-
-private struct AppGroupResponder: GroupAgentResponder {
-    let registry: ProviderRegistry
-
-    func respond(agent: AgentProfile, history: [RoomMessage]) async throws -> [String] {
-        guard let provider = await registry.provider(id: agent.providerID) else {
-            throw ProviderError.transport("The group member's provider is unavailable.")
-        }
-        let transcript = history.suffix(40).map { message in
-            let sender = message.senderID.map { "agent:\($0.uuidString)" } ?? "user"
-            return "[\(sender)] \(message.text)"
-        }.joined(separator: "\n")
-        let prompt = """
-        You are participating in a group conversation. Reply only when useful. If you have nothing new to add, reply PASS.
-
-        \(transcript)
-        """
-        let request = InferenceRequest(
-            conversationID: UUID(),
-            modelID: agent.modelID,
-            messages: [.init(role: .system, text: agent.instructions), .init(role: .user, text: prompt)]
-        )
-        var text = ""
-        for try await event in provider.stream(request) {
-            if case .textDelta(let value) = event { text += value }
-        }
-        return [text]
     }
 }
 

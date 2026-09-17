@@ -1370,3 +1370,17 @@
 "Filicon could not open its data folder." = "Filicon 無法開啟自己的資料夾。";
 "No workspace data was opened or moved. Check folder permissions, then restart Filicon." = "尚未開啟或搬移任何工作區資料。請檢查資料夾權限後重新啟動 Filicon。";
 "Quit Filicon" = "結束 Filicon";
+/* Group tool execution */
+"Tools & connections" = "工具與連線";
+"Integrations are managed in MCP Servers and Plugins. Gmail installation cards are not supported in chat." = "整合功能請至「MCP 伺服器」與「外掛」管理。聊天不支援 Gmail 安裝卡片。";
+"Text-only providers cannot use Filicon tools." = "僅支援文字的供應商無法使用 Filicon 工具。";
+"Awaiting approval or result" = "等待核准或結果";
+"No group member matches @{0}. Add the member or choose an existing name." = "群組中沒有 @{0} 這位成員。請先新增成員，或指定現有成員。";
+"Approval required" = "需要核准";
+"Reject" = "拒絕";
+"Text reply · no tools used" = "文字回覆 · 未執行工具";
+/* Group mention completion */
+"Mention a group member" = "提及群組成員";
+"No matching group members" = "找不到符合的群組成員";
+"All group members" = "所有群組成員";
+"↑↓ Select · Enter Insert · Esc Close" = "↑↓ 選擇 · Enter 插入 · Esc 關閉";

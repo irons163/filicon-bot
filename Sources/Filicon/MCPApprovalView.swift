@@ -222,11 +222,12 @@ actor MCPUserPolicyStore {
 struct MCPApprovalPanel: View {
     @Environment(\.locale) private var uiLocale
     @EnvironmentObject private var model: AppModel
+    var conversationID: UUID? = nil
 
     var body: some View {
         let _ = uiLocale.identifier
         let approvals = model.pendingMCPApprovals.filter {
-            $0.request.target.conversationIdentifier == model.selection?.uuidString
+            $0.request.target.conversationIdentifier == (conversationID ?? model.selection)?.uuidString
         }
         if !approvals.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
@@ -244,14 +245,9 @@ struct MCPApprovalPanel: View {
                             Text(approval.request.risk.reasons.joined(separator: " · ")).font(.caption).foregroundStyle(.orange)
                         }
                         Text(approval.argumentsSummary).font(.caption.monospaced()).lineLimit(4).textSelection(.enabled)
-                        HStack {
-                            Button(l10n("Allow Once")) { model.resolveMCPApproval(approval, resolution: .allowOnce) }
-                            Button(l10n("Always Exact Arguments")) { model.resolveMCPApproval(approval, resolution: .allowAlways(scope: .exactArguments)) }
-                                .disabled(!approval.canPersist)
-                            Button(l10n("Always This Tool")) { model.resolveMCPApproval(approval, resolution: .allowAlways(scope: .tool)) }
-                                .disabled(!approval.canPersistTool)
-                            Spacer()
-                            Button(l10n("Deny"), role: .destructive) { model.resolveMCPApproval(approval, resolution: .deny) }
+                        ViewThatFits(in: .horizontal) {
+                            approvalButtons(approval, horizontal: true)
+                            approvalButtons(approval, horizontal: false)
                         }
                         Text(l10n("Expires \(approval.request.expiresAt.formatted(date: .omitted, time: .shortened))"))
                             .font(.caption2).foregroundStyle(.secondary)
@@ -260,6 +256,18 @@ struct MCPApprovalPanel: View {
                 }
             }
             .padding()
+        }
+    }
+
+    private func approvalButtons(_ approval: MCPApprovalPresentation, horizontal: Bool) -> some View {
+        let layout = horizontal ? AnyLayout(HStackLayout()) : AnyLayout(VStackLayout(alignment: .leading))
+        return layout {
+            Button(l10n("Allow Once")) { model.resolveMCPApproval(approval, resolution: .allowOnce) }
+            Button(l10n("Always Exact Arguments")) { model.resolveMCPApproval(approval, resolution: .allowAlways(scope: .exactArguments)) }
+                .disabled(!approval.canPersist)
+            Button(l10n("Always This Tool")) { model.resolveMCPApproval(approval, resolution: .allowAlways(scope: .tool)) }
+                .disabled(!approval.canPersistTool)
+            Button(l10n("Deny"), role: .destructive) { model.resolveMCPApproval(approval, resolution: .deny) }
         }
     }
 }

@@ -78,6 +78,9 @@ public actor ToolLoop {
             var pending = Set<ToolCallID>()
             for try await event in provider.stream(request) {
                 try Task.checkCancellation()
+                // Only our executors may produce results. A provider event is not
+                // evidence that an operation actually ran on the user's machine.
+                if case .toolResult = event { throw ProviderError.invalidResponse }
                 continuation.yield(event)
                 if case .toolCallStarted(let id, _) = event {
                     guard !seen.contains(id), pending.insert(id).inserted else { throw ToolLoopError.duplicateCallID(id) }

@@ -1370,3 +1370,17 @@
 "Filicon could not open its data folder." = "Filicon 데이터 폴더를 열 수 없습니다.";
 "No workspace data was opened or moved. Check folder permissions, then restart Filicon." = "작업 공간 데이터를 열거나 이동하지 않았습니다. 폴더 권한을 확인한 후 Filicon을 다시 시작하세요.";
 "Quit Filicon" = "Filicon 종료";
+/* Group tool execution */
+"Tools & connections" = "도구 및 연결";
+"Integrations are managed in MCP Servers and Plugins. Gmail installation cards are not supported in chat." = "연동은 MCP 서버와 플러그인에서 관리합니다. 채팅에서는 Gmail 설치 카드를 지원하지 않습니다.";
+"Text-only providers cannot use Filicon tools." = "텍스트 전용 제공업체는 Filicon 도구를 사용할 수 없습니다.";
+"Awaiting approval or result" = "승인 또는 결과 대기 중";
+"No group member matches @{0}. Add the member or choose an existing name." = "그룹에 @{0} 멤버가 없습니다. 멤버를 추가하거나 기존 이름을 선택하세요.";
+"Approval required" = "승인 필요";
+"Reject" = "거부";
+"Text reply · no tools used" = "텍스트 응답 · 도구 사용 없음";
+/* Group mention completion */
+"Mention a group member" = "그룹 멤버 멘션";
+"No matching group members" = "일치하는 그룹 멤버가 없습니다";
+"All group members" = "모든 그룹 멤버";
+"↑↓ Select · Enter Insert · Esc Close" = "↑↓ 선택 · Enter 삽입 · Esc 닫기";

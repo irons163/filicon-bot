@@ -330,14 +330,39 @@ public struct AgentGroup: Identifiable, Codable, Hashable, Sendable {
     }
 }
 
+/// Execution metadata comes from the host, never from the assistant's prose.
+/// Arguments and results are deliberately excluded from the persisted group history.
+public struct RoomToolActivity: Identifiable, Codable, Hashable, Sendable {
+    public enum Status: String, Codable, Sendable { case pending, succeeded, failed, cancelled }
+    public let id: String
+    public let name: String
+    public var status: Status
+    public init(id: String, name: String, status: Status = .pending) {
+        self.id = id; self.name = name; self.status = status
+    }
+}
+
 public struct RoomMessage: Identifiable, Codable, Hashable, Sendable {
     public let id: UUID
     public let groupID: UUID
     public let senderID: UUID?
-    public let text: String
+    public var text: String
     public let createdAt: Date
-    public init(id: UUID = UUID(), groupID: UUID, senderID: UUID?, text: String, createdAt: Date = Date()) {
+    public var toolActivities: [RoomToolActivity]
+    public init(id: UUID = UUID(), groupID: UUID, senderID: UUID?, text: String, createdAt: Date = Date(), toolActivities: [RoomToolActivity] = []) {
         self.id = id; self.groupID = groupID; self.senderID = senderID; self.text = text; self.createdAt = createdAt
+        self.toolActivities = toolActivities
+    }
+
+    private enum CodingKeys: String, CodingKey { case id, groupID, senderID, text, createdAt, toolActivities }
+    public init(from decoder: any Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(UUID.self, forKey: .id)
+        groupID = try values.decode(UUID.self, forKey: .groupID)
+        senderID = try values.decodeIfPresent(UUID.self, forKey: .senderID)
+        text = try values.decode(String.self, forKey: .text)
+        createdAt = try values.decode(Date.self, forKey: .createdAt)
+        toolActivities = try values.decodeIfPresent([RoomToolActivity].self, forKey: .toolActivities) ?? []
     }
 }
 
@@ -352,6 +377,7 @@ public struct MessageReaction: Identifiable, Codable, Hashable, Sendable {
 public enum AgentServiceError: LocalizedError, Equatable, Sendable {
     case limitExceeded(Int), invalidName, unknownAgent(UUID), unknownGroup(UUID)
     case duplicateMember, groupMemberLimit, selfMessage, messageTooLong
+    case unknownGroupMention(String)
     case duplicateMessage(UUID), depthLimit, concurrencyLimit, invalidReaction
     case invalidSubagent, subagentNotRunning(UUID), cycleDetected, scopeEscalation
     case tokenBudgetExceeded
@@ -362,6 +388,7 @@ public enum AgentServiceError: LocalizedError, Equatable, Sendable {
         case .unknownAgent(let id): "Unknown agent \(id)."
         case .unknownGroup(let id): "Unknown group \(id)."
         case .duplicateMember: "A group cannot contain duplicate members."
+        case .unknownGroupMention(let name): "No group member matches @\(name). Add the member or choose an existing name."
         case .groupMemberLimit: "Groups support at most six members."
         case .selfMessage: "Agents cannot message themselves."
         case .messageTooLong: "Agent messages are limited to 8,000 characters."

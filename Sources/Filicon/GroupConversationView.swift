@@ -1,6 +1,7 @@
 import SwiftUI
 import FiliconAgents
 import FiliconAutomations
+import FiliconAutoReview
 
 struct GroupWorkspaceView: View {
     @EnvironmentObject private var model: AppModel
@@ -53,9 +54,27 @@ struct GroupConversationView: View {
     @Binding var draft: String
     @State private var inspectorVisible = true
     @State private var compactInspectorPresented = false
+    @State private var composerSelection = NSRange(location: 0, length: 0)
+    @State private var composerFocused = false
+    @State private var composerComposing = false
+    @State private var dismissedMention: GroupMentionCompletion.Query?
+    @State private var selectedMention = 0
 
     private var messages: [RoomMessage] { model.groupMessages[group.id] ?? [] }
     private var isRunning: Bool { model.runningGroups.contains(group.id) }
+    private var mentionMemberNames: [String] {
+        model.agents.filter { group.memberIDs.contains($0.id) && $0.archivedAt == nil }.map(\.name)
+    }
+    private var mentionQuery: GroupMentionCompletion.Query? {
+        guard composerFocused, !composerComposing,
+              let query = GroupMentionCompletion.query(in: draft, selection: composerSelection, memberNames: mentionMemberNames),
+              query != dismissedMention else { return nil }
+        return query
+    }
+    private var mentionCandidates: [GroupMentionCompletion.Candidate] {
+        guard let query = mentionQuery else { return [] }
+        return GroupMentionCompletion.candidates(for: query, memberIDs: group.memberIDs, agents: model.agents)
+    }
 
     var body: some View {
         let _ = locale.identifier
@@ -129,6 +148,8 @@ struct GroupConversationView: View {
                     } else if isRunning {
                         GroupThinkingIndicator(agentName: group.name)
                     }
+                    GroupToolApprovalPanel(groupID: group.id)
+                    MCPApprovalPanel(conversationID: group.id)
                     Color.clear.frame(height: 1).id("group-bottom")
                 }
                 .padding(.horizontal, 24).padding(.top, 8).padding(.bottom, 16)
@@ -137,20 +158,36 @@ struct GroupConversationView: View {
             .defaultScrollAnchor(.bottom)
             .onChange(of: messages.count) { scrollToBottom(proxy) }
             .onChange(of: model.thinkingGroupMembers[group.id]) { scrollToBottom(proxy) }
+            .onChange(of: model.pendingAutoReviewApprovals) { scrollToBottom(proxy) }
+            .onChange(of: model.pendingMCPApprovals.count) { scrollToBottom(proxy) }
         }
     }
 
     private var composer: some View {
         VStack(alignment: .leading, spacing: 8) {
+            DisclosureGroup(l10n("Tools & connections")) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(l10n("Integrations are managed in MCP Servers and Plugins. Gmail installation cards are not supported in chat."))
+                    Text(l10n("Text-only providers cannot use Filicon tools."))
+                    HStack {
+                        Button(l10n("MCP Servers")) { model.selectRoute(.mcp) }
+                        Button(l10n("Plugins")) { model.selectRoute(.plugins) }
+                    }
+                }.padding(.top, 6)
+            }
+            .font(.caption).foregroundStyle(FiliconTheme.textSecondary)
             if group.memberIDs.isEmpty {
                 Text(l10n("Add members to start chatting."))
                     .font(.caption).foregroundStyle(FiliconTheme.textSecondary)
             }
+            if mentionQuery != nil { mentionMenu }
             HStack(alignment: .bottom, spacing: 10) {
-                TextField(l10n("Message the group; @name and @everyone are supported"), text: $draft, axis: .vertical)
-                    .textFieldStyle(.plain).lineLimit(1...5).font(.system(size: 13))
-                    .padding(.vertical, 8).onSubmit(send)
-                    .accessibilityIdentifier("group-message-input")
+                GroupComposerEditor(
+                    text: $draft, selection: $composerSelection,
+                    focused: $composerFocused, composing: $composerComposing,
+                    placeholder: l10n("Message the group; @name and @everyone are supported"),
+                    onCommand: composerCommand
+                )
                 if isRunning {
                     FiliconIconButton(label: l10n("Stop"), systemName: "stop.fill", size: 30, isProminent: true, action: stop)
                 } else {
@@ -165,12 +202,106 @@ struct GroupConversationView: View {
         }
         .padding(.horizontal, 22).padding(.top, 8).padding(.bottom, 22)
         .disabled(!model.isBootstrapped)
+        .onChange(of: mentionQuery) { selectedMention = 0 }
+        .onChange(of: mentionCandidates.map(\.id)) { selectedMention = 0 }
+    }
+
+    private var mentionMenu: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(l10n("Mention a group member")).font(.system(size: 11, weight: .medium))
+                .foregroundStyle(FiliconTheme.textSecondary).padding(.horizontal, 10).padding(.vertical, 5)
+            if mentionCandidates.isEmpty {
+                Text(l10n("No matching group members"))
+                    .font(.system(size: 12)).foregroundStyle(FiliconTheme.textSecondary).padding(10)
+            } else {
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        VStack(spacing: 2) {
+                            ForEach(Array(mentionCandidates.enumerated()), id: \.element.id) { index, candidate in
+                                Button { mentionSelected(candidate) } label: {
+                                    HStack(spacing: 9) {
+                                        if let agent = candidate.agent {
+                                            AgentAvatarIcon(profile: agent, dimension: 25)
+                                        } else {
+                                            Image(systemName: "person.3.fill").frame(width: 25, height: 25)
+                                        }
+                                        Text(candidate.agent == nil ? l10n("All group members") : candidate.name)
+                                            .lineLimit(1)
+                                        Spacer(minLength: 4)
+                                        if candidate.agent == nil {
+                                            Text(verbatim: "@everyone").foregroundStyle(FiliconTheme.textSecondary)
+                                        }
+                                        if index == selectedMention { Image(systemName: "return").font(.caption) }
+                                    }
+                                    .font(.system(size: 13)).foregroundStyle(FiliconTheme.textPrimary)
+                                    .padding(.horizontal, 10).padding(.vertical, 6)
+                                    .background(index == selectedMention ? FiliconTheme.surfaceRaised : .clear, in: RoundedRectangle(cornerRadius: 7))
+                                    .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityIdentifier("group-mention-\(candidate.id)")
+                                .accessibilityAddTraits(index == selectedMention ? .isSelected : [])
+                                .id(index)
+                            }
+                        }
+                    }.frame(height: CGFloat(min(mentionCandidates.count, 4)) * 39)
+                        .onChange(of: selectedMention) { proxy.scrollTo(selectedMention) }
+                }
+            }
+            Text(l10n("↑↓ Select · Enter Insert · Esc Close"))
+                .font(.system(size: 10)).foregroundStyle(FiliconTheme.textTertiary).padding(.horizontal, 10).padding(.vertical, 5)
+        }
+        .padding(6).background(FiliconTheme.surface, in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(FiliconTheme.border, lineWidth: 1))
+        .shadow(color: .black.opacity(0.12), radius: 12, y: 4)
+        .accessibilityIdentifier("group-mention-menu")
+    }
+
+    private func mentionSelected(_ candidate: GroupMentionCompletion.Candidate) {
+        guard let query = GroupMentionCompletion.query(in: draft, selection: composerSelection, memberNames: mentionMemberNames),
+              GroupMentionCompletion.candidates(for: query, memberIDs: group.memberIDs, agents: model.agents).contains(candidate),
+              let insertion = GroupMentionCompletion.inserting(candidate, into: draft, query: query) else { return }
+        draft = insertion.text
+        composerSelection = insertion.selection
+        dismissedMention = GroupMentionCompletion.query(in: draft, selection: composerSelection, memberNames: mentionMemberNames)
+        composerFocused = true
+    }
+
+    private func composerCommand(_ command: GroupComposerCommand, text: String, selection: NSRange) -> Bool {
+        // Read the editor's live value, rather than a potentially one-frame-old View.
+        draft = text
+        composerSelection = selection
+        let query = GroupMentionCompletion.query(in: text, selection: selection, memberNames: mentionMemberNames)
+        let open = query != nil && query != dismissedMention
+        let candidates = query.map { GroupMentionCompletion.candidates(for: $0, memberIDs: group.memberIDs, agents: model.agents) } ?? []
+        switch command {
+        case .previous, .next:
+            guard open, !candidates.isEmpty else { return false }
+            selectedMention = GroupMentionCompletion.movedSelection(selectedMention, by: command == .next ? 1 : -1, count: candidates.count)
+        case .dismiss:
+            guard open else { return false }
+            dismissedMention = query
+        case .accept, .submit:
+            if open {
+                if !candidates.isEmpty { mentionSelected(candidates[min(selectedMention, candidates.count - 1)]) }
+                // An empty-result menu must not accidentally submit an unknown mention.
+            } else if command == .submit { send() }
+            else { return false }
+        }
+        return true
     }
 
     private func send() {
         guard !isRunning, !group.memberIDs.isEmpty, !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        let members = model.agents.filter { group.memberIDs.contains($0.id) && $0.archivedAt == nil }
+        if let unknown = GroupService.unknownMentions(in: draft, members: members).first {
+            model.errorMessage = l10n("No group member matches @\(unknown). Add the member or choose an existing name.")
+            return
+        }
         let value = draft
         draft = ""
+        composerSelection = NSRange(location: 0, length: 0)
+        dismissedMention = nil
         Task { await model.sendGroupMessage(groupID: group.id, text: value) }
     }
 
@@ -198,7 +329,11 @@ struct GroupMessageBubble: View {
                             .font(.system(size: 10.5, weight: .semibold)).foregroundStyle(FiliconTheme.textSecondary)
                     }
                 }
-                Text(message.text).font(.system(size: 13)).lineSpacing(4).textSelection(.enabled)
+                if !message.text.isEmpty {
+                    Group {
+                        if isUser { Text(message.text) }
+                        else { RichMarkdownView(source: message.text, fillsWidth: false) }
+                    }.font(.system(size: 13)).lineSpacing(4).textSelection(.enabled)
                     .foregroundStyle(isUser ? FiliconTheme.userBubbleText : FiliconTheme.textPrimary)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal, 13).padding(.vertical, 10)
@@ -207,6 +342,23 @@ struct GroupMessageBubble: View {
                         Button(FiliconLocalization.string("Copy"), action: copy)
                         if !isUser { Button("👍", action: onReaction) }
                     }
+                }
+                ForEach(message.toolActivities) { tool in
+                    HStack(spacing: 7) {
+                        if tool.status == .pending { ProgressView().controlSize(.small) }
+                        else { Image(systemName: tool.status == .succeeded ? "checkmark.circle" : "xmark.circle") }
+                        Text(tool.name).font(.caption.monospaced()).lineLimit(2)
+                        Spacer(minLength: 4)
+                        Text(toolStatus(tool.status)).font(.caption)
+                    }
+                    .padding(10)
+                    .background(FiliconTheme.input, in: RoundedRectangle(cornerRadius: 10))
+                    .accessibilityIdentifier("group-tool-\(tool.id)")
+                }
+                if !isUser && message.toolActivities.isEmpty {
+                    Text(l10n("Text reply · no tools used"))
+                        .font(.system(size: 10)).foregroundStyle(FiliconTheme.textTertiary)
+                }
                 HStack(spacing: 8) {
                     Text(message.createdAt, style: .time).font(.system(size: 9))
                     if !isUser { Button("👍", action: onReaction).buttonStyle(.plain).font(.system(size: 10)) }
@@ -225,6 +377,43 @@ struct GroupMessageBubble: View {
     private func copy() {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(message.text, forType: .string)
+    }
+
+    private func toolStatus(_ status: RoomToolActivity.Status) -> String {
+        switch status {
+        case .pending: l10n("Awaiting approval or result")
+        case .succeeded: l10n("Completed")
+        case .failed: l10n("Failed")
+        case .cancelled: l10n("Cancelled")
+        }
+    }
+}
+
+private struct GroupToolApprovalPanel: View {
+    @EnvironmentObject private var model: AppModel
+    let groupID: UUID
+
+    var body: some View {
+        ForEach(model.pendingAutoReviewApprovals.filter { $0.action.context.conversationID == groupID }) { approval in
+            VStack(alignment: .leading, spacing: 8) {
+                Label(l10n("Approval required"), systemImage: "checkmark.shield")
+                    .font(.headline)
+                Text(approval.action.summary).font(.callout).textSelection(.enabled)
+                Text(approval.reason).font(.caption).foregroundStyle(FiliconTheme.textSecondary)
+                HStack {
+                    Button(l10n("Approve")) { Task { await resolve(approval, approve: true) } }
+                        .accessibilityIdentifier("group-tool-approve")
+                    Button(l10n("Reject"), role: .destructive) { Task { await resolve(approval, approve: false) } }
+                        .accessibilityIdentifier("group-tool-reject")
+                }
+            }
+            .padding(14).frame(maxWidth: .infinity, alignment: .leading)
+            .background(FiliconTheme.input, in: RoundedRectangle(cornerRadius: 12))
+        }
+    }
+
+    private func resolve(_ approval: PendingApproval, approve: Bool) async {
+        await model.resolveGroupApproval(approval, groupID: groupID, approve: approve)
     }
 }
 
