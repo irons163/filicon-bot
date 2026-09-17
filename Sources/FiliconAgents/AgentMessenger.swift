@@ -56,7 +56,9 @@ public actor AgentMessenger {
         // Terminal results cannot be resurrected by a late provider event.
         guard previous.delivery?.state == .queued || previous.delivery?.state == .running else { return }
         state.messages[index].delivery?.state = deliveryState
-        state.messages[index].delivery?.response = response.map { String($0.prefix(8_000)) }
+        // A state-only transition (especially Stop) must not erase a report
+        // already published through SendMessage.
+        if let response { state.messages[index].delivery?.response = String(response.prefix(8_000)) }
         do { try persist() } catch { state.messages[index] = previous; throw error }
     }
 

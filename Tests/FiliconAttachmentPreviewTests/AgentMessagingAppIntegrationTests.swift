@@ -23,6 +23,10 @@ struct AgentMessagingAppIntegrationTests {
         )
 
         #expect(sent)
+        for _ in 0..<400 where !first.runningAgentMessageScopes.isEmpty {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        try #require(first.runningAgentMessageScopes.isEmpty)
         #expect(first.agentInbox(for: builder.id).map { $0.text } == ["Please implement the parser."])
         #expect(first.agentOutbox(for: planner.id).count == 1)
         #expect(first.agentThread(between: planner.id, and: builder.id).count == 1)

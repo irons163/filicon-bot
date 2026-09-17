@@ -48,8 +48,10 @@ Multi-round work does not grant new permissions or guarantee a particular model
 will always make a useful contribution.
 
 This repairs group turn-taking/context, not full original-runtime parity.
-Filicon posts final responses itself instead of exposing the reference's
-`SendMessage` tool.
+The text-only `SendMessage` tool now publishes directly through the host's
+durable group callback, with a two-message turn limit and the existing ten-message
+group budget. Once it publishes, final text is not posted again. Providers that
+do not use it retain the final-response compatibility fallback.
 
 ### Cross-agent SendToAgent
 
@@ -63,8 +65,9 @@ group. A plain `@mention` still cannot expand the participant set.
 
 Approval → durable enqueue → immediate queued acknowledgement → foreground group
 responses finish → recipient wake in an independent inference context → explicit
-SendToAgent reply → sender wake. Only that agent's own current-request history and
-the explicitly delivered peer message enter a wake; the sender's private persona
+SendToAgent reply → sender wake. That agent's own current-request history, retained
+peer context for the same account/origin, and the explicitly delivered message
+enter a wake; the sender's private persona
 or complete conversation is never copied to a different agent. Incoming peer
 messages have assistant role, not new user authority. A single reply to the
 approved sender is part of the exchange; new handoffs require new approval.
@@ -81,12 +84,21 @@ Recipient tools use a fresh run ID and retain the originating conversation's
 existing folder, local-tool, MCP and auto-review approval gates; delegation does
 not grant file-write or external-action permission.
 
-This is deliberately narrower than the reference's full background session
-runtime: it has request-scoped agent contexts, not a permanent personal agent
-conversation/memory service; it does not interrupt user work, wake arbitrary
-closed conversations, broadcast to group targets, attach images, or accept a
-priority-interruption flag. Manual mailbox composition remains a stored message,
-not an inference trigger. These differences remain tracked as partial parity.
+Manual Agents > Messages sends now enqueue and wake the recipient, even when the
+view is not selected. Replies wake the sender; progress/delivery status appears in
+the mailbox, with folder/MCP/delegation approval panels and Stop. A second send
+in the same active mailbox is rejected rather than racing its grants/history.
+`AgentConversationStore` retains up to 30 peer-context entries and stable inference
+IDs across requests/restarts, isolated by account, origin conversation and agent.
+It stores no system instructions, tools, approval receipts or permission grants.
+`SendMessage` during a peer wake publishes to the originating group/mailbox.
+
+This remains narrower than the reference's full background session runtime:
+contexts are origin-isolated, not a unified personal DM/group memory service;
+there is no cross-origin per-agent exclusive scheduler, group target broadcast,
+image payload or priority interruption. Unfinished work is cancelled at restart,
+not replayed with stale approval. Model-facing CreateAgent/UpdateAgent remain
+unwired despite existing UI/service CRUD. See [the itemized audit](Agent-collaboration-parity.md).
 
 `AgentMessagingSessionTests` exercises real tool-loop dispatch with scripted
 providers, reply wakes, context isolation, permissions scope, denial, spoofed
@@ -104,11 +116,22 @@ uses scripted providers but real local file tools, permission receipts and both
 approval layers in an isolated workspace: create → design read → revise → reread.
 It does not contact a live model or modify the user's project.
 
-Validation including SendToAgent: `swift test --no-parallel` reported 134 XCTest
+Earlier validation including SendToAgent: `swift test --no-parallel` reported 134 XCTest
 tests and a 548-test Swift Testing run with no failures. The two opt-in live
 Codex tests were skipped. Native `Filicon App` Debug build succeeded. All seven
 catalogs passed the localization audit; PASS/failure notices rendered in all
 seven languages, with Traditional Chinese and French PNGs visually inspected.
+
+Latest validation (2026-09-18), including manual wakes, scoped persistent context,
+text-only SendMessage, and preservation of published progress after failure/Stop:
+134 XCTest tests and a 561-test Swift Testing run reported zero failures; the two
+opt-in live Codex tests remained skipped. Native `Filicon App` Debug build and
+`codesign --verify --deep --strict` passed. All seven catalogs have 1,393 keys and
+zero missing keys. The message/approval view rendered in all seven languages;
+Traditional Chinese and French were visually inspected, including long French
+mailbox labels. One earlier full rerun hung in the existing cross-process file-lock
+test's `Process.waitUntilExit` cleanup; that test passed in isolation and the final
+full rerun passed. No live provider was contacted and the user's app was not restarted.
 
 `ConversationDesignTests` covers the responsive breakpoint, draft separation, membership binding, persistence validation, transcript preservation and native SwiftUI rendering. To export review PNGs without changing the user's data:
 

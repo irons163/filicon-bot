@@ -42,6 +42,26 @@ struct AgentMessagingView: View {
         VStack(spacing: 0) {
             controls
             Divider()
+            if !model.runningAgentMessageScopes.isEmpty {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 10) {
+                        ForEach(model.runningAgentMessageScopes.sorted { $0.uuidString < $1.uuidString }, id: \.self) { scopeID in
+                            HStack {
+                                ProgressView().controlSize(.small)
+                                if let message = model.agentMessages.first(where: { $0.delivery?.originConversationID == scopeID }) {
+                                    Text("\(agentName(message.senderID)) → \(agentName(message.recipientID))")
+                                }
+                                Text(agentMessageString("Running"))
+                                Spacer()
+                                Button(agentMessageString("Stop")) { Task { await model.stopAgentMessages(scopeID: scopeID) } }
+                            }
+                            WorkspaceFolderAccessPanel(conversationID: scopeID)
+                            GroupToolApprovalPanel(groupID: scopeID)
+                            MCPApprovalPanel(conversationID: scopeID)
+                        }
+                    }.padding()
+                }.frame(maxHeight: 300)
+            }
             if activeAgents.count < 2 {
                 ContentUnavailableView(
                     agentMessageString("Two active agents required"),
@@ -56,6 +76,7 @@ struct AgentMessagingView: View {
                 }
             }
         }
+        .background(FiliconTheme.canvas)
         .task {
             normalizeSelection()
             await model.reloadAgentMessages()
@@ -98,19 +119,21 @@ struct AgentMessagingView: View {
                         .disabled(!canSend)
                 }
             }
-            HStack {
+            VStack(alignment: .leading, spacing: 8) {
                 Picker(agentMessageString("Mailbox"), selection: $mailbox) {
                     ForEach(Mailbox.allCases) { Text($0.title).tag($0) }
                 }
                 .pickerStyle(.segmented)
-                .frame(maxWidth: 330)
-                if let recipientID, model.agentMessageUnreadCounts[recipientID, default: 0] > 0 {
-                    Button(agentMessageString("Mark Inbox Read")) {
-                        Task { await model.markAgentMessagesRead(recipientID: recipientID) }
+                .labelsHidden()
+                HStack {
+                    if let recipientID, model.agentMessageUnreadCounts[recipientID, default: 0] > 0 {
+                        Button(agentMessageString("Mark Inbox Read")) {
+                            Task { await model.markAgentMessagesRead(recipientID: recipientID) }
+                        }
                     }
+                    Spacer()
+                    if let feedback { Text(feedback).font(.caption).foregroundStyle(.secondary) }
                 }
-                Spacer()
-                if let feedback { Text(feedback).font(.caption).foregroundStyle(.secondary) }
             }
         }
         .padding()
@@ -195,7 +218,7 @@ struct AgentMessagingView: View {
         Task {
             if await model.sendAgentMessage(senderID: senderID, recipientID: recipientID, text: message, priority: priority) {
                 draft = ""
-                feedback = agentMessageString("Message sent.")
+                feedback = agentMessageString("Queued")
                 mailbox = .thread
             } else {
                 feedback = agentMessageString("Not sent. You can edit and retry.")

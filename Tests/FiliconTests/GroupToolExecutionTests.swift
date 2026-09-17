@@ -261,7 +261,7 @@ struct GroupToolExecutionTests {
         let registry = ProviderRegistry()
         await registry.register(GroupScriptProvider { request in
             #expect(request.conversationID == group.id)
-            #expect(request.tools.map(\.name) == ["fixture_read"])
+            expectNoDifference(request.tools.map(\.name), ["SendMessage", "fixture_read"])
             #expect(request.messages.contains { $0.text.contains("no built-in Gmail connector") })
             if request.toolExchanges.isEmpty { return try groupCallEvents() }
             #expect(request.toolExchanges[0].results[0].wireText == "private fixture result")

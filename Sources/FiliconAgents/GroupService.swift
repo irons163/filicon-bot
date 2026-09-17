@@ -30,9 +30,18 @@ public protocol GroupAgentResponder: Sendable {
     func respond(agent: AgentProfile, history: [RoomMessage]) async throws -> [String]
     func respond(agent: AgentProfile, history: [RoomMessage], onTools: @escaping @Sendable ([RoomToolActivity]) async throws -> Void) async throws -> [String]
     func respond(agent: AgentProfile, history: [RoomMessage], context: GroupTurnContext, onTools: @escaping @Sendable ([RoomToolActivity]) async throws -> Void) async throws -> [String]
+    func respond(agent: AgentProfile, history: [RoomMessage], context: GroupTurnContext,
+                 onTools: @escaping @Sendable ([RoomToolActivity]) async throws -> Void,
+                 onMessage: @escaping @Sendable (String) async throws -> Void) async throws -> [String]
 }
 
 public extension GroupAgentResponder {
+    func respond(agent: AgentProfile, history: [RoomMessage], context: GroupTurnContext,
+                 onTools: @escaping @Sendable ([RoomToolActivity]) async throws -> Void,
+                 onMessage: @escaping @Sendable (String) async throws -> Void) async throws -> [String] {
+        try await respond(agent: agent, history: history, context: context, onTools: onTools)
+    }
+
     func respond(agent: AgentProfile, history: [RoomMessage], context: GroupTurnContext, onTools: @escaping @Sendable ([RoomToolActivity]) async throws -> Void) async throws -> [String] {
         try await respond(agent: agent, history: history, onTools: onTools)
     }
@@ -52,6 +61,7 @@ public actor GroupService {
     private var state: AgentPersistentState
     private var epochs: [UUID: UInt64] = [:]
     private var activeResponses: [UUID: Task<[String], any Error>] = [:]
+    private var explicitReplies: [UUID: [RoomMessage]] = [:]
 
     public init(agents: AgentService, storeURL: URL) throws {
         self.agents = agents; self.storeURL = storeURL
@@ -187,6 +197,9 @@ public actor GroupService {
                 )
                 let responses: [String]
                 let activityMessage = RoomMessage(groupID: groupID, senderID: memberID, text: "")
+                let remainingBudget = Self.maximumMemberMessages - total
+                let previousTexts = publishedTexts[memberID, default: []]
+                defer { explicitReplies[activityMessage.id] = nil }
                 await onAgentChange(agent.id)
                 guard epochs[groupID] == epoch, !Task.isCancelled else {
                     await onAgentChange(nil)
@@ -194,9 +207,12 @@ public actor GroupService {
                 }
                 let responseTask = Task {
                     try Task.checkCancellation()
-                    return try await responder.respond(agent: agent, history: history, context: context) { tools in
+                    return try await responder.respond(agent: agent, history: history, context: context, onTools: { tools in
                         try await self.recordTools(tools, message: activityMessage, epoch: epoch, onMessage: onMessage)
-                    }
+                    }, onMessage: { text in
+                        try await self.recordExplicitReply(text, activity: activityMessage, epoch: epoch,
+                                                           remainingBudget: remainingBudget, previousTexts: previousTexts, onMessage: onMessage)
+                    })
                 }
                 activeResponses[groupID] = responseTask
                 do {
@@ -205,6 +221,10 @@ public actor GroupService {
                     } onCancel: { responseTask.cancel() }
                     successfulTurns += 1
                 } catch {
+                    let published = explicitReplies[activityMessage.id] ?? []
+                    produced += published
+                    total += published.count
+                    messagesThisRound += published.count
                     try await finishPendingTools(messageID: activityMessage.id, cancelled: error is CancellationError || epochs[groupID] != epoch || Task.isCancelled, onMessage: onMessage)
                     await onAgentChange(nil)
                     guard epochs[groupID] == epoch, !Task.isCancelled else { return produced }
@@ -221,8 +241,16 @@ public actor GroupService {
                 activeResponses[groupID] = nil
                 await onAgentChange(nil)
                 guard epochs[groupID] == epoch, !Task.isCancelled else { return produced }
-                var sentThisTurn = 0
+                let published = explicitReplies[activityMessage.id] ?? []
+                produced += published
+                total += published.count
+                messagesThisRound += published.count
+                for message in published {
+                    publishedTexts[memberID, default: []].insert(Self.replyFingerprint(message.text))
+                }
+                var sentThisTurn = published.count
                 for text in responses.filter({ !Self.isPass($0) }).prefix(Self.maximumMessagesPerMemberTurn) {
+                    guard sentThisTurn < Self.maximumMessagesPerMemberTurn, total < Self.maximumMemberMessages else { break }
                     let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
                     guard !Self.isPass(trimmed) else { continue }
                     let boundedText = String(trimmed.prefix(8_000))
@@ -263,6 +291,28 @@ public actor GroupService {
     public func stop(groupID: UUID) {
         epochs[groupID, default: 0] &+= 1
         activeResponses.removeValue(forKey: groupID)?.cancel()
+    }
+
+    private static func replyFingerprint(_ text: String) -> String {
+        text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+    }
+
+    private func recordExplicitReply(_ text: String, activity: RoomMessage, epoch: UInt64, remainingBudget: Int,
+                                     previousTexts: Set<String>, onMessage: @Sendable (RoomMessage) async -> Void) async throws {
+        try Task.checkCancellation()
+        guard epochs[activity.groupID] == epoch else { throw CancellationError() }
+        let replies = explicitReplies[activity.id] ?? []
+        let fingerprint = Self.replyFingerprint(text)
+        guard !fingerprint.isEmpty, text.count <= 8_000,
+              replies.count < min(remainingBudget, Self.maximumMessagesPerMemberTurn),
+              !previousTexts.contains(fingerprint), !replies.contains(where: { Self.replyFingerprint($0.text) == fingerprint }) else {
+            throw AgentServiceError.invalidName
+        }
+        let message = RoomMessage(groupID: activity.groupID, senderID: activity.senderID, text: text)
+        state.roomMessages.append(message)
+        do { try persist() } catch { state.roomMessages.removeLast(); throw error }
+        explicitReplies[activity.id, default: []].append(message)
+        await onMessage(message)
     }
 
     private func recordTools(_ tools: [RoomToolActivity], message: RoomMessage, epoch: UInt64, onMessage: @Sendable (RoomMessage) async -> Void) async throws {

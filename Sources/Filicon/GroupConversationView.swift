@@ -419,7 +419,7 @@ struct GroupMessageBubble: View {
     }
 }
 
-private struct GroupToolApprovalPanel: View {
+struct GroupToolApprovalPanel: View {
     @EnvironmentObject private var model: AppModel
     let groupID: UUID
 
@@ -435,7 +435,7 @@ private struct GroupToolApprovalPanel: View {
                     // outgoing payload must be visible in full before approval.
                     Text(verbatim: text).font(.callout).textSelection(.enabled)
                 }
-                Text(approval.reason).font(.caption).foregroundStyle(FiliconTheme.textSecondary)
+                Text(FiliconLocalization.string(approval.reason)).font(.caption).foregroundStyle(FiliconTheme.textSecondary)
                 HStack {
                     Button(l10n("Approve")) { Task { await resolve(approval, approve: true) } }
                         .accessibilityIdentifier("group-tool-approve")

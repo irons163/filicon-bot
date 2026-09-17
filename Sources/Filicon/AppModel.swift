@@ -260,7 +260,11 @@ final class AppModel: ObservableObject {
     private let rootResilience = WorkspaceRootResilience()
     private let agentService: AgentService?
     private let agentMessenger: AgentMessenger?
+    private let agentConversations: AgentConversationStore?
     private var agentMessagingSessions: [UUID: AgentMessagingSession] = [:]
+    @Published private(set) var runningAgentMessageScopes: Set<UUID> = []
+    private var agentMessageTasks: [UUID: Task<Void, Never>] = [:]
+    private var agentMessagingAccountTransition = false
     private let subagentService: SubagentService?
     private let agentAvatarStore: AgentAvatarStore
     private let groupService: GroupService?
@@ -430,6 +434,7 @@ final class AppModel: ObservableObject {
         )
         agentAvatarStore = AgentAvatarStore(rootURL: root.appending(path: "agent-avatars", directoryHint: .isDirectory))
         agentService = try? AgentService(storeURL: root.appending(path: "agents.json"))
+        agentConversations = try? AgentConversationStore(url: root.appending(path: "agent-conversations.json"))
         if let agentService {
             agentMessenger = try? AgentMessenger(service: agentService, storeURL: root.appending(path: "agent-messages.json"))
             subagentService = SubagentService(agents: agentService)
@@ -2423,7 +2428,10 @@ final class AppModel: ObservableObject {
         text: String,
         priority: AgentMessagePriority = .normal
     ) async -> Bool {
-        guard let agentService, let agentMessenger else {
+        let generation = autoReviewAccountGeneration
+        let accountID = settings.accountScope ?? "local"
+        guard !agentMessagingAccountTransition else { return false }
+        guard let agentService, agentMessenger != nil, let agentConversations else {
             errorMessage = l10n("Agent messaging storage is unavailable. Your message was not sent.")
             return false
         }
@@ -2449,14 +2457,88 @@ final class AppModel: ObservableObject {
             return false
         }
         do {
-            try await agentMessenger.send(.init(senderID: sender.id, recipientID: recipient.id, text: trimmed, priority: priority))
-            await reloadAgentMessages()
+            let scopeID = try await agentConversations.mailboxScope(accountID: accountID, senderID: sender.id, recipientID: recipient.id)
+            guard generation == autoReviewAccountGeneration,
+                  accountID == (settings.accountScope ?? "local"), !Task.isCancelled,
+                  !runningAgentMessageScopes.contains(scopeID),
+                  let session = makeAgentMessagingSession(originID: scopeID) else { return false }
+            // Reserve before enqueue's first suspension. One conversation owns
+            // its context and approval cards until its entire reply chain ends.
+            runningAgentMessageScopes.insert(scopeID)
+            agentMessagingSessions[scopeID] = session
+            workspaceFolders.beginTurn(conversationID: scopeID)
+            do {
+                try await session.enqueueUserMessage(senderID: sender.id, recipientID: recipient.id, text: trimmed, priority: priority)
+                guard generation == autoReviewAccountGeneration, !Task.isCancelled,
+                      runningAgentMessageScopes.contains(scopeID) else { throw CancellationError() }
+            } catch {
+                try? await session.close()
+                agentMessagingSessions[scopeID] = nil
+                runningAgentMessageScopes.remove(scopeID)
+                throw error
+            }
+            agentMessageTasks[scopeID] = Task { [weak self] in
+                guard let self else { return }
+                await self.runAgentMessages(scopeID: scopeID, session: session)
+            }
             return true
         } catch {
             errorMessage = l10n("Message not sent: \(error.localizedDescription)")
             await reloadAgentMessages()
             return false
         }
+    }
+
+    private func runAgentMessages(scopeID: UUID, session: AgentMessagingSession) async {
+        do { try await session.drain() }
+        catch is CancellationError {}
+        catch { errorMessage = error.localizedDescription }
+        do { try await session.close() }
+        catch { errorMessage = error.localizedDescription }
+        await cancelAgentMessageTools(scopeID: scopeID)
+        await reloadAgentMessages()
+        agentMessagingSessions[scopeID] = nil
+        agentMessageTasks[scopeID] = nil
+        runningAgentMessageScopes.remove(scopeID)
+    }
+
+    func stopAgentMessages(scopeID: UUID) async {
+        guard runningAgentMessageScopes.contains(scopeID) else { return }
+        agentMessageTasks[scopeID]?.cancel()
+        do { try await agentMessagingSessions[scopeID]?.close() }
+        catch { errorMessage = error.localizedDescription }
+        await cancelAgentMessageTools(scopeID: scopeID)
+        // Keep the scope reserved until drain has unwound; a new request must
+        // not share an old turn's pending grants or stale completion callbacks.
+    }
+
+    private func cancelAgentMessageTools(scopeID: UUID) async {
+        workspaceFolders.cancel(conversationID: scopeID)
+        await cancelAutoReviewApprovals(conversationID: scopeID, lifecycle: .cancelled)
+        await localToolApprovalBroker.cancel(conversationID: scopeID)
+        await localToolPermissionPolicy.revokePendingGrants(conversationID: scopeID)
+        await localToolRuntime.cancel(conversationID: scopeID)
+        await invalidateMCPAuthorization(conversationID: scopeID)
+    }
+
+    private func makeAgentMessagingSession(originID: UUID) -> AgentMessagingSession? {
+        guard let agentService, let agentMessenger, let agentConversations else { return nil }
+        return AgentMessagingSession(
+            originConversationID: originID, agents: agentService, messenger: agentMessenger,
+            registry: registry, coordinator: coordinator, conversations: agentConversations,
+            accountID: settings.accountScope ?? "local",
+            authorize: { [weak self] sender, recipient, text, call, context in
+                guard let self else { throw CancellationError() }
+                try await self.authorizeAgentDelegation(sender: sender, recipient: recipient, text: text, call: call, context: context)
+            }, onChange: { [weak self] in await self?.reloadAgentMessages() }
+        )
+    }
+
+    private func isAgentMessagingScopeActive(_ scopeID: UUID) -> Bool {
+        !agentMessagingAccountTransition && (
+            (runningGroups.contains(scopeID) && !cancelledGroupRuns.contains(scopeID))
+                || (runningAgentMessageScopes.contains(scopeID) && agentMessageTasks[scopeID]?.isCancelled == false)
+        )
     }
 
     func markAgentMessagesRead(recipientID: UUID) async {
@@ -2724,23 +2806,14 @@ final class AppModel: ObservableObject {
     }
 
     func sendGroupMessage(groupID: UUID, text: String) async {
-        guard let groupService, !runningGroups.contains(groupID), !stoppingGroups.contains(groupID) else { return }
+        guard let groupService, !agentMessagingAccountTransition,
+              !runningGroups.contains(groupID), !stoppingGroups.contains(groupID) else { return }
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         // Reserve before the first suspension so two sends cannot race.
         runningGroups.insert(groupID)
         workspaceFolders.beginTurn(conversationID: groupID)
-        let messaging: AgentMessagingSession?
-        if let agentService, let agentMessenger {
-            messaging = AgentMessagingSession(
-                originConversationID: groupID, agents: agentService, messenger: agentMessenger,
-                registry: registry, coordinator: coordinator,
-                authorize: { [weak self] sender, recipient, text, call, context in
-                    guard let self else { throw CancellationError() }
-                    try await self.authorizeAgentDelegation(sender: sender, recipient: recipient, text: text, call: call, context: context)
-                }, onChange: { [weak self] in await self?.reloadAgentMessages() }
-            )
-        } else { messaging = nil }
+        let messaging = makeAgentMessagingSession(originID: groupID)
         agentMessagingSessions[groupID] = messaging
         defer {
             agentMessagingSessions[groupID] = nil
@@ -2813,7 +2886,7 @@ final class AppModel: ObservableObject {
 
     private func authorizeAgentDelegation(sender: AgentProfile, recipient: AgentProfile, text: String,
                                            call: NormalizedToolCall, context: ToolContext) async throws {
-        guard runningGroups.contains(context.conversationID), !cancelledGroupRuns.contains(context.conversationID) else {
+        guard isAgentMessagingScopeActive(context.conversationID) else {
             throw CancellationError()
         }
         let fence = ApprovalFence(accountID: settings.accountScope ?? "local", agentID: context.conversationID.uuidString.lowercased(),
@@ -2826,12 +2899,12 @@ final class AppModel: ObservableObject {
         )
         // Always show the exact recipient and payload. General auto-review allow
         // rules never authorize expanding the participating agent set implicitly.
-        let pending = PendingApproval(action: action, reason: l10n("Approval required"), expiresAt: Date().addingTimeInterval(300))
+        let pending = PendingApproval(action: action, reason: "Approval required", expiresAt: Date().addingTimeInterval(300))
         try await autoReviewBroker.waitForApprovalToExecute(pending) { [weak self] pending in
             await self?.registerAutoReviewApproval(pending)
         }
         try Task.checkCancellation()
-        guard runningGroups.contains(context.conversationID), !cancelledGroupRuns.contains(context.conversationID) else {
+        guard isAgentMessagingScopeActive(context.conversationID) else {
             throw CancellationError()
         }
     }
@@ -3914,8 +3987,8 @@ final class AppModel: ObservableObject {
 
     private func registerAutoReviewApproval(_ pending: PendingApproval) async {
         let conversationID = pending.action.context.conversationID
-        if groups.contains(where: { $0.id == conversationID }) {
-            guard runningGroups.contains(conversationID), !cancelledGroupRuns.contains(conversationID),
+        if groups.contains(where: { $0.id == conversationID }) || runningAgentMessageScopes.contains(conversationID) {
+            guard isAgentMessagingScopeActive(conversationID),
                   pendingAutoReviewByID[pending.id] == nil else {
                 await autoReviewBroker.cancel(reviewID: pending.id, fence: pending.fence)
                 return
@@ -3970,7 +4043,7 @@ final class AppModel: ObservableObject {
     func resolveGroupApproval(_ pending: PendingApproval, groupID: UUID, approve: Bool) async {
         guard pending.action.context.conversationID == groupID,
               pendingAutoReviewByID[pending.id] == pending,
-              runningGroups.contains(groupID), !cancelledGroupRuns.contains(groupID) else { return }
+              isAgentMessagingScopeActive(groupID) else { return }
         do {
             try await autoReviewBroker.resolve(reviewID: pending.id, resolution: approve ? .approve : .deny, fence: pending.fence)
         } catch { errorMessage = error.localizedDescription }
@@ -3998,10 +4071,15 @@ final class AppModel: ObservableObject {
         } catch { errorMessage = error.localizedDescription }
     }
 
-    private func cancelAutoReviewApprovals(nextAccountID: String) async {
+    func cancelAutoReviewApprovals(nextAccountID: String) async {
         // Queued peer work is scoped to the account that approved the exchange.
-        for groupID in Array(agentMessagingSessions.keys) { await stopGroup(id: groupID) }
+        agentMessagingAccountTransition = true
         autoReviewAccountGeneration &+= 1
+        defer { agentMessagingAccountTransition = false }
+        for scopeID in Array(agentMessagingSessions.keys) {
+            if runningAgentMessageScopes.contains(scopeID) { await stopAgentMessages(scopeID: scopeID) }
+            else { await stopGroup(id: scopeID) }
+        }
         let agentIDs = Set(pendingAutoReviewByID.values.map(\.fence.agentID))
         for agentID in agentIDs { await autoReviewBroker.cancelAll(agentID: agentID) }
         pendingAutoReviewByID.removeAll()
@@ -5039,6 +5117,7 @@ final class AppModel: ObservableObject {
     private var hasUpdateBlockingWork: Bool {
         !running.isEmpty
             || !runningGroups.isEmpty
+            || !runningAgentMessageScopes.isEmpty
             || workflowIsLoading
             || workflowRuns.contains(where: { $0.status == .running })
             || agentAsyncTasks.contains(where: { [.queued, .running, .awaitingInput].contains($0.status) })

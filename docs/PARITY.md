@@ -1,8 +1,8 @@
 # Filicon / Grok Bot 0.18 功能 parity matrix（current implementation）
 
-本矩陣保留固定的 48 個 parity ID，對照目前 macOS Swift 實作。`complete` 表示現行程式碼已提供並接線該能力；`partial` 表示核心程式已完成，但仍缺少可宣稱的 production artifact 或外部驗證；`NA` 表示該列是來源 runtime 的實作細節，不是 macOS 產品行為。
+本矩陣保留固定的 48 個 parity ID，對照目前 macOS Swift 實作。`complete` 表示該列所述能力有歷史實作證據，不代表原版所有細項均已重新核驗；`partial` 表示仍有功能、接線或驗證缺口；`NA` 表示該列是來源 runtime 的實作細節，不是 macOS 產品行為。這不是「原版功能全部都有」的保證。
 
-2026-09-18 核對 reconstructed 原始碼後，修正為 45 筆 `complete`、2 筆 `partial`、1 筆 `NA`（`UPD-04`）。`partial` 也包含尚未接線的原始協作能力；不能因服務層存在就宣稱模型已能使用。其他列的驗證欄保留歷史紀錄，不表示本次重新驗證。
+2026-09-18 核對 reconstructed 原始碼後，修正為 44 筆 `complete`、3 筆 `partial`、1 筆 `NA`（`UPD-04`）。新增確認 `AGENT-01` 的模型工具缺口：UI 能建立／修改代理人，不等於模型已有 `CreateAgent`／`UpdateAgent`。其他列的驗證欄保留歷史紀錄，不表示本次重新驗證。細項見 [協作核對紀錄](Agent-collaboration-parity.md)。
 
 ## Matrix
 
@@ -55,10 +55,10 @@
 
 | ID | 現行實作（authoritative evidence） | 狀態 | 驗證 |
 |---|---|---|---|
-| AGENT-01 | `FiliconAgents/AgentService.swift`、`Models.swift`、`AgentsWorkspaceScreen.swift` 與 `AgentAvatarStore.swift` 提供 profile CRUD、purpose/model、roster status、archive、avatar、empty/error/retry。 | complete | final gates passed |
-| AGENT-02 | `GroupService.swift`、`GroupConversationResponder.swift` 恢復最多三輪接續、群組目標/同伴角色、增量訊息、去重、可見 PASS/失敗、stop/cancel。只依使用者 mention 選擇參與者；最終文字由 host 發送，未提供原版 `SendMessage` 工具。 | partial | `GroupCollaborationTests`、`GroupToolExecutionTests`、`GroupToolApprovalIntegrationTests`；詳見 Conversation-design.md |
+| AGENT-01 | `FiliconAgents/AgentService.swift`、`Models.swift`、`AgentsWorkspaceScreen.swift` 與 `AgentAvatarStore.swift` 提供 UI profile CRUD、purpose/model、roster status、archive、avatar、empty/error/retry；尚未接線原版模型用 `CreateAgent`／`UpdateAgent` 工具。 | partial | UI/service 歷史驗證；模型工具尚缺 |
+| AGENT-02 | `GroupService.swift`、`GroupConversationResponder.swift` 提供三輪接續、角色/增量上下文、去重、PASS/失敗、stop/cancel。`AgentUserMessageTool` 已接線文字版 `SendMessage`，即時持久化並顯示，每 turn 至多兩則，不重複 final text；仍未還原原版完整訊息 payload/runtime。 | partial | `GroupCollaborationTests`、`GroupToolExecutionTests`、`AgentBackgroundExecutionTests`、`AgentUserMessageToolTests` |
 | AGENT-03 | `FiliconSharedRooms` 的 file/HTTPS transports、`SharedRoomsWorkspaceView.swift`、`FiliconChannels/ChannelService.swift` 與 REST connectors 提供 room invite/approval/member lifecycle、channel inbound/outbound、attachments、reactions、OAuth 與 delivery retry。 | complete | final gates passed |
-| AGENT-04 | 群組模型已接上 `AgentMessagingSession` 的 `SendToAgent`：固定寄件者、完整訊息核准、持久入列、獨立上下文喚醒、回信再喚醒、原權限閘門、停止/逾時/防循環。仍非原版永久個人對話與背景工作階段；未含群組廣播、圖片與優先中斷。 | partial | `AgentMessagingSessionTests`、`SendToAgentAppIntegrationTests` 驗證實際模型工具 dispatch 與 App 核准流程；仍不宣稱完整原版 parity |
+| AGENT-04 | `AgentMessagingSession` 提供固定寄件身分、完整 payload approval、durable queue、recipient/reply wake、權限/停止/逾時/上限。手動訊息已接上背景推論與審批 UI。`AgentConversationStore` 持久化 account/origin/agent 隔離上下文；仍非跨全部 DM/群組統一的私人記憶與完整背景排程，group targets/images/priority interruption 尚缺。 | partial | `AgentMessagingSessionTests`、`SendToAgentAppIntegrationTests`、`AgentBackgroundExecutionTests`、`AgentConversationStoreTests` |
 
 ### 7. Automations
 
@@ -116,4 +116,4 @@
 
 ## Verification note
 
-最終 verifier evidence：553 tests（420 Swift Testing、133 XCTest）全數通過；WAE pass；release build pass；`v0.18.0` release `0.18.0-184` 的 app/DMG notarization、stapling、Gatekeeper、clean-install、remote SHA-256 checksum 與公開 feed signature 全數通過。本矩陣沒有剩餘的 macOS product-behavior parity gap；`UPD-04` 維持 NA。
+歷史 verifier 紀錄：553 tests（420 Swift Testing、133 XCTest）、WAE、release build，以及 `v0.18.0` release `0.18.0-184` 的簽署／發佈檢查曾通過。這些不是本輪重新驗證，也不能證明功能完整對等。舊版「沒有剩餘 parity gap」結論已撤回；目前至少有上述 AGENT-01/02/04 缺項，其他區域仍需逐項端到端核對。`UPD-04` 維持 NA。
