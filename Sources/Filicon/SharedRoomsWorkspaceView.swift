@@ -4,6 +4,7 @@ import FiliconAgents
 import FiliconSharedRooms
 
 struct SharedRoomsWorkspaceView: View {
+    @Environment(\.locale) private var uiLocale
     @EnvironmentObject private var model: AppModel
     @State private var displayName = ""
     @State private var transportMode = "local"
@@ -14,36 +15,37 @@ struct SharedRoomsWorkspaceView: View {
     @State private var inviteText = ""
 
     var body: some View {
+        let _ = uiLocale.identifier
         Form {
-            Section("Shared Rooms") {
-                Toggle("Enable shared rooms", isOn: Binding(
+            Section(l10n("Shared Rooms")) {
+                Toggle(l10n("Enable shared rooms"), isOn: Binding(
                     get: { model.sharedRoomsEnabled },
                     set: { enabled in Task { await saveConfiguration(enabled: enabled) } }
                 ))
-                TextField("Your display name", text: $displayName)
-                Picker("Transport", selection: $transportMode) {
-                    Text("This Mac").tag("local")
-                    Text("HTTPS server").tag("https")
+                TextField(l10n("Your display name"), text: $displayName)
+                Picker(l10n("Transport"), selection: $transportMode) {
+                    Text(l10n("This Mac")).tag("local")
+                    Text(l10n("HTTPS server")).tag("https")
                 }
                 if transportMode == "https" {
-                    TextField("Server URL", text: $serverURL)
-                    TextField("Keychain account", text: $credentialReference)
-                    SecureField("New access token (optional)", text: $serverToken)
+                    TextField(l10n("Server URL"), text: $serverURL)
+                    TextField(l10n("Keychain account"), text: $credentialReference)
+                    SecureField(l10n("New access token (optional)"), text: $serverToken)
                 }
                 HStack {
-                    Button("Save") { Task { await saveConfiguration(enabled: model.sharedRoomsEnabled) } }
-                    Button("Reset identity") {
+                    Button(l10n("Save")) { Task { await saveConfiguration(enabled: model.sharedRoomsEnabled) } }
+                    Button(l10n("Reset identity")) {
                         Task { await model.resetSharedRoomIdentity(displayName: displayName) }
                     }
                     Spacer()
-                    Text("Session \(model.sharedRoomIdentity.accountGeneration)")
+                    Text(l10n("Session \(model.sharedRoomIdentity.accountGeneration)"))
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
 
-            Section("Join a room") {
-                TextField("Paste a filicon://shared-room/join invite", text: $inviteText)
-                Button("Request to join") {
+            Section(l10n("Join a room")) {
+                TextField(l10n("Paste a filicon://shared-room/join invite"), text: $inviteText)
+                Button(l10n("Request to join")) {
                     let value = inviteText
                     inviteText = ""
                     Task { await model.requestSharedRoomJoin(invite: value) }
@@ -51,10 +53,10 @@ struct SharedRoomsWorkspaceView: View {
                 .disabled(inviteText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !model.sharedRoomsEnabled)
             }
 
-            Section("Create a room") {
+            Section(l10n("Create a room")) {
                 HStack {
-                    TextField("Room name", text: $newRoomName)
-                    Button("Create") {
+                    TextField(l10n("Room name"), text: $newRoomName)
+                    Button(l10n("Create")) {
                         let value = newRoomName
                         newRoomName = ""
                         Task { await model.createSharedRoom(name: value) }
@@ -63,10 +65,10 @@ struct SharedRoomsWorkspaceView: View {
                 }
             }
 
-            Section("Rooms") {
+            Section(l10n("Rooms")) {
                 if model.sharedRooms.isEmpty {
                     ContentUnavailableView(
-                        model.sharedRoomsEnabled ? "No shared rooms" : "Shared Rooms are disabled",
+                        model.sharedRoomsEnabled ? l10n("No shared rooms") : l10n("Shared Rooms are disabled"),
                         systemImage: "person.3.sequence"
                     )
                 } else {
@@ -77,11 +79,11 @@ struct SharedRoomsWorkspaceView: View {
             }
 
             if let invite = model.lastSharedRoomInvite {
-                Section("Latest invite") {
+                Section(l10n("Latest invite")) {
                     Text(invite.url.absoluteString).textSelection(.enabled)
-                    Text("Expires (invite.expiresAt, style: .relative)")
+                    Text(l10n("Expires \(invite.expiresAt.formatted(.dateTime.locale(uiLocale)))"))
                         .font(.caption).foregroundStyle(.secondary)
-                    Button("Copy invite") {
+                    Button(l10n("Copy invite")) {
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString(invite.url.absoluteString, forType: .string)
                     }
@@ -89,10 +91,10 @@ struct SharedRoomsWorkspaceView: View {
             }
         }
         .formStyle(.grouped)
-        .navigationTitle("Shared Rooms")
+        .navigationTitle(l10n("Shared Rooms"))
         .toolbar {
             Button { Task { await model.refreshSharedRooms() } } label: {
-                Label("Refresh", systemImage: "arrow.clockwise")
+                Label(l10n("Refresh"), systemImage: "arrow.clockwise")
             }
             .disabled(!model.sharedRoomsEnabled)
         }
@@ -120,20 +122,22 @@ struct SharedRoomsWorkspaceView: View {
 }
 
 private struct SharedRoomRow: View {
+    @Environment(\.locale) private var uiLocale
     @EnvironmentObject private var model: AppModel
     let room: SharedRoomSnapshot
 
     private var isHost: Bool { room.hostPersonID == model.sharedRoomIdentity.id }
 
     var body: some View {
+        let _ = uiLocale.identifier
         DisclosureGroup {
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
-                    Button("Copy invite") { Task { await model.createSharedRoomInvite(roomID: room.id) } }
+                    Button(l10n("Copy invite")) { Task { await model.createSharedRoomInvite(roomID: room.id) } }
                         .disabled(!isHost)
-                    Button("Leave", role: .destructive) { Task { await model.leaveSharedRoom(roomID: room.id) } }
+                    Button(l10n("Leave"), role: .destructive) { Task { await model.leaveSharedRoom(roomID: room.id) } }
                     Spacer()
-                    Toggle("Typing", isOn: Binding(
+                    Toggle(l10n("Typing"), isOn: Binding(
                         get: { room.typingUsers.contains { $0.personID == model.sharedRoomIdentity.id } },
                         set: { value in Task { await model.setSharedRoomTyping(roomID: room.id, isTyping: value) } }
                     ))
@@ -141,15 +145,15 @@ private struct SharedRoomRow: View {
                 }
 
                 if !room.pendingJoinRequests.isEmpty {
-                    GroupBox("Join requests") {
+                    GroupBox(l10n("Join requests")) {
                         ForEach(room.pendingJoinRequests) { request in
                             HStack {
                                 Text(request.identity.displayName)
                                 Spacer()
-                                Button("Approve") {
+                                Button(l10n("Approve")) {
                                     Task { await model.decideSharedRoomJoin(roomID: room.id, requestID: request.id, approve: true) }
                                 }
-                                Button("Deny", role: .destructive) {
+                                Button(l10n("Deny"), role: .destructive) {
                                     Task { await model.decideSharedRoomJoin(roomID: room.id, requestID: request.id, approve: false) }
                                 }
                             }
@@ -158,25 +162,25 @@ private struct SharedRoomRow: View {
                     .disabled(!isHost)
                 }
 
-                GroupBox("Members") {
+                GroupBox(l10n("Members")) {
                     ForEach(room.members) { member in
                         HStack {
                             Image(systemName: member.kind == .agent ? "cpu" : "person")
                             VStack(alignment: .leading) {
                                 Text(member.displayName)
-                                Text(member.kind == .agent ? "Agent" : member.id == room.hostPersonID ? "Host" : "Person")
+                                Text(member.kind == .agent ? l10n("Agent") : member.id == room.hostPersonID ? l10n("Host") : l10n("Person"))
                                     .font(.caption).foregroundStyle(.secondary)
                             }
                             Spacer()
                             if isHost && member.id != room.hostPersonID {
-                                Button("Remove", role: .destructive) {
+                                Button(l10n("Remove"), role: .destructive) {
                                     Task { await model.removeSharedRoomMember(roomID: room.id, memberID: member.id) }
                                 }
                             }
                         }
                     }
                     if isHost {
-                        Menu("Add agent") {
+                        Menu(l10n("Add agent")) {
                             ForEach(availableAgents) { agent in
                                 Button(agent.name) { Task { await model.addAgentToSharedRoom(roomID: room.id, agent: agent) } }
                             }
@@ -186,7 +190,7 @@ private struct SharedRoomRow: View {
                 }
 
                 if !room.typingUsers.isEmpty {
-                    Text(room.typingUsers.map(\.displayName).joined(separator: ", ") + " typing…")
+                    Text(room.typingUsers.map(\.displayName).joined(separator: ", ") + l10n(" typing…"))
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
@@ -194,7 +198,7 @@ private struct SharedRoomRow: View {
         } label: {
             VStack(alignment: .leading) {
                 Text(room.name)
-                Text("\(room.members.count) members")
+                Text(l10n("\(room.members.count) members"))
                     .font(.caption).foregroundStyle(.secondary)
             }
         }

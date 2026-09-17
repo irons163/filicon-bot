@@ -31,7 +31,7 @@ enum ConversationOutlineProjection {
             if !message.reasoningText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 result.append(item(
                     id: "\(message.id.uuidString):thinking", messageID: message.id,
-                    kind: .thinking, label: "Thinking", detail: message.reasoningText, status: nil
+                    kind: .thinking, label: l10n("Thinking"), detail: message.reasoningText, status: nil
                 ))
             }
             for tool in message.toolActivities {
@@ -72,6 +72,7 @@ enum ConversationOutlineProjection {
 }
 
 struct ConversationOutlineView: View {
+    @Environment(\.locale) private var uiLocale
     let title: String
     let items: [ConversationOutlineItem]
     let onSelect: (UUID) -> Void
@@ -79,17 +80,18 @@ struct ConversationOutlineView: View {
     @State private var expanded = Set<String>()
 
     var body: some View {
+        let _ = uiLocale.identifier
         VStack(spacing: 0) {
             HStack {
-                Label("Full conversation", systemImage: "list.bullet")
+                Label(l10n("Full conversation"), systemImage: "list.bullet")
                     .font(.headline)
                 Text(title).foregroundStyle(.secondary).lineLimit(1)
                 Spacer()
-                Button("Done") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button(l10n("Done")) { dismiss() }.keyboardShortcut(.cancelAction)
             }.padding(12)
             Divider()
             if items.isEmpty {
-                ContentUnavailableView("No conversation activity yet", systemImage: "text.bubble")
+                ContentUnavailableView(l10n("No conversation activity yet"), systemImage: "text.bubble")
             } else {
                 List(items) { item in
                     DisclosureGroup(isExpanded: Binding(
@@ -97,11 +99,11 @@ struct ConversationOutlineView: View {
                         set: { value in if value { expanded.insert(item.id) } else { expanded.remove(item.id) } }
                     )) {
                         if item.detail.isEmpty {
-                            Text("No additional details.").foregroundStyle(.secondary)
+                            Text(l10n("No additional details.")).foregroundStyle(.secondary)
                         } else {
                             Text(item.detail).font(.system(.caption, design: item.kind == .toolCall ? .monospaced : .default)).textSelection(.enabled)
                         }
-                        Button("Show in conversation") {
+                        Button(l10n("Show in conversation")) {
                             onSelect(item.messageID)
                             dismiss()
                         }
@@ -111,7 +113,7 @@ struct ConversationOutlineView: View {
                             VStack(alignment: .leading, spacing: 2) {
                                 HStack {
                                     Text(item.label).fontWeight(.medium)
-                                    if let status = item.status { Text(status.capitalized).font(.caption2).foregroundStyle(.secondary) }
+                                    if let status = item.status { Text(FiliconLocalization.string(status.capitalized)).font(.caption2).foregroundStyle(.secondary) }
                                 }
                                 if !item.preview.isEmpty { Text(item.preview).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
                             }

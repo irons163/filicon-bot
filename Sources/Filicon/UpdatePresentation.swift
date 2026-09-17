@@ -16,12 +16,12 @@ struct UpdatePillPresentation: Equatable {
     static func make(state: UpdateState) -> Self? {
         switch state {
         case .idle, .upToDate: nil
-        case .checking: .init(label: "Checking for updates…", symbolName: "arrow.triangle.2.circlepath", action: nil, isError: false)
-        case .available(let release): .init(label: "Update \(release.version)", symbolName: "arrow.down.circle", action: .download, isError: false)
-        case .downloading: .init(label: "Downloading update…", symbolName: "arrow.down.circle", action: nil, isError: false)
-        case .staged: .init(label: "Install Update", symbolName: "arrow.clockwise.circle.fill", action: .install, isError: false)
-        case .installing: .init(label: "Installing update…", symbolName: "arrow.triangle.2.circlepath", action: nil, isError: false)
-        case .failed: .init(label: "Update failed — Retry", symbolName: "exclamationmark.triangle.fill", action: .check, isError: true)
+        case .checking: .init(label: l10n("Checking for updates…"), symbolName: "arrow.triangle.2.circlepath", action: nil, isError: false)
+        case .available(let release): .init(label: l10n("Update \(release.version)"), symbolName: "arrow.down.circle", action: .download, isError: false)
+        case .downloading: .init(label: l10n("Downloading update…"), symbolName: "arrow.down.circle", action: nil, isError: false)
+        case .staged: .init(label: l10n("Install Update"), symbolName: "arrow.clockwise.circle.fill", action: .install, isError: false)
+        case .installing: .init(label: l10n("Installing update…"), symbolName: "arrow.triangle.2.circlepath", action: nil, isError: false)
+        case .failed: .init(label: l10n("Update failed — Retry"), symbolName: "exclamationmark.triangle.fill", action: .check, isError: true)
         }
     }
 }

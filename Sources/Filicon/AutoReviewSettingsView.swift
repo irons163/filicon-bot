@@ -2,39 +2,41 @@ import SwiftUI
 import FiliconAutoReview
 
 struct AutoReviewSettingsView: View {
+    @Environment(\.locale) private var uiLocale
     @EnvironmentObject private var model: AppModel
     @State private var allowRules = ""
     @State private var askRules = ""
     @State private var loaded = false
 
     var body: some View {
-        Section("Auto-review") {
-            Toggle("Auto-review enabled", isOn: Binding(
+        let _ = uiLocale.identifier
+        Section(FiliconLocalization.string("Auto-review")) {
+            Toggle(FiliconLocalization.string("Auto-review enabled"), isOn: Binding(
                 get: { model.autoReviewInstructions.isEnabled },
                 set: { value in Task { await model.setAutoReviewEnabled(value) } }
             ))
-            Text("Only explicitly allowed read-only actions may run automatically. Local writes, commands, network access, sensitive data, and destructive actions always require approval.")
+            Text(FiliconLocalization.string("Only explicitly allowed read-only actions may run automatically. Local writes, commands, network access, sensitive data, and destructive actions always require approval."))
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
             rulesEditor(
-                title: "Allow rules",
-                help: "One literal phrase per line. At most 20 rules; each rule is limited to 1,000 characters.",
+                title: FiliconLocalization.string("Allow rules"),
+                help: FiliconLocalization.string("One literal phrase per line. At most 20 rules; each rule is limited to 1,000 characters."),
                 text: $allowRules
             )
             rulesEditor(
-                title: "Ask rules",
-                help: "Ask rules take precedence over allow rules.",
+                title: FiliconLocalization.string("Ask rules"),
+                help: FiliconLocalization.string("Ask rules take precedence over allow rules."),
                 text: $askRules
             )
             HStack {
-                Button("Save Auto-review Rules") {
+                Button(FiliconLocalization.string("Save Auto-review Rules")) {
                     let allow = Self.rules(from: allowRules)
                     let ask = Self.rules(from: askRules)
                     Task { await model.setAutoReviewRules(allow: allow, ask: ask) }
                 }
                 Spacer()
-                Text("\(Self.rules(from: allowRules).count)/20 allow · \(Self.rules(from: askRules).count)/20 ask")
+                Text("\(Self.rules(from: allowRules).count)/20 \(FiliconLocalization.string("allow")) · \(Self.rules(from: askRules).count)/20 \(FiliconLocalization.string("ask"))")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

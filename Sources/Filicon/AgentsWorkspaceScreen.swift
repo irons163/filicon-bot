@@ -4,6 +4,7 @@ import FiliconDomain
 import FiliconAgents
 
 struct AgentsWorkspaceScreen: View {
+    @Environment(\.locale) private var uiLocale
     @EnvironmentObject private var model: AppModel
     @State private var section = Section.roster
     @State private var inspectedAgent: AgentProfile?
@@ -16,21 +17,34 @@ struct AgentsWorkspaceScreen: View {
         case tasks = "Async Tasks"
         case cloud = "Cloud Catalog"
         var id: Self { self }
+        var title: String { agentString(rawValue) }
     }
 
     var body: some View {
+        let _ = uiLocale.identifier
         VStack(spacing: 0) {
-            HStack {
-                Picker("Agents workspace", selection: $section) {
-                    ForEach(Section.allCases) { Text($0.rawValue).tag($0) }
+            ViewThatFits(in: .horizontal) {
+                HStack {
+                Picker(agentString("Agents workspace"), selection: $section) {
+                    ForEach(Section.allCases) { Text($0.title).tag($0) }
                 }
                 .pickerStyle(.segmented)
-                .frame(maxWidth: 480)
+                .fixedSize()
                 Spacer()
-                Button { creatingAgent = true } label: { Label("New Agent", systemImage: "plus") }
+                Button { creatingAgent = true } label: { Label(agentString("New Agent"), systemImage: "plus") }
+                }
+                HStack {
+                    Picker(agentString("Agents workspace"), selection: $section) {
+                        ForEach(Section.allCases) { Text($0.title).tag($0) }
+                    }.labelsHidden().pickerStyle(.menu)
+                    Spacer()
+                    Button { creatingAgent = true } label: { Label(agentString("New Agent"), systemImage: "plus") }
+                }
             }
+            .fixedSize(horizontal: false, vertical: true)
             .padding()
             Divider()
+            Group {
             switch section {
             case .roster:
                 AgentRosterView(inspectedAgent: $inspectedAgent)
@@ -43,8 +57,10 @@ struct AgentsWorkspaceScreen: View {
             case .cloud:
                 CloudAgentCatalogView()
             }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .navigationTitle("Agents")
+        .navigationTitle(agentString("Agents"))
         .sheet(item: $inspectedAgent) { profile in
             AgentEditorView(profile: profile, isNew: false)
         }
@@ -66,22 +82,32 @@ struct AgentsWorkspaceScreen: View {
 }
 
 private struct CloudAgentCatalogView: View {
+    @Environment(\.locale) private var uiLocale
     @EnvironmentObject private var model: AppModel
 
     var body: some View {
+        let _ = uiLocale.identifier
         Group {
             if model.cloudAgentEndpoint.isEmpty {
                 ContentUnavailableView(
-                    "Cloud agents are not configured",
+                    agentString("Cloud agents are not configured"),
                     systemImage: "cloud.slash",
-                    description: Text("Add a credential-free HTTPS endpoint and Keychain bearer reference in Settings.")
+                    description: Text(agentString("Add a credential-free HTTPS endpoint and Keychain bearer reference in Settings."))
                 )
             } else if model.cloudAgentCatalog.isEmpty && !model.isRefreshingCloudAgents {
-                ContentUnavailableView("No cloud agents", systemImage: "cloud", description: Text("Refresh the remote catalog."))
+                ContentUnavailableView(
+                    agentString("No cloud agents"),
+                    systemImage: "cloud",
+                    description: Text(agentString("Refresh the remote catalog."))
+                )
             } else {
                 List(model.cloudAgentCatalog) { agent in
                     VStack(alignment: .leading, spacing: 3) {
-                        HStack { Text(agent.name).fontWeight(.medium); Spacer(); Text(agent.status.rawValue.capitalized).foregroundStyle(.secondary) }
+                        HStack {
+                            Text(agent.name).fontWeight(.medium)
+                            Spacer()
+                            Text(agentString(agent.status.rawValue.capitalized)).foregroundStyle(.secondary)
+                        }
                         Text(agent.id).font(.caption.monospaced()).foregroundStyle(.secondary)
                         if let summary = agent.summary { Text(summary).font(.caption).foregroundStyle(.secondary) }
                     }
@@ -91,7 +117,7 @@ private struct CloudAgentCatalogView: View {
         .overlay(alignment: .topTrailing) {
             Button { Task { await model.refreshCloudAgents() } } label: {
                 if model.isRefreshingCloudAgents { ProgressView().controlSize(.small) }
-                else { Label("Refresh", systemImage: "arrow.clockwise") }
+                else { Label(agentString("Refresh"), systemImage: "arrow.clockwise") }
             }
             .disabled(model.isRefreshingCloudAgents)
             .padding()
@@ -101,13 +127,19 @@ private struct CloudAgentCatalogView: View {
 }
 
 private struct AgentRosterView: View {
+    @Environment(\.locale) private var uiLocale
     @EnvironmentObject private var model: AppModel
     @Binding var inspectedAgent: AgentProfile?
 
     var body: some View {
+        let _ = uiLocale.identifier
         let sections = AgentRosterSection.build(profiles: model.agents, pinnedIDs: model.pinnedAgentIDs)
         if sections.isEmpty {
-            ContentUnavailableView("No agents yet", systemImage: "person.2", description: Text("Create an agent to give it instructions and a model."))
+            ContentUnavailableView(
+                agentString("No agents yet"),
+                systemImage: "person.2",
+                description: Text(agentString("Create an agent to give it instructions and a model."))
+            )
         } else {
             List {
                 ForEach(sections) { section in
@@ -124,16 +156,19 @@ private struct AgentRosterView: View {
 
 private extension AgentRosterSectionID {
     var title: String {
-        switch self { case .pinned: "Pinned"; case .active: "Active"; case .archived: "Archived" }
+        let key = switch self { case .pinned: l10n("Pinned"); case .active: l10n("Active"); case .archived: l10n("Archived") }
+        return agentString(key)
     }
 }
 
 private struct AgentRosterRow: View {
+    @Environment(\.locale) private var uiLocale
     @EnvironmentObject private var model: AppModel
     let profile: AgentProfile
     @Binding var inspectedAgent: AgentProfile?
 
     var body: some View {
+        let _ = uiLocale.identifier
         HStack(spacing: 12) {
             AgentAvatarIcon(profile: profile, dimension: 38)
             VStack(alignment: .leading, spacing: 3) {
@@ -151,16 +186,16 @@ private struct AgentRosterRow: View {
             }
             AgentStatusLabel(status: profile.status)
             Menu {
-                Button("Edit…") { inspectedAgent = profile }
-                Button(model.pinnedAgentIDs.contains(profile.id) ? "Unpin" : "Pin") { model.toggleAgentPinned(id: profile.id) }
-                if profile.unreadCount > 0 { Button("Mark Read") { Task { await model.markAgentRead(id: profile.id) } } }
-                if profile.status == .failed { Button("Retry") { Task { await model.retryAgent(id: profile.id) } } }
-                Button("Clone") { Task { await model.cloneAgent(id: profile.id) } }
+                Button(agentString("Edit…")) { inspectedAgent = profile }
+                Button(agentString(model.pinnedAgentIDs.contains(profile.id) ? l10n("Unpin") : l10n("Pin"))) { model.toggleAgentPinned(id: profile.id) }
+                if profile.unreadCount > 0 { Button(agentString("Mark Read")) { Task { await model.markAgentRead(id: profile.id) } } }
+                if profile.status == .failed { Button(agentString("Retry")) { Task { await model.retryAgent(id: profile.id) } } }
+                Button(agentString("Clone")) { Task { await model.cloneAgent(id: profile.id) } }
                 Divider()
                 if profile.archivedAt == nil {
-                    Button("Archive", role: .destructive) { Task { await model.archiveAgent(id: profile.id) } }
+                    Button(agentString("Archive"), role: .destructive) { Task { await model.archiveAgent(id: profile.id) } }
                 } else {
-                    Button("Restore") { Task { await model.restoreAgent(id: profile.id) } }
+                    Button(agentString("Restore")) { Task { await model.restoreAgent(id: profile.id) } }
                 }
             } label: { Image(systemName: "ellipsis.circle") }
             .menuStyle(.borderlessButton).fixedSize()
@@ -172,8 +207,10 @@ private struct AgentRosterRow: View {
 }
 
 private struct AgentStatusLabel: View {
+    @Environment(\.locale) private var uiLocale
     let status: AgentAvailabilityStatus
     var body: some View {
+        let _ = uiLocale.identifier
         HStack(spacing: 4) {
             Circle().fill(color).frame(width: 7, height: 7)
             Text(label).font(.caption).foregroundStyle(.secondary)
@@ -181,7 +218,8 @@ private struct AgentStatusLabel: View {
         .help(label)
     }
     private var label: String {
-        switch status { case .idle: "Idle"; case .running: "Running"; case .awaitingInput: "Awaiting input"; case .failed: "Failed"; case .offline: "Offline" }
+        let key = switch status { case .idle: l10n("Idle"); case .running: l10n("Running"); case .awaitingInput: l10n("Awaiting input"); case .failed: l10n("Failed"); case .offline: l10n("Offline") }
+        return agentString(key)
     }
     private var color: Color {
         switch status { case .idle: .green; case .running: .blue; case .awaitingInput: .orange; case .failed: .red; case .offline: .gray }
@@ -189,6 +227,7 @@ private struct AgentStatusLabel: View {
 }
 
 private struct AgentEditorView: View {
+    @Environment(\.locale) private var uiLocale
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
     @State private var profile: AgentProfile
@@ -212,30 +251,31 @@ private struct AgentEditorView: View {
     }
 
     var body: some View {
+        let _ = uiLocale.identifier
         Form {
-            Section("Identity") {
+            Section(agentString("Identity")) {
                 HStack(alignment: .top, spacing: 16) {
                     AgentAvatarIcon(profile: profile, dimension: 72)
                     VStack(alignment: .leading) {
-                        Picker("Avatar", selection: $selectedAvatarKind) {
-                            Text("Character").tag(AgentAvatarKind.character)
-                            Text("Image").tag(AgentAvatarKind.image)
+                        Picker(agentString("Avatar"), selection: $selectedAvatarKind) {
+                            Text(agentString("Character")).tag(AgentAvatarKind.character)
+                            Text(agentString("Image")).tag(AgentAvatarKind.image)
                         }.pickerStyle(.segmented)
                         if selectedAvatarKind != .image {
-                            TextField("Character (up to 2)", text: $characterValue)
+                            TextField(agentString("Character (up to 2)"), text: $characterValue)
                                 .onChange(of: characterValue) { _, _ in updateCharacterPreview() }
-                            TextField("Color (#RRGGBB)", text: $colorHexValue)
+                            TextField(agentString("Color (#RRGGBB)"), text: $colorHexValue)
                                 .onChange(of: colorHexValue) { _, _ in updateCharacterPreview() }
                         } else {
-                            Button("Choose image…") { importingImage = true }
-                            HStack { Text("Zoom"); Slider(value: $zoom, in: 1...5); Text(String(format: "%.1f×", zoom)).monospacedDigit() }
-                            HStack { Text("Horizontal focus"); Slider(value: $focusX, in: 0...1) }
-                            HStack { Text("Vertical focus"); Slider(value: $focusY, in: 0...1) }
-                            Text("Images must be under 25 MB. Filicon safely normalizes to 1024 px and stores a 256 px PNG.")
+                            Button(agentString("Choose image…")) { importingImage = true }
+                            HStack { Text(agentString("Zoom")); Slider(value: $zoom, in: 1...5); Text(String(format: l10n("%.1f×"), zoom)).monospacedDigit() }
+                            HStack { Text(agentString("Horizontal focus")); Slider(value: $focusX, in: 0...1) }
+                            HStack { Text(agentString("Vertical focus")); Slider(value: $focusY, in: 0...1) }
+                            Text(agentString("Images must be under 25 MB. Filicon safely normalizes to 1024 px and stores a 256 px PNG."))
                                 .font(.caption).foregroundStyle(.secondary)
                         }
-                        Picker("Shape", selection: $selectedAvatarShape) {
-                            ForEach(AgentAvatarShape.allCases, id: \.self) { Text($0.label).tag($0) }
+                        Picker(agentString("Shape"), selection: $selectedAvatarShape) {
+                            ForEach(AgentAvatarShape.allCases, id: \.self) { Text(agentString($0.label)).tag($0) }
                         }
                         .onChange(of: selectedAvatarShape) { _, shape in
                             guard var avatar = profile.avatar else { updateCharacterPreview(); return }
@@ -243,21 +283,21 @@ private struct AgentEditorView: View {
                         }
                     }
                 }
-                TextField("Name", text: $profile.name)
-                TextField("Title", text: $profile.title)
-                TextField("Summary", text: $profile.summary, axis: .vertical).lineLimit(2...4)
+                TextField(agentString("Name"), text: $profile.name)
+                TextField(agentString("Title"), text: $profile.title)
+                TextField(agentString("Summary"), text: $profile.summary, axis: .vertical).lineLimit(2...4)
             }
-            Section("Behavior") {
-                Picker("Provider", selection: $profile.providerID) {
+            Section(agentString("Behavior")) {
+                Picker(agentString("Provider"), selection: $profile.providerID) {
                     ForEach(model.descriptors) { Text($0.displayName).tag($0.id) }
                 }
-                TextField("Model ID", text: Binding(get: { profile.modelID.rawValue }, set: { profile.modelID = ModelID(rawValue: $0) }))
-                TextField("Instructions", text: $profile.instructions, axis: .vertical).lineLimit(6...14)
+                TextField(agentString("Model ID"), text: Binding(get: { profile.modelID.rawValue }, set: { profile.modelID = ModelID(rawValue: $0) }))
+                TextField(agentString("Instructions"), text: $profile.instructions, axis: .vertical).lineLimit(6...14)
             }
             HStack {
-                Button("Cancel") { dismiss() }
+                Button(agentString("Cancel")) { dismiss() }
                 Spacer()
-                Button(isNew ? "Create" : "Save") { save() }
+                Button(agentString(isNew ? l10n("Create") : l10n("Save"))) { save() }
                     .keyboardShortcut(.defaultAction)
                     .disabled(profile.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || profile.modelID.rawValue.isEmpty)
             }
@@ -297,14 +337,16 @@ private struct AgentEditorView: View {
 }
 
 private extension AgentAvatarShape {
-    var label: String { switch self { case .circle: "Circle"; case .roundedSquare: "Rounded square"; case .hexagon: "Hexagon" } }
+    var label: String { switch self { case .circle: l10n("Circle"); case .roundedSquare: l10n("Rounded square"); case .hexagon: l10n("Hexagon") } }
 }
 
 private struct AgentAvatarIcon: View {
+    @Environment(\.locale) private var uiLocale
     @EnvironmentObject private var model: AppModel
     let profile: AgentProfile
     let dimension: CGFloat
     var body: some View {
+        let _ = uiLocale.identifier
         Group {
             if let url = model.agentAvatarURL(for: profile.avatar), let image = NSImage(contentsOf: url) {
                 Image(nsImage: image).resizable().scaledToFill()
@@ -347,51 +389,53 @@ private extension Color {
 }
 
 private struct AgentAsyncTasksView: View {
+    @Environment(\.locale) private var uiLocale
     @EnvironmentObject private var model: AppModel
     @State private var kind = AgentTaskKind.subagent
     @State private var agentID: UUID?
     @State private var title = ""
     @State private var prompt = ""
     var body: some View {
+        let _ = uiLocale.identifier
         List {
-            Section("Launch task") {
+            Section(agentString("Launch task")) {
                 HStack {
-                    Picker("Kind", selection: $kind) {
-                        ForEach(AgentTaskKind.allCases, id: \.self) { Label($0.label, systemImage: $0.icon).tag($0) }
+                    Picker(agentString("Kind"), selection: $kind) {
+                        ForEach(AgentTaskKind.allCases, id: \.self) { Label(agentString($0.label), systemImage: $0.icon).tag($0) }
                     }
-                    Picker("Agent", selection: $agentID) {
-                        Text("Choose…").tag(nil as UUID?)
+                    Picker(agentString("Agent"), selection: $agentID) {
+                        Text(agentString("Choose…")).tag(nil as UUID?)
                         ForEach(model.agents.filter { $0.archivedAt == nil }) { Text($0.name).tag(Optional($0.id)) }
                     }
                 }
-                TextField("Title", text: $title)
-                TextField(kind == .shell ? "Shell command" : "Task prompt", text: $prompt, axis: .vertical).lineLimit(2...6)
+                TextField(agentString("Task title"), text: $title)
+                TextField(agentString(kind == .shell ? l10n("Shell command") : l10n("Task prompt")), text: $prompt, axis: .vertical).lineLimit(2...6)
                 HStack {
                     if kind == .shell {
-                        Label("Runs locally with /bin/zsh after you press Launch.", systemImage: "exclamationmark.shield")
+                        Label(agentString("Runs locally with /bin/zsh after you press Launch."), systemImage: "exclamationmark.shield")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
-                    Button("Launch") { launch() }.disabled(agentID == nil || title.trimmed.isEmpty || prompt.trimmed.isEmpty)
+                    Button(agentString("Launch")) { launch() }.disabled(agentID == nil || title.trimmed.isEmpty || prompt.trimmed.isEmpty)
                 }
             }
-            Section("History") {
+            Section(agentString("History")) {
             if model.agentAsyncTasks.isEmpty {
-                ContentUnavailableView("No async tasks", systemImage: "clock.arrow.2.circlepath")
+                ContentUnavailableView(agentString("No async tasks"), systemImage: "clock.arrow.2.circlepath")
             } else {
                 ForEach(model.agentAsyncTasks.sorted { $0.startedAt > $1.startedAt }) { task in
                     HStack(spacing: 12) {
                         Image(systemName: task.kind.icon).frame(width: 24)
                         VStack(alignment: .leading, spacing: 3) {
                             Text(task.title).fontWeight(.medium)
-                            Text("\(task.kind.label) · \(agentName(task.agentID)) · \(task.startedAt.formatted(date: .abbreviated, time: .shortened))")
+                            Text("\(agentString(task.kind.label)) · \(agentName(task.agentID)) · \(task.startedAt.formatted(date: .abbreviated, time: .shortened))")
                                 .font(.caption).foregroundStyle(.secondary)
                             if let result = task.result { Text(result).font(.caption).lineLimit(2) }
                         }
                         Spacer()
-                        Text(task.status.label).font(.caption).foregroundStyle(task.status == .failed ? .red : .secondary)
+                        Text(agentString(task.status.label)).font(.caption).foregroundStyle(task.status == .failed ? .red : .secondary)
                         if task.isCancellationAllowed {
-                            Button("Cancel", role: .destructive) { Task { await model.cancelAgentTask(id: task.id) } }
+                            Button(agentString("Cancel"), role: .destructive) { Task { await model.cancelAgentTask(id: task.id) } }
                         }
                     }.padding(.vertical, 4)
                 }
@@ -401,7 +445,7 @@ private struct AgentAsyncTasksView: View {
         .task { await model.reloadAgentTasks() }
         .refreshable { await model.reloadAgentTasks() }
     }
-    private func agentName(_ id: UUID) -> String { model.agents.first(where: { $0.id == id })?.name ?? "Unknown agent" }
+    private func agentName(_ id: UUID) -> String { model.agents.first(where: { $0.id == id })?.name ?? agentString("Unknown agent") }
     private func launch() {
         guard let agentID else { return }
         let values = (kind, agentID, title.trimmed, prompt.trimmed)
@@ -413,34 +457,36 @@ private struct AgentAsyncTasksView: View {
 private extension String { var trimmed: String { trimmingCharacters(in: .whitespacesAndNewlines) } }
 
 private extension AgentTaskKind {
-    var label: String { switch self { case .subagent: "Subagent"; case .shell: "Shell"; case .cloud: "Cloud" } }
+    var label: String { switch self { case .subagent: l10n("Subagent"); case .shell: l10n("Shell"); case .cloud: l10n("Cloud") } }
     var icon: String { switch self { case .subagent: "person.2"; case .shell: "terminal"; case .cloud: "cloud" } }
 }
 private extension AgentRunStatus {
     var label: String {
-        switch self { case .queued: "Queued"; case .running: "Running"; case .awaitingInput: "Awaiting input"; case .succeeded: "Succeeded"; case .failed: "Failed"; case .cancelled: "Cancelled"; case .interrupted: "Interrupted" }
+        switch self { case .queued: l10n("Queued"); case .running: l10n("Running"); case .awaitingInput: l10n("Awaiting input"); case .succeeded: l10n("Succeeded"); case .failed: l10n("Failed"); case .cancelled: l10n("Cancelled"); case .interrupted: l10n("Interrupted") }
     }
 }
 
 private struct AgentOrgChartView: View {
+    @Environment(\.locale) private var uiLocale
     @EnvironmentObject private var model: AppModel
     @Binding var inspectedAgent: AgentProfile?
     @State private var zoom = 1.0
 
     var body: some View {
+        let _ = uiLocale.identifier
         let layout = AgentOrgChartLayout.make(profiles: model.agents.filter { $0.archivedAt == nil }, tasks: model.agentAsyncTasks)
         VStack(spacing: 0) {
             HStack {
                 Button { zoom = max(0.5, zoom - 0.1) } label: { Image(systemName: "minus.magnifyingglass") }
                 Slider(value: $zoom, in: 0.5...2).frame(width: 150)
                 Button { zoom = min(2, zoom + 0.1) } label: { Image(systemName: "plus.magnifyingglass") }
-                Button("Reset") { zoom = 1 }
+                Button(agentString("Reset")) { zoom = 1 }
                 Spacer()
-                Text("Drag the scroll view to pan · click a card to inspect").font(.caption).foregroundStyle(.secondary)
+                Text(agentString("Drag the scroll view to pan · click a card to inspect")).font(.caption).foregroundStyle(.secondary)
             }.padding(10)
             Divider()
             if layout.nodes.isEmpty {
-                ContentUnavailableView("No active agents", systemImage: "point.3.connected.trianglepath.dotted")
+                ContentUnavailableView(agentString("No active agents"), systemImage: "point.3.connected.trianglepath.dotted")
             } else {
                 ScrollView([.horizontal, .vertical]) {
                     ZStack(alignment: .topLeading) {
@@ -458,7 +504,7 @@ private struct AgentOrgChartView: View {
                                     AgentAvatarIcon(profile: node.profile, dimension: 34)
                                     VStack(alignment: .leading) {
                                         Text(node.profile.name).fontWeight(.medium).lineLimit(1)
-                                        Text(node.profile.title.isEmpty ? node.profile.status.rawValue : node.profile.title).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                                        Text(node.profile.title.isEmpty ? FiliconLocalization.string(node.profile.status.rawValue) : node.profile.title).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                                     }
                                 }.padding(10).frame(width: 190, height: 72, alignment: .leading)
                                     .background(.background, in: RoundedRectangle(cornerRadius: 11)).shadow(radius: 2, y: 1)
@@ -473,4 +519,8 @@ private struct AgentOrgChartView: View {
             }
         }
     }
+}
+
+private func agentString(_ key: String) -> String {
+    FiliconLocalization.string(key)
 }

@@ -8,16 +8,18 @@ struct NotificationTrayActionResult: Sendable {
 }
 
 struct InAppNotificationStack: View {
+    @Environment(\.locale) private var uiLocale
     let trays: [InAppNotificationTray]
     let onClear: () -> Void
     let onDismiss: (UUID) -> Void
     let onAction: (NotificationTrayAction) async -> NotificationTrayActionResult
 
     var body: some View {
+        let _ = uiLocale.identifier
         if !trays.isEmpty {
             VStack(alignment: .trailing, spacing: 6) {
                 if trays.count > 1 {
-                    Button("Clear All", action: onClear)
+                    Button(l10n("Clear All"), action: onClear)
                         .buttonStyle(.bordered)
                         .controlSize(.small)
                 }
@@ -27,18 +29,20 @@ struct InAppNotificationStack: View {
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
             .accessibilityElement(children: .contain)
-            .accessibilityLabel("Notifications")
+            .accessibilityLabel(l10n("Notifications"))
         }
     }
 }
 
 private struct NotificationTrayCard: View {
+    @Environment(\.locale) private var uiLocale
     let tray: InAppNotificationTray
     let onDismiss: (UUID) -> Void
     let onAction: (NotificationTrayAction) async -> NotificationTrayActionResult
     @State private var copiedRequestID = false
 
     var body: some View {
+        let _ = uiLocale.identifier
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundStyle(.red)
@@ -50,7 +54,7 @@ private struct NotificationTrayCard: View {
                         Text("×\(count)")
                             .foregroundStyle(.secondary)
                             .monospacedDigit()
-                            .accessibilityLabel("Occurred \(count) times")
+                            .accessibilityLabel(l10n("Occurred \(count) times"))
                     }
                 }
                 if !tray.detail.isEmpty {
@@ -60,10 +64,10 @@ private struct NotificationTrayCard: View {
                         .textSelection(.enabled)
                 }
                 if tray.errorKind != nil || tray.rawDetail != nil {
-                    DisclosureGroup("Details") {
+                    DisclosureGroup(l10n("Details")) {
                         VStack(alignment: .leading, spacing: 3) {
                             if let errorKind = tray.errorKind {
-                                Text(errorKind)
+                                Text(FiliconLocalization.message(errorKind))
                                     .font(.caption.monospaced())
                                     .foregroundStyle(.secondary)
                             }
@@ -98,13 +102,13 @@ private struct NotificationTrayCard: View {
                         Image(systemName: copiedRequestID ? "checkmark" : "doc.on.doc")
                     }
                     .buttonStyle(.plain)
-                    .help(copiedRequestID ? "Request ID copied" : "Copy request ID")
-                    .accessibilityLabel(copiedRequestID ? "Request ID copied" : "Copy request ID")
+                    .help(copiedRequestID ? l10n("Request ID copied") : l10n("Copy request ID"))
+                    .accessibilityLabel(copiedRequestID ? l10n("Request ID copied") : l10n("Copy request ID"))
                 }
                 Button { onDismiss(tray.id) } label: { Image(systemName: "xmark") }
                     .buttonStyle(.plain)
-                    .help("Dismiss notification")
-                    .accessibilityLabel("Dismiss notification")
+                    .help(l10n("Dismiss notification"))
+                    .accessibilityLabel(l10n("Dismiss notification"))
             }
         }
         .padding(12)
@@ -116,12 +120,14 @@ private struct NotificationTrayCard: View {
 }
 
 private struct NotificationTrayActionButton: View {
+    @Environment(\.locale) private var uiLocale
     let action: NotificationTrayAction
     let onAction: (NotificationTrayAction) async -> NotificationTrayActionResult
     @State private var isPending = false
     @State private var result: NotificationTrayActionResult?
 
     var body: some View {
+        let _ = uiLocale.identifier
         VStack(alignment: .leading, spacing: 3) {
             Button(label) {
                 guard !isPending else { return }
@@ -136,7 +142,7 @@ private struct NotificationTrayActionButton: View {
             .controlSize(.small)
             .disabled(isPending)
             if isPending {
-                ProgressView().controlSize(.small).accessibilityLabel("Action in progress")
+                ProgressView().controlSize(.small).accessibilityLabel(l10n("Action in progress"))
             } else if let message = result?.message {
                 Text(message)
                     .font(.caption)

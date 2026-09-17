@@ -12,7 +12,7 @@ final class SkillPublishingAppIntegrationTests: XCTestCase {
         let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
         _ = try await model.privateSkillLibrary.create(id: "review", name: "Review", description: "Reviews", body: "Review")
         await model.publishPrivateSkill(id: "review", targetID: "team")
-        XCTAssertEqual(model.errorMessage, "Configure a publishing backend before changing a team marketplace.")
+        XCTAssertEqual(model.errorMessage, l10n("Configure a publishing backend before changing a team marketplace."))
         let configured = await model.configureSkillPublishing(endpoint: "http://market.example", bearerToken: "secret")
         XCTAssertFalse(configured)
         XCTAssertTrue(model.skillPublishingEndpoint.isEmpty)

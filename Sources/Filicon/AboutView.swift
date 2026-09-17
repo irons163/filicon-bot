@@ -2,28 +2,30 @@ import AppKit
 import SwiftUI
 
 struct AboutView: View {
+    @Environment(\.locale) private var uiLocale
     @EnvironmentObject private var model: AppModel
     @State private var copied = false
     @State private var copyGeneration = 0
 
     var body: some View {
+        let _ = uiLocale.identifier
         VStack(spacing: 18) {
             Image(nsImage: NSApp.applicationIconImage)
                 .resizable()
                 .frame(width: 64, height: 64)
                 .accessibilityHidden(true)
             VStack(spacing: 5) {
-                Text("Filicon").font(.title2.bold())
-                Text("Version \(version) (\(build))")
+                Text(l10n("Filicon")).font(.title2.bold())
+                Text(l10n("Version \(version) (\(build))"))
                     .foregroundStyle(.secondary)
-                Text("Release track: \(model.settings.updatePolicy.effectiveTrack.rawValue.capitalized)")
+                Text(l10n("Release track: \(model.settings.updatePolicy.effectiveTrack.rawValue.capitalized)"))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            Text("© \(Calendar.current.component(.year, from: .now)) Filicon contributors")
+            Text(l10n("© \(Calendar.current.component(.year, from: .now)) Filicon contributors"))
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            Button(copied ? "Copied" : "Copy Version Info", action: copyVersionInfo)
+            Button(copied ? l10n("Copied") : l10n("Copy Version Info"), action: copyVersionInfo)
         }
         .padding(28)
         .frame(width: 360, height: 300)
@@ -63,7 +65,7 @@ struct AboutCommands: Commands {
 
     var body: some Commands {
         CommandGroup(replacing: .appInfo) {
-            Button("About Filicon") { openWindow(id: "about") }
+            Button(l10n("About Filicon")) { openWindow(id: "about") }
         }
     }
 }

@@ -37,8 +37,8 @@ enum AttachmentFileIntegrityError: LocalizedError, Equatable {
 
     var errorDescription: String? {
         switch self {
-        case .unsafeFile: "The preview copy is no longer a safe regular file."
-        case .changed: "The preview copy no longer matches its verified attachment."
+        case .unsafeFile: l10n("The preview copy is no longer a safe regular file.")
+        case .changed: l10n("The preview copy no longer matches its verified attachment.")
         }
     }
 }
@@ -61,6 +61,7 @@ struct AttachmentFileIntegrity {
 }
 
 struct AttachmentMediaViewerSheet: View {
+    @Environment(\.locale) private var uiLocale
     let item: AttachmentPreviewItem
     let onClose: () -> Void
 
@@ -83,6 +84,7 @@ struct AttachmentMediaViewerSheet: View {
     }
 
     var body: some View {
+        let _ = uiLocale.identifier
         VStack(spacing: 0) {
             toolbar
             Divider()
@@ -94,10 +96,10 @@ struct AttachmentMediaViewerSheet: View {
             }
         }
         .frame(minWidth: 760, idealWidth: 980, minHeight: 560, idealHeight: 720)
-        .alert("Attachment", isPresented: Binding(
+        .alert(l10n("Attachment"), isPresented: Binding(
             get: { actionError != nil },
             set: { if !$0 { actionError = nil } }
-        )) { Button("OK") { actionError = nil } } message: { Text(actionError ?? "") }
+        )) { Button(l10n("OK")) { actionError = nil } } message: { Text(FiliconLocalization.message(actionError ?? "")) }
     }
 
     private var toolbar: some View {
@@ -107,16 +109,16 @@ struct AttachmentMediaViewerSheet: View {
                     .disabled(selectedIndex == 0)
                 Button { select(offset: 1) } label: { Image(systemName: "chevron.right") }
                     .disabled(selectedIndex == item.files.count - 1)
-                Text("\(selectedIndex + 1) of \(item.files.count)")
+                Text(l10n("\(selectedIndex + 1) of \(item.files.count)"))
                     .font(.caption).foregroundStyle(.secondary)
             }
             Text(selectedFile.filename).font(.headline).lineLimit(1)
             Spacer()
-            Button { showsMetadata.toggle() } label: { Label("Info", systemImage: "info.circle") }
+            Button { showsMetadata.toggle() } label: { Label(l10n("Info"), systemImage: "info.circle") }
                 .popover(isPresented: $showsMetadata) { AttachmentMetadataView(file: selectedFile) }
-            Button("Save a Copy…", action: saveOriginal)
-            Button("Open Externally", action: openExternally)
-            Button("Close", action: onClose).keyboardShortcut(.cancelAction)
+            Button(l10n("Save a Copy…"), action: saveOriginal)
+            Button(l10n("Open Externally"), action: openExternally)
+            Button(l10n("Close"), action: onClose).keyboardShortcut(.cancelAction)
         }
         .padding(12)
     }
@@ -185,20 +187,22 @@ struct AttachmentMediaViewerSheet: View {
 /// until its digest and byte count have been checked again. This closes the
 /// gap between the store check in `AppModel` and opening the preview sheet.
 private struct AttachmentIntegrityGate<Content: View>: View {
+    @Environment(\.locale) private var uiLocale
     let file: AttachmentPreviewFile
     @ViewBuilder let content: () -> Content
     @State private var isVerified = false
     @State private var error: String?
 
     var body: some View {
+        let _ = uiLocale.identifier
         Group {
             if isVerified {
                 content()
             } else if let error {
                 ContentUnavailableView(
-                    "Attachment unavailable",
+                    l10n("Attachment unavailable"),
                     systemImage: "lock.trianglebadge.exclamationmark",
-                    description: Text(error)
+                    description: Text(FiliconLocalization.message(error))
                 )
             } else {
                 ProgressView("Verifying attachment…")
@@ -223,16 +227,18 @@ private struct AttachmentIntegrityGate<Content: View>: View {
 }
 
 private struct AttachmentMetadataView: View {
+    @Environment(\.locale) private var uiLocale
     let file: AttachmentPreviewFile
 
     var body: some View {
+        let _ = uiLocale.identifier
         Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 8) {
-            row("Name", file.filename)
-            row("Type", file.metadata?.mimeType ?? "Unknown")
-            row("Size", file.metadata.map { ByteCountFormatter.string(fromByteCount: $0.byteCount, countStyle: .file) } ?? "Unknown")
+            row(l10n("Name"), file.filename)
+            row(l10n("Type"), file.metadata?.mimeType ?? "Unknown")
+            row(l10n("Size"), file.metadata.map { ByteCountFormatter.string(fromByteCount: $0.byteCount, countStyle: .file) } ?? "Unknown")
             if let identifier = file.metadata?.id {
-                row("SHA-256", identifier)
-                Button("Copy SHA-256") {
+                row(l10n("SHA-256"), identifier)
+                Button(l10n("Copy SHA-256")) {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(identifier, forType: .string)
                 }
@@ -253,9 +259,11 @@ private struct AttachmentMetadataView: View {
 }
 
 private struct AttachmentThumbnail: View {
+    @Environment(\.locale) private var uiLocale
     let file: AttachmentPreviewFile
 
     var body: some View {
+        let _ = uiLocale.identifier
         if AttachmentViewerKind.classify(filename: file.filename, mimeType: file.metadata?.mimeType) == .image,
            let image = NSImage(contentsOf: file.fileURL) {
             Image(nsImage: image).resizable().scaledToFit()
@@ -276,10 +284,12 @@ private struct AttachmentThumbnail: View {
 }
 
 private struct AttachmentImageView: View {
+    @Environment(\.locale) private var uiLocale
     let fileURL: URL
     @State private var magnification = 1.0
 
     var body: some View {
+        let _ = uiLocale.identifier
         if let image = NSImage(contentsOf: fileURL) {
             ScrollView([.horizontal, .vertical]) {
                 Image(nsImage: image)
@@ -291,17 +301,19 @@ private struct AttachmentImageView: View {
             }
             .background(Color(nsColor: .windowBackgroundColor))
         } else {
-            ContentUnavailableView("Image unavailable", systemImage: "photo.badge.exclamationmark")
+            ContentUnavailableView(l10n("Image unavailable"), systemImage: "photo.badge.exclamationmark")
         }
     }
 }
 
 private struct AttachmentAVPlayerView: View {
+    @Environment(\.locale) private var uiLocale
     let player: AVPlayer
 
     init(fileURL: URL) { player = AVPlayer(url: fileURL) }
 
     var body: some View {
+        let _ = uiLocale.identifier
         VideoPlayer(player: player)
             .background(.black)
             .onDisappear { player.pause() }
@@ -309,6 +321,7 @@ private struct AttachmentAVPlayerView: View {
 }
 
 private struct AttachmentPDFView: View {
+    @Environment(\.locale) private var uiLocale
     let file: AttachmentPreviewFile
     @State private var searchQuery = ""
     @State private var showsText = false
@@ -317,18 +330,19 @@ private struct AttachmentPDFView: View {
     @State private var error: String?
 
     var body: some View {
+        let _ = uiLocale.identifier
         VStack(spacing: 0) {
             HStack {
-                TextField("Search PDF", text: $searchQuery).textFieldStyle(.roundedBorder).frame(maxWidth: 280)
-                Text("\(pageCount) page\(pageCount == 1 ? "" : "s")").foregroundStyle(.secondary)
+                TextField(l10n("Search PDF"), text: $searchQuery).textFieldStyle(.roundedBorder).frame(maxWidth: 280)
+                Text(l10n("Pages: \(pageCount)")).foregroundStyle(.secondary)
                 Spacer()
-                Toggle("Text", isOn: $showsText).toggleStyle(.button)
-                Button("Export Text…", action: exportText).disabled(documentText.isEmpty)
+                Toggle(l10n("Text"), isOn: $showsText).toggleStyle(.button)
+                Button(l10n("Export Text…"), action: exportText).disabled(documentText.isEmpty)
             }
             .padding(8)
             Divider()
             if let error {
-                ContentUnavailableView("PDF unavailable", systemImage: "doc.badge.ellipsis", description: Text(error))
+                ContentUnavailableView(l10n("PDF unavailable"), systemImage: "doc.badge.ellipsis", description: Text(FiliconLocalization.message(error)))
             } else if showsText {
                 ScrollView { Text(documentText).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading).padding() }
             } else {
@@ -399,17 +413,19 @@ private struct PDFNativeView: NSViewRepresentable {
 }
 
 private struct AttachmentSpreadsheetView: View {
+    @Environment(\.locale) private var uiLocale
     let file: AttachmentPreviewFile
     @State private var preview: SpreadsheetPreview?
     @State private var selectedSheetID: String?
     @State private var error: String?
 
     var body: some View {
+        let _ = uiLocale.identifier
         Group {
             if let preview {
                 VStack(spacing: 0) {
                     if preview.sheets.count > 1 {
-                        Picker("Sheet", selection: Binding(
+                        Picker(l10n("Sheet"), selection: Binding(
                             get: { selectedSheetID ?? preview.sheets.first?.id },
                             set: { selectedSheetID = $0 }
                         )) {
@@ -419,12 +435,12 @@ private struct AttachmentSpreadsheetView: View {
                         Divider()
                     }
                     if let sheet = selectedSheet(in: preview) { SpreadsheetGrid(sheet: sheet) }
-                    else { ContentUnavailableView("Empty workbook", systemImage: "tablecells") }
+                    else { ContentUnavailableView(l10n("Empty workbook"), systemImage: "tablecells") }
                 }
             } else if let error {
                 VStack(spacing: 12) {
-                    ContentUnavailableView("Table preview unavailable", systemImage: "tablecells.badge.ellipsis", description: Text(error))
-                    Text("Quick Look remains available for unsupported system spreadsheet formats.")
+                    ContentUnavailableView(l10n("Table preview unavailable"), systemImage: "tablecells.badge.ellipsis", description: Text(FiliconLocalization.message(error)))
+                    Text(l10n("Quick Look remains available for unsupported system spreadsheet formats."))
                         .font(.caption).foregroundStyle(.secondary)
                 }
             } else {
@@ -461,11 +477,13 @@ private struct AttachmentSpreadsheetView: View {
 }
 
 private struct SpreadsheetGrid: View {
+    @Environment(\.locale) private var uiLocale
     let sheet: SpreadsheetPreview.Sheet
 
     private var columnCount: Int { sheet.rows.map(\.count).max() ?? 0 }
 
     var body: some View {
+        let _ = uiLocale.identifier
         ScrollView([.horizontal, .vertical]) {
             LazyVStack(alignment: .leading, spacing: 0) {
                 ForEach(Array(sheet.rows.enumerated()), id: \.offset) { rowIndex, row in
@@ -485,10 +503,12 @@ private struct SpreadsheetGrid: View {
 }
 
 private struct SpreadsheetCell: View {
+    @Environment(\.locale) private var uiLocale
     let value: String
     let isHeader: Bool
 
     var body: some View {
+        let _ = uiLocale.identifier
         Text(value)
                                 .textSelection(.enabled)
                                 .lineLimit(4)

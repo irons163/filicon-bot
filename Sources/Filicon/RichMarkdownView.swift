@@ -137,6 +137,7 @@ struct MermaidNativeLayout: Sendable, Equatable {
 }
 
 struct RichMarkdownView: View {
+    @Environment(\.locale) private var uiLocale
     let source: String
     let metadataController: RichLinkMetadataController?
     let maximumMetadataCards: Int
@@ -170,6 +171,7 @@ struct RichMarkdownView: View {
     }
 
     var body: some View {
+        let _ = uiLocale.identifier
         let value = projection
         VStack(alignment: .leading, spacing: 9) {
             ForEach(Array(value.blocks.enumerated()), id: \.offset) { _, block in
@@ -225,16 +227,18 @@ struct RichMarkdownView: View {
 }
 
 private struct RichCodeBlock: View {
+    @Environment(\.locale) private var uiLocale
     let language: String?
     let source: String
     let isTerminated: Bool
     @State private var copied = false
 
     var body: some View {
+        let _ = uiLocale.identifier
         VStack(alignment: .leading, spacing: 0) {
             HStack {
-                Text(language?.isEmpty == false ? language! : "Code").font(.caption).foregroundStyle(.secondary)
-                if !isTerminated { Text("Unterminated").font(.caption2).foregroundStyle(.orange) }
+                Text(language?.isEmpty == false ? language! : l10n("Code")).font(.caption).foregroundStyle(.secondary)
+                if !isTerminated { Text(l10n("Unterminated")).font(.caption2).foregroundStyle(.orange) }
                 Spacer()
                 Button {
                     NSPasteboard.general.clearContents()
@@ -242,10 +246,10 @@ private struct RichCodeBlock: View {
                     copied = true
                     Task { try? await Task.sleep(for: .seconds(1.5)); copied = false }
                 } label: {
-                    Label(copied ? "Copied" : "Copy Code", systemImage: copied ? "checkmark" : "doc.on.doc")
+                    Label(copied ? l10n("Copied") : l10n("Copy Code"), systemImage: copied ? "checkmark" : "doc.on.doc")
                 }
                 .buttonStyle(.plain).controlSize(.small)
-                .accessibilityHint("Copies the complete code block")
+                .accessibilityHint(l10n("Copies the complete code block"))
             }
             .padding(.horizontal, 9).padding(.vertical, 6)
             Divider()
@@ -260,8 +264,10 @@ private struct RichCodeBlock: View {
 }
 
 private struct RichMarkdownTableView: View {
+    @Environment(\.locale) private var uiLocale
     let table: MarkdownTable
     var body: some View {
+        let _ = uiLocale.identifier
         ScrollView(.horizontal) {
             Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 7) {
                 GridRow {
@@ -276,27 +282,29 @@ private struct RichMarkdownTableView: View {
         }
         .background(.quaternary, in: RoundedRectangle(cornerRadius: 7))
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Table with \(table.headers.count) columns and \(table.rows.count) rows")
+        .accessibilityLabel(l10n("Table with \(table.headers.count) columns and \(table.rows.count) rows"))
     }
 }
 
 private struct OfflineMathView: View {
+    @Environment(\.locale) private var uiLocale
     let source: String
     let mode: MathMode
     let presentation: MathPresentation
     var body: some View {
+        let _ = uiLocale.identifier
         switch presentation {
         case .mathML(let mathML):
             OfflineMathMLView(mathML: mathML, display: mode == .display)
                 .frame(maxWidth: mode == .display ? .infinity : 640, minHeight: mode == .display ? 64 : 34, maxHeight: mode == .display ? 96 : 48)
-                .accessibilityLabel("Math: \(source)")
+                .accessibilityLabel(l10n("Math: \(source)"))
         case .fallback(let original):
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Image(systemName: "function").foregroundStyle(.secondary)
                 Text(original).font(.system(.callout, design: .monospaced))
             }
             .padding(7).background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
-            .accessibilityLabel("Math fallback: \(original)")
+            .accessibilityLabel(l10n("Math fallback: \(original)"))
         }
     }
 }
@@ -372,9 +380,11 @@ private struct OfflineMathMLView: NSViewRepresentable {
 }
 
 private struct NativeMermaidView: View {
+    @Environment(\.locale) private var uiLocale
     let source: String
     let presentation: MermaidPresentation
     var body: some View {
+        let _ = uiLocale.identifier
         switch presentation {
         case .diagram(let diagram):
             let layout = MermaidNativeLayout.project(diagram)
@@ -394,21 +404,23 @@ private struct NativeMermaidView: View {
             .frame(minHeight: diagram.kind == .sequence ? 220 : 170)
             .padding(6).background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 7))
             .accessibilityElement(children: .contain)
-            .accessibilityLabel("\(diagram.kind.rawValue.capitalized) diagram")
+            .accessibilityLabel(l10n("\(diagram.kind.rawValue.capitalized) diagram"))
         case .fallback(let original, let reason):
             VStack(alignment: .leading, spacing: 4) {
-                Label("Diagram shown as source", systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.secondary)
+                Label(l10n("Diagram shown as source"), systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.secondary)
                 ScrollView(.horizontal) { Text(original).font(.system(.caption, design: .monospaced)).textSelection(.enabled) }
             }
             .padding(8).background(.quaternary, in: RoundedRectangle(cornerRadius: 7))
-            .accessibilityLabel("Diagram fallback, \(reason): \(original)")
+            .accessibilityLabel(l10n("Diagram fallback, \(reason): \(original)"))
         }
     }
 }
 
 private struct MermaidEdgesCanvas: View {
+    @Environment(\.locale) private var uiLocale
     let layout: MermaidNativeLayout
     var body: some View {
+        let _ = uiLocale.identifier
         Canvas { context, size in
             if layout.kind == .sequence {
                 for node in layout.nodes {
@@ -438,9 +450,11 @@ private struct MermaidEdgesCanvas: View {
 }
 
 private struct RichLinkMetadataCard: View {
+    @Environment(\.locale) private var uiLocale
     let metadata: SafeLinkMetadata
     let openLink: @MainActor (URL) -> Bool
     var body: some View {
+        let _ = uiLocale.identifier
         Button { _ = openLink(metadata.url) } label: {
             HStack(alignment: .top, spacing: 8) {
                 Image(systemName: "link")
@@ -456,6 +470,6 @@ private struct RichLinkMetadataCard: View {
             .background(.quaternary, in: RoundedRectangle(cornerRadius: 7))
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Link preview: \(metadata.title)")
+        .accessibilityLabel(l10n("Link preview: \(metadata.title)"))
     }
 }

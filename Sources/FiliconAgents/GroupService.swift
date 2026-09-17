@@ -53,7 +53,12 @@ public actor GroupService {
         state.roomMessages.append(message); try persist(); return message
     }
 
-    public func run(groupID: UUID, responder: any GroupAgentResponder) async throws -> [RoomMessage] {
+    public func run(
+        groupID: UUID,
+        responder: any GroupAgentResponder,
+        onAgentChange: @escaping @Sendable (UUID?) async -> Void = { _ in },
+        onMessage: @escaping @Sendable (RoomMessage) async -> Void = { _ in }
+    ) async throws -> [RoomMessage] {
         guard let groupIndex = state.groups.firstIndex(where: { $0.id == groupID }) else { throw AgentServiceError.unknownGroup(groupID) }
         let group = state.groups[groupIndex]
         guard !group.memberIDs.isEmpty else { return [] }
@@ -62,20 +67,33 @@ public actor GroupService {
         let members = await resolveMembers(group.memberIDs)
         var produced: [RoomMessage] = []
         var total = 0
+        var successfulTurns = 0
+        var attemptedMemberIDs: Set<UUID> = []
+        var firstFailure: (any Error)?
         for round in 0..<Self.maximumRounds {
             guard epochs[groupID] == epoch, !Task.isCancelled else { return produced }
             let responderIDs = Self.resolveResponderIDs(members: members, history: state.roomMessages.filter { $0.groupID == groupID })
-            let rotation = Self.rotated(responderIDs, by: round)
+            let rotation = Self.rotated(responderIDs, by: round).filter { !attemptedMemberIDs.contains($0) }
+            guard !rotation.isEmpty else { break }
             var messagesThisRound = 0
             for memberID in rotation {
                 guard total < Self.maximumMemberMessages,
                       epochs[groupID] == epoch,
                       !Task.isCancelled,
                       let agent = members.first(where: { $0.id == memberID }) else { return produced }
+                attemptedMemberIDs.insert(memberID)
                 let history = state.roomMessages.filter { $0.groupID == groupID }
                 let responses: [String]
-                do { responses = try await responder.respond(agent: agent, history: history) }
-                catch { continue }
+                await onAgentChange(agent.id)
+                do {
+                    responses = try await responder.respond(agent: agent, history: history)
+                    successfulTurns += 1
+                } catch {
+                    await onAgentChange(nil)
+                    if firstFailure == nil { firstFailure = error }
+                    continue
+                }
+                await onAgentChange(nil)
                 guard epochs[groupID] == epoch, !Task.isCancelled else { return produced }
                 var sentThisTurn = 0
                 for text in responses {
@@ -84,6 +102,7 @@ public actor GroupService {
                     let message = RoomMessage(groupID: groupID, senderID: memberID, text: String(trimmed.prefix(8_000)))
                     state.roomMessages.append(message)
                     produced.append(message)
+                    await onMessage(message)
                     total += 1
                     messagesThisRound += 1
                     sentThisTurn += 1
@@ -92,6 +111,7 @@ public actor GroupService {
             }
             if messagesThisRound == 0 || total >= Self.maximumMemberMessages { break }
         }
+        if successfulTurns == 0, let firstFailure { throw firstFailure }
         try persist()
         return produced
     }

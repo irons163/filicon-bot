@@ -60,7 +60,7 @@ private actor AppCatalogProvider: AIProvider, DynamicModelCatalogProviding {
     return false
 }
 
-@Suite("Provider catalog app integration")
+@Suite("Provider catalog app integration", EnglishUITrait())
 struct ProviderCatalogAppIntegrationTests {
     @Test func presentationMakesFallbackStalenessCapabilitiesAndErrorsExplicit() {
         let model = AIModel(

@@ -122,3 +122,23 @@ struct AppWindowAccessor: NSViewRepresentable {
         }
     }
 }
+
+struct WindowTitleAccessor: NSViewRepresentable {
+    let title: String
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        updateWindowTitle(for: view)
+        return view
+    }
+
+    func updateNSView(_ view: NSView, context: Context) {
+        updateWindowTitle(for: view)
+    }
+
+    private func updateWindowTitle(for view: NSView) {
+        DispatchQueue.main.async { [weak view] in
+            view?.window?.title = title
+        }
+    }
+}

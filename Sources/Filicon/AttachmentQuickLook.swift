@@ -13,11 +13,11 @@ enum AttachmentPreviewError: LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .invalidFilename:
-            "This attachment has an invalid filename and cannot be previewed."
+            l10n("This attachment has an invalid filename and cannot be previewed.")
         case .integrityMismatch:
-            "The attachment bytes do not match their content-addressed identity."
+            l10n("The attachment bytes do not match their content-addressed identity.")
         case .previewFileUnavailable:
-            "The attachment preview file could not be created."
+            l10n("The attachment preview file could not be created.")
         }
     }
 }
@@ -128,10 +128,12 @@ struct AttachmentPreviewMaterializer {
 }
 
 struct AttachmentQuickLookSheet: View {
+    @Environment(\.locale) private var uiLocale
     let item: AttachmentPreviewItem
     let onClose: () -> Void
 
     var body: some View {
+        let _ = uiLocale.identifier
         AttachmentMediaViewerSheet(item: item, onClose: onClose)
     }
 }

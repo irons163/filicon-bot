@@ -9,15 +9,15 @@ enum ProviderCatalogPresentation {
         error: String?
     ) -> String {
         if let error, !error.isEmpty {
-            if source == .builtInFallback { return "Built-in fallback — \(error)" }
+            if source == .builtInFallback { return l10n("Built-in fallback — \(error)") }
             return isStale ? "Stale catalog — \(error)" : "Catalog error — \(error)"
         }
-        if isStale { return "Stale catalog" }
+        if isStale { return l10n("Stale catalog") }
         switch source {
-        case .dynamic: return "Live provider catalog"
-        case .builtIn: return "Built-in catalog"
-        case .builtInFallback: return "Built-in fallback"
-        case nil: return "Catalog not loaded"
+        case .dynamic: return l10n("Live provider catalog")
+        case .builtIn: return l10n("Built-in catalog")
+        case .builtInFallback: return l10n("Built-in fallback")
+        case nil: return l10n("Catalog not loaded")
         }
     }
 
@@ -44,22 +44,22 @@ enum ProviderCatalogPresentation {
         catalogConversationID: UUID?,
         loading: Bool
     ) -> String? {
-        guard !loading else { return "Wait for the model catalog to finish loading before sending." }
+        guard !loading else { return l10n("Wait for the model catalog to finish loading before sending.") }
         guard catalogProviderID == conversation.providerID, catalogConversationID == conversation.id else {
-            return "Refresh the model catalog for this conversation before sending."
+            return l10n("Refresh the model catalog for this conversation before sending.")
         }
         guard let model = models.first(where: { $0.id == conversation.modelID }) else {
-            return "Model \(conversation.modelID.rawValue) is not available in the current provider catalog. Choose an available model."
+            return l10n("Model \(conversation.modelID.rawValue) is not available in the current provider catalog. Choose an available model.")
         }
         guard model.capabilities.supports(conversation.reasoningEffort) else {
-            return "Model \(model.displayName) does not support reasoning effort \(conversation.reasoningEffort.rawValue). Choose a supported effort."
+            return l10n("Model \(model.displayName) does not support reasoning effort \(conversation.reasoningEffort.rawValue). Choose a supported effort.")
         }
         return nil
     }
 
     private static func formatTokens(_ value: Int) -> String {
-        if value >= 1_000_000, value.isMultiple(of: 1_000_000) { return "\(value / 1_000_000)M" }
-        if value >= 1_000, value.isMultiple(of: 1_000) { return "\(value / 1_000)K" }
+        if value >= 1_000_000, value.isMultiple(of: 1_000_000) { return l10n("\(value / 1_000_000)M") }
+        if value >= 1_000, value.isMultiple(of: 1_000) { return l10n("\(value / 1_000)K") }
         return value.formatted()
     }
 }

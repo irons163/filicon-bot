@@ -85,6 +85,7 @@ command -v codesign >/dev/null || die "codesign is required"
 command -v /usr/libexec/PlistBuddy >/dev/null || die "PlistBuddy is required"
 
 cd "$project_dir"
+python3 scripts/localization_audit.py
 # `--show-bin-path` reports a directory but does not guarantee that the named
 # product was built. Build every executable explicitly before resolving the
 # output directory so a clean checkout can never package a stale/missing app.
@@ -106,6 +107,9 @@ cp "$bin_dir/Filicon" "$contents_dir/MacOS/Filicon"
 cp "$bin_dir/FiliconLocalToolHelper" "$contents_dir/Helpers/FiliconLocalToolHelper"
 cp "$bin_dir/FiliconUpdateHelper" "$contents_dir/Helpers/FiliconUpdateHelper"
 cp "$project_dir/Support/Info.plist" "$contents_dir/Info.plist"
+for localization_dir in "$project_dir"/Sources/Filicon/Resources/*.lproj; do
+  cp -R "$localization_dir" "$contents_dir/Resources/"
+done
 
 # Production release jobs inject the real feed and public verification key.
 # They are intentionally absent from source control and never replaced with

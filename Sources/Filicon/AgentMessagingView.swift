@@ -2,6 +2,7 @@ import SwiftUI
 import FiliconAgents
 
 struct AgentMessagingView: View {
+    @Environment(\.locale) private var uiLocale
     @EnvironmentObject private var model: AppModel
     @State private var senderID: UUID?
     @State private var recipientID: UUID?
@@ -15,6 +16,7 @@ struct AgentMessagingView: View {
         case inbox = "Inbox"
         case outbox = "Outbox"
         var id: Self { self }
+        var title: String { agentMessageString(rawValue) }
     }
 
     private var activeAgents: [AgentProfile] {
@@ -36,17 +38,18 @@ struct AgentMessagingView: View {
     }
 
     var body: some View {
+        let _ = uiLocale.identifier
         VStack(spacing: 0) {
             controls
             Divider()
             if activeAgents.count < 2 {
                 ContentUnavailableView(
-                    "Two active agents required",
+                    agentMessageString("Two active agents required"),
                     systemImage: "bubble.left.and.bubble.right",
-                    description: Text("Create or restore another agent to exchange messages.")
+                    description: Text(agentMessageString("Create or restore another agent to exchange messages."))
                 )
             } else if visibleMessages.isEmpty {
-                ContentUnavailableView("No messages", systemImage: "tray", description: Text(emptyDescription))
+                ContentUnavailableView(agentMessageString("No messages"), systemImage: "tray", description: Text(emptyDescription))
             } else {
                 List(visibleMessages) { message in
                     messageRow(message)
@@ -64,19 +67,19 @@ struct AgentMessagingView: View {
     private var controls: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Picker("From", selection: $senderID) {
-                    Text("Select sender").tag(Optional<UUID>.none)
+                Picker(agentMessageString("From"), selection: $senderID) {
+                    Text(agentMessageString("Select sender")).tag(Optional<UUID>.none)
                     ForEach(activeAgents) { Text($0.name).tag(Optional($0.id)) }
                 }
-                Picker("To", selection: $recipientID) {
-                    Text("Select recipient").tag(Optional<UUID>.none)
+                Picker(agentMessageString("To"), selection: $recipientID) {
+                    Text(agentMessageString("Select recipient")).tag(Optional<UUID>.none)
                     ForEach(activeAgents.filter { $0.id != senderID }) { profile in
                         Text(recipientLabel(profile)).tag(Optional(profile.id))
                     }
                 }
-                Picker("Priority", selection: $priority) {
-                    Text("Normal").tag(AgentMessagePriority.normal)
-                    Text("Priority").tag(AgentMessagePriority.priority)
+                Picker(agentMessageString("Priority"), selection: $priority) {
+                    Text(agentMessageString("Normal")).tag(AgentMessagePriority.normal)
+                    Text(agentMessageString("Priority")).tag(AgentMessagePriority.priority)
                 }
                 .frame(width: 150)
             }
@@ -90,19 +93,19 @@ struct AgentMessagingView: View {
                     }
                 VStack(alignment: .trailing) {
                     Text("\(draft.count)/8,000").font(.caption).foregroundStyle(.secondary)
-                    Button("Send") { send() }
+                    Button(agentMessageString("Send")) { send() }
                         .keyboardShortcut(.return, modifiers: [.command])
                         .disabled(!canSend)
                 }
             }
             HStack {
-                Picker("Mailbox", selection: $mailbox) {
-                    ForEach(Mailbox.allCases) { Text($0.rawValue).tag($0) }
+                Picker(agentMessageString("Mailbox"), selection: $mailbox) {
+                    ForEach(Mailbox.allCases) { Text($0.title).tag($0) }
                 }
                 .pickerStyle(.segmented)
                 .frame(maxWidth: 330)
                 if let recipientID, model.agentMessageUnreadCounts[recipientID, default: 0] > 0 {
-                    Button("Mark Inbox Read") {
+                    Button(agentMessageString("Mark Inbox Read")) {
                         Task { await model.markAgentMessagesRead(recipientID: recipientID) }
                     }
                 }
@@ -120,17 +123,17 @@ struct AgentMessagingView: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
                     Text("\(agentName(message.senderID)) → \(agentName(message.recipientID))").fontWeight(.medium)
-                    if message.priority == .priority { Label("Priority", systemImage: "exclamationmark").font(.caption).foregroundStyle(.orange) }
+                    if message.priority == .priority { Label(agentMessageString("Priority"), systemImage: "exclamationmark").font(.caption).foregroundStyle(.orange) }
                     Spacer()
                     Text(message.createdAt.formatted(date: .abbreviated, time: .shortened)).font(.caption).foregroundStyle(.secondary)
                 }
                 Text(message.text).textSelection(.enabled)
             }
-            Button("Reply") {
+            Button(agentMessageString("Reply")) {
                 senderID = message.recipientID
                 recipientID = message.senderID
                 mailbox = .thread
-                feedback = "Replying as \(agentName(message.recipientID))."
+                feedback = l10n("\(agentMessageString("Replying as")) \(agentName(message.recipientID)).")
             }
             .buttonStyle(.borderless)
             .disabled(!activeAgents.contains(where: { $0.id == message.senderID })
@@ -146,19 +149,19 @@ struct AgentMessagingView: View {
 
     private var emptyDescription: String {
         switch mailbox {
-        case .thread: "Send the first message between the selected agents."
-        case .inbox: "The selected recipient has no messages."
-        case .outbox: "The selected sender has not sent any messages."
+        case .thread: agentMessageString("Send the first message between the selected agents.")
+        case .inbox: agentMessageString("The selected recipient has no messages.")
+        case .outbox: agentMessageString("The selected sender has not sent any messages.")
         }
     }
 
     private func recipientLabel(_ profile: AgentProfile) -> String {
         let unread = model.agentMessageUnreadCounts[profile.id, default: 0]
-        return unread == 0 ? profile.name : "\(profile.name) (\(unread) unread)"
+        return unread == 0 ? profile.name : "\(profile.name) (\(unread) \(agentMessageString("unread")))"
     }
 
     private func agentName(_ id: UUID) -> String {
-        model.agents.first(where: { $0.id == id })?.name ?? "Unknown agent"
+        model.agents.first(where: { $0.id == id })?.name ?? agentMessageString("Unknown agent")
     }
 
     private func normalizeSelection() {
@@ -176,11 +179,15 @@ struct AgentMessagingView: View {
         Task {
             if await model.sendAgentMessage(senderID: senderID, recipientID: recipientID, text: message, priority: priority) {
                 draft = ""
-                feedback = "Message sent."
+                feedback = agentMessageString("Message sent.")
                 mailbox = .thread
             } else {
-                feedback = "Not sent. You can edit and retry."
+                feedback = agentMessageString("Not sent. You can edit and retry.")
             }
         }
     }
+}
+
+private func agentMessageString(_ key: String) -> String {
+    FiliconLocalization.string(key)
 }

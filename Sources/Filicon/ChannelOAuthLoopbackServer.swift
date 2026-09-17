@@ -11,12 +11,12 @@ enum ChannelOAuthBrowserError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .couldNotStartListener: "Could not start the OAuth callback listener on this Mac."
-        case .couldNotOpenBrowser: "Could not open the OAuth authorization page."
-        case .timedOut: "OAuth did not finish within ten minutes."
-        case .malformedCallback: "The OAuth service returned a malformed callback."
-        case .callbackTooLarge: "The OAuth callback exceeded the safe size limit."
-        case .cancelled: "OAuth was cancelled."
+        case .couldNotStartListener: l10n("Could not start the OAuth callback listener on this Mac.")
+        case .couldNotOpenBrowser: l10n("Could not open the OAuth authorization page.")
+        case .timedOut: l10n("OAuth did not finish within ten minutes.")
+        case .malformedCallback: l10n("The OAuth service returned a malformed callback.")
+        case .callbackTooLarge: l10n("The OAuth callback exceeded the safe size limit.")
+        case .cancelled: l10n("OAuth was cancelled.")
         }
     }
 }

@@ -3,6 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "Filicon",
+    defaultLocalization: "en",
     platforms: [.macOS(.v14)],
     products: [
         .library(name: "FiliconDomain", targets: ["FiliconDomain"]),
@@ -57,7 +58,11 @@ let package = Package(
         .executableTarget(name: "FiliconLocalToolHelper", dependencies: ["FiliconLocalTools"]),
         .executableTarget(name: "FiliconLocalToolXPCService", dependencies: ["FiliconLocalTools"]),
         .executableTarget(name: "FiliconUpdateHelper", dependencies: ["FiliconUpdater"]),
-        .executableTarget(name: "Filicon", dependencies: ["FiliconDomain", "FiliconProviderKit", "FiliconAppServices", "FiliconAgents", "FiliconChannels", "FiliconAutomations", "FiliconMCP", "FiliconVoice", "FiliconLocalTools", "FiliconUpdater", "FiliconSettings", "FiliconComputer", "FiliconPlugins", "FiliconSharedRooms", "FiliconAccount", "FiliconAutoReview", "FiliconRichContent", "FiliconSecurityKey"]),
+        .executableTarget(
+            name: "Filicon",
+            dependencies: ["FiliconDomain", "FiliconProviderKit", "FiliconAppServices", "FiliconAgents", "FiliconChannels", "FiliconAutomations", "FiliconMCP", "FiliconVoice", "FiliconLocalTools", "FiliconUpdater", "FiliconSettings", "FiliconComputer", "FiliconPlugins", "FiliconSharedRooms", "FiliconAccount", "FiliconAutoReview", "FiliconRichContent", "FiliconSecurityKey"],
+            resources: [.process("Resources")]
+        ),
         .testTarget(name: "FiliconTests", dependencies: ["FiliconDomain", "FiliconProviderKit", "FiliconPersistence", "FiliconAppServices", "FiliconAgents", "CSQLite"]),
         .testTarget(name: "FiliconMCPTests", dependencies: ["FiliconMCP"]),
         .testTarget(name: "FiliconAgentsTests", dependencies: ["FiliconAgents", "FiliconDomain"]),

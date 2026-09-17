@@ -220,15 +220,17 @@ actor MCPUserPolicyStore {
 }
 
 struct MCPApprovalPanel: View {
+    @Environment(\.locale) private var uiLocale
     @EnvironmentObject private var model: AppModel
 
     var body: some View {
+        let _ = uiLocale.identifier
         let approvals = model.pendingMCPApprovals.filter {
             $0.request.target.conversationIdentifier == model.selection?.uuidString
         }
         if !approvals.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
-                Label("MCP tool approval", systemImage: "checkmark.shield")
+                Label(l10n("MCP tool approval"), systemImage: "checkmark.shield")
                     .font(.headline)
                 ForEach(approvals) { approval in
                     VStack(alignment: .leading, spacing: 6) {
@@ -243,15 +245,15 @@ struct MCPApprovalPanel: View {
                         }
                         Text(approval.argumentsSummary).font(.caption.monospaced()).lineLimit(4).textSelection(.enabled)
                         HStack {
-                            Button("Allow Once") { model.resolveMCPApproval(approval, resolution: .allowOnce) }
-                            Button("Always Exact Arguments") { model.resolveMCPApproval(approval, resolution: .allowAlways(scope: .exactArguments)) }
+                            Button(l10n("Allow Once")) { model.resolveMCPApproval(approval, resolution: .allowOnce) }
+                            Button(l10n("Always Exact Arguments")) { model.resolveMCPApproval(approval, resolution: .allowAlways(scope: .exactArguments)) }
                                 .disabled(!approval.canPersist)
-                            Button("Always This Tool") { model.resolveMCPApproval(approval, resolution: .allowAlways(scope: .tool)) }
+                            Button(l10n("Always This Tool")) { model.resolveMCPApproval(approval, resolution: .allowAlways(scope: .tool)) }
                                 .disabled(!approval.canPersistTool)
                             Spacer()
-                            Button("Deny", role: .destructive) { model.resolveMCPApproval(approval, resolution: .deny) }
+                            Button(l10n("Deny"), role: .destructive) { model.resolveMCPApproval(approval, resolution: .deny) }
                         }
-                        Text("Expires \(approval.request.expiresAt.formatted(date: .omitted, time: .shortened))")
+                        Text(l10n("Expires \(approval.request.expiresAt.formatted(date: .omitted, time: .shortened))"))
                             .font(.caption2).foregroundStyle(.secondary)
                     }
                     .padding(10).background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
@@ -270,11 +272,11 @@ extension MCPApprovalPresentation {
 private extension MCPToolRisk {
     var label: String {
         switch self {
-        case .localRead: "Local read"
-        case .openWorldRead: "Open-world read"
-        case .mutation: "Mutation"
-        case .destructive: "Destructive"
-        case .unknown: "Unknown — fail closed"
+        case .localRead: l10n("Local read")
+        case .openWorldRead: l10n("Open-world read")
+        case .mutation: l10n("Mutation")
+        case .destructive: l10n("Destructive")
+        case .unknown: l10n("Unknown — fail closed")
         }
     }
     var color: Color {

@@ -9,7 +9,7 @@ import FiliconSettings
 import FiliconUpdater
 @testable import Filicon
 
-@Suite("App surface projection coverage")
+@Suite("App surface projection coverage", EnglishUITrait())
 struct AppSurfaceCoverageTests {
     @Test func workspaceRoutesRoundTripEveryDestination() {
         let conversationID = UUID()

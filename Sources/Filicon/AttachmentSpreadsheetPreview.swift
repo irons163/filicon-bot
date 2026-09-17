@@ -28,18 +28,18 @@ enum SpreadsheetPreviewError: LocalizedError, Equatable {
 
     var errorDescription: String? {
         switch self {
-        case .unsupportedEncoding: "The table is not valid UTF-8."
-        case .delimitedTooLarge: "The CSV/TSV file exceeds the 8 MB preview limit."
-        case .archiveToolUnavailable: "The system ZIP reader is unavailable; use Quick Look instead."
-        case .archiveTooLarge: "The XLSX archive exceeds the 50 MB preview limit."
-        case .archiveExpansionLimit: "The XLSX archive exceeds safe expansion limits."
-        case .archiveEntryLimit: "The XLSX archive contains too many files."
-        case .unsafeArchiveEntry(let name): "The XLSX archive contains an unsafe entry: \(name)"
-        case .malformedWorkbook: "The XLSX workbook could not be parsed safely."
-        case .rowLimit: "The table exceeds the 2,000-row preview limit."
-        case .columnLimit: "The table exceeds the 200-column preview limit."
-        case .textLimit: "The table contains more text than can be previewed safely."
-        case .processFailed: "The system ZIP reader failed."
+        case .unsupportedEncoding: l10n("The table is not valid UTF-8.")
+        case .delimitedTooLarge: l10n("The CSV/TSV file exceeds the 8 MB preview limit.")
+        case .archiveToolUnavailable: l10n("The system ZIP reader is unavailable; use Quick Look instead.")
+        case .archiveTooLarge: l10n("The XLSX archive exceeds the 50 MB preview limit.")
+        case .archiveExpansionLimit: l10n("The XLSX archive exceeds safe expansion limits.")
+        case .archiveEntryLimit: l10n("The XLSX archive contains too many files.")
+        case .unsafeArchiveEntry(let name): l10n("The XLSX archive contains an unsafe entry: \(name)")
+        case .malformedWorkbook: l10n("The XLSX workbook could not be parsed safely.")
+        case .rowLimit: l10n("The table exceeds the 2,000-row preview limit.")
+        case .columnLimit: l10n("The table exceeds the 200-column preview limit.")
+        case .textLimit: l10n("The table contains more text than can be previewed safely.")
+        case .processFailed: l10n("The system ZIP reader failed.")
         }
     }
 }

@@ -3,6 +3,7 @@ import SwiftUI
 import FiliconPlugins
 
 struct PrivateSkillsSection: View {
+    @Environment(\.locale) private var uiLocale
     @EnvironmentObject private var model: AppModel
     @State private var editor: Editor?
     @State private var removeCandidate: PrivateSkillRecord?
@@ -10,14 +11,15 @@ struct PrivateSkillsSection: View {
     @State private var showingImportID = false
 
     var body: some View {
+        let _ = uiLocale.identifier
         Group {
             SkillPublishingSection()
-            Section("Private Skills") {
+            Section(l10n("Private Skills")) {
             HStack {
-                Button("New Skill") { editor = .create }
-                Button("Import…") { importID = ""; showingImportID = true }
+                Button(l10n("New Skill")) { editor = .create }
+                Button(l10n("Import…")) { importID = ""; showingImportID = true }
                 Spacer()
-                Text("Stored locally on this Mac").font(.caption).foregroundStyle(.secondary)
+                Text(l10n("Stored locally on this Mac")).font(.caption).foregroundStyle(.secondary)
             }
             ForEach(model.privateSkills) { skill in
                 HStack {
@@ -26,15 +28,15 @@ struct PrivateSkillsSection: View {
                         Text(skill.id).font(.caption.monospaced()).foregroundStyle(.secondary)
                     }
                     Spacer()
-                    Button("Edit") {
+                    Button(l10n("Edit")) {
                         Task { if let value = await model.privateSkillDocument(id: skill.id) { editor = .edit(value) } }
                     }
-                    Button("Export…") { export(skill) }
-                    Button("Delete", role: .destructive) { removeCandidate = skill }
+                    Button(l10n("Export…")) { export(skill) }
+                    Button(l10n("Delete"), role: .destructive) { removeCandidate = skill }
                 }
             }
             if model.privateSkills.isEmpty {
-                Text("Create or import a SKILL.md directory to add reusable private instructions.")
+                Text(l10n("Create or import a SKILL.md directory to add reusable private instructions."))
                     .foregroundStyle(.secondary)
             }
             }
@@ -44,13 +46,13 @@ struct PrivateSkillsSection: View {
         }
         .sheet(isPresented: $showingImportID) {
             VStack(alignment: .leading, spacing: 14) {
-                Text("Import Private Skill").font(.headline)
-                TextField("New skill identifier", text: $importID)
-                Text("Use lowercase letters, numbers, periods, underscores, or hyphens.").font(.caption).foregroundStyle(.secondary)
+                Text(l10n("Import Private Skill")).font(.headline)
+                TextField(l10n("New skill identifier"), text: $importID)
+                Text(l10n("Use lowercase letters, numbers, periods, underscores, or hyphens.")).font(.caption).foregroundStyle(.secondary)
                 HStack {
                     Spacer()
-                    Button("Cancel") { showingImportID = false }
-                    Button("Choose Source…") {
+                    Button(l10n("Cancel")) { showingImportID = false }
+                    Button(l10n("Choose Source…")) {
                         let id = importID
                         showingImportID = false
                         chooseImport(id: id)
@@ -61,23 +63,23 @@ struct PrivateSkillsSection: View {
             }.padding(20).frame(width: 440)
         }
         .confirmationDialog(
-            "Delete “\(removeCandidate?.name ?? "")”?",
+            l10n("Delete “\(removeCandidate?.name ?? "")”?"),
             isPresented: Binding(get: { removeCandidate != nil }, set: { if !$0 { removeCandidate = nil } })
         ) {
-            Button("Delete Skill", role: .destructive) {
+            Button(l10n("Delete Skill"), role: .destructive) {
                 guard let id = removeCandidate?.id else { return }
                 removeCandidate = nil
                 Task { await model.removePrivateSkill(id: id) }
             }
-            Button("Cancel", role: .cancel) { removeCandidate = nil }
+            Button(l10n("Cancel"), role: .cancel) { removeCandidate = nil }
         } message: {
-            Text("This removes the local skill directory. This action cannot be undone in Filicon.")
+            Text(l10n("This removes the local skill directory. This action cannot be undone in Filicon."))
         }
     }
 
     private func chooseImport(id: String) {
         let panel = NSOpenPanel()
-        panel.title = "Choose a SKILL.md directory or archive"
+        panel.title = l10n("Choose a SKILL.md directory or archive")
         panel.canChooseFiles = true
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
@@ -87,8 +89,8 @@ struct PrivateSkillsSection: View {
 
     private func export(_ skill: PrivateSkillRecord) {
         let panel = NSOpenPanel()
-        panel.title = "Choose an export folder"
-        panel.prompt = "Export"
+        panel.title = l10n("Choose an export folder")
+        panel.prompt = l10n("Export")
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.canCreateDirectories = true
@@ -105,6 +107,7 @@ struct PrivateSkillsSection: View {
 }
 
 private struct PrivateSkillEditor: View {
+    @Environment(\.locale) private var uiLocale
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
     let editor: PrivateSkillsSection.Editor
@@ -131,17 +134,18 @@ private struct PrivateSkillEditor: View {
     }
 
     var body: some View {
+        let _ = uiLocale.identifier
         VStack(alignment: .leading, spacing: 12) {
-            Text(replacing ? "Edit Private Skill" : "New Private Skill").font(.headline)
-            TextField("Identifier", text: $id).disabled(replacing)
-            TextField("Name", text: $name)
-            TextField("Description", text: $description)
-            Text("Instructions").font(.caption.bold())
+            Text(replacing ? l10n("Edit Private Skill") : l10n("New Private Skill")).font(.headline)
+            TextField(l10n("Identifier"), text: $id).disabled(replacing)
+            TextField(l10n("Name"), text: $name)
+            TextField(l10n("Description"), text: $description)
+            Text(l10n("Instructions")).font(.caption.bold())
             TextEditor(text: $bodyText).font(.system(.body, design: .monospaced)).border(.quaternary).frame(minHeight: 260)
             HStack {
                 Spacer()
-                Button("Cancel") { dismiss() }.disabled(saving)
-                Button(saving ? "Saving…" : "Save") {
+                Button(l10n("Cancel")) { dismiss() }.disabled(saving)
+                Button(saving ? l10n("Saving…") : l10n("Save")) {
                     saving = true
                     Task {
                         if await model.savePrivateSkill(id: id, name: name, description: description, body: bodyText, replacing: replacing) { dismiss() }

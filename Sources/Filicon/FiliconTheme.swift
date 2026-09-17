@@ -76,11 +76,13 @@ enum FiliconTheme {
 }
 
 struct FiliconAvatar: View {
+    @Environment(\.locale) private var uiLocale
     let title: String
     var systemName: String = "bubble.left.and.bubble.right.fill"
     var size: CGFloat = 30
 
     var body: some View {
+        let _ = uiLocale.identifier
         ZStack {
             Circle().fill(FiliconTheme.accent.opacity(0.16))
             Image(systemName: systemName)
@@ -93,6 +95,7 @@ struct FiliconAvatar: View {
 }
 
 struct FiliconIconButton: View {
+    @Environment(\.locale) private var uiLocale
     let label: String
     let systemName: String
     var size: CGFloat = 30
@@ -101,6 +104,7 @@ struct FiliconIconButton: View {
     let action: () -> Void
 
     var body: some View {
+        let _ = uiLocale.identifier
         Button(action: action) {
             Image(systemName: systemName)
                 .font(.system(size: 13, weight: .semibold))
@@ -131,11 +135,13 @@ struct FiliconIconButton: View {
 }
 
 struct FiliconPill: View {
+    @Environment(\.locale) private var uiLocale
     let title: String
     var symbolName: String?
     var tint: Color = FiliconTheme.textSecondary
 
     var body: some View {
+        let _ = uiLocale.identifier
         HStack(spacing: 5) {
             if let symbolName { Image(systemName: symbolName).font(.caption2) }
             Text(title).lineLimit(1)
@@ -150,6 +156,7 @@ struct FiliconPill: View {
 }
 
 struct FiliconSidebarRow: View {
+    @Environment(\.locale) private var uiLocale
     let title: String
     let systemName: String
     var selected = false
@@ -157,6 +164,7 @@ struct FiliconSidebarRow: View {
     let action: () -> Void
 
     var body: some View {
+        let _ = uiLocale.identifier
         Button(action: action) {
             HStack(spacing: 10) {
                 Image(systemName: systemName)
@@ -183,10 +191,13 @@ struct FiliconSidebarRow: View {
 }
 
 struct FiliconSectionLabel: View {
+    @Environment(\.locale) private var uiLocale
     let title: String
 
     var body: some View {
-        Text(title.uppercased())
+        let _ = uiLocale.identifier
+        Text(title)
+            .textCase(.uppercase)
             .font(.system(size: 10, weight: .bold))
             .tracking(0.8)
             .foregroundStyle(FiliconTheme.textTertiary)
@@ -195,4 +206,3 @@ struct FiliconSectionLabel: View {
             .padding(.bottom, 6)
     }
 }
-

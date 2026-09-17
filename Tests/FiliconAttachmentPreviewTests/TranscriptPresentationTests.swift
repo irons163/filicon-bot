@@ -3,7 +3,7 @@ import Testing
 import FiliconDomain
 @testable import Filicon
 
-@Suite("Transcript presentation")
+@Suite("Transcript presentation", EnglishUITrait())
 struct TranscriptPresentationTests {
     @Test func conversationLoadFenceRejectsStaleAndSwitchedSelections() {
         let firstID = UUID(), secondID = UUID()

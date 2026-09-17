@@ -104,7 +104,7 @@ enum WorkflowComposerReferences {
 
     static func learningReference(agentID: String, label: String = "Learn from demonstration") -> String {
         let scope = SHA256.hash(data: Data(agentID.utf8)).map { String(format: "%02x", $0) }.joined()
-        return "[\(label)](sand-workflow:learn-from-demonstration?teachQueueScope=\(scope))"
+        return l10n("[\(label)](sand-workflow:learn-from-demonstration?teachQueueScope=\(scope))")
     }
 
     private static func teachScopes(in prompt: String) -> [String: String] {

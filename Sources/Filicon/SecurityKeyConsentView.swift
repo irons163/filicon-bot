@@ -35,27 +35,29 @@ final class AppSecurityKeyConsentPresenter: ObservableObject, SecurityKeyConsent
 }
 
 struct SecurityKeyConsentView: View {
+    @Environment(\.locale) private var uiLocale
     @ObservedObject var presenter: AppSecurityKeyConsentPresenter
 
     var body: some View {
+        let _ = uiLocale.identifier
         VStack(alignment: .leading, spacing: 16) {
-            Label("Use Hardware Security Key?", systemImage: "key.horizontal")
+            Label(l10n("Use Hardware Security Key?"), systemImage: "key.horizontal")
                 .font(.title2.weight(.semibold))
-            Text("A remote computer is asking this Mac to perform a WebAuthn ceremony. Verify both values before allowing it.")
+            Text(l10n("A remote computer is asking this Mac to perform a WebAuthn ceremony. Verify both values before allowing it."))
                 .foregroundStyle(.secondary)
             if let request = presenter.pending?.consent {
                 Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 10) {
-                    GridRow { Text("Origin").foregroundStyle(.secondary); Text(request.origin).textSelection(.enabled) }
-                    GridRow { Text("Relying-party ID").foregroundStyle(.secondary); Text(request.rpID).textSelection(.enabled) }
+                    GridRow { Text(l10n("Origin")).foregroundStyle(.secondary); Text(request.origin).textSelection(.enabled) }
+                    GridRow { Text(l10n("Relying-party ID")).foregroundStyle(.secondary); Text(request.rpID).textSelection(.enabled) }
                 }
             }
-            Text("Any PIN or biometric prompt is displayed by macOS Authentication Services. Filicon never asks for or handles the PIN itself.")
+            Text(l10n("Any PIN or biometric prompt is displayed by macOS Authentication Services. Filicon never asks for or handles the PIN itself."))
                 .font(.caption).foregroundStyle(.secondary)
             HStack {
                 Spacer()
-                Button("Decline") { presenter.resolve(approved: false) }
+                Button(l10n("Decline")) { presenter.resolve(approved: false) }
                     .keyboardShortcut(.cancelAction)
-                Button("Allow Once") { presenter.resolve(approved: true) }
+                Button(l10n("Allow Once")) { presenter.resolve(approved: true) }
                     .keyboardShortcut(.defaultAction)
             }
         }
@@ -66,9 +68,11 @@ struct SecurityKeyConsentView: View {
 }
 
 struct SecurityKeyConsentHost: View {
+    @Environment(\.locale) private var uiLocale
     @ObservedObject var presenter: AppSecurityKeyConsentPresenter
 
     var body: some View {
+        let _ = uiLocale.identifier
         Color.clear
             .frame(width: 0, height: 0)
             .sheet(item: Binding(

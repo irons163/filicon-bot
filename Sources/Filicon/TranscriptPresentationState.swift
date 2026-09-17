@@ -29,7 +29,7 @@ struct TranscriptPresentationState: Equatable {
     }
     var matchPositionLabel: String {
         guard let selectedMatchIndex, !matchIDs.isEmpty else { return "0 of 0" }
-        return "\(selectedMatchIndex + 1) of \(matchIDs.count)"
+        return l10n("\(selectedMatchIndex + 1) of \(matchIDs.count)")
     }
 
     func visibleMessages(from messages: [ChatMessage]) -> ArraySlice<ChatMessage> {

@@ -123,7 +123,7 @@ struct ReplyPreviewPresentation: Equatable, Sendable {
 
     static func make(for message: ChatMessage?) -> ReplyPreviewPresentation {
         guard let message else {
-            return .init(kind: .unavailable, label: "Original message", detail: "Unavailable", symbolName: "questionmark.circle")
+            return .init(kind: .unavailable, label: l10n("Original message"), detail: l10n("Unavailable"), symbolName: "questionmark.circle")
         }
         let role = message.role == .user ? "You" : message.role == .assistant ? "Assistant" : message.role.rawValue.capitalized
         let text = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -135,7 +135,7 @@ struct ReplyPreviewPresentation: Equatable, Sendable {
         }
         let reasoning = message.reasoningText.trimmingCharacters(in: .whitespacesAndNewlines)
         if !reasoning.isEmpty {
-            return .init(kind: .reasoning, label: role, detail: "Reasoning", symbolName: "brain")
+            return .init(kind: .reasoning, label: role, detail: l10n("Reasoning"), symbolName: "brain")
         }
         if let tool = message.toolActivities.first {
             let card = ToolCardClassifier.presentation(for: tool)
@@ -145,7 +145,7 @@ struct ReplyPreviewPresentation: Equatable, Sendable {
             let presentation = TranscriptCardPresenter.presentation(for: card)
             return .init(kind: .card, label: role, detail: presentation.title, symbolName: presentation.symbolName)
         }
-        return .init(kind: .unavailable, label: role, detail: "Empty message", symbolName: "questionmark.circle")
+        return .init(kind: .unavailable, label: role, detail: l10n("Empty message"), symbolName: "questionmark.circle")
     }
 
     private static func oneLine(_ value: String) -> String {
@@ -308,12 +308,12 @@ enum ToolCardClassifier {
     }
     private static func title(for kind: ToolCardKind, fallback: String) -> String {
         switch kind {
-        case .connector: "Connector Activity"
-        case .email: "Email"
-        case .permission: "Permission Request"
-        case .secret: "Protected Credential"
-        case .automation: "Automation"
-        case .cloudAgent: "Cloud Agent"
+        case .connector: l10n("Connector Activity")
+        case .email: l10n("Email")
+        case .permission: l10n("Permission Request")
+        case .secret: l10n("Protected Credential")
+        case .automation: l10n("Automation")
+        case .cloudAgent: l10n("Cloud Agent")
         case .generic: fallback
         }
     }

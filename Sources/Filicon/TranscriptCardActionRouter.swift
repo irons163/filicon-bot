@@ -12,15 +12,15 @@ enum TranscriptCardActionRoutingError: LocalizedError, Equatable {
 
     var errorDescription: String? {
         switch self {
-        case .unauthorizedAction: "This action was not authorized by the card."
-        case .mismatchedTarget: "The action target does not match this card."
-        case .staleCard: "This card is stale and can no longer perform that action."
-        case .actionInFlight: "This card action is already running."
-        case .alreadyHandled: "This card action has already been handled."
+        case .unauthorizedAction: l10n("This action was not authorized by the card.")
+        case .mismatchedTarget: l10n("The action target does not match this card.")
+        case .staleCard: l10n("This card is stale and can no longer perform that action.")
+        case .actionInFlight: l10n("This card action is already running.")
+        case .alreadyHandled: l10n("This card action has already been handled.")
         case .backendUnavailable(let operation):
-            "\(operation) is unavailable. The card was not completed and can be retried."
+            l10n("\(operation) is unavailable. The card was not completed and can be retried.")
         case .operationNotConfirmed(let operation):
-            "\(operation) was not confirmed by its service. The card can be retried."
+            l10n("\(operation) was not confirmed by its service. The card can be retried.")
         }
     }
 }

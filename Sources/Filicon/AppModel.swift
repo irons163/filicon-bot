@@ -103,8 +103,10 @@ final class AppModel: ObservableObject {
     @Published private(set) var agentMessageUnreadCounts: [UUID: Int] = [:]
     @Published private(set) var notificationTrays: [InAppNotificationTray] = []
     @Published var groups: [AgentGroup] = []
+    @Published var selectedGroupID: UUID?
     @Published var groupMessages: [UUID: [RoomMessage]] = [:]
     @Published var runningGroups: Set<UUID> = []
+    @Published var thinkingGroupMembers: [UUID: UUID] = [:]
     @Published var automations: [Automation] = []
     @Published var automationHistory: [UUID: [AutomationRun]] = [:]
     @Published var automationWakes: [AutomationWake] = []
@@ -700,6 +702,11 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func selectGroup(id: UUID) {
+        selectedGroupID = id
+        selectRoute(.groups)
+    }
+
     var canGoBack: Bool { navigationHistory.canGoBack }
     var canGoForward: Bool { navigationHistory.canGoForward }
 
@@ -773,7 +780,7 @@ final class AppModel: ObservableObject {
                let selectedModel = availableModels.first(where: { $0.id == modelID }),
                !selectedModel.capabilities.supports(conversations[index].reasoningEffort) {
                 conversations[index].reasoningEffort = .disabled
-                errorMessage = "Reasoning was reset to disabled because \(selectedModel.displayName) does not support the previous effort."
+                errorMessage = l10n("Reasoning was reset to disabled because \(selectedModel.displayName) does not support the previous effort.")
             }
         }
         Task { await refreshModels(); await persist(conversationID: selection) }
@@ -785,7 +792,7 @@ final class AppModel: ObservableObject {
               let index = conversations.firstIndex(where: { $0.id == selection }),
               let model = availableModels.first(where: { $0.id == conversations[index].modelID }),
               model.capabilities.supports(effort) else {
-            errorMessage = "The selected model does not support that reasoning effort."
+            errorMessage = l10n("The selected model does not support that reasoning effort.")
             return
         }
         conversations[index].reasoningEffort = effort
@@ -1010,7 +1017,7 @@ final class AppModel: ObservableObject {
         }), let currentModel = snapshot.models.first(where: { $0.id == conversations[index].modelID }),
            !currentModel.capabilities.supports(conversations[index].reasoningEffort) {
             conversations[index].reasoningEffort = .disabled
-            errorMessage = "Reasoning was reset to disabled because \(currentModel.displayName) does not support the previous effort."
+            errorMessage = l10n("Reasoning was reset to disabled because \(currentModel.displayName) does not support the previous effort.")
             await persist(conversationID: ticket.conversationID)
         } else if let catalogError = snapshot.errorDescription {
             errorMessage = catalogError
@@ -1159,7 +1166,7 @@ final class AppModel: ObservableObject {
             return nil
         }()
         guard let (data, extensionName, mimeType) = image else {
-            errorMessage = "The clipboard does not contain a file or image."
+            errorMessage = l10n("The clipboard does not contain a file or image.")
             return
         }
         isImportingAttachments = true
@@ -1262,7 +1269,7 @@ final class AppModel: ObservableObject {
 
     func handleTranscriptCardIntent(_ intent: TranscriptCardActionIntent) {
         guard let context = transcriptCardContext(for: intent) else {
-            errorMessage = "This card action is stale or ambiguous. No operation was performed."
+            errorMessage = l10n("This card action is stale or ambiguous. No operation was performed.")
             return
         }
         Task { await executeTranscriptCardIntent(intent, context: context) }
@@ -1339,7 +1346,7 @@ final class AppModel: ObservableObject {
                     try await persistTranscriptCardConversation(context.conversationID)
                     errorMessage = actionError.localizedDescription
                 } catch {
-                    errorMessage = "\(actionError.localizedDescription) Card failure state could not be persisted: \(error.localizedDescription)"
+                    errorMessage = l10n("\(actionError.localizedDescription) Card failure state could not be persisted: \(error.localizedDescription)")
                 }
             } else {
                 // A successful external action may already have advanced the
@@ -1628,7 +1635,7 @@ final class AppModel: ObservableObject {
             do {
                 try await persistOrThrow(conversationID: id)
             } catch {
-                errorMessage = "The completed response could not be saved: \(error.localizedDescription)"
+                errorMessage = l10n("The completed response could not be saved: \(error.localizedDescription)")
                 running.remove(id)
                 turnTasks.removeValue(forKey: id)
                 return
@@ -1643,7 +1650,7 @@ final class AppModel: ObservableObject {
                     // The assistant turn is already canonical and durable. A
                     // replica-memory failure remains visible and is never
                     // represented as a successful memory record.
-                    errorMessage = "The response was saved, but turn memory could not be updated: \(error.localizedDescription)"
+                    errorMessage = l10n("The response was saved, but turn memory could not be updated: \(error.localizedDescription)")
                 }
             }
             running.remove(id)
@@ -2148,6 +2155,9 @@ final class AppModel: ObservableObject {
         await reloadAgentMessages()
         if let groupService {
             groups = await groupService.list()
+            if selectedGroupID == nil || !groups.contains(where: { $0.id == selectedGroupID }) {
+                selectedGroupID = groups.first?.id
+            }
             var values: [UUID: [RoomMessage]] = [:]
             for group in groups { values[group.id] = await groupService.messages(groupID: group.id) }
             groupMessages = values
@@ -2335,7 +2345,7 @@ final class AppModel: ObservableObject {
     }
 
     func createAgent(name: String, title: String = "", summary: String, instructions: String, providerID: ProviderID, modelID: ModelID, avatar: AgentAvatar? = nil) async {
-        guard let agentService else { errorMessage = "Agent storage is unavailable."; return }
+        guard let agentService else { errorMessage = l10n("Agent storage is unavailable."); return }
         do {
             let payload = try JSONEncoder().encode(["name": name, "title": title, "summary": summary, "instructions": instructions, "provider": providerID.rawValue, "model": modelID.rawValue])
             _ = try await quotaWrite(scope: "workflow", key: "agent-\(name)", data: payload) { [agentService, name, summary, instructions, providerID, modelID, title, avatar] in
@@ -2346,7 +2356,7 @@ final class AppModel: ObservableObject {
     }
 
     func updateAgent(_ profile: AgentProfile) async {
-        guard let agentService else { errorMessage = "Agent storage is unavailable."; return }
+        guard let agentService else { errorMessage = l10n("Agent storage is unavailable."); return }
         do {
             try await agentService.update(profile)
             agents = await agentService.list(includeArchived: true)
@@ -2403,12 +2413,12 @@ final class AppModel: ObservableObject {
         priority: AgentMessagePriority = .normal
     ) async -> Bool {
         guard let agentService, let agentMessenger else {
-            errorMessage = "Agent messaging storage is unavailable. Your message was not sent."
+            errorMessage = l10n("Agent messaging storage is unavailable. Your message was not sent.")
             return false
         }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
-            errorMessage = "Enter a message before sending."
+            errorMessage = l10n("Enter a message before sending.")
             return false
         }
         guard trimmed.count <= 8_000 else {
@@ -2420,11 +2430,11 @@ final class AppModel: ObservableObject {
             return false
         }
         guard let sender = await agentService.profile(id: senderID), sender.archivedAt == nil else {
-            errorMessage = "The selected sender is unavailable. Your message was not sent."
+            errorMessage = l10n("The selected sender is unavailable. Your message was not sent.")
             return false
         }
         guard let recipient = await agentService.profile(id: recipientID), recipient.archivedAt == nil else {
-            errorMessage = "The selected recipient is unavailable. Your message was not sent."
+            errorMessage = l10n("The selected recipient is unavailable. Your message was not sent.")
             return false
         }
         do {
@@ -2432,7 +2442,7 @@ final class AppModel: ObservableObject {
             await reloadAgentMessages()
             return true
         } catch {
-            errorMessage = "Message not sent: \(error.localizedDescription)"
+            errorMessage = l10n("Message not sent: \(error.localizedDescription)")
             await reloadAgentMessages()
             return false
         }
@@ -2440,14 +2450,14 @@ final class AppModel: ObservableObject {
 
     func markAgentMessagesRead(recipientID: UUID) async {
         guard let agentMessenger else {
-            errorMessage = "Agent messaging storage is unavailable."
+            errorMessage = l10n("Agent messaging storage is unavailable.")
             return
         }
         do {
             while try await agentMessenger.dequeue(recipientID: recipientID) != nil {}
             await reloadAgentMessages()
         } catch {
-            errorMessage = "Messages could not be marked read: \(error.localizedDescription)"
+            errorMessage = l10n("Messages could not be marked read: \(error.localizedDescription)")
             await reloadAgentMessages()
         }
     }
@@ -2494,7 +2504,7 @@ final class AppModel: ObservableObject {
     func launchAgentTask(kind: AgentTaskKind, agentID: UUID, title: String, prompt: String) async {
         guard let subagentService, let agentService,
               let profile = await agentService.profile(id: agentID), profile.archivedAt == nil else {
-            errorMessage = "The selected agent is unavailable."; return
+            errorMessage = l10n("The selected agent is unavailable."); return
         }
         let runtime: any AgentAsyncTaskRuntime
         switch kind {
@@ -2671,10 +2681,10 @@ final class AppModel: ObservableObject {
     }
 
     func createGroup(name: String, summary: String, memberIDs: [UUID]) async {
-        guard let groupService else { errorMessage = "Group storage is unavailable."; return }
+        guard let groupService else { errorMessage = l10n("Group storage is unavailable."); return }
         do {
             let group = try await groupService.create(name: name, summary: summary, memberIDs: memberIDs)
-            groups = await groupService.list(); groupMessages[group.id] = []
+            groups = await groupService.list(); groupMessages[group.id] = []; selectedGroupID = group.id
         }
         catch { errorMessage = error.localizedDescription }
     }
@@ -2693,15 +2703,32 @@ final class AppModel: ObservableObject {
             _ = try await groupService.postUserMessage(text, groupID: groupID)
             groupMessages[groupID] = await groupService.messages(groupID: groupID)
             runningGroups.insert(groupID)
-            _ = try await groupService.run(groupID: groupID, responder: AppGroupResponder(registry: registry))
+            defer {
+                runningGroups.remove(groupID)
+                thinkingGroupMembers[groupID] = nil
+            }
+            _ = try await groupService.run(
+                groupID: groupID,
+                responder: AppGroupResponder(registry: registry),
+                onAgentChange: { [weak self] agentID in
+                    await MainActor.run { self?.thinkingGroupMembers[groupID] = agentID }
+                }
+            ) { [weak self] message in
+                await MainActor.run {
+                    guard let self else { return }
+                    if self.groupMessages[groupID, default: []].contains(where: { $0.id == message.id }) == false {
+                        self.groupMessages[groupID, default: []].append(message)
+                    }
+                }
+            }
             groupMessages[groupID] = await groupService.messages(groupID: groupID)
         } catch { errorMessage = error.localizedDescription }
-        runningGroups.remove(groupID)
     }
 
     func stopGroup(id: UUID) async {
         await groupService?.stop(groupID: id)
         runningGroups.remove(id)
+        thinkingGroupMembers[id] = nil
     }
 
     func toggleGroupReaction(groupID: UUID, messageID: UUID, emoji: String) async {
@@ -2711,9 +2738,9 @@ final class AppModel: ObservableObject {
     }
 
     func createChannelConnection(connectorID: String, displayName: String, channelIDs: String, token: String, agentID: UUID?) async {
-        guard let channelService else { errorMessage = "Channel storage is unavailable."; return }
+        guard let channelService else { errorMessage = l10n("Channel storage is unavailable."); return }
         let token = token.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !token.isEmpty else { errorMessage = "Enter the bot token."; return }
+        guard !token.isEmpty else { errorMessage = l10n("Enter the bot token."); return }
         let id = UUID()
         let reference = "keychain://channels/\(id.uuidString.lowercased())"
         do {
@@ -2740,7 +2767,7 @@ final class AppModel: ObservableObject {
     func connectChannelOAuth(connectorID: String, clientID: String, displayName: String, channelIDs: String, agentID: UUID?) async {
         guard !channelOAuthInProgress, let channelService else { return }
         let cleanClientID = clientID.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !cleanClientID.isEmpty else { errorMessage = "Enter the OAuth client ID."; return }
+        guard !cleanClientID.isEmpty else { errorMessage = l10n("Enter the OAuth client ID."); return }
         channelOAuthInProgress = true
         let listener = ChannelOAuthLoopbackServer()
         defer {
@@ -2980,7 +3007,7 @@ final class AppModel: ObservableObject {
     }
 
     func createAutomation(agentID: UUID, name: String, prompt: String, trigger: AutomationTrigger) async {
-        guard let automationService else { errorMessage = "Automation storage is unavailable."; return }
+        guard let automationService else { errorMessage = l10n("Automation storage is unavailable."); return }
         do {
             let proposed = Automation(agentID: agentID, name: name, prompt: prompt, trigger: trigger)
             let data = try JSONEncoder().encode(proposed)
@@ -3051,7 +3078,7 @@ final class AppModel: ObservableObject {
     }
 
     func saveAutomationIngressRoute(name: String, provider: AutomationIngressProvider, secret: String) async {
-        guard let automationIngress else { errorMessage = "Automation webhook ingress is unavailable."; return }
+        guard let automationIngress else { errorMessage = l10n("Automation webhook ingress is unavailable."); return }
         let id = UUID(), reference = "route.\(id.uuidString.lowercased()).secret"
         do {
             let trimmed = secret.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -3181,7 +3208,7 @@ final class AppModel: ObservableObject {
     func authenticateMCPAccount(serverID: String, accountKey: String, bearerToken: String) async {
         await invalidateAllMCPAuthorization()
         let token = bearerToken.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !token.isEmpty else { errorMessage = "Enter a bearer token."; return }
+        guard !token.isEmpty else { errorMessage = l10n("Enter a bearer token."); return }
         let authorizationValue = token.lowercased().hasPrefix("bearer ") ? token : "Bearer \(token)"
         do {
             let slot = try Self.mcpAccountSlot(
@@ -3692,7 +3719,7 @@ final class AppModel: ObservableObject {
     func resolveMCPApproval(_ approval: MCPApprovalPresentation, resolution: MCPApprovalResolution) {
         Task {
             guard await mcpApprovalBroker.resolveIfMatches(approval, resolution: resolution) else {
-                errorMessage = "This MCP approval is stale or has already been handled."
+                errorMessage = l10n("This MCP approval is stale or has already been handled.")
                 return
             }
         }
@@ -3946,9 +3973,9 @@ final class AppModel: ObservableObject {
 
     func authorizeWorkspaceFolder() {
         let panel = NSOpenPanel()
-        panel.title = "Authorize a workspace folder"
-        panel.message = "Local AI tools will be restricted to this exact folder."
-        panel.prompt = "Authorize Folder"
+        panel.title = l10n("Authorize a workspace folder")
+        panel.message = l10n("Local AI tools will be restricted to this exact folder.")
+        panel.prompt = l10n("Authorize Folder")
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
@@ -3979,7 +4006,7 @@ final class AppModel: ObservableObject {
             let constrained = permission.constrained(by: settings.localToolPermissionCeiling)
             guard constrained == permission,
                   permission == .always || permission == .never else {
-                errorMessage = "Managed policy does not permit that persistent local-tool choice."
+                errorMessage = l10n("Managed policy does not permit that persistent local-tool choice.")
                 return
             }
             let previous = await localToolPermissionPolicy.configuredChoices()[request.action] ?? .ask
@@ -4068,7 +4095,7 @@ final class AppModel: ObservableObject {
         let token = sessionToken.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !token.isEmpty, var components = URLComponents(string: endpoint.trimmingCharacters(in: .whitespacesAndNewlines)),
               let scheme = components.scheme?.lowercased(), let host = components.host else {
-            errorMessage = "Enter a valid VNC URL and session token."
+            errorMessage = l10n("Enter a valid VNC URL and session token.")
             return
         }
         if components.path.isEmpty || components.path == "/" { components.path = "/vnc.html" }
@@ -4076,13 +4103,13 @@ final class AppModel: ObservableObject {
         items.removeAll { $0.name == VNCTrustPolicy.sessionTokenQueryName }
         items.append(URLQueryItem(name: VNCTrustPolicy.sessionTokenQueryName, value: token))
         components.queryItems = items
-        guard let url = components.url else { errorMessage = "The VNC URL is invalid."; return }
+        guard let url = components.url else { errorMessage = l10n("The VNC URL is invalid."); return }
         let loopback = ["localhost", "127.0.0.1", "::1"].contains(host.lowercased())
         let port = components.port.map { ":\($0)" } ?? ""
         let origins: Set<String> = !loopback && scheme == "https" ? ["https://\(host.lowercased())\(port)"] : []
         let policy = VNCTrustPolicy(trustedHTTPSOrigins: origins, sessionToken: token)
         guard case .allowed = policy.evaluate(url) else {
-            errorMessage = "VNC allows only loopback HTTP or the exact HTTPS origin you entered, with a matching session token."
+            errorMessage = l10n("VNC allows only loopback HTTP or the exact HTTPS origin you entered, with a matching session token.")
             return
         }
         activeVNCURL = url
@@ -4312,7 +4339,7 @@ final class AppModel: ObservableObject {
               let token = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?
                 .first(where: { $0.name == VNCTrustPolicy.sessionTokenQueryName })?.value,
               !token.isEmpty else {
-            errorMessage = "The remote computer did not provide a VNC session token."
+            errorMessage = l10n("The remote computer did not provide a VNC session token.")
             return
         }
         await connectVNC(endpoint: url.absoluteString, sessionToken: token)
@@ -4322,7 +4349,7 @@ final class AppModel: ObservableObject {
         guard let controller = remoteTerminalController,
               let data = commandJSON.data(using: .utf8),
               let command = try? JSONSerialization.jsonObject(with: data) as? [String], !command.isEmpty else {
-            errorMessage = "Enter the terminal command as a JSON argv array, for example [\"/usr/bin/env\",\"pwd\"]."
+            errorMessage = l10n("Enter the terminal command as a JSON argv array, for example [\"/usr/bin/env\",\"pwd\"].")
             return
         }
         remoteTerminalPollingTask?.cancel()
@@ -4507,7 +4534,7 @@ final class AppModel: ObservableObject {
             return
         }
         guard let url = URL(string: value), url.scheme?.lowercased() == "https", url.host != nil else {
-            errorMessage = "Plugin catalogs must use an HTTPS URL."
+            errorMessage = l10n("Plugin catalogs must use an HTTPS URL.")
             return
         }
         pluginCatalogURLString = value
@@ -4546,7 +4573,7 @@ final class AppModel: ObservableObject {
     }
 
     func installPlugin(_ entry: PluginCatalogEntry, setupValues: [String: String]) async {
-        guard let url = entry.downloadURL else { errorMessage = "This catalog entry has no downloadable artifact."; return }
+        guard let url = entry.downloadURL else { errorMessage = l10n("This catalog entry has no downloadable artifact."); return }
         do {
             let (temporary, response) = try await URLSession.shared.download(from: url)
             guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
@@ -4633,7 +4660,7 @@ final class AppModel: ObservableObject {
             return true
         }
         guard let url = URL(string: endpoint), !token.isEmpty else {
-            errorMessage = "Publishing requires an HTTPS endpoint and bearer token."
+            errorMessage = l10n("Publishing requires an HTTPS endpoint and bearer token.")
             return false
         }
         do {
@@ -4661,7 +4688,7 @@ final class AppModel: ObservableObject {
     }
 
     func publishPrivateSkill(id: String, targetID: String) async {
-        guard let service = skillPublishService else { errorMessage = "Configure a publishing backend before changing a team marketplace."; return }
+        guard let service = skillPublishService else { errorMessage = l10n("Configure a publishing backend before changing a team marketplace."); return }
         do {
             let document = try await privateSkillLibrary.read(id: id)
             _ = try await service.publish(localSkillID: id, name: document.record.name, description: document.record.description, targetID: targetID)
@@ -4671,7 +4698,7 @@ final class AppModel: ObservableObject {
     }
 
     func resyncPrivateSkill(id: String) async {
-        guard let service = skillPublishService else { errorMessage = "Configure a publishing backend before changing a team marketplace."; return }
+        guard let service = skillPublishService else { errorMessage = l10n("Configure a publishing backend before changing a team marketplace."); return }
         do {
             let document = try await privateSkillLibrary.read(id: id)
             _ = try await service.resyncPublication(localSkillID: id, name: document.record.name, description: document.record.description)
@@ -4680,7 +4707,7 @@ final class AppModel: ObservableObject {
     }
 
     func unpublishPrivateSkill(id: String) async {
-        guard let service = skillPublishService else { errorMessage = "Configure a publishing backend before changing a team marketplace."; return }
+        guard let service = skillPublishService else { errorMessage = l10n("Configure a publishing backend before changing a team marketplace."); return }
         do {
             try await service.unpublishPublication(localSkillID: id)
             skillPublicationStates = try await skillPublicationStore.list()
@@ -4688,7 +4715,7 @@ final class AppModel: ObservableObject {
     }
 
     func resyncPublishedPluginSkill(id: String) async {
-        guard let service = skillPublishService else { errorMessage = "Configure a publishing backend before changing a team marketplace."; return }
+        guard let service = skillPublishService else { errorMessage = l10n("Configure a publishing backend before changing a team marketplace."); return }
         do {
             _ = try await service.resync(skillID: id)
             indexedPluginSkills = try await pluginSkillIndex.snapshot()?.skills ?? []
@@ -4697,7 +4724,7 @@ final class AppModel: ObservableObject {
     }
 
     func unpublishPublishedPluginSkill(id: String) async {
-        guard let service = skillPublishService else { errorMessage = "Configure a publishing backend before changing a team marketplace."; return }
+        guard let service = skillPublishService else { errorMessage = l10n("Configure a publishing backend before changing a team marketplace."); return }
         do {
             _ = try await service.unpublish(skillID: id)
             privateSkills = try await privateSkillLibrary.list()
@@ -4731,7 +4758,7 @@ final class AppModel: ObservableObject {
         }
         guard let url = URL(string: feed), url.scheme?.lowercased() == "https", url.host != nil,
               let keyData = Data(base64Encoded: key), keyData.count == 32 else {
-            errorMessage = "Updates require an HTTPS feed and a 32-byte Ed25519 public key encoded as Base64."
+            errorMessage = l10n("Updates require an HTTPS feed and a 32-byte Ed25519 public key encoded as Base64.")
             return
         }
         do { _ = try makeUpdateConfiguration(feedURL: url, key: keyData) }
@@ -4749,7 +4776,7 @@ final class AppModel: ObservableObject {
     private func checkForUpdates(reportMissingConfiguration: Bool) async {
         guard let configuration = configuredUpdates(automaticallyDownloads: false) else {
             if reportMissingConfiguration {
-                errorMessage = "This build has no packaged update feed. Configure an HTTPS update feed and trusted signing key."
+                errorMessage = l10n("This build has no packaged update feed. Configure an HTTPS update feed and trusted signing key.")
             }
             return
         }
@@ -4772,12 +4799,12 @@ final class AppModel: ObservableObject {
     func installStagedUpdate() async {
         guard case .staged(let staged, let directory) = updateState else { return }
         if hasUpdateBlockingWork {
-            errorMessage = "Filicon is busy. Stop active conversations, groups, and workflows before installing."
+            errorMessage = l10n("Filicon is busy. Stop active conversations, groups, and workflows before installing.")
             return
         }
         let application = Bundle.main.bundleURL
         guard application.pathExtension == "app", let bundleIdentifier = Bundle.main.bundleIdentifier else {
-            errorMessage = "Updates can be installed only from a packaged Filicon.app build."
+            errorMessage = l10n("Updates can be installed only from a packaged Filicon.app build.")
             return
         }
         do {
@@ -4790,7 +4817,7 @@ final class AppModel: ObservableObject {
             )
             guard !hasUpdateBlockingWork else {
                 updateState = .staged(staged, directory: directory)
-                errorMessage = "Filicon became busy before installation. The verified update remains ready."
+                errorMessage = l10n("Filicon became busy before installation. The verified update remains ready.")
                 return
             }
             let helper = application.appending(path: "Contents/Helpers/FiliconUpdateHelper")
@@ -5157,9 +5184,9 @@ final class AppModel: ObservableObject {
         case .queued, .duplicate:
             break
         case .queueFull:
-            errorMessage = "Filicon has too many pending links. Finish opening the app and try again."
+            errorMessage = l10n("Filicon has too many pending links. Finish opening the app and try again.")
         case .rejected:
-            errorMessage = "Filicon could not open that link because it is unsupported or malformed."
+            errorMessage = l10n("Filicon could not open that link because it is unsupported or malformed.")
         }
     }
 
@@ -5188,13 +5215,13 @@ final class AppModel: ObservableObject {
             authorizationURL: values[0], tokenURL: values[1], profileURL: values[2],
             entitlementURL: values[3], usageURL: values[4], clientID: values[5]
         ) else {
-            errorMessage = "Account service requires HTTPS authorization, token, profile, entitlement, and usage endpoints plus a client ID."
+            errorMessage = l10n("Account service requires HTTPS authorization, token, profile, entitlement, and usage endpoints plus a client ID.")
             return
         }
         if !trimmedFeedbackURL.isEmpty {
             guard let feedbackEndpoint = URL(string: trimmedFeedbackURL),
                   (try? HTTPSFeedbackTransport(endpoint: feedbackEndpoint)) != nil else {
-                errorMessage = "The feedback service requires a safe HTTPS endpoint."
+                errorMessage = l10n("The feedback service requires a safe HTTPS endpoint.")
                 return
             }
         }
@@ -5210,7 +5237,7 @@ final class AppModel: ObservableObject {
     }
 
     func beginAccountSignIn() async {
-        guard let accountController else { errorMessage = "Configure an account service first."; return }
+        guard let accountController else { errorMessage = l10n("Configure an account service first."); return }
         do {
             let request = try await accountController.beginSignIn()
             accountState = await accountController.state
@@ -5220,7 +5247,7 @@ final class AppModel: ObservableObject {
     }
 
     func handleAccountCallback(_ url: URL) async {
-        guard let accountController else { errorMessage = "No account sign-in is pending."; return }
+        guard let accountController else { errorMessage = l10n("No account sign-in is pending."); return }
         do {
             accountState = try await accountController.handleCallback(url)
             if let identifier = accountState.session?.profile.id {
@@ -5283,7 +5310,7 @@ final class AppModel: ObservableObject {
 
     func submitFeedback(message: String, includeConversationID: Bool) async -> Bool {
         guard let endpoint = URL(string: accountFeedbackURL), !accountFeedbackURL.isEmpty else {
-            errorMessage = "Configure an HTTPS feedback endpoint in Account settings first."
+            errorMessage = l10n("Configure an HTTPS feedback endpoint in Account settings first.")
             return false
         }
         do {
@@ -5405,11 +5432,11 @@ final class AppModel: ObservableObject {
             if route == nil { selectRoute(.search) }
         case .infoDeepLinks:
             NSApp.activate(ignoringOtherApps: true)
-            errorMessage = "Supported links can open a conversation or agent, join a Shared Room, open a plugin for installation, or activate Filicon. Links are validated locally before any action runs."
+            errorMessage = l10n("Supported links can open a conversation or agent, join a Shared Room, open a plugin for installation, or activate Filicon. Links are validated locally before any action runs.")
         case .agent(let id):
             NSApp.activate(ignoringOtherApps: true)
             guard agents.contains(where: { $0.id == id }) else {
-                errorMessage = "That agent is not available on this Mac."
+                errorMessage = l10n("That agent is not available on this Mac.")
                 return
             }
             requestedAgentInspectionID = id
@@ -5422,7 +5449,7 @@ final class AppModel: ObservableObject {
             Task {
                 do {
                     guard var metadata = try await store.conversation(id: id) else {
-                        errorMessage = "That conversation is not available on this Mac."
+                        errorMessage = l10n("That conversation is not available on this Mac.")
                         return
                     }
                     metadata.messages = []
@@ -5443,7 +5470,7 @@ final class AppModel: ObservableObject {
             guard let url = URL(string: serverURL), url.scheme?.lowercased() == "https", url.host != nil else {
                 errorMessage = SharedRoomError.insecureEndpoint.localizedDescription; return
             }
-            guard !credentialReference.isEmpty else { errorMessage = "Enter a Keychain credential reference."; return }
+            guard !credentialReference.isEmpty else { errorMessage = l10n("Enter a Keychain credential reference."); return }
         }
         sharedRoomsEnabled = enabled
         sharedRoomIdentity.displayName = cleanName
@@ -5503,7 +5530,7 @@ final class AppModel: ObservableObject {
     }
 
     func requestSharedRoomJoin(invite: String) async {
-        guard let sharedRoomClient else { errorMessage = "Enable Shared Rooms first."; return }
+        guard let sharedRoomClient else { errorMessage = l10n("Enable Shared Rooms first."); return }
         do {
             let response = try await sharedRoomClient.perform(.requestJoin(token: invite))
             if case .room(let room) = response { selectedSharedRoomID = room.id }

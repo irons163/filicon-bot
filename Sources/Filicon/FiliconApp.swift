@@ -18,6 +18,7 @@ import FiliconSecurityKey
 struct FiliconApp: App {
     @NSApplicationDelegateAdaptor(FiliconApplicationDelegate.self) private var applicationDelegate
     @StateObject private var model: AppModel
+    @AppStorage(FiliconLocalization.preferenceKey) private var preferredLanguage = AppLanguage.system.rawValue
 
     init() {
         let startup = AppStartupContext.production()
@@ -29,6 +30,7 @@ struct FiliconApp: App {
                 .environmentObject(model)
                 .frame(minWidth: 512, minHeight: 520)
                 .preferredColorScheme(model.settings.theme.colorScheme)
+                .environment(\.locale, selectedLanguage.locale)
                 .background(AppWindowAccessor().frame(width: 0, height: 0))
                 .onOpenURL(perform: model.handleDeepLink)
                 .onReceive(NotificationCenter.default.publisher(for: .filiconOpenDeepLink)) { notification in
@@ -38,29 +40,29 @@ struct FiliconApp: App {
         .commands {
             AboutCommands()
             CommandGroup(after: .newItem) {
-                Button("New Conversation") { model.addConversation() }
+                Button(FiliconLocalization.string("New Conversation")) { model.addConversation() }
                     .keyboardShortcut("n")
                     .disabled(!model.isBootstrapped)
             }
-            CommandMenu("Conversation") {
-                Button("Find in Chat") {
+            CommandMenu(FiliconLocalization.string("Conversation")) {
+                Button(FiliconLocalization.string("Find in Chat")) {
                     NotificationCenter.default.post(name: .filiconFindInChat, object: model.selection)
                 }
                 .keyboardShortcut("f")
                 .disabled(model.selectedConversation == nil)
             }
-            CommandMenu("Navigate") {
-                Button("Search") { model.focusGlobalSearch() }
+            CommandMenu(FiliconLocalization.string("Navigate")) {
+                Button(FiliconLocalization.string("Search")) { model.focusGlobalSearch() }
                     .keyboardShortcut("k", modifiers: [.command])
                 Divider()
-                Button("Back") { model.goBack() }
+                Button(FiliconLocalization.string("Back")) { model.goBack() }
                     .keyboardShortcut("[", modifiers: [.command])
                     .disabled(!model.canGoBack)
-                Button("Forward") { model.goForward() }
+                Button(FiliconLocalization.string("Forward")) { model.goForward() }
                     .keyboardShortcut("]", modifiers: [.command])
                     .disabled(!model.canGoForward)
                 Divider()
-                Button("Reload Workspace") { Task { await model.reloadRootWorkspace() } }
+                Button(FiliconLocalization.string("Reload Workspace")) { Task { await model.reloadRootWorkspace() } }
                     .keyboardShortcut("r", modifiers: [.command])
             }
         }
@@ -68,21 +70,74 @@ struct FiliconApp: App {
             SettingsView()
                 .environmentObject(model)
                 .preferredColorScheme(model.settings.theme.colorScheme)
+                .environment(\.locale, selectedLanguage.locale)
                 .frame(width: 660, height: 700)
         }
-        Window("About Filicon", id: "about") {
+        Window(l10n("About Filicon"), id: "about") {
             AboutView()
                 .environmentObject(model)
                 .preferredColorScheme(model.settings.theme.colorScheme)
+                .environment(\.locale, selectedLanguage.locale)
         }
         .windowResizability(.contentSize)
+    }
+
+    private var selectedLanguage: AppLanguage {
+        AppLanguage(rawValue: preferredLanguage) ?? .system
+    }
+}
+
+enum AppLanguage: String, CaseIterable, Identifiable {
+    case system
+    case english = "en"
+    case traditionalChinese = "zh-Hant"
+    case simplifiedChinese = "zh-Hans"
+    case french = "fr"
+    case spanish = "es"
+    case japanese = "ja"
+    case korean = "ko"
+
+    var id: String { rawValue }
+
+    var title: LocalizedStringKey {
+        LocalizedStringKey(localizationKey)
+    }
+
+    var localizationKey: String {
+        switch self {
+        case .system: "Follow System"
+        case .english: "English"
+        case .traditionalChinese: "Traditional Chinese"
+        case .simplifiedChinese: "Simplified Chinese"
+        case .french: "French"
+        case .spanish: "Spanish"
+        case .japanese: "Japanese"
+        case .korean: "Korean"
+        }
+    }
+
+    var locale: Locale {
+        guard self == .system else { return Locale(identifier: rawValue) }
+        return Self.systemLocale(preferredLanguages: Locale.preferredLanguages)
+    }
+
+    static func systemLocale(preferredLanguages: [String]) -> Locale {
+        let preferred = (preferredLanguages.first ?? "en").replacingOccurrences(of: "_", with: "-").lowercased()
+        if preferred.hasPrefix("zh-hant") || (!preferred.hasPrefix("zh-hans") && ["zh-tw", "zh-hk", "zh-mo"].contains(where: preferred.hasPrefix)) {
+            return Locale(identifier: "zh-Hant")
+        }
+        if preferred.hasPrefix("zh") { return Locale(identifier: "zh-Hans") }
+        let language = preferred.split(separator: "-").first.map(String.init) ?? "en"
+        return Locale(identifier: ["en", "fr", "es", "ja", "ko"].contains(language) ? language : "en")
     }
 }
 
 struct ContentView: View {
+    @Environment(\.locale) private var uiLocale
     @EnvironmentObject private var model: AppModel
     @Environment(\.scenePhase) private var scenePhase
     var body: some View {
+        let _ = uiLocale.identifier
         VStack(spacing: 0) {
             AccountConnectionBanner()
             PersistenceRecoveryBanner()
@@ -95,7 +150,7 @@ struct ContentView: View {
         }
         .background(FiliconTheme.canvas)
         }
-        .alert("Filicon", isPresented: Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } })) { Button("OK") { model.errorMessage = nil } } message: { Text(model.errorMessage ?? "") }
+        .alert(l10n("Filicon"), isPresented: Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } })) { Button(l10n("OK")) { model.errorMessage = nil } } message: { Text(FiliconLocalization.message(model.errorMessage ?? "")) }
         .sheet(item: Binding(
             get: { model.pendingToolApprovals.first },
             set: { _ in }
@@ -142,7 +197,7 @@ struct ContentView: View {
         switch model.route {
         case .conversation:
             if let conversation = model.selectedConversation { ChatDetailView(conversation: conversation) }
-            else { ContentUnavailableView("Conversation unavailable", systemImage: "exclamationmark.bubble") }
+            else { ContentUnavailableView(l10n("Conversation unavailable"), systemImage: "exclamationmark.bubble") }
         case .search: SearchWorkspaceView()
         case .agents: AgentWorkspaceView()
         case .groups: GroupWorkspaceView()
@@ -154,32 +209,37 @@ struct ContentView: View {
         case .plugins: PluginsWorkspaceView()
         case .account: AccountWorkspaceView()
         case .hiddenChats: HiddenChatsView()
-        case nil: ContentUnavailableView("Choose a workspace", systemImage: "sidebar.left")
+        case nil: ContentUnavailableView(l10n("Choose a workspace"), systemImage: "sidebar.left")
         }
     }
 }
 
 private struct FiliconSidebar: View {
+    @Environment(\.locale) private var uiLocale
     @EnvironmentObject private var model: AppModel
+    @Environment(\.openSettings) private var openSettings
     @State private var showingSearchField = false
     @FocusState private var searchFocused: Bool
 
     var body: some View {
+        let _ = uiLocale.identifier
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 9) {
-                FiliconAvatar(title: "Filicon", systemName: "sparkles", size: 29)
-                Text("Filicon")
+                FiliconAvatar(title: l10n("Filicon"), systemName: "sparkles", size: 29)
+                Text(l10n("Filicon"))
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(FiliconTheme.textPrimary)
                     .fixedSize(horizontal: true, vertical: false)
                 Spacer(minLength: 4)
-                FiliconIconButton(label: "Back", systemName: "chevron.left", size: 27, action: model.goBack)
+                FiliconIconButton(label: localized("Back"), systemName: "chevron.left", size: 27, action: model.goBack)
                     .disabled(!model.canGoBack)
                     .accessibilityIdentifier("workspace-back")
-                FiliconIconButton(label: "Forward", systemName: "chevron.right", size: 27, action: model.goForward)
+                FiliconIconButton(label: localized("Forward"), systemName: "chevron.right", size: 27, action: model.goForward)
                     .disabled(!model.canGoForward)
                     .accessibilityIdentifier("workspace-forward")
-                FiliconIconButton(label: "New Conversation", systemName: "square.and.pencil", size: 28, isProminent: true, action: model.addConversation)
+                FiliconIconButton(label: localized("New Group Chat"), systemName: "person.3.fill", size: 28, isProminent: true) {
+                    model.selectRoute(.groups)
+                }
                     .disabled(!model.isBootstrapped)
             }
             .padding(.horizontal, 14)
@@ -191,11 +251,11 @@ private struct FiliconSidebar: View {
                     Image(systemName: "magnifyingglass")
                         .font(.caption)
                         .foregroundStyle(FiliconTheme.textTertiary)
-                    TextField("Search chats", text: $model.searchQuery)
+                    TextField(localized("Search chats"), text: $model.searchQuery)
                         .textFieldStyle(.plain)
                         .focused($searchFocused)
                         .onSubmit { model.focusGlobalSearch() }
-                    FiliconIconButton(label: "Close search", systemName: "xmark", size: 24) {
+                    FiliconIconButton(label: localized("Close search"), systemName: "xmark", size: 24) {
                         showingSearchField = false
                         model.searchQuery = ""
                     }
@@ -214,9 +274,9 @@ private struct FiliconSidebar: View {
                 } label: {
                     HStack(spacing: 10) {
                         Image(systemName: "magnifyingglass")
-                        Text("Search")
+                        Text(localized("Search"))
                         Spacer()
-                        Text("⌘K").font(.caption2.monospaced()).foregroundStyle(FiliconTheme.textTertiary)
+                        Text(l10n("⌘K")).font(.caption2.monospaced()).foregroundStyle(FiliconTheme.textTertiary)
                     }
                     .font(.system(size: 13.5))
                     .foregroundStyle(FiliconTheme.textSecondary)
@@ -225,14 +285,33 @@ private struct FiliconSidebar: View {
                     .background(FiliconTheme.surfaceRaised.opacity(0.55), in: RoundedRectangle(cornerRadius: 9))
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("Search")
+                .accessibilityLabel(localized("Search"))
                 .padding(.horizontal, 12)
                 .padding(.bottom, 7)
             }
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 1) {
-                    FiliconSectionLabel(title: "Chats")
+                    FiliconSectionLabel(title: localized("Group Chats"))
+                    ForEach(model.groups) { group in
+                        FiliconSidebarRow(
+                            title: group.name,
+                            systemName: "person.3",
+                            selected: model.route == .groups && model.selectedGroupID == group.id
+                        ) {
+                            model.selectGroup(id: group.id)
+                        }
+                    }
+                    if model.groups.isEmpty {
+                        Button(localized("Create your first group")) { model.selectRoute(.groups) }
+                            .buttonStyle(.plain)
+                            .font(.caption)
+                            .foregroundStyle(FiliconTheme.textTertiary)
+                            .padding(.horizontal, 12)
+                            .frame(height: 30)
+                    }
+
+                    FiliconSectionLabel(title: localized("Direct Chats"))
                     ForEach(model.visibleConversations) { conversation in
                         ConversationSidebarRow(conversation: conversation)
                     }
@@ -243,7 +322,7 @@ private struct FiliconSidebar: View {
                             HStack(spacing: 10) {
                                 if model.isLoadingMoreConversations { ProgressView().controlSize(.small) }
                                 else { Image(systemName: "arrow.down.circle") }
-                                Text("Load more chats")
+                                Text(localized("Load more chats"))
                             }
                             .font(.caption)
                             .foregroundStyle(FiliconTheme.textTertiary)
@@ -254,13 +333,12 @@ private struct FiliconSidebar: View {
                         .buttonStyle(.plain)
                         .disabled(model.isLoadingMoreConversations)
                     }
-                    FiliconSidebarRow(title: "Hidden Chats", systemName: "archivebox", selected: model.route == .hiddenChats) {
+                    FiliconSidebarRow(title: localized("Hidden Chats"), systemName: "archivebox", selected: model.route == .hiddenChats) {
                         model.selectRoute(.hiddenChats)
                     }
 
-                    FiliconSectionLabel(title: "Workspace")
+                    FiliconSectionLabel(title: localized("Workspace"))
                     workspaceRow("Agents", "person.2", .agents)
-                    workspaceRow("Groups", "person.3", .groups)
                     workspaceRow("Automations", "clock.arrow.circlepath", .automations)
                     workspaceRow("Channels", "number", .channels)
                     workspaceRow("Shared Rooms", "person.3.sequence", .sharedRooms)
@@ -281,11 +359,12 @@ private struct FiliconSidebar: View {
                     .frame(width: 28, height: 28)
                     .overlay(Image(systemName: "person.fill").font(.caption).foregroundStyle(FiliconTheme.accent))
                 VStack(alignment: .leading, spacing: 1) {
-                    Text("Local workspace").font(.caption.weight(.semibold)).foregroundStyle(FiliconTheme.textPrimary)
+                    Text(localized("Local workspace")).font(.caption.weight(.semibold)).foregroundStyle(FiliconTheme.textPrimary)
                     Text(model.dataRoot.lastPathComponent).font(.caption2).foregroundStyle(FiliconTheme.textTertiary).lineLimit(1)
                 }
                 Spacer()
-                FiliconIconButton(label: "Account", systemName: "gearshape", size: 26) { model.selectRoute(.account) }
+                FiliconIconButton(label: localized("Settings"), systemName: "gearshape", size: 26) { openSettings() }
+                    .accessibilityIdentifier("workspace-settings")
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 11)
@@ -296,16 +375,22 @@ private struct FiliconSidebar: View {
 
     @ViewBuilder
     private func workspaceRow(_ title: String, _ symbolName: String, _ route: WorkspaceRoute) -> some View {
-        FiliconSidebarRow(title: title, systemName: symbolName, selected: model.route == route) {
+        FiliconSidebarRow(title: localized(title), systemName: symbolName, selected: model.route == route) {
             model.selectRoute(route)
         }
+    }
+
+    private func localized(_ key: String) -> String {
+        FiliconLocalization.string(key)
     }
 }
 
 private struct UpdateStatusPill: View {
+    @Environment(\.locale) private var uiLocale
     @EnvironmentObject private var model: AppModel
 
     var body: some View {
+        let _ = uiLocale.identifier
         if !model.isUpdateRequired, let presentation = UpdatePillPresentation.make(state: model.updateState) {
             HStack {
                 Spacer()
@@ -339,9 +424,11 @@ private struct UpdateStatusPill: View {
 }
 
 private struct RequiredUpdateOverlay: View {
+    @Environment(\.locale) private var uiLocale
     @EnvironmentObject private var model: AppModel
 
     var body: some View {
+        let _ = uiLocale.identifier
         let presentation = RequiredUpdatePresentation.make(state: model.updateState)
         ZStack {
             Color(nsColor: .windowBackgroundColor).ignoresSafeArea()
@@ -349,8 +436,8 @@ private struct RequiredUpdateOverlay: View {
                 Image(systemName: presentation.isError ? "exclamationmark.triangle.fill" : "arrow.down.app.fill")
                     .font(.system(size: 42))
                     .foregroundStyle(presentation.isError ? Color.red : Color.accentColor)
-                Text("Update Required").font(.title.bold())
-                Text("This version of Filicon is below the required minimum version\(minimumSuffix).")
+                Text(l10n("Update Required")).font(.title.bold())
+                Text(l10n("This version of Filicon is below the required minimum version\(minimumSuffix)."))
                     .multilineTextAlignment(.center).foregroundStyle(.secondary)
                 Text(presentation.status).multilineTextAlignment(.center)
                 if presentation.action == nil {
@@ -386,12 +473,14 @@ private struct RequiredUpdateOverlay: View {
 }
 
 private struct ConversationSidebarRow: View {
+    @Environment(\.locale) private var uiLocale
     @EnvironmentObject private var model: AppModel
     let conversation: Conversation
     @State private var showingRename = false
     @State private var title = ""
 
     var body: some View {
+        let _ = uiLocale.identifier
         HStack(spacing: 2) {
             Button {
                 model.selectRoute(.conversation(conversation.id))
@@ -400,7 +489,7 @@ private struct ConversationSidebarRow: View {
                     Image(systemName: "bubble.left")
                         .font(.system(size: 13, weight: .semibold))
                         .frame(width: 18)
-                    Text(conversation.title)
+                    Text(conversation.title == "New conversation" ? FiliconLocalization.string("New Conversation") : conversation.title)
                         .font(.system(size: 13.5, weight: model.route == .conversation(conversation.id) ? .semibold : .regular))
                         .lineLimit(1)
                     Spacer(minLength: 2)
@@ -412,10 +501,10 @@ private struct ConversationSidebarRow: View {
             }
             .buttonStyle(.plain)
             Menu {
-                Button("Rename…") { title = conversation.title; showingRename = true }
-                Button("Hide") { model.setConversationHidden(id: conversation.id, hidden: true) }
+                Button(l10n("Rename…")) { title = conversation.title; showingRename = true }
+                Button(l10n("Hide")) { model.setConversationHidden(id: conversation.id, hidden: true) }
                 Divider()
-                Button("Delete", role: .destructive) { model.deleteConversation(id: conversation.id) }
+                Button(l10n("Delete"), role: .destructive) { model.deleteConversation(id: conversation.id) }
             } label: {
                 Image(systemName: "ellipsis")
                     .font(.caption.weight(.semibold))
@@ -435,9 +524,9 @@ private struct ConversationSidebarRow: View {
         }
         .sheet(isPresented: $showingRename) {
             VStack(alignment: .leading, spacing: 14) {
-                Text("Rename Conversation").font(.headline)
-                TextField("Title", text: $title).onSubmit(rename)
-                HStack { Spacer(); Button("Cancel") { showingRename = false }; Button("Rename", action: rename).keyboardShortcut(.defaultAction) }
+                Text(l10n("Rename Conversation")).font(.headline)
+                TextField(l10n("Title"), text: $title).onSubmit(rename)
+                HStack { Spacer(); Button(l10n("Cancel")) { showingRename = false }; Button(l10n("Rename"), action: rename).keyboardShortcut(.defaultAction) }
             }.padding(20).frame(width: 420)
         }
     }
@@ -449,29 +538,32 @@ private struct ConversationSidebarRow: View {
 }
 
 private struct HiddenChatsView: View {
+    @Environment(\.locale) private var uiLocale
     @EnvironmentObject private var model: AppModel
     var body: some View {
+        let _ = uiLocale.identifier
         List {
             ForEach(model.hiddenConversations) { conversation in
                 HStack {
                     VStack(alignment: .leading) {
                         Text(conversation.title)
-                        Text(conversation.hiddenAt?.formatted() ?? "Hidden").font(.caption).foregroundStyle(.secondary)
+                        Text(conversation.hiddenAt?.formatted() ?? l10n("Hidden")).font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
-                    Button("Restore") { model.setConversationHidden(id: conversation.id, hidden: false) }
-                    Button("Delete", role: .destructive) { model.deleteConversation(id: conversation.id) }
+                    Button(l10n("Restore")) { model.setConversationHidden(id: conversation.id, hidden: false) }
+                    Button(l10n("Delete"), role: .destructive) { model.deleteConversation(id: conversation.id) }
                 }
             }
         }
         .overlay {
-            if model.hiddenConversations.isEmpty { ContentUnavailableView("No hidden chats", systemImage: "archivebox") }
+            if model.hiddenConversations.isEmpty { ContentUnavailableView(l10n("No hidden chats"), systemImage: "archivebox") }
         }
-        .navigationTitle("Hidden Chats")
+        .navigationTitle(l10n("Hidden Chats"))
     }
 }
 
 private struct PluginsWorkspaceView: View {
+    @Environment(\.locale) private var uiLocale
     @EnvironmentObject private var model: AppModel
     @State private var tab: PluginBrowserTab = .marketplace
     @State private var type: PluginTypeFilter = .all
@@ -482,39 +574,43 @@ private struct PluginsWorkspaceView: View {
     @State private var catalogURL = ""
 
     var body: some View {
+        let _ = uiLocale.identifier
         VStack(spacing: 0) {
+            ScrollView(.horizontal) {
             HStack {
-                Picker("Collection", selection: $tab) {
-                    Text("Marketplace").tag(PluginBrowserTab.marketplace)
-                    Text("Yours").tag(PluginBrowserTab.yours)
-                }.pickerStyle(.segmented).frame(width: 220)
-                TextField("Search plugins", text: $query).textFieldStyle(.roundedBorder)
-                Picker("Type", selection: $type) {
-                    Text("All").tag(PluginTypeFilter.all)
-                    Text("Connectors").tag(PluginTypeFilter.connectors)
-                    Text("Skills").tag(PluginTypeFilter.skills)
-                }.frame(width: 140)
-                Picker("Owner", selection: $ownership) {
-                    Text("All owners").tag(nil as PluginOwnership?)
-                    Text("Public").tag(Optional(PluginOwnership.publicMarketplace))
-                    Text("Team").tag(Optional(PluginOwnership.team))
-                    Text("User").tag(Optional(PluginOwnership.user))
-                }.frame(width: 140)
+                Picker(localized("Collection"), selection: $tab) {
+                    Text(localized("Marketplace")).tag(PluginBrowserTab.marketplace)
+                    Text(localized("Yours")).tag(PluginBrowserTab.yours)
+                }.pickerStyle(.segmented).fixedSize()
+                TextField(localized("Search plugins"), text: $query).textFieldStyle(.roundedBorder).frame(minWidth: 180)
+                Picker(localized("Type"), selection: $type) {
+                    Text(localized("All")).tag(PluginTypeFilter.all)
+                    Text(localized("Connectors")).tag(PluginTypeFilter.connectors)
+                    Text(localized("Skills")).tag(PluginTypeFilter.skills)
+                }.fixedSize()
+                Picker(localized("Owner"), selection: $ownership) {
+                    Text(localized("All owners")).tag(nil as PluginOwnership?)
+                    Text(localized("Public")).tag(Optional(PluginOwnership.publicMarketplace))
+                    Text(localized("Team")).tag(Optional(PluginOwnership.team))
+                    Text(localized("User")).tag(Optional(PluginOwnership.user))
+                }.fixedSize()
                 Button { Task { await model.reloadPlugins(forceCatalogRefresh: true) } } label: {
                     if model.isRefreshingPlugins { ProgressView().controlSize(.small) } else { Image(systemName: "arrow.clockwise") }
                 }.disabled(model.isRefreshingPlugins)
-                Button("Import…") { showingImporter = true }
+                Button(localized("Import…")) { showingImporter = true }
             }.padding(12)
+            }.fixedSize(horizontal: false, vertical: true)
             Divider()
+            Group {
             if tab == .marketplace && model.pluginCatalogURLString.isEmpty {
                 ContentUnavailableView {
-                    Label("Choose a plugin catalog", systemImage: "puzzlepiece.extension")
+                    Label(localized("Choose a plugin catalog"), systemImage: "puzzlepiece.extension")
                 } description: {
-                    Text("Filicon accepts a generic HTTPS catalog, so plugin distribution is not tied to one AI vendor.")
+                    Text(localized("Filicon accepts a generic HTTPS catalog, so plugin distribution is not tied to one AI vendor."))
                 } actions: {
                     HStack {
-                        TextField("https://…/catalog.json", text: $catalogURL).frame(width: 360)
-                        Button("Use Catalog") { let value = catalogURL; Task { await model.configurePluginCatalog(value) } }
+                        TextField(l10n("https://…/catalog.json"), text: $catalogURL).frame(width: 360)
+                        Button(localized("Use Catalog")) { let value = catalogURL; Task { await model.configurePluginCatalog(value) } }
                     }
                 }
             } else {
@@ -523,14 +619,14 @@ private struct PluginsWorkspaceView: View {
                         ForEach(visibleCatalog) { entry in
                             Button { selectedEntry = entry } label: { catalogRow(entry) }.buttonStyle(.plain)
                         }
-                        if visibleCatalog.isEmpty { Text("No plugins match these filters.").foregroundStyle(.secondary) }
+                        if visibleCatalog.isEmpty { Text(localized("No plugins match these filters.")).foregroundStyle(.secondary) }
                     } else {
                         PrivateSkillsSection()
-                        Section("Installed") {
+                        Section(localized("Installed")) {
                             ForEach(visibleInstalled) { plugin in PluginInstalledRow(plugin: plugin) }
-                            if visibleInstalled.isEmpty { Text("No installed plugins match.").foregroundStyle(.secondary) }
+                            if visibleInstalled.isEmpty { Text(localized("No installed plugins match.")).foregroundStyle(.secondary) }
                         }
-                        Section("Skills") {
+                        Section(localized("Skills")) {
                             ForEach(model.indexedPluginSkills) { skill in
                                 VStack(alignment: .leading) {
                                     Text(skill.name)
@@ -542,8 +638,10 @@ private struct PluginsWorkspaceView: View {
                     }
                 }
             }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .navigationTitle("Plugins")
+        .navigationTitle(localized("Plugins"))
         .task {
             catalogURL = model.pluginCatalogURLString
             await model.reloadPlugins(forceCatalogRefresh: false)
@@ -565,6 +663,10 @@ private struct PluginsWorkspaceView: View {
         return model.pluginCatalogEntries.filter { $0.matches(filter, installedIDs: installed) }
     }
 
+    private func localized(_ key: String) -> String {
+        FiliconLocalization.string(key)
+    }
+
     private var visibleInstalled: [InstalledPlugin] {
         model.installedPlugins.filter { plugin in
             if type == .connectors && plugin.manifest.connectors.isEmpty { return false }
@@ -580,7 +682,7 @@ private struct PluginsWorkspaceView: View {
         guard let entry = model.pluginCatalogEntries.first(where: { $0.id == id || $0.manifest.id == id }) else {
             if !model.isRefreshingPlugins {
                 model.requestedPluginID = nil
-                model.errorMessage = "Plugin “\(id)” is not available in the configured catalogs."
+                model.errorMessage = l10n("Plugin “\(id)” is not available in the configured catalogs.")
             }
             return
         }
@@ -599,20 +701,21 @@ private struct PluginsWorkspaceView: View {
                 Text(entry.manifest.displayName).fontWeight(.semibold)
                 Text(entry.manifest.description).lineLimit(2).foregroundStyle(.secondary)
                 HStack {
-                    if !entry.manifest.connectors.isEmpty { Text("\(entry.manifest.connectors.count) connectors") }
-                    if !entry.manifest.skills.isEmpty { Text("\(entry.manifest.skills.count) skills") }
-                    Text(entry.ownership == .publicMarketplace ? "Public" : entry.ownership.rawValue.capitalized)
-                    if entry.policy == .required { Text("Required").foregroundStyle(.orange) }
+                    if !entry.manifest.connectors.isEmpty { Text(l10n("\(entry.manifest.connectors.count) connectors")) }
+                    if !entry.manifest.skills.isEmpty { Text(l10n("\(entry.manifest.skills.count) skills")) }
+                    Text(entry.ownership == .publicMarketplace ? localized("Public") : localized(entry.ownership.rawValue.capitalized))
+                    if entry.policy == .required { Text(localized("Required")).foregroundStyle(.orange) }
                 }.font(.caption)
             }
             Spacer()
-            Text(model.installedPlugins.contains(where: { $0.id == entry.id }) ? "Installed" : "View")
+            Text(model.installedPlugins.contains(where: { $0.id == entry.id }) ? localized("Installed") : localized("View"))
                 .foregroundStyle(.secondary)
         }.padding(.vertical, 5)
     }
 }
 
 private struct PluginInstallSheet: View {
+    @Environment(\.locale) private var uiLocale
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
     let entry: PluginCatalogEntry
@@ -620,16 +723,17 @@ private struct PluginInstallSheet: View {
     @State private var installing = false
 
     var body: some View {
+        let _ = uiLocale.identifier
         VStack(alignment: .leading, spacing: 16) {
             Text(entry.manifest.displayName).font(.title2.bold())
             Text(entry.manifest.description).foregroundStyle(.secondary)
-            if let publisher = entry.publisher { LabeledContent("Publisher", value: publisher) }
-            LabeledContent("Version", value: entry.manifest.version)
+            if let publisher = entry.publisher { LabeledContent(l10n("Publisher"), value: publisher) }
+            LabeledContent(l10n("Version"), value: entry.manifest.version)
             if !entry.manifest.connectors.isEmpty {
-                GroupBox("Connectors") { ForEach(entry.manifest.connectors) { Text($0.name).frame(maxWidth: .infinity, alignment: .leading) } }
+                GroupBox(l10n("Connectors")) { ForEach(entry.manifest.connectors) { Text($0.name).frame(maxWidth: .infinity, alignment: .leading) } }
             }
             if !entry.manifest.skills.isEmpty {
-                GroupBox("Skills") { ForEach(entry.manifest.skills) { skill in VStack(alignment: .leading) { Text(skill.name); Text(skill.description).font(.caption).foregroundStyle(.secondary) }.frame(maxWidth: .infinity, alignment: .leading) } }
+                GroupBox(l10n("Skills")) { ForEach(entry.manifest.skills) { skill in VStack(alignment: .leading) { Text(skill.name); Text(skill.description).font(.caption).foregroundStyle(.secondary) }.frame(maxWidth: .infinity, alignment: .leading) } }
             }
             ForEach(entry.manifest.variables) { field in
                 if field.kind == .secret {
@@ -640,8 +744,8 @@ private struct PluginInstallSheet: View {
             }
             HStack {
                 Spacer()
-                Button("Cancel") { dismiss() }
-                Button("Install") {
+                Button(l10n("Cancel")) { dismiss() }
+                Button(l10n("Install")) {
                     installing = true
                     Task {
                         await model.installPlugin(entry, setupValues: values)
@@ -663,28 +767,30 @@ private struct PluginInstallSheet: View {
 }
 
 private struct PluginInstalledRow: View {
+    @Environment(\.locale) private var uiLocale
     @EnvironmentObject private var model: AppModel
     let plugin: InstalledPlugin
     @State private var toolName = ""
 
     var body: some View {
+        let _ = uiLocale.identifier
         DisclosureGroup {
             VStack(alignment: .leading, spacing: 8) {
                 if !plugin.manifest.connectors.isEmpty {
-                    Text("Connectors: \(plugin.manifest.connectors.map(\.name).joined(separator: ", "))")
+                    Text(l10n("Connectors: \(plugin.manifest.connectors.map(\.name).joined(separator: ", "))"))
                 }
                 if !plugin.manifest.skills.isEmpty {
-                    Text("Skills: \(plugin.manifest.skills.map(\.name).joined(separator: ", "))")
+                    Text(l10n("Skills: \(plugin.manifest.skills.map(\.name).joined(separator: ", "))"))
                 }
                 ForEach(plugin.disabledToolNames.sorted(), id: \.self) { name in
-                    Toggle("Disable \(name)", isOn: Binding(
+                    Toggle(l10n("Disable \(name)"), isOn: Binding(
                         get: { plugin.disabledToolNames.contains(name) },
                         set: { disabled in Task { await model.setPluginToolDisabled(pluginID: plugin.id, toolName: name, disabled: disabled) } }
                     ))
                 }
                 HStack {
-                    TextField("Tool name to disable", text: $toolName)
-                    Button("Disable") {
+                    TextField(l10n("Tool name to disable"), text: $toolName)
+                    Button(l10n("Disable")) {
                         let name = toolName.trimmingCharacters(in: .whitespacesAndNewlines); toolName = ""
                         Task { await model.setPluginToolDisabled(pluginID: plugin.id, toolName: name, disabled: true) }
                     }.disabled(toolName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -694,10 +800,10 @@ private struct PluginInstalledRow: View {
             HStack {
                 VStack(alignment: .leading) {
                     Text(plugin.manifest.displayName)
-                    Text("\(plugin.manifest.version) · \(plugin.policy.rawValue)").font(.caption).foregroundStyle(.secondary)
+                    Text("\(plugin.manifest.version) · \(FiliconLocalization.string(plugin.policy.rawValue))").font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
-                Button("Remove", role: .destructive) { Task { await model.uninstallPlugin(id: plugin.id) } }
+                Button(l10n("Remove"), role: .destructive) { Task { await model.uninstallPlugin(id: plugin.id) } }
                     .disabled(!plugin.policy.permitsRemoval)
             }
         }
@@ -705,11 +811,13 @@ private struct PluginInstalledRow: View {
 }
 
 private struct ComputerWorkspaceView: View {
+    @Environment(\.locale) private var uiLocale
     @EnvironmentObject private var model: AppModel
     @State private var endpoint = "http://127.0.0.1:6080/vnc.html"
     @State private var sessionToken = ""
 
     var body: some View {
+        let _ = uiLocale.identifier
         VStack(spacing: 0) {
             HStack(spacing: 12) {
                 Label(statusText, systemImage: statusIcon)
@@ -720,9 +828,9 @@ private struct ComputerWorkspaceView: View {
                 Spacer()
                 if model.activeVNCURL != nil {
                     if model.vncControlSnapshot?.owner == .agent {
-                        Button("Give Back") { Task { await model.giveBackVNCControl() } }
+                        Button(l10n("Give Back")) { Task { await model.giveBackVNCControl() } }
                     } else {
-                        Button("Take Control") { Task { await model.takeVNCControl() } }
+                        Button(l10n("Take Control")) { Task { await model.takeVNCControl() } }
                             .disabled(model.vncControlSnapshot?.userPresent == true)
                     }
                 }
@@ -734,12 +842,12 @@ private struct ComputerWorkspaceView: View {
             if let url = model.activeVNCURL, let token = model.activeVNCToken {
                 if model.computerSnapshot.phase == .crashedOut {
                     ContentUnavailableView {
-                        Label("VNC renderer stopped repeatedly", systemImage: "exclamationmark.triangle")
+                        Label(l10n("VNC renderer stopped repeatedly"), systemImage: "exclamationmark.triangle")
                     } description: {
-                        Text("The renderer was stopped after four crashes within 60 seconds.")
+                        Text(l10n("The renderer was stopped after four crashes within 60 seconds."))
                     } actions: {
-                        Button("Try again") { Task { await model.recoverVNCRenderer() } }
-                        Button("Disconnect") { Task { await model.disconnectVNC() } }
+                        Button(l10n("Try again")) { Task { await model.recoverVNCRenderer() } }
+                        Button(l10n("Disconnect")) { Task { await model.disconnectVNC() } }
                     }
                 } else {
                     VNCWebView(
@@ -753,21 +861,21 @@ private struct ComputerWorkspaceView: View {
                             Task { await model.reportVNCUserPresence(present) }
                         }
                     )
-                    .accessibilityLabel("Remote computer viewer")
+                    .accessibilityLabel(l10n("Remote computer viewer"))
                     .overlay(alignment: .topTrailing) {
-                        Button("Disconnect") { Task { await model.disconnectVNC() } }
+                        Button(l10n("Disconnect")) { Task { await model.disconnectVNC() } }
                             .padding(8)
                     }
                 }
             } else {
                 Form {
-                    Section("VNC connection") {
-                        TextField("http://127.0.0.1:6080/vnc.html or HTTPS URL", text: $endpoint)
+                    Section(l10n("VNC connection")) {
+                        TextField(l10n("http://127.0.0.1:6080/vnc.html or HTTPS URL"), text: $endpoint)
                             .textContentType(.URL)
-                        SecureField("Session token", text: $sessionToken)
-                        Text("Only loopback HTTP or the exact HTTPS origin entered here is accepted. The top-level VNC page must be /vnc.html and present the same session token.")
+                        SecureField(l10n("Session token"), text: $sessionToken)
+                        Text(l10n("Only loopback HTTP or the exact HTTPS origin entered here is accepted. The top-level VNC page must be /vnc.html and present the same session token."))
                             .font(.caption).foregroundStyle(.secondary)
-                        Button("Connect") {
+                        Button(l10n("Connect")) {
                             let endpoint = endpoint
                             let token = sessionToken
                             sessionToken = ""
@@ -776,10 +884,10 @@ private struct ComputerWorkspaceView: View {
                         .disabled(endpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || sessionToken.isEmpty)
                     }
                     RemoteComputerControlsView()
-                    Section("Teach recording") {
-                        Text("Teach records a private ScreenCaptureKit monitor for at most 10 minutes. Incomplete crash artifacts are quarantined at next launch.")
+                    Section(l10n("Teach recording")) {
+                        Text(l10n("Teach records a private ScreenCaptureKit monitor for at most 10 minutes. Incomplete crash artifacts are quarantined at next launch."))
                             .font(.caption).foregroundStyle(.secondary)
-                        Button("Open Screen Recording Settings") {
+                        Button(l10n("Open Screen Recording Settings")) {
                             if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
                                 NSWorkspace.shared.open(url)
                             }
@@ -790,55 +898,55 @@ private struct ComputerWorkspaceView: View {
                 .frame(maxWidth: 720)
             }
         }
-        .navigationTitle("Computer")
+        .navigationTitle(l10n("Computer"))
         .onDisappear { Task { await model.shutdownComputerIntegration() } }
     }
 
     @ViewBuilder private var teachControls: some View {
         if let policy = model.teachStatus.maskingPolicy {
-            Label("\(model.teachStatus.maskedWindowCount) masked", systemImage: "eye.slash")
+            Label(l10n("\(model.teachStatus.maskedWindowCount) masked"), systemImage: "eye.slash")
                 .font(.caption)
-            Label("\(model.teachStatus.pausedSensitiveWindowCount) paused", systemImage: "pause.circle")
+            Label(l10n("\(model.teachStatus.pausedSensitiveWindowCount) paused"), systemImage: "pause.circle")
                 .font(.caption)
                 .foregroundStyle(model.teachStatus.pausedSensitiveWindowCount > 0 ? .orange : .secondary)
-            Text("Policy v\(policy.version) · \(policy.failClosed ? "fail closed" : "permissive")")
+            Text(l10n("Policy v\(policy.version) · \(policy.failClosed ? "fail closed" : "permissive")"))
                 .font(.caption2).foregroundStyle(.secondary)
         }
         switch model.teachStatus.phase {
         case .idle:
             if model.teachStatus.savedVideoURL != nil {
-                Button("Attach recording") { Task { await model.attachTeachRecording() } }
+                Button(l10n("Attach recording")) { Task { await model.attachTeachRecording() } }
             }
             Button { Task { await model.startTeachRecording() } } label: {
-                Label("Teach", systemImage: "record.circle")
+                Label(l10n("Teach"), systemImage: "record.circle")
             }
         case .starting, .recovering:
             ProgressView().controlSize(.small)
-            Text(model.teachStatus.phase == .starting ? "Starting recording…" : "Recovering recordings…")
+            Text(model.teachStatus.phase == .starting ? l10n("Starting recording…") : l10n("Recovering recordings…"))
                 .font(.caption).foregroundStyle(.secondary)
         case .recording:
-            Label("Recording", systemImage: "record.circle.fill").foregroundStyle(.red)
-            Button("Save") { Task { await model.stopTeachRecording(save: true) } }
-            Button("Discard", role: .destructive) { Task { await model.stopTeachRecording(save: false) } }
+            Label(l10n("Recording"), systemImage: "record.circle.fill").foregroundStyle(.red)
+            Button(l10n("Save")) { Task { await model.stopTeachRecording(save: true) } }
+            Button(l10n("Discard"), role: .destructive) { Task { await model.stopTeachRecording(save: false) } }
         case .finalizing:
             ProgressView().controlSize(.small)
-            Text("Finalizing…").font(.caption).foregroundStyle(.secondary)
+            Text(l10n("Finalizing…")).font(.caption).foregroundStyle(.secondary)
         case .failed:
-            Label(model.teachStatus.errorMessage ?? "Recording failed", systemImage: "exclamationmark.triangle")
+            Label(model.teachStatus.errorMessage ?? l10n("Recording failed"), systemImage: "exclamationmark.triangle")
                 .foregroundStyle(.red)
-            Button("Retry") { Task { await model.startTeachRecording() } }
+            Button(l10n("Retry")) { Task { await model.startTeachRecording() } }
         }
     }
 
     @ViewBuilder private var takeoverStatus: some View {
         if let snapshot = model.vncControlSnapshot {
-            Label(snapshot.owner == .agent ? "Agent control" : "User control",
+            Label(snapshot.owner == .agent ? l10n("Agent control") : l10n("User control"),
                   systemImage: snapshot.owner == .agent ? "cpu" : "person.fill")
                 .font(.caption)
             if snapshot.userPresent {
-                Text("User present").font(.caption).foregroundStyle(.orange)
+                Text(l10n("User present")).font(.caption).foregroundStyle(.orange)
             } else if let deadline = snapshot.lease?.deadlineMilliseconds {
-                Text("Lease until \(Date(timeIntervalSince1970: Double(deadline) / 1_000).formatted(date: .omitted, time: .standard))")
+                Text(l10n("Lease until \(Date(timeIntervalSince1970: Double(deadline) / 1_000).formatted(date: .omitted, time: .standard))"))
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
@@ -846,13 +954,13 @@ private struct ComputerWorkspaceView: View {
 
     private var statusText: String {
         switch model.computerSnapshot.phase {
-        case .off: "Off"
-        case .starting: "Starting"
-        case .sleeping: "Sleeping"
-        case .local: "This Mac"
-        case .running: "Connected"
-        case .pulling: "Downloading computer image"
-        case .crashedOut: "Renderer stopped"
+        case .off: l10n("Off")
+        case .starting: l10n("Starting")
+        case .sleeping: l10n("Sleeping")
+        case .local: l10n("This Mac")
+        case .running: l10n("Connected")
+        case .pulling: l10n("Downloading computer image")
+        case .crashedOut: l10n("Renderer stopped")
         }
     }
 
@@ -875,6 +983,7 @@ private struct ComputerWorkspaceView: View {
 }
 
 private struct FiliconChatHeader: View {
+    @Environment(\.locale) private var uiLocale
     let title: String
     let providerName: String
     let modelName: String
@@ -885,6 +994,7 @@ private struct FiliconChatHeader: View {
     let onOutline: () -> Void
 
     var body: some View {
+        let _ = uiLocale.identifier
         HStack(spacing: 11) {
             FiliconAvatar(title: title, systemName: "sparkles", size: 32)
             VStack(alignment: .leading, spacing: 2) {
@@ -897,7 +1007,7 @@ private struct FiliconChatHeader: View {
                     Text("·").foregroundStyle(FiliconTheme.textTertiary)
                     Text(modelName).lineLimit(1)
                     if isWorking {
-                        Text("· Working")
+                        Text(l10n("· Working"))
                             .foregroundStyle(FiliconTheme.accent)
                     } else if isLoadingCatalog {
                         ProgressView().controlSize(.mini)
@@ -907,9 +1017,9 @@ private struct FiliconChatHeader: View {
                 .foregroundStyle(FiliconTheme.textSecondary)
             }
             Spacer(minLength: 10)
-            FiliconIconButton(label: "Model and provider settings", systemName: "slider.horizontal.3", action: onConfiguration)
-            FiliconIconButton(label: "Find in Chat (⌘F)", systemName: "magnifyingglass", action: onFind)
-            FiliconIconButton(label: "Full conversation", systemName: "list.bullet", action: onOutline)
+            FiliconIconButton(label: l10n("Model and provider settings"), systemName: "slider.horizontal.3", action: onConfiguration)
+            FiliconIconButton(label: l10n("Find in Chat (⌘F)"), systemName: "magnifyingglass", action: onFind)
+            FiliconIconButton(label: l10n("Full conversation"), systemName: "list.bullet", action: onOutline)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 11)
@@ -919,13 +1029,15 @@ private struct FiliconChatHeader: View {
 }
 
 private struct ChatConfigurationPopover: View {
+    @Environment(\.locale) private var uiLocale
     @EnvironmentObject private var model: AppModel
     let conversation: Conversation
 
     var body: some View {
+        let _ = uiLocale.identifier
         VStack(alignment: .leading, spacing: 14) {
             HStack {
-                Text("Model settings").font(.headline)
+                Text(l10n("Model settings")).font(.headline)
                 Spacer()
                 Button {
                     Task { await model.refreshModels(forceRefresh: true) }
@@ -934,9 +1046,9 @@ private struct ChatConfigurationPopover: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(model.isLoadingModels)
-                .help("Refresh model catalog")
+                .help(l10n("Refresh model catalog"))
             }
-            Picker("Provider", selection: Binding(
+            Picker(l10n("Provider"), selection: Binding(
                 get: { conversation.providerID },
                 set: { model.updateRoute(providerID: $0) }
             )) {
@@ -945,7 +1057,7 @@ private struct ChatConfigurationPopover: View {
                 }
             }
             .pickerStyle(.menu)
-            Picker("Model", selection: Binding(
+            Picker(l10n("Model"), selection: Binding(
                 get: { conversation.modelID },
                 set: { model.updateRoute(providerID: conversation.providerID, modelID: $0) }
             )) {
@@ -954,12 +1066,12 @@ private struct ChatConfigurationPopover: View {
                 }
             }
             .pickerStyle(.menu)
-            Picker("Reasoning", selection: Binding(
+            Picker(l10n("Reasoning"), selection: Binding(
                 get: { conversation.reasoningEffort },
                 set: { model.setReasoningEffort($0) }
             )) {
                 ForEach(model.supportedReasoningEfforts, id: \.self) { effort in
-                    Text(effort.rawValue.capitalized).tag(effort)
+                    Text(FiliconLocalization.string(effort.rawValue.capitalized)).tag(effort)
                 }
             }
             .pickerStyle(.menu)
@@ -974,15 +1086,15 @@ private struct ChatConfigurationPopover: View {
             .font(.caption)
             .foregroundStyle(model.modelCatalogError == nil && !model.isModelCatalogStale ? FiliconTheme.textTertiary : FiliconTheme.warning)
             .accessibilityElement(children: .combine)
-            .accessibilityLabel("Model catalog status: \(model.modelCatalogStatusLabel)")
+            .accessibilityLabel(l10n("Model catalog status: \(model.modelCatalogStatusLabel)"))
             if let configurationError = model.selectedConversationConfigurationError, !model.isLoadingModels {
-                Text(configurationError)
+                Text(FiliconLocalization.message(configurationError))
                     .font(.caption)
                     .foregroundStyle(.red)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let usage = model.selectedProviderUsage, usage.requests > 0 {
-                Text("\(usage.requests.formatted()) requests · \(usage.inputTokens.formatted()) in / \(usage.outputTokens.formatted()) out")
+                Text(l10n("\(usage.requests.formatted()) requests · \(usage.inputTokens.formatted()) in / \(usage.outputTokens.formatted()) out"))
                     .font(.caption2.monospacedDigit())
                     .foregroundStyle(FiliconTheme.textTertiary)
             }
@@ -994,6 +1106,7 @@ private struct ChatConfigurationPopover: View {
 }
 
 private struct ChatDetailView: View {
+    @Environment(\.locale) private var uiLocale
     @EnvironmentObject private var model: AppModel
     let conversation: Conversation
     @State private var showingImporter = false
@@ -1010,6 +1123,7 @@ private struct ChatDetailView: View {
     }
 
     var body: some View {
+        let _ = uiLocale.identifier
         VStack(spacing: 0) {
             FiliconChatHeader(
                 title: conversation.title,
@@ -1045,7 +1159,7 @@ private struct ChatDetailView: View {
                                 if model.loadingMessageHistory.contains(conversation.id) {
                                     ProgressView().controlSize(.small).frame(maxWidth: .infinity)
                                 } else {
-                                    Label("Load older messages", systemImage: "arrow.up.circle")
+                                    Label(l10n("Load older messages"), systemImage: "arrow.up.circle")
                                         .frame(maxWidth: .infinity)
                                 }
                             }
@@ -1113,7 +1227,7 @@ private struct ChatDetailView: View {
                 HStack(spacing: 8) {
                     Image(systemName: preview.symbolName)
                     VStack(alignment: .leading, spacing: 1) {
-                        Text("Replying to \(preview.label)").font(.caption.bold())
+                        Text(l10n("Replying to \(preview.label)")).font(.caption.bold())
                         Text(preview.detail).font(.caption).lineLimit(1).foregroundStyle(.secondary)
                     }
                     Spacer()
@@ -1128,16 +1242,16 @@ private struct ChatDetailView: View {
                                 .font(.caption)
                                 .padding(.horizontal, 8).padding(.vertical, 5)
                                 .background(.quaternary, in: Capsule())
-                                .accessibilityLabel("Referenced workflow \(workflow.name)")
+                                .accessibilityLabel(l10n("Referenced workflow \(workflow.name)"))
                         }
                     }.padding(.horizontal)
                 }.scrollIndicators(.hidden)
             }
             if WorkflowComposerReferences.query(in: model.draft) != nil {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Reference a skill").font(.caption.bold()).foregroundStyle(.secondary)
+                    Text(l10n("Reference a skill")).font(.caption.bold()).foregroundStyle(.secondary)
                     if workflowSuggestions.isEmpty {
-                        Text("No matching enabled manual workflows")
+                        Text(l10n("No matching enabled manual workflows"))
                             .font(.caption).foregroundStyle(.secondary)
                     } else {
                         ScrollView(.horizontal) {
@@ -1162,13 +1276,13 @@ private struct ChatDetailView: View {
                 }.padding(.horizontal).padding(.top, 6)
             }
             HStack(alignment: .bottom, spacing: 8) {
-                FiliconIconButton(label: "Attach", systemName: "paperclip", size: 32) { showingImporter = true }
+                FiliconIconButton(label: l10n("Attach"), systemName: "paperclip", size: 32) { showingImporter = true }
                     .disabled(model.isImportingAttachments || !model.selectedModelSupportsAttachments)
-                    .help(model.selectedModelAttachmentError ?? "Attach a file")
-                FiliconIconButton(label: "Paste files", systemName: "doc.on.clipboard", size: 32) { model.pasteAttachments() }
+                    .help(model.selectedModelAttachmentError ?? l10n("Attach a file"))
+                FiliconIconButton(label: l10n("Paste files"), systemName: "doc.on.clipboard", size: 32) { model.pasteAttachments() }
                     .disabled(!model.selectedModelSupportsAttachments)
-                    .help(model.selectedModelAttachmentError ?? "Paste a file or image")
-                TextField("Message", text: $model.draft, axis: .vertical)
+                    .help(model.selectedModelAttachmentError ?? l10n("Paste a file or image"))
+                TextField(l10n("Message"), text: $model.draft, axis: .vertical)
                     .lineLimit(1...4)
                     .textFieldStyle(.plain)
                     .font(.system(size: 14))
@@ -1177,7 +1291,7 @@ private struct ChatDetailView: View {
                     .padding(.vertical, 6)
                     .frame(minHeight: 34, maxHeight: 54)
                     .onSubmit { if !model.running.contains(conversation.id) { model.send() } }
-                    .help("Type / after a space to reference an enabled workflow")
+                    .help(l10n("Type / after a space to reference an enabled workflow"))
                 VoiceComposerControls(
                     controller: model.voiceComposer,
                     accept: model.acceptVoiceResult,
@@ -1185,10 +1299,10 @@ private struct ChatDetailView: View {
                     unsupportedAudioHelp: model.selectedModelAudioError
                 )
                 if model.running.contains(conversation.id) {
-                    FiliconIconButton(label: "Stop", systemName: "stop.fill", size: 32, isDestructive: true, action: model.cancel)
+                    FiliconIconButton(label: l10n("Stop"), systemName: "stop.fill", size: 32, isDestructive: true, action: model.cancel)
                 } else {
                     FiliconIconButton(
-                        label: "Send",
+                        label: l10n("Send"),
                         systemName: "arrow.up",
                         size: 32,
                         isProminent: true,
@@ -1201,7 +1315,7 @@ private struct ChatDetailView: View {
                     )
                     .help(
                         model.selectedConversationConfigurationError
-                            ?? (model.pendingAttachments.isEmpty ? "Send message" : model.selectedModelAttachmentError ?? "Send message")
+                            ?? (model.pendingAttachments.isEmpty ? l10n("Send message") : model.selectedModelAttachmentError ?? l10n("Send message"))
                     )
                 }
             }
@@ -1254,7 +1368,7 @@ private struct ChatDetailView: View {
     private var findBar: some View {
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-            TextField("Find in this chat", text: Binding(
+            TextField(l10n("Find in this chat"), text: Binding(
                 get: { transcript.query },
                 set: { transcript.setQuery($0, messages: conversation.messages) }
             ))
@@ -1266,16 +1380,16 @@ private struct ChatDetailView: View {
                 .foregroundStyle(.secondary)
                 .frame(minWidth: 50, alignment: .trailing)
             Button { _ = transcript.selectPrevious(messages: conversation.messages) } label: {
-                Label("Previous match", systemImage: "chevron.up")
+                Label(l10n("Previous match"), systemImage: "chevron.up")
             }
             .labelStyle(.iconOnly)
             .disabled(transcript.matchIDs.isEmpty)
             Button { _ = transcript.selectNext(messages: conversation.messages) } label: {
-                Label("Next match", systemImage: "chevron.down")
+                Label(l10n("Next match"), systemImage: "chevron.down")
             }
             .labelStyle(.iconOnly)
             .disabled(transcript.matchIDs.isEmpty)
-            Button(action: closeFind) { Label("Close Find", systemImage: "xmark") }
+            Button(action: closeFind) { Label(l10n("Close Find"), systemImage: "xmark") }
                 .labelStyle(.iconOnly)
                 .keyboardShortcut(.cancelAction)
         }
@@ -1322,65 +1436,69 @@ private struct ChatDetailView: View {
 }
 
 private struct VoiceComposerControls: View {
+    @Environment(\.locale) private var uiLocale
     @ObservedObject var controller: VoiceComposerController
     let accept: () -> Void
     let supportsAudio: Bool
     let unsupportedAudioHelp: String?
 
     var body: some View {
+        let _ = uiLocale.identifier
         switch controller.phase {
         case .idle:
-            FiliconIconButton(label: "Record voice message", systemName: "mic", size: 32, action: controller.startRecording)
+            FiliconIconButton(label: l10n("Record voice message"), systemName: "mic", size: 32, action: controller.startRecording)
             .disabled(!supportsAudio)
-            .help(unsupportedAudioHelp ?? "Record voice message")
+            .help(unsupportedAudioHelp ?? l10n("Record voice message"))
         case .requestingMicrophonePermission:
-            ProgressView().controlSize(.small).help("Requesting microphone access…")
-            Button("Cancel", action: controller.cancel).controlSize(.small)
+            ProgressView().controlSize(.small).help(l10n("Requesting microphone access…"))
+            Button(l10n("Cancel"), action: controller.cancel).controlSize(.small)
         case .recording(let elapsed):
             WaveformStrip(samples: controller.waveformSamples)
                 .frame(width: 92, height: 25)
-                .accessibilityLabel("Live microphone level")
+                .accessibilityLabel(l10n("Live microphone level"))
             Text(elapsed.formattedVoiceDuration).font(.system(.caption, design: .monospaced))
             Button(action: controller.stopAndTranscribe) {
-                Label("Stop and transcribe", systemImage: "stop.circle.fill")
-            }.labelStyle(.iconOnly).foregroundStyle(.red).help("Stop and transcribe")
+                Label(l10n("Stop and transcribe"), systemImage: "stop.circle.fill")
+            }.labelStyle(.iconOnly).foregroundStyle(.red).help(l10n("Stop and transcribe"))
             Button(action: controller.cancel) { Image(systemName: "xmark") }
-                .buttonStyle(.plain).help("Cancel recording")
+                .buttonStyle(.plain).help(l10n("Cancel recording"))
         case .transcribing:
             ProgressView().controlSize(.small)
-            Text("Transcribing…").font(.caption).foregroundStyle(.secondary)
-            Button("Cancel", action: controller.cancel).controlSize(.small)
+            Text(l10n("Transcribing…")).font(.caption).foregroundStyle(.secondary)
+            Button(l10n("Cancel"), action: controller.cancel).controlSize(.small)
         case .ready:
             WaveformStrip(samples: controller.waveformSamples).frame(width: 70, height: 22)
-            Button("Use Recording", action: accept).controlSize(.small)
+            Button(l10n("Use Recording"), action: accept).controlSize(.small)
             Button(action: controller.retry) { Image(systemName: "arrow.clockwise") }
-                .buttonStyle(.plain).help("Record again")
+                .buttonStyle(.plain).help(l10n("Record again"))
             Button(action: controller.cancel) { Image(systemName: "trash") }
-                .buttonStyle(.plain).help("Discard recording")
+                .buttonStyle(.plain).help(l10n("Discard recording"))
         case .permissionDenied:
-            Label("Microphone access denied", systemImage: "mic.slash").font(.caption).foregroundStyle(.red)
-            Button("Settings") {
+            Label(l10n("Microphone access denied"), systemImage: "mic.slash").font(.caption).foregroundStyle(.red)
+            Button(l10n("Settings")) {
                 if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") {
                     NSWorkspace.shared.open(url)
                 }
             }.controlSize(.small)
-            Button("Retry", action: controller.retry).controlSize(.small)
+            Button(l10n("Retry"), action: controller.retry).controlSize(.small)
         case .tooShort(let minimum):
-            Text("Recording must be at least \(minimum, specifier: "%.1f")s").font(.caption).foregroundStyle(.orange)
-            Button("Retry", action: controller.retry).controlSize(.small)
-            Button("Cancel", action: controller.cancel).controlSize(.small)
+            Text(l10n("Recording must be at least \(minimum, specifier: "%.1f")s")).font(.caption).foregroundStyle(.orange)
+            Button(l10n("Retry"), action: controller.retry).controlSize(.small)
+            Button(l10n("Cancel"), action: controller.cancel).controlSize(.small)
         case .failed(let message):
             Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.red).help(message)
             Text(message).font(.caption).foregroundStyle(.red).lineLimit(2)
-            Button("Retry", action: controller.retry).controlSize(.small)
-            Button("Cancel", action: controller.cancel).controlSize(.small)
+            Button(l10n("Retry"), action: controller.retry).controlSize(.small)
+            Button(l10n("Cancel"), action: controller.cancel).controlSize(.small)
         }
     }
 }
 
 private struct WaveformStrip: View {
+    @Environment(\.locale) private var uiLocale
     let samples: [Float]
     var body: some View {
+        let _ = uiLocale.identifier
         GeometryReader { proxy in
             let values = Array(samples.suffix(36))
             HStack(alignment: .center, spacing: 1) {
@@ -1402,6 +1520,7 @@ private extension TimeInterval {
 }
 
 private struct TranscriptMessageView: View {
+    @Environment(\.locale) private var uiLocale
     @EnvironmentObject private var model: AppModel
     let message: ChatMessage
     let conversation: Conversation
@@ -1412,6 +1531,7 @@ private struct TranscriptMessageView: View {
     @State private var isHovered = false
 
     var body: some View {
+        let _ = uiLocale.identifier
         let isUser = message.role == .user
         HStack(alignment: .bottom, spacing: 8) {
             if !isUser {
@@ -1464,13 +1584,13 @@ private struct TranscriptMessageView: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .help("Jump to replied message")
+                .help(l10n("Jump to replied message"))
                 .padding(7)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(FiliconTheme.surfaceRaised.opacity(0.72), in: RoundedRectangle(cornerRadius: 10))
             }
             if !message.reasoningText.isEmpty {
-                DisclosureGroup("Reasoning") {
+                DisclosureGroup(l10n("Reasoning")) {
                     MarkdownText(source: message.reasoningText)
                         .foregroundStyle(FiliconTheme.textSecondary)
                         .padding(.top, 4)
@@ -1481,7 +1601,7 @@ private struct TranscriptMessageView: View {
                 MarkdownText(source: message.text)
                     .foregroundStyle(FiliconTheme.textPrimary)
             } else if message.reasoningText.isEmpty && message.toolActivities.isEmpty && message.transcriptCards.isEmpty {
-                Text(message.deliveryStatus == .failed ? "No response was delivered." : "…")
+                Text(message.deliveryStatus == .failed ? l10n("No response was delivered.") : "…")
                     .foregroundStyle(FiliconTheme.textSecondary)
             }
             ForEach(message.toolActivities) { activity in
@@ -1528,8 +1648,8 @@ private struct TranscriptMessageView: View {
 
     private var messageActions: some View {
         HStack(spacing: 3) {
-            FiliconIconButton(label: "Reply", systemName: "arrowshape.turn.up.left", size: 25) { model.beginReply(to: message.id) }
-            FiliconIconButton(label: "Copy Message", systemName: "doc.on.doc", size: 25) {
+            FiliconIconButton(label: l10n("Reply"), systemName: "arrowshape.turn.up.left", size: 25) { model.beginReply(to: message.id) }
+            FiliconIconButton(label: l10n("Copy Message"), systemName: "doc.on.doc", size: 25) {
                 TranscriptPasteboard.copy(TranscriptClipboardContent.messageText(message))
             }
             Menu {
@@ -1544,18 +1664,18 @@ private struct TranscriptMessageView: View {
             }
             .menuStyle(.borderlessButton)
             if message.role == .assistant && [.failed, .cancelled].contains(message.deliveryStatus) {
-                FiliconIconButton(label: "Resend", systemName: "arrow.clockwise", size: 25) { model.resend(messageID: message.id) }
+                FiliconIconButton(label: l10n("Resend"), systemName: "arrow.clockwise", size: 25) { model.resend(messageID: message.id) }
             }
             Spacer(minLength: 3)
-            FiliconIconButton(label: "Delete", systemName: "trash", size: 25, isDestructive: true) { model.deleteMessage(id: message.id) }
+            FiliconIconButton(label: l10n("Delete"), systemName: "trash", size: 25, isDestructive: true) { model.deleteMessage(id: message.id) }
         }
         .opacity(isHovered || message.deliveryStatus != .succeeded ? 1 : 0)
         .animation(.easeOut(duration: 0.12), value: isHovered)
         .accessibilityElement(children: .contain)
     }
 
-    private var roleLabel: String { message.role == .user ? "You" : message.role == .assistant ? "Assistant" : message.role.rawValue.capitalized }
-    private var statusLabel: String { message.deliveryStatus.rawValue.capitalized }
+    private var roleLabel: String { FiliconLocalization.string(message.role == .user ? "You" : message.role == .assistant ? "Assistant" : message.role.rawValue.capitalized) }
+    private var statusLabel: String { FiliconLocalization.string(message.deliveryStatus.rawValue.capitalized) }
     private var statusIcon: String {
         switch message.deliveryStatus {
         case .queued: "clock"
@@ -1574,16 +1694,20 @@ private struct TranscriptMessageView: View {
 }
 
 struct MarkdownText: View {
+    @Environment(\.locale) private var uiLocale
     let source: String
     var body: some View {
+        let _ = uiLocale.identifier
         RichMarkdownView.transcript(source: source, openLink: TranscriptSafeLinkOpener.open)
     }
 }
 
 private struct ToolActivityRow: View {
+    @Environment(\.locale) private var uiLocale
     let activity: ToolActivity
     private var presentation: ToolCardPresentation { ToolCardClassifier.presentation(for: activity) }
     var body: some View {
+        let _ = uiLocale.identifier
         DisclosureGroup {
             VStack(alignment: .leading, spacing: 5) {
                 ForEach(Array(presentation.fields.enumerated()), id: \.offset) { _, field in
@@ -1600,11 +1724,11 @@ private struct ToolActivityRow: View {
                     .buttonStyle(.link)
                 }
                 if !presentation.redactedArguments.isEmpty {
-                    Text("Arguments").font(.caption.bold())
+                    Text(l10n("Arguments")).font(.caption.bold())
                     Text(presentation.redactedArguments).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
                 }
                 if let result = presentation.redactedResult, !result.isEmpty {
-                    Text("Result").font(.caption.bold())
+                    Text(l10n("Result")).font(.caption.bold())
                     Text(result).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
                 }
             }.padding(.top, 5)
@@ -1630,14 +1754,16 @@ private struct ToolActivityRow: View {
 }
 
 private struct TranscriptCodeBlock: View {
+    @Environment(\.locale) private var uiLocale
     let language: String?
     let source: String
     @State private var copied = false
 
     var body: some View {
+        let _ = uiLocale.identifier
         VStack(alignment: .leading, spacing: 0) {
             HStack {
-                Text(language?.isEmpty == false ? language! : "Code")
+                Text(language?.isEmpty == false ? language! : l10n("Code"))
                     .font(.caption).foregroundStyle(.secondary)
                 Spacer()
                 Button {
@@ -1645,7 +1771,7 @@ private struct TranscriptCodeBlock: View {
                     copied = true
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copied = false }
                 } label: {
-                    Label(copied ? "Copied" : "Copy Code", systemImage: copied ? "checkmark" : "doc.on.doc")
+                    Label(copied ? l10n("Copied") : l10n("Copy Code"), systemImage: copied ? "checkmark" : "doc.on.doc")
                 }
                 .buttonStyle(.plain).controlSize(.small)
             }
@@ -1683,9 +1809,11 @@ private enum TranscriptSafeLinkOpener {
 }
 
 private struct AttachmentCard: View {
+    @Environment(\.locale) private var uiLocale
     @EnvironmentObject private var model: AppModel
     let attachment: AttachmentMetadata
     var body: some View {
+        let _ = uiLocale.identifier
         Button { model.openAttachment(attachment) } label: {
             HStack(spacing: 8) {
                 Image(systemName: icon)
@@ -1694,20 +1822,22 @@ private struct AttachmentCard: View {
                     Text(ByteCountFormatter.string(fromByteCount: attachment.byteCount, countStyle: .file)).font(.caption).foregroundStyle(.secondary)
                 }
             }.padding(8).background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
-        }.buttonStyle(.plain).help("Preview attachment")
+        }.buttonStyle(.plain).help(l10n("Preview attachment"))
     }
     private var icon: String { switch attachment.kind { case .image: "photo"; case .video: "film"; case .audio: "waveform"; case .document: "doc"; case .other: "paperclip" } }
 }
 
 private struct SearchWorkspaceView: View {
+    @Environment(\.locale) private var uiLocale
     @EnvironmentObject private var model: AppModel
     @FocusState private var searchFieldFocused: Bool
 
     var body: some View {
+        let _ = uiLocale.identifier
         VStack(alignment: .leading, spacing: 12) {
-            Text("Search").font(.title2.bold())
-            Picker("Search scope", selection: $model.globalSearchTab) {
-                ForEach(GlobalSearchTab.allCases) { tab in Text(tab.rawValue).tag(tab) }
+            Text(l10n("Search")).font(.title2.bold())
+            Picker(l10n("Search scope"), selection: $model.globalSearchTab) {
+                ForEach(GlobalSearchTab.allCases) { tab in Text(FiliconLocalization.string(tab.rawValue)).tag(tab) }
             }
             .pickerStyle(.segmented)
             HStack {
@@ -1716,12 +1846,12 @@ private struct SearchWorkspaceView: View {
                     .focused($searchFieldFocused)
                     .onSubmit(model.search)
                     .accessibilityIdentifier("global-search-field")
-                Button("Search", action: model.search)
+                Button(l10n("Search"), action: model.search)
             }
             searchContent
         }
         .padding()
-        .navigationTitle("Search")
+        .navigationTitle(l10n("Search"))
         .task(id: model.globalSearchFocusRequestID) {
             await Task.yield()
             searchFieldFocused = true
@@ -1730,9 +1860,9 @@ private struct SearchWorkspaceView: View {
 
     private var searchPlaceholder: String {
         switch model.globalSearchTab {
-        case .conversations: "Conversation title or text"
-        case .messages: "Words in messages"
-        case .files: "File name or type (leave empty for recent)"
+        case .conversations: l10n("Conversation title or text")
+        case .messages: l10n("Words in messages")
+        case .files: l10n("File name or type (leave empty for recent)")
         }
     }
 
@@ -1740,9 +1870,9 @@ private struct SearchWorkspaceView: View {
         switch model.globalSearchState {
         case .idle:
             ContentUnavailableView(
-                model.globalSearchTab == .files ? "Recent files" : "Start searching",
+                model.globalSearchTab == .files ? l10n("Recent files") : l10n("Start searching"),
                 systemImage: "magnifyingglass",
-                description: Text(model.globalSearchTab == .files ? "Recent attachments appear automatically." : "Enter a search above.")
+                description: Text(model.globalSearchTab == .files ? l10n("Recent attachments appear automatically.") : l10n("Enter a search above."))
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .task { if model.globalSearchTab == .files { await model.performGlobalSearch() } }
@@ -1752,9 +1882,9 @@ private struct SearchWorkspaceView: View {
             ContentUnavailableView.search(text: model.searchQuery)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         case .failed(let message):
-            searchUnavailable(title: "Search failed", message: message, symbol: "exclamationmark.triangle")
+            searchUnavailable(title: l10n("Search failed"), message: message, symbol: "exclamationmark.triangle")
         case .unavailable(let message):
-            searchUnavailable(title: "Search unavailable", message: message, symbol: "externaldrive.badge.exclamationmark")
+            searchUnavailable(title: l10n("Search unavailable"), message: message, symbol: "externaldrive.badge.exclamationmark")
         case .results:
             resultsList
         }
@@ -1781,7 +1911,7 @@ private struct SearchWorkspaceView: View {
                             Text(hit.timestamp, style: .relative).font(.caption).foregroundStyle(.secondary)
                         }
                         Text(hit.snippet).lineLimit(3).foregroundStyle(.primary)
-                        Text(hit.role == .user ? "You" : hit.role.rawValue.capitalized)
+                        Text(hit.role == .user ? l10n("You") : FiliconLocalization.string(hit.role.rawValue.capitalized))
                             .font(.caption).foregroundStyle(.secondary)
                     }.padding(.vertical, 3)
                 }.buttonStyle(.plain)
@@ -1810,7 +1940,7 @@ private struct SearchWorkspaceView: View {
         } description: {
             Text(message)
         } actions: {
-            Button("Try Again") { model.search() }
+            Button(l10n("Try Again")) { model.search() }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -1827,92 +1957,136 @@ private struct SearchWorkspaceView: View {
 }
 
 private struct AgentWorkspaceView: View {
+    @Environment(\.locale) private var uiLocale
     var body: some View {
+        let _ = uiLocale.identifier
         AgentsWorkspaceScreen()
     }
 }
 
 private struct GroupWorkspaceView: View {
+    @Environment(\.locale) private var uiLocale
     @EnvironmentObject private var model: AppModel
     @State private var name = ""
     @State private var summary = ""
     @State private var selected: Set<UUID> = []
     var body: some View {
+        let _ = uiLocale.identifier
         Form {
-            Section("Create group") {
-                TextField("Name", text: $name); TextField("Summary", text: $summary)
-                ForEach(model.agents.filter { $0.archivedAt == nil }) { agent in
-                    Toggle(agent.name, isOn: Binding(get: { selected.contains(agent.id) }, set: { if $0 { selected.insert(agent.id) } else { selected.remove(agent.id) } })).disabled(!selected.contains(agent.id) && selected.count >= GroupService.maximumMembers)
-                }
-                Button("Create group") { let ids = model.agents.map(\.id).filter(selected.contains); let values = (name, summary); name = ""; summary = ""; selected.removeAll(); Task { await model.createGroup(name: values.0, summary: values.1, memberIDs: ids) } }
-            }
-            Section("Groups") {
+            Section(l10n("Group chat")) {
                 ForEach(model.groups) { group in
-                    GroupChatRow(group: group)
+                    GroupChatRow(group: group, initiallyExpanded: model.selectedGroupID == group.id)
                 }
             }
-        }.formStyle(.grouped).navigationTitle("Groups")
+            Section {
+                DisclosureGroup(l10n("Create another group")) {
+                    TextField(l10n("Name"), text: $name)
+                    TextField(l10n("Summary"), text: $summary)
+                    ForEach(model.agents.filter { $0.archivedAt == nil }) { agent in
+                        Toggle(agent.name, isOn: Binding(get: { selected.contains(agent.id) }, set: { if $0 { selected.insert(agent.id) } else { selected.remove(agent.id) } })).disabled(!selected.contains(agent.id) && selected.count >= GroupService.maximumMembers)
+                    }
+                    Button(l10n("Create group")) { let ids = model.agents.map(\.id).filter(selected.contains); let values = (name, summary); name = ""; summary = ""; selected.removeAll(); Task { await model.createGroup(name: values.0, summary: values.1, memberIDs: ids) } }
+                }
+            }
+        }.formStyle(.grouped).navigationTitle(l10n("Groups"))
     }
 }
 
 private struct GroupChatRow: View {
+    @Environment(\.locale) private var uiLocale
     @EnvironmentObject private var model: AppModel
     let group: AgentGroup
+    @State private var isExpanded: Bool
     @State private var draft = ""
     @State private var members: Set<UUID> = []
 
+    init(group: AgentGroup, initiallyExpanded: Bool) {
+        self.group = group
+        _isExpanded = State(initialValue: initiallyExpanded)
+    }
+
     var body: some View {
-        DisclosureGroup {
+        let _ = uiLocale.identifier
+        DisclosureGroup(isExpanded: $isExpanded) {
             VStack(alignment: .leading, spacing: 10) {
-                Text(group.summary).foregroundStyle(.secondary)
-                GroupBox("Members") {
-                    ForEach(model.agents.filter { $0.archivedAt == nil }) { agent in
-                        Toggle(agent.name, isOn: Binding(
-                            get: { members.contains(agent.id) },
-                            set: { selected in
-                                if selected { members.insert(agent.id) } else { members.remove(agent.id) }
-                            }
-                        )).disabled(!members.contains(agent.id) && members.count >= GroupService.maximumMembers)
+                if !group.summary.isEmpty { Text(group.summary).foregroundStyle(.secondary) }
+                DisclosureGroup(l10n("Group settings")) {
+                    GroupBox(l10n("Members")) {
+                        ForEach(model.agents.filter { $0.archivedAt == nil }) { agent in
+                            Toggle(agent.name, isOn: Binding(
+                                get: { members.contains(agent.id) },
+                                set: { selected in
+                                    if selected { members.insert(agent.id) } else { members.remove(agent.id) }
+                                }
+                            )).disabled(!members.contains(agent.id) && members.count >= GroupService.maximumMembers)
+                        }
+                        Button(l10n("Update Members")) { Task { await model.updateGroupMembers(groupID: group.id, memberIDs: Array(members)) } }
                     }
-                    Button("Update Members") { Task { await model.updateGroupMembers(groupID: group.id, memberIDs: Array(members)) } }
                 }
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 8) {
-                        ForEach(model.groupMessages[group.id] ?? []) { message in
-                            VStack(alignment: .leading, spacing: 3) {
-                                HStack {
-                                    Text(senderName(message)).font(.caption.bold())
-                                    Spacer(); Text(message.createdAt, style: .time).font(.caption2).foregroundStyle(.secondary)
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 8) {
+                            ForEach(model.groupMessages[group.id] ?? []) { message in
+                                VStack(alignment: .leading, spacing: 3) {
+                                    HStack {
+                                        Text(senderName(message)).font(.caption.bold())
+                                        Spacer(); Text(message.createdAt, style: .time).font(.caption2).foregroundStyle(.secondary)
+                                    }
+                                    Text(message.text).textSelection(.enabled)
+                                    if message.senderID != nil {
+                                        Button("👍") { Task { await model.toggleGroupReaction(groupID: group.id, messageID: message.id, emoji: "👍") } }
+                                            .buttonStyle(.plain).controlSize(.mini)
+                                    }
                                 }
-                                Text(message.text).textSelection(.enabled)
-                                if message.senderID != nil {
-                                    Button("👍") { Task { await model.toggleGroupReaction(groupID: group.id, messageID: message.id, emoji: "👍") } }
-                                        .buttonStyle(.plain).controlSize(.mini)
-                                }
+                                .padding(8).background(.quaternary, in: RoundedRectangle(cornerRadius: 7))
+                                .id(message.id)
                             }
-                            .padding(8).background(.quaternary, in: RoundedRectangle(cornerRadius: 7))
+                            if let agentID = model.thinkingGroupMembers[group.id],
+                               let agent = model.agents.first(where: { $0.id == agentID }) {
+                                GroupThinkingIndicator(agentName: agent.name)
+                                    .id(thinkingAnchorID)
+                            }
+                        }
+                    }
+                    .onChange(of: model.groupMessages[group.id]?.count ?? 0) {
+                        scrollToLatest(using: proxy)
+                    }
+                    .onChange(of: model.thinkingGroupMembers[group.id]) { _, agentID in
+                        if agentID != nil {
+                            withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(thinkingAnchorID, anchor: .bottom) }
+                        } else {
+                            scrollToLatest(using: proxy)
                         }
                     }
                 }.frame(minHeight: 120, maxHeight: 320)
                 HStack {
-                    TextField("Message the group; @name and @everyone are supported", text: $draft)
+                    TextField(
+                        l10n("Group message"),
+                        text: $draft,
+                        prompt: Text(l10n("Message the group; @name and @everyone are supported"))
+                    )
+                        .labelsHidden()
+                        .textFieldStyle(.roundedBorder)
                         .onSubmit(send)
                     if model.runningGroups.contains(group.id) {
-                        Button("Stop") { Task { await model.stopGroup(id: group.id) } }
+                        Button(l10n("Stop")) { Task { await model.stopGroup(id: group.id) } }
                     } else {
-                        Button("Send", action: send).disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        Button(l10n("Send"), action: send).disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
                 }
             }.padding(.top, 8)
         } label: {
             VStack(alignment: .leading) {
                 Text(group.name)
-                Text("\(group.memberIDs.count) members · up to \(GroupService.maximumRounds) response rounds")
+                Text(l10n("\(group.memberIDs.count) members · up to \(GroupService.maximumRounds) response rounds"))
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
         .onAppear { members = Set(group.memberIDs) }
         .onChange(of: group.memberIDs) { _, value in members = Set(value) }
+        .onChange(of: model.selectedGroupID) { _, id in
+            if id == group.id { isExpanded = true }
+        }
     }
 
     private func send() {
@@ -1920,89 +2094,128 @@ private struct GroupChatRow: View {
         Task { await model.sendGroupMessage(groupID: group.id, text: value) }
     }
 
+    private var thinkingAnchorID: String { "group-thinking-\(group.id.uuidString)" }
+
+    private func scrollToLatest(using proxy: ScrollViewProxy) {
+        guard let id = model.groupMessages[group.id]?.last?.id else { return }
+        withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(id, anchor: .bottom) }
+    }
+
     private func senderName(_ message: RoomMessage) -> String {
-        guard let id = message.senderID else { return "You" }
+        guard let id = message.senderID else { return l10n("You") }
         return model.agents.first(where: { $0.id == id })?.name ?? "Agent"
     }
 }
 
+private struct GroupThinkingIndicator: View {
+    @Environment(\.locale) private var uiLocale
+    let agentName: String
+
+    var body: some View {
+        let _ = uiLocale.identifier
+        TimelineView(.animation(minimumInterval: 0.25)) { context in
+            let phase = Int(context.date.timeIntervalSinceReferenceDate * 4) % 4
+            HStack(spacing: 7) {
+                Text(agentName).font(.caption.bold())
+                Text(l10n("Thinking")).font(.caption).foregroundStyle(.secondary)
+                HStack(spacing: 4) {
+                    ForEach(0..<3) { index in
+                        Circle()
+                            .fill(FiliconTheme.accent)
+                            .frame(width: 5, height: 5)
+                            .opacity(index < phase ? 1 : 0.25)
+                    }
+                }
+                .frame(width: 23, alignment: .leading)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 9)
+            .background(FiliconTheme.surfaceRaised, in: RoundedRectangle(cornerRadius: 8))
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(l10n("\(agentName) Thinking")))
+    }
+}
+
 struct RoutineAutomationWorkspaceView: View {
+    @Environment(\.locale) private var uiLocale
     @EnvironmentObject private var model: AppModel
     @State private var agentID: UUID?
     @State private var name = ""
     @State private var prompt = ""
     @State private var listeners = [AutomationListenerDraft()]
     var body: some View {
+        let _ = uiLocale.identifier
         Form {
-            Section("New routine") {
-                Picker("Agent", selection: $agentID) { Text("Choose…").tag(nil as UUID?); ForEach(model.agents.filter { $0.archivedAt == nil }) { Text($0.name).tag(Optional($0.id)) } }
-                TextField("Name", text: $name); TextField("Instruction", text: $prompt, axis: .vertical).lineLimit(2...5)
+            Section(l10n("New routine")) {
+                Picker(l10n("Agent"), selection: $agentID) { Text(l10n("Choose…")).tag(nil as UUID?); ForEach(model.agents.filter { $0.archivedAt == nil }) { Text($0.name).tag(Optional($0.id)) } }
+                TextField(l10n("Name"), text: $name); TextField(l10n("Instruction"), text: $prompt, axis: .vertical).lineLimit(2...5)
                 ForEach($listeners) { $listener in
                     AutomationListenerEditor(listener: $listener, canRemove: listeners.count > 1) {
                         listeners.removeAll { $0.id == listener.id }
                     }
                 }
                 HStack {
-                    Button("Add listener") { listeners.append(AutomationListenerDraft()) }
+                    Button(l10n("Add listener")) { listeners.append(AutomationListenerDraft()) }
                         .disabled(listeners.count >= AutomationService.maximumListeners)
                     Text("\(listeners.count)/\(AutomationService.maximumListeners)")
                         .font(.caption).foregroundStyle(.secondary)
                     Spacer()
-                    Button("Create", action: create)
+                    Button(l10n("Create"), action: create)
                         .disabled(agentID == nil || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
-                Text("Multiple listeners are OR-combined. Schedules support five-field cron, aliases, @every, and IANA time zones; connector filters must be a JSON object.")
+                Text(l10n("Multiple listeners are OR-combined. Schedules support five-field cron, aliases, @every, and IANA time zones; connector filters must be a JSON object."))
                     .font(.caption).foregroundStyle(.secondary)
             }
             if !model.automationWakes.isEmpty {
-                Section("Pending results") {
+                Section(l10n("Pending results")) {
                     ForEach(model.automationWakes) { wake in
                         HStack {
-                            Label(wake.detail.isEmpty ? wake.status.rawValue.capitalized : wake.detail, systemImage: wake.status == .ok ? "checkmark.circle" : "exclamationmark.circle")
+                            Label(wake.detail.isEmpty ? FiliconLocalization.string(wake.status.rawValue.capitalized) : FiliconLocalization.message(wake.detail), systemImage: wake.status == .ok ? "checkmark.circle" : "exclamationmark.circle")
                                 .lineLimit(2)
                             Spacer()
                             Text(wake.createdAt, style: .relative).font(.caption).foregroundStyle(.secondary)
-                            Button("Acknowledge") { Task { await model.acknowledgeAutomationWake(id: wake.id) } }
+                            Button(l10n("Acknowledge")) { Task { await model.acknowledgeAutomationWake(id: wake.id) } }
                         }
                     }
                 }
             }
             if model.automationSpendGuard.nudgedAt != nil || !model.automationSpendGuard.guardPausedAutomationIDs.isEmpty {
-                Section("Automation activity check") {
+                Section(l10n("Automation activity check")) {
                     Text(model.automationSpendGuard.guardPausedAutomationIDs.isEmpty
-                         ? "Automations have continued while you were away. Keep them running or pause them."
-                         : "Automations were paused after prolonged unviewed activity.")
+                         ? l10n("Automations have continued while you were away. Keep them running or pause them.")
+                         : l10n("Automations were paused after prolonged unviewed activity."))
                     HStack {
                         if model.automationSpendGuard.guardPausedAutomationIDs.isEmpty {
-                            Button("Keep running") { Task { await model.answerAutomationSpendGuard(.keep) } }
-                            Button("Pause", role: .destructive) { Task { await model.answerAutomationSpendGuard(.pause) } }
-                            Button("Never ask") { Task { await model.answerAutomationSpendGuard(.neverAsk) } }
+                            Button(l10n("Keep running")) { Task { await model.answerAutomationSpendGuard(.keep) } }
+                            Button(l10n("Pause"), role: .destructive) { Task { await model.answerAutomationSpendGuard(.pause) } }
+                            Button(l10n("Never ask")) { Task { await model.answerAutomationSpendGuard(.neverAsk) } }
                         } else {
-                            Button("Resume") { Task { await model.answerAutomationSpendGuard(.resume) } }
-                            Button("Stay paused") { Task { await model.answerAutomationSpendGuard(.stayPaused) } }
+                            Button(l10n("Resume")) { Task { await model.answerAutomationSpendGuard(.resume) } }
+                            Button(l10n("Stay paused")) { Task { await model.answerAutomationSpendGuard(.stayPaused) } }
                         }
                     }
                 }
             }
             AutomationIngressSettingsView()
-            Section("Routines") {
+            Section(l10n("Routines")) {
                 ForEach(model.automations) { automation in
                     DisclosureGroup {
                         VStack(alignment: .leading, spacing: 8) {
                             Text(automation.prompt).textSelection(.enabled)
                             if let runs = model.automationHistory[automation.id], !runs.isEmpty {
-                                Text("Recent runs").font(.caption.bold())
+                                Text(l10n("Recent runs")).font(.caption.bold())
                                 ForEach(runs) { run in
                                     HStack(alignment: .top) {
-                                        Label(run.status.rawValue.capitalized, systemImage: run.status == .ok ? "checkmark.circle" : "exclamationmark.circle")
-                                        Text(run.trigger.rawValue.capitalized).foregroundStyle(.secondary)
+                                        Label(FiliconLocalization.string(run.status.rawValue.capitalized), systemImage: run.status == .ok ? "checkmark.circle" : "exclamationmark.circle")
+                                        Text(FiliconLocalization.string(run.trigger.rawValue.capitalized)).foregroundStyle(.secondary)
                                         Text(run.startedAt, style: .relative).foregroundStyle(.secondary)
                                         Spacer()
                                         Text(run.detail ?? "").lineLimit(2).foregroundStyle(.secondary)
                                     }.font(.caption)
                                 }
                             } else {
-                                Text("No runs yet").font(.caption).foregroundStyle(.secondary)
+                                Text(l10n("No runs yet")).font(.caption).foregroundStyle(.secondary)
                             }
                         }.padding(.top, 6)
                     } label: {
@@ -2013,14 +2226,14 @@ struct RoutineAutomationWorkspaceView: View {
                                     .font(.caption).foregroundStyle(.secondary)
                             }
                             Spacer()
-                            Toggle("Enabled", isOn: Binding(get: { automation.enabled }, set: { value in Task { await model.setAutomationEnabled(id: automation.id, enabled: value) } })).labelsHidden()
-                            Button("Run Now") { Task { await model.runAutomationNow(id: automation.id) } }
-                            Button("Delete", role: .destructive) { Task { await model.deleteAutomation(id: automation.id) } }
+                            Toggle(l10n("Enabled"), isOn: Binding(get: { automation.enabled }, set: { value in Task { await model.setAutomationEnabled(id: automation.id, enabled: value) } })).labelsHidden()
+                            Button(l10n("Run Now")) { Task { await model.runAutomationNow(id: automation.id) } }
+                            Button(l10n("Delete"), role: .destructive) { Task { await model.deleteAutomation(id: automation.id) } }
                         }
                     }
                 }
             }
-        }.formStyle(.grouped).navigationTitle("Automations")
+        }.formStyle(.grouped).navigationTitle(l10n("Automations"))
             .task { await model.reloadAutomationDetails(markViewed: true) }
     }
 
@@ -2038,10 +2251,10 @@ struct RoutineAutomationWorkspaceView: View {
     private func triggerSummary(_ trigger: AutomationTrigger) -> String {
         switch trigger {
         case .cron(let expression, let zone): "\(expression) · \(zone ?? "system time")"
-        case .event(let value): "\(value.kind) connector event"
+        case .event(let value): l10n("\(value.kind) connector event")
         case .platform(let value): value.platform
-        case .anyOf(let values): "\(values.count) listeners"
-        case .unknown(let kind, _): "Unavailable: \(kind)"
+        case .anyOf(let values): l10n("\(values.count) listeners")
+        case .unknown(let kind, _): l10n("Unavailable: \(kind)")
         }
     }
 }
@@ -2121,18 +2334,20 @@ private struct AutomationListenerDraft: Identifiable {
 }
 
 private struct AutomationListenerEditor: View {
+    @Environment(\.locale) private var uiLocale
     @Binding var listener: AutomationListenerDraft
     let canRemove: Bool
     let remove: () -> Void
 
     var body: some View {
+        let _ = uiLocale.identifier
         GroupBox {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
-                    Picker("Trigger", selection: $listener.kind) {
-                        ForEach(AutomationListenerKind.allCases) { Text($0.rawValue).tag($0) }
+                    Picker(l10n("Trigger"), selection: $listener.kind) {
+                        ForEach(AutomationListenerKind.allCases) { Text(FiliconLocalization.string($0.rawValue)).tag($0) }
                     }
-                    if canRemove { Button("Remove", role: .destructive, action: remove) }
+                    if canRemove { Button(l10n("Remove"), role: .destructive, action: remove) }
                 }
                 fields
             }.padding(4)
@@ -2143,35 +2358,35 @@ private struct AutomationListenerEditor: View {
     @ViewBuilder private var fields: some View {
         switch listener.kind {
         case .schedule:
-            TextField("Cron, alias, or @every 30m", text: $listener.primary)
-            Picker("Time zone", selection: $listener.secondary) {
-                Text("System (\(TimeZone.current.identifier))").tag("")
+            TextField(l10n("Cron, alias, or @every 30m"), text: $listener.primary)
+            Picker(l10n("Time zone"), selection: $listener.secondary) {
+                Text(l10n("System (\(TimeZone.current.identifier))")).tag("")
                 ForEach(TimeZone.knownTimeZoneIdentifiers, id: \.self) { Text($0).tag($0) }
             }
         case .connector:
-            TextField("Connector UUID", text: $listener.primary)
-            TextField("Event kind", text: $listener.secondary)
-            TextField("JSON filters", text: $listener.filtersJSON, axis: .vertical).font(.system(.body, design: .monospaced))
+            TextField(l10n("Connector UUID"), text: $listener.primary)
+            TextField(l10n("Event kind"), text: $listener.secondary)
+            TextField(l10n("JSON filters"), text: $listener.filtersJSON, axis: .vertical).font(.system(.body, design: .monospaced))
         case .slack:
-            TextField("Channel name or *", text: $listener.primary)
-            Picker("Match", selection: $listener.secondary) {
-                Text("Message").tag("message"); Text("Mention").tag("mention"); Text("Keyword").tag("keyword"); Text("Reaction").tag("reaction")
+            TextField(l10n("Channel name or *"), text: $listener.primary)
+            Picker(l10n("Match"), selection: $listener.secondary) {
+                Text(l10n("Message")).tag("message"); Text(l10n("Mention")).tag("mention"); Text(l10n("Keyword")).tag("keyword"); Text(l10n("Reaction")).tag("reaction")
             }
-            if ["keyword", "reaction"].contains(listener.secondary) { TextField(listener.secondary == "keyword" ? "Keyword" : "Emoji names, comma-separated", text: $listener.tertiary) }
+            if ["keyword", "reaction"].contains(listener.secondary) { TextField(listener.secondary == "keyword" ? l10n("Keyword") : l10n("Emoji names, comma-separated"), text: $listener.tertiary) }
         case .github:
-            TextField("owner/repository", text: $listener.primary)
-            TextField("Events, comma-separated", text: $listener.secondary)
-            TextField("CI branch (required for CI events)", text: $listener.tertiary)
-            TextField("Allowed users, comma-separated (optional)", text: $listener.quaternary)
+            TextField(l10n("owner/repository"), text: $listener.primary)
+            TextField(l10n("Events, comma-separated"), text: $listener.secondary)
+            TextField(l10n("CI branch (required for CI events)"), text: $listener.tertiary)
+            TextField(l10n("Allowed users, comma-separated (optional)"), text: $listener.quaternary)
         case .teams:
-            TextField("Tenant ID", text: $listener.primary)
-            TextField("Team IDs, comma-separated", text: $listener.secondary)
-            TextField("Channel IDs, comma-separated (optional)", text: $listener.tertiary)
-            TextField("Message contains (optional)", text: $listener.quaternary)
+            TextField(l10n("Tenant ID"), text: $listener.primary)
+            TextField(l10n("Team IDs, comma-separated"), text: $listener.secondary)
+            TextField(l10n("Channel IDs, comma-separated (optional)"), text: $listener.tertiary)
+            TextField(l10n("Message contains (optional)"), text: $listener.quaternary)
         case .linear, .sentry, .pagerDuty:
-            TextField("Event", text: $listener.primary)
-            TextField("Primary IDs, comma-separated (optional)", text: $listener.secondary)
-            TextField("Secondary IDs, comma-separated (optional)", text: $listener.tertiary)
+            TextField(l10n("Event"), text: $listener.primary)
+            TextField(l10n("Primary IDs, comma-separated (optional)"), text: $listener.secondary)
+            TextField(l10n("Secondary IDs, comma-separated (optional)"), text: $listener.tertiary)
         }
     }
 
@@ -2192,6 +2407,7 @@ private struct AutomationListenerEditor: View {
 }
 
 private struct ChannelWorkspaceView: View {
+    @Environment(\.locale) private var uiLocale
     @EnvironmentObject private var model: AppModel
     @State private var connectorID = "slack"
     @State private var displayName = ""
@@ -2201,31 +2417,32 @@ private struct ChannelWorkspaceView: View {
     @State private var authentication = ChannelAuthenticationChoice.botToken
     @State private var agentID: UUID?
     var body: some View {
+        let _ = uiLocale.identifier
         Form {
-            Section("Connect a bot") {
-                Picker("Service", selection: $connectorID) {
+            Section(l10n("Connect a bot")) {
+                Picker(l10n("Service"), selection: $connectorID) {
                     ForEach(model.channelDescriptors) { Text($0.displayName).tag($0.id) }
                 }
-                TextField("Display name", text: $displayName)
-                TextField("Channel IDs, comma-separated", text: $channelIDs)
-                Picker("Authentication", selection: $authentication) {
-                    Text("Bot token").tag(ChannelAuthenticationChoice.botToken)
-                    Text("OAuth in browser").tag(ChannelAuthenticationChoice.oauth)
+                TextField(l10n("Display name"), text: $displayName)
+                TextField(l10n("Channel IDs, comma-separated"), text: $channelIDs)
+                Picker(l10n("Authentication"), selection: $authentication) {
+                    Text(l10n("Bot token")).tag(ChannelAuthenticationChoice.botToken)
+                    Text(l10n("OAuth in browser")).tag(ChannelAuthenticationChoice.oauth)
                 }
                 if authentication == .botToken {
-                    SecureField("Bot token", text: $token)
+                    SecureField(l10n("Bot token"), text: $token)
                 } else {
-                    TextField("OAuth client ID", text: $clientID)
-                    Text("Filicon starts a single-use callback on 127.0.0.1, uses PKCE, and stores the resulting token only in macOS Keychain.")
+                    TextField(l10n("OAuth client ID"), text: $clientID)
+                    Text(l10n("Filicon starts a single-use callback on 127.0.0.1, uses PKCE, and stores the resulting token only in macOS Keychain."))
                         .font(.caption).foregroundStyle(.secondary)
                 }
-                Picker("Respond as agent", selection: $agentID) {
-                    Text("Receive only").tag(nil as UUID?)
+                Picker(l10n("Respond as agent"), selection: $agentID) {
+                    Text(l10n("Receive only")).tag(nil as UUID?)
                     ForEach(model.agents.filter { $0.archivedAt == nil }) { Text($0.name).tag(Optional($0.id)) }
                 }
-                Text(BuiltInChannelManifests.all.first(where: { $0.id == connectorID })?.connectGuide ?? "Credentials are stored in macOS Keychain.")
+                Text(FiliconLocalization.string(BuiltInChannelManifests.all.first(where: { $0.id == connectorID })?.connectGuide ?? "Credentials are stored in macOS Keychain."))
                     .font(.caption).foregroundStyle(.secondary)
-                Button(model.channelOAuthInProgress ? "Waiting for OAuth…" : "Connect") {
+                Button(model.channelOAuthInProgress ? l10n("Waiting for OAuth…") : l10n("Connect")) {
                     let values = (connectorID, displayName, channelIDs, token, clientID, agentID, authentication)
                     displayName = ""; channelIDs = ""; token = ""; clientID = ""
                     Task {
@@ -2248,36 +2465,36 @@ private struct ChannelWorkspaceView: View {
                 )
             }
             if !model.channelFailureWakes.isEmpty {
-                Section("Needs attention") {
+                Section(l10n("Needs attention")) {
                     ForEach(model.channelFailureWakes) { wake in
                         HStack {
                             Label(wake.error, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.red)
                             Spacer()
-                            Button("Acknowledge") { Task { await model.acknowledgeChannelFailure(id: wake.id) } }
+                            Button(l10n("Acknowledge")) { Task { await model.acknowledgeChannelFailure(id: wake.id) } }
                         }
                     }
                 }
             }
-            Section("Connections") {
+            Section(l10n("Connections")) {
                 ForEach(model.channelConnections) { connection in ChannelConnectionRow(connection: connection) }
-                if model.channelConnections.isEmpty { Text("No connected channels.").foregroundStyle(.secondary) }
+                if model.channelConnections.isEmpty { Text(l10n("No connected channels.")).foregroundStyle(.secondary) }
             }
-            Section("Recent inbound") {
+            Section(l10n("Recent inbound")) {
                 ForEach(model.channelInboundEvents.suffix(100).reversed()) { event in
                     ChannelInboundRow(event: event)
                 }
-                if model.channelInboundEvents.isEmpty { Text("No inbound messages yet.").foregroundStyle(.secondary) }
+                if model.channelInboundEvents.isEmpty { Text(l10n("No inbound messages yet.")).foregroundStyle(.secondary) }
             }
-            Section("Delivery queue") {
+            Section(l10n("Delivery queue")) {
                 ForEach(model.channelDeliveries.suffix(100).reversed()) { delivery in
                     HStack {
                         Text(delivery.outbound.text).lineLimit(1)
                         Spacer()
-                        Text("\(delivery.status.rawValue) · attempt \(delivery.attemptCount)").font(.caption).foregroundStyle(delivery.status == .deadLetter ? .red : .secondary)
+                        Text(l10n("\(FiliconLocalization.string(delivery.status.rawValue)) · attempt \(delivery.attemptCount)")).font(.caption).foregroundStyle(delivery.status == .deadLetter ? .red : .secondary)
                     }
                 }
             }
-        }.formStyle(.grouped).navigationTitle("Channels")
+        }.formStyle(.grouped).navigationTitle(l10n("Channels"))
     }
 }
 
@@ -2287,6 +2504,7 @@ private enum ChannelAuthenticationChoice: String, Hashable {
 }
 
 private struct ChannelConnectionRow: View {
+    @Environment(\.locale) private var uiLocale
     @EnvironmentObject private var model: AppModel
     let connection: ChannelConnection
     @State private var target = ""
@@ -2295,24 +2513,25 @@ private struct ChannelConnectionRow: View {
     @State private var attachments: [URL] = []
 
     var body: some View {
+        let _ = uiLocale.identifier
         DisclosureGroup {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     VStack(alignment: .leading) {
-                        Text("Listening to: \(connection.accountLabel)").font(.caption).foregroundStyle(.secondary)
+                        Text(l10n("Listening to: \(connection.accountLabel)")).font(.caption).foregroundStyle(.secondary)
                         if let profile = connection.profile {
-                            Text("Authorized as \(profile.displayName) · \(profile.workspaceID ?? profile.id)")
+                            Text(l10n("Authorized as \(profile.displayName) · \(profile.workspaceID ?? profile.id)"))
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                     }
                     Spacer()
-                    Button("Refresh profile") { Task { await model.refreshChannelProfile(id: connection.id) } }
+                    Button(l10n("Refresh profile")) { Task { await model.refreshChannelProfile(id: connection.id) } }
                 }
                 HStack {
-                    TextField("Target channel ID", text: $target)
-                    TextField("Thread ID (optional)", text: $thread)
-                    TextField("Message", text: $text)
-                    Button("Send") {
+                    TextField(l10n("Target channel ID"), text: $target)
+                    TextField(l10n("Thread ID (optional)"), text: $thread)
+                    TextField(l10n("Message"), text: $text)
+                    Button(l10n("Send")) {
                         let values = (target, thread, text, attachments)
                         text = ""; attachments = []
                         Task {
@@ -2324,14 +2543,14 @@ private struct ChannelConnectionRow: View {
                     }.disabled(target.isEmpty || (text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && attachments.isEmpty))
                 }
                 HStack {
-                    Button("Attach files…", action: chooseAttachments)
+                    Button(l10n("Attach files…"), action: chooseAttachments)
                     if !attachments.isEmpty {
                         Text(attachments.map(\.lastPathComponent).joined(separator: ", "))
                             .font(.caption).foregroundStyle(.secondary).lineLimit(2)
-                        Button("Clear") { attachments = [] }
+                        Button(l10n("Clear")) { attachments = [] }
                     }
                 }
-                if let activity = connection.lastActivityAt { Text("Last activity \(activity.formatted())").font(.caption).foregroundStyle(.secondary) }
+                if let activity = connection.lastActivityAt { Text(l10n("Last activity \(activity.formatted())")).font(.caption).foregroundStyle(.secondary) }
             }.padding(.top, 6)
         } label: {
             HStack {
@@ -2341,11 +2560,11 @@ private struct ChannelConnectionRow: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
-                Toggle("Enabled", isOn: Binding(
+                Toggle(l10n("Enabled"), isOn: Binding(
                     get: { connection.enabled },
                     set: { enabled in Task { await model.setChannelConnectionEnabled(id: connection.id, enabled: enabled) } }
                 )).labelsHidden()
-                Button("Remove", role: .destructive) { Task { await model.removeChannelConnection(id: connection.id) } }
+                Button(l10n("Remove"), role: .destructive) { Task { await model.removeChannelConnection(id: connection.id) } }
             }
         }
         .onAppear { target = connection.accountLabel.split(separator: ",").first.map(String.init) ?? "" }
@@ -2362,11 +2581,13 @@ private struct ChannelConnectionRow: View {
 }
 
 private struct ChannelInboundRow: View {
+    @Environment(\.locale) private var uiLocale
     @EnvironmentObject private var model: AppModel
     let event: ChannelEnvelope
     @State private var emoji = "👍"
 
     var body: some View {
+        let _ = uiLocale.identifier
         VStack(alignment: .leading, spacing: 5) {
             HStack {
                 Text(event.senderDisplayName).fontWeight(.semibold)
@@ -2388,10 +2609,10 @@ private struct ChannelInboundRow: View {
                         .padding(.horizontal, 6).padding(.vertical, 2)
                         .background(.quaternary, in: Capsule())
                 }
-                TextField("Emoji", text: $emoji).frame(width: 70)
-                Button("React") { Task { await model.setChannelReaction(event: event, emoji: emoji, removing: false) } }
+                TextField(l10n("Emoji"), text: $emoji).frame(width: 70)
+                Button(l10n("React")) { Task { await model.setChannelReaction(event: event, emoji: emoji, removing: false) } }
                     .disabled(emoji.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                Button("Remove") { Task { await model.setChannelReaction(event: event, emoji: emoji, removing: true) } }
+                Button(l10n("Remove")) { Task { await model.setChannelReaction(event: event, emoji: emoji, removing: true) } }
                     .disabled(emoji.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
             .controlSize(.small)
@@ -2400,6 +2621,7 @@ private struct ChannelInboundRow: View {
 }
 
 private struct MCPWorkspaceView: View {
+    @Environment(\.locale) private var uiLocale
     @EnvironmentObject private var model: AppModel
     @State private var identifier = ""
     @State private var name = ""
@@ -2409,26 +2631,27 @@ private struct MCPWorkspaceView: View {
     @State private var executable = "/usr/bin/"
     @State private var arguments = ""
     var body: some View {
+        let _ = uiLocale.identifier
         Form {
-            Section("Add Streamable HTTP server") {
-                TextField("Identifier", text: $identifier); TextField("Display name", text: $name); TextField("HTTPS endpoint", text: $endpoint)
+            Section(l10n("Add Streamable HTTP server")) {
+                TextField(l10n("Identifier"), text: $identifier); TextField(l10n("Display name"), text: $name); TextField(l10n("HTTPS endpoint"), text: $endpoint)
                 HStack {
-                    Button("Add") { let values = (identifier, name, endpoint); identifier = ""; name = ""; endpoint = "https://"; Task { await model.addMCPHTTPServer(identifier: values.0, displayName: values.1, endpoint: values.2) } }
-                    Button("Reconnect All") { Task { await model.refreshMCP() } }
+                    Button(l10n("Add")) { let values = (identifier, name, endpoint); identifier = ""; name = ""; endpoint = "https://"; Task { await model.addMCPHTTPServer(identifier: values.0, displayName: values.1, endpoint: values.2) } }
+                    Button(l10n("Reconnect All")) { Task { await model.refreshMCP() } }
                 }
             }
-            Section("Add local stdio server") {
-                TextField("Identifier", text: $stdioIdentifier)
-                TextField("Display name", text: $stdioName)
-                TextField("Absolute executable path", text: $executable)
-                TextField("Arguments (one per line)", text: $arguments, axis: .vertical).lineLimit(2...5)
-                Button("Add Local Server") {
+            Section(l10n("Add local stdio server")) {
+                TextField(l10n("Identifier"), text: $stdioIdentifier)
+                TextField(l10n("Display name"), text: $stdioName)
+                TextField(l10n("Absolute executable path"), text: $executable)
+                TextField(l10n("Arguments (one per line)"), text: $arguments, axis: .vertical).lineLimit(2...5)
+                Button(l10n("Add Local Server")) {
                     let values = (stdioIdentifier, stdioName, executable, arguments.split(whereSeparator: \.isNewline).map(String.init))
                     stdioIdentifier = ""; stdioName = ""; executable = "/usr/bin/"; arguments = ""
                     Task { await model.addMCPStdioServer(identifier: values.0, displayName: values.1, executable: values.2, arguments: values.3) }
                 }
             }
-            Section("Servers") {
+            Section(l10n("Servers")) {
                 ForEach(model.mcpConfigs.filter { config in
                     !model.mcpAccountDefinitions.contains { definition in
                         definition.managedReadOnly && definition.accounts.contains { $0.serverIdentifier == config.identifier }
@@ -2438,39 +2661,41 @@ private struct MCPWorkspaceView: View {
                 }
             }
             MCPAccountsView()
-            Section("Discovered tools (\(model.mcpCatalog.tools.count))") {
+            Section(l10n("Discovered tools (\(model.mcpCatalog.tools.count))")) {
                 ForEach(model.mcpCatalog.tools) { tool in VStack(alignment: .leading) { Text(tool.name); Text(tool.serverIdentifier).font(.caption).foregroundStyle(.secondary) } }
             }
-        }.formStyle(.grouped).navigationTitle("MCP Servers")
+        }.formStyle(.grouped).navigationTitle(l10n("MCP Servers"))
     }
 }
 
 private struct MCPServerEditor: View {
+    @Environment(\.locale) private var uiLocale
     @EnvironmentObject private var model: AppModel
     let config: MCPServerConfig
     @State private var displayName = ""
     @State private var authorization = ""
 
     var body: some View {
+        let _ = uiLocale.identifier
         DisclosureGroup {
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
-                    TextField("Display name", text: $displayName)
-                    Button("Rename") { Task { await model.renameMCPServer(id: config.id, displayName: displayName) } }
+                    TextField(l10n("Display name"), text: $displayName)
+                    Button(l10n("Rename")) { Task { await model.renameMCPServer(id: config.id, displayName: displayName) } }
                 }
                 if isHTTP {
                     HStack {
-                        SecureField("Authorization header value", text: $authorization)
-                        Button("Save Token") {
+                        SecureField(l10n("Authorization header value"), text: $authorization)
+                        Button(l10n("Save Token")) {
                             let token = authorization; authorization = ""
                             Task { await model.saveMCPAuthorization(id: config.id, token: token) }
                         }
                     }
-                    Text("The token is stored in Keychain; configuration contains only its reference.")
+                    Text(l10n("The token is stored in Keychain; configuration contains only its reference."))
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 if !toolNames.isEmpty {
-                    Text("Tools").font(.caption.bold())
+                    Text(l10n("Tools")).font(.caption.bold())
                     ForEach(toolNames, id: \.self) { name in
                         Toggle(name, isOn: Binding(
                             get: { !config.disabledTools.contains(name) },
@@ -2479,9 +2704,9 @@ private struct MCPServerEditor: View {
                     }
                 }
                 HStack {
-                    Button("Reconnect") { Task { await model.refreshMCP() } }
+                    Button(l10n("Reconnect")) { Task { await model.refreshMCP() } }
                     Spacer()
-                    Button("Remove", role: .destructive) { Task { await model.deleteMCPServer(id: config.id) } }
+                    Button(l10n("Remove"), role: .destructive) { Task { await model.deleteMCPServer(id: config.id) } }
                 }
             }
             .padding(.top, 8)
@@ -2492,7 +2717,7 @@ private struct MCPServerEditor: View {
                     Text("\(config.identifier) · \(statusLabel)").font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
-                Toggle("Enabled", isOn: Binding(
+                Toggle(l10n("Enabled"), isOn: Binding(
                     get: { config.enabled },
                     set: { enabled in Task { await model.setMCPServerEnabled(id: config.id, enabled: enabled) } }
                 )).labelsHidden()
@@ -2515,18 +2740,20 @@ private struct MCPServerEditor: View {
 
     private var statusLabel: String {
         switch model.mcpCatalog.statuses[config.identifier] {
-        case .disabled: "Disabled"
-        case .connecting: "Connecting"
-        case .connected: "Connected"
-        case .needsAuth: "Needs authentication"
+        case .disabled: l10n("Disabled")
+        case .connecting: l10n("Connecting")
+        case .connected: l10n("Connected")
+        case .needsAuth: l10n("Needs authentication")
         case .error(let message): message
-        case nil: "Not connected"
+        case nil: l10n("Not connected")
         }
     }
 }
 
 struct SettingsView: View {
+    @Environment(\.locale) private var uiLocale
     @EnvironmentObject private var model: AppModel
+    @AppStorage(FiliconLocalization.preferenceKey) private var preferredLanguage = AppLanguage.system.rawValue
     @State private var provider: ProviderID = "openai"
     @State private var apiKey = ""
     @State private var status = ""
@@ -2536,77 +2763,83 @@ struct SettingsView: View {
     @State private var cloudCredentialReference = "default"
     @State private var cloudBearer = ""
     var body: some View {
+        let _ = uiLocale.identifier
         Form {
             PersistenceRecoverySettingsSection()
-            Section("Appearance and locale") {
-                Picker("Theme", selection: Binding(
+            Section(localized("Appearance and locale")) {
+                Picker(localized("Language"), selection: $preferredLanguage) {
+                    ForEach(AppLanguage.allCases) { language in
+                        Text(localized(language.localizationKey)).tag(language.rawValue)
+                    }
+                }
+                Picker(localized("Theme"), selection: Binding(
                     get: { model.settings.theme },
                     set: { value in Task { await model.setTheme(value) } }
                 )) {
-                    Text("System").tag(ThemePreference.system)
-                    Text("Light").tag(ThemePreference.light)
-                    Text("Dark").tag(ThemePreference.dark)
+                    Text(localized("System")).tag(ThemePreference.system)
+                    Text(localized("Light")).tag(ThemePreference.light)
+                    Text(localized("Dark")).tag(ThemePreference.dark)
                 }
-                Picker("Time zone", selection: Binding(
+                Picker(localized("Time zone"), selection: Binding(
                     get: { model.settings.timeZoneIdentifier ?? "" },
                     set: { value in Task { await model.setTimeZone(value.isEmpty ? nil : value) } }
                 )) {
-                    Text("System (\(TimeZone.current.identifier))").tag("")
+                    Text("\(localized("System")) (\(TimeZone.current.identifier))").tag("")
                     ForEach(TimeZone.knownTimeZoneIdentifiers, id: \.self) { identifier in
                         Text(identifier.replacingOccurrences(of: "_", with: " ")).tag(identifier)
                     }
                 }
             }
-            Section("Conversation defaults") {
+            Section(localized("Conversation defaults")) {
                 if let selected = model.selectedConversation {
-                    Button("Use current provider and model as default") {
+                    Button(localized("Use current provider and model as default")) {
                         Task { await model.setDefaultModel(providerID: selected.providerID, modelID: selected.modelID) }
                     }
                 }
                 if let value = model.settings.defaultModel {
                     HStack {
-                        Text("Default")
+                        Text(localized("Default"))
                         Spacer()
                         Text("\(value.providerID) / \(value.modelID)").foregroundStyle(.secondary)
-                        Button("Clear") { Task { await model.clearDefaultModel() } }
+                        Button(localized("Clear")) { Task { await model.clearDefaultModel() } }
                     }
                 } else {
-                    LabeledContent("Default", value: "App default")
+                    LabeledContent(localized("Default"), value: localized("App default"))
                 }
-                Picker("If unavailable", selection: Binding(
+                Picker(localized("If unavailable"), selection: Binding(
                     get: { model.settings.unavailableModelFallback },
                     set: { value in Task { await model.setUnavailableModelFallback(value) } }
                 )) {
-                    Text("Same provider default").tag(UnavailableModelFallbackPolicy.providerDefault)
-                    Text("First available provider").tag(UnavailableModelFallbackPolicy.firstAvailable)
-                    Text("Do not replace").tag(UnavailableModelFallbackPolicy.none)
+                    Text(localized("Same provider default")).tag(UnavailableModelFallbackPolicy.providerDefault)
+                    Text(localized("First available provider")).tag(UnavailableModelFallbackPolicy.firstAvailable)
+                    Text(localized("Do not replace")).tag(UnavailableModelFallbackPolicy.none)
                 }
             }
-            Section("AI providers") {
-                Picker("Provider", selection: $provider) {
+            Section(localized("AI providers")) {
+                Picker(localized("Provider"), selection: $provider) {
                     ForEach(model.descriptors.filter(\.requiresAPIKey)) { Text($0.displayName).tag($0.id) }
                 }
-                SecureField("API key", text: $apiKey)
-                Text("Keys are stored only in the macOS Keychain. Filicon never reads another app's credentials.").font(.caption).foregroundStyle(.secondary)
-                HStack { Button("Save to Keychain") { Task { do { try await model.saveAPIKey(apiKey, providerID: provider); apiKey = ""; status = "Saved" } catch { status = error.localizedDescription } } }; Text(status).foregroundStyle(.secondary) }
+                SecureField(localized("API key"), text: $apiKey)
+                Text(localized("Keys are stored only in the macOS Keychain. Filicon never reads another app's credentials.")).font(.caption).foregroundStyle(.secondary)
+                HStack { Button(localized("Save to Keychain")) { Task { do { try await model.saveAPIKey(apiKey, providerID: provider); apiKey = ""; status = localized("Saved") } catch { status = error.localizedDescription } } }; Text(status).foregroundStyle(.secondary) }
                 HStack {
-                    Button("Refresh Current Model Catalog") {
+                    Button(localized("Refresh Current Model Catalog")) {
                         Task { await model.refreshModels(forceRefresh: true) }
                     }
                     .disabled(model.isLoadingModels || model.selectedConversation == nil)
-                    .accessibilityLabel("Refresh current model catalog")
+                    .accessibilityLabel(localized("Refresh current model catalog"))
                     if model.isLoadingModels { ProgressView().controlSize(.small) }
-                    Text(model.modelCatalogStatusLabel).foregroundStyle(.secondary)
+                    Text(localized(model.modelCatalogStatusLabel)).foregroundStyle(.secondary)
                 }
             }
-            Section("Cloud agents") {
-                TextField("HTTPS endpoint", text: $cloudEndpoint)
-                TextField("Keychain reference", text: $cloudCredentialReference)
-                SecureField("Bearer token (leave blank to keep existing)", text: $cloudBearer)
-                Text("The endpoint is persisted without credentials. Bearer tokens are stored only in macOS Keychain.")
+            Section(localized("Cloud agents")) {
+                TextField(localized("HTTPS endpoint"), text: $cloudEndpoint)
+                TextField(localized("Keychain reference"), text: $cloudCredentialReference)
+                SecureField(localized("Bearer token (leave blank to keep existing)"), text: $cloudBearer)
+                Text(localized("The endpoint is persisted without credentials. Bearer tokens are stored only in macOS Keychain."))
                     .font(.caption).foregroundStyle(.secondary)
                 HStack {
-                    Button("Save and Refresh") {
+                    Button(localized("Save and Refresh")) {
                         Task {
                             await model.configureCloudAgents(
                                 endpoint: cloudEndpoint,
@@ -2618,16 +2851,16 @@ struct SettingsView: View {
                     }
                     .disabled(cloudEndpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     if model.isRefreshingCloudAgents { ProgressView().controlSize(.small) }
-                    Text(model.cloudAgentCatalog.isEmpty ? "Not loaded" : "\(model.cloudAgentCatalog.count) available")
+                    Text(model.cloudAgentCatalog.isEmpty ? localized("Not loaded") : "\(model.cloudAgentCatalog.count) \(localized("available"))")
                         .foregroundStyle(.secondary)
                 }
             }
-            Section("Notifications") {
+            Section(localized("Notifications")) {
                 HStack {
-                    Text("Completion notifications")
+                    Text(localized("Completion notifications"))
                     Spacer()
                     Text(notificationStatusLabel).foregroundStyle(.secondary)
-                    Button("Enable") {
+                    Button(localized("Enable")) {
                         Task {
                             do { try await model.systemNotifications.requestAuthorization() }
                             catch { status = error.localizedDescription }
@@ -2635,45 +2868,45 @@ struct SettingsView: View {
                     }
                 }
             }
-            Section("Local tool permissions") {
-                Text("Always still creates a signed, exact-operation receipt. Ask pauses the tool call until you allow it once. Never fails closed.")
+            Section(localized("Local tool permissions")) {
+                Text(localized("Always still creates a signed, exact-operation receipt. Ask pauses the tool call until you allow it once. Never fails closed."))
                     .font(.caption).foregroundStyle(.secondary)
-                Picker("Set all local tools", selection: Binding(
+                Picker(localized("Set all local tools"), selection: Binding(
                     get: { model.settings.effectiveLocalToolPermission },
                     set: { value in Task { await model.setGlobalLocalToolPermission(value) } }
                 )) {
-                    Text("Always").tag(LocalToolPermission.always)
-                    Text("Ask").tag(LocalToolPermission.ask)
-                    Text("Never").tag(LocalToolPermission.never)
+                    Text(localized("Always")).tag(LocalToolPermission.always)
+                    Text(localized("Ask")).tag(LocalToolPermission.ask)
+                    Text(localized("Never")).tag(LocalToolPermission.never)
                 }
                 ForEach(LocalToolAction.allCases, id: \.self) { action in
                     Picker(localToolActionLabel(action), selection: Binding(
                         get: { model.localToolPermissions[action] ?? .ask },
                         set: { value in Task { await model.setLocalToolPermission(value, for: action) } }
                     )) {
-                        Text("Always").tag(LocalToolPermission.always)
-                        Text("Ask").tag(LocalToolPermission.ask)
-                        Text("Never").tag(LocalToolPermission.never)
+                        Text(localized("Always")).tag(LocalToolPermission.always)
+                        Text(localized("Ask")).tag(LocalToolPermission.ask)
+                        Text(localized("Never")).tag(LocalToolPermission.never)
                     }
                 }
             }
-            Section("Security Key") {
-                Toggle("Use hardware security keys", isOn: Binding(
+            Section(localized("Security Key")) {
+                Toggle(localized("Use hardware security keys"), isOn: Binding(
                     get: { model.securityKeyEnabled && model.securityKeySupported },
                     set: { value in Task { await model.setSecurityKeyEnabled(value) } }
                 ))
                 .disabled(!model.securityKeySupported)
-                Text(model.securityKeySupported
-                     ? "Allow a remote Filicon computer to use a hardware security key connected to this Mac. Every request shows its origin and relying-party ID for one-time approval."
-                     : "External hardware security keys require macOS 14.4 or later.")
+                Text(localized(model.securityKeySupported
+                     ? l10n("Allow a remote Filicon computer to use a hardware security key connected to this Mac. Every request shows its origin and relying-party ID for one-time approval.")
+                     : l10n("External hardware security keys require macOS 14.4 or later.")))
                     .font(.caption).foregroundStyle(.secondary)
                 Text(securityKeyStatusLabel).font(.caption).foregroundStyle(.secondary)
-                Text("Bearer credentials remain in macOS Keychain. Authentication Services owns any PIN or biometric prompt; Filicon never collects a PIN and never falls back to a platform passkey.")
+                Text(localized("Bearer credentials remain in macOS Keychain. Authentication Services owns any PIN or biometric prompt; Filicon never collects a PIN and never falls back to a platform passkey."))
                     .font(.caption).foregroundStyle(.secondary)
             }
             AutoReviewSettingsView()
-            Section("Authorized workspace folders") {
-                Text("Local file and process tools can use only these exact folders. Access is stored as macOS security-scoped bookmarks.")
+            Section(localized("Authorized workspace folders")) {
+                Text(localized("Local file and process tools can use only these exact folders. Access is stored as macOS security-scoped bookmarks."))
                     .font(.caption).foregroundStyle(.secondary)
                 ForEach(model.workspaceAuthorizations) { authorization in
                     HStack {
@@ -2682,45 +2915,45 @@ struct SettingsView: View {
                             Text(authorization.path).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
                         }
                         Spacer()
-                        Button("Remove", role: .destructive) {
+                        Button(localized("Remove"), role: .destructive) {
                             Task { await model.removeWorkspaceAuthorization(id: authorization.id) }
                         }
                     }
                 }
-                Button("Authorize Folder…", action: model.authorizeWorkspaceFolder)
+                Button(localized("Authorize Folder…"), action: model.authorizeWorkspaceFolder)
             }
-            Section("Updates") {
-                Picker("Release track", selection: Binding(
+            Section(localized("Updates")) {
+                Picker(localized("Release track"), selection: Binding(
                     get: { model.settings.updatePolicy.effectiveTrack },
                     set: { value in Task { await model.setUpdateTrack(value) } }
                 )) {
                     ForEach(model.settings.updatePolicy.enabledTracks.sorted(by: { $0.rawValue < $1.rawValue }), id: \.self) { track in
-                        Text(track.rawValue.capitalized).tag(track)
+                        Text(localized(track.rawValue.capitalized)).tag(track)
                     }
                 }
-                Toggle("Install downloaded updates when idle", isOn: Binding(
+                Toggle(localized("Install downloaded updates when idle"), isOn: Binding(
                     get: { model.settings.updatePolicy.installWhenIdle },
                     set: { value in Task { await model.setInstallUpdatesWhenIdle(value) } }
                 ))
-                Text("Updates are accepted only from HTTPS feeds and verified with the release signing key before installation.")
+                Text(localized("Updates are accepted only from HTTPS feeds and verified with the release signing key before installation."))
                     .font(.caption).foregroundStyle(.secondary)
-                TextField("HTTPS feed URL", text: $updateFeed)
-                SecureField("Ed25519 public key (Base64)", text: $updateKey)
+                TextField(localized("HTTPS feed URL"), text: $updateFeed)
+                SecureField(localized("Ed25519 public key (Base64)"), text: $updateKey)
                 HStack {
-                    Button("Save Update Source") { let values = (updateFeed, updateKey); Task { await model.configureUpdates(feedURL: values.0, publicKeyBase64: values.1) } }
-                    Button("Check Now") { Task { await model.checkForUpdates() } }
+                    Button(localized("Save Update Source")) { let values = (updateFeed, updateKey); Task { await model.configureUpdates(feedURL: values.0, publicKeyBase64: values.1) } }
+                    Button(localized("Check Now")) { Task { await model.checkForUpdates() } }
                         .disabled(model.updateFeedURLString.isEmpty)
                     if case .available = model.updateState {
-                        Button("Download") { Task { await model.downloadAvailableUpdate() } }
+                        Button(localized("Download")) { Task { await model.downloadAvailableUpdate() } }
                     }
                     if case .staged = model.updateState {
-                        Button("Install and Relaunch") { Task { await model.installStagedUpdate() } }
+                        Button(localized("Install and Relaunch")) { Task { await model.installStagedUpdate() } }
                     }
                 }
                 Label(updateStatusLabel, systemImage: updateStatusIcon)
                     .font(.caption).foregroundStyle(.secondary)
             }
-            Section("Usage") {
+            Section(localized("Usage")) {
                 let total = model.settings.usageByAccount.values.reduce(into: UsageCounters()) { partial, account in
                     let value = account.total
                     partial = UsageCounters(
@@ -2732,11 +2965,11 @@ struct SettingsView: View {
                         costMicros: partial.costMicros + value.costMicros
                     )
                 }
-                LabeledContent("Requests", value: total.requests.formatted())
-                LabeledContent("Input tokens", value: total.inputTokens.formatted())
-                LabeledContent("Output tokens", value: total.outputTokens.formatted())
+                LabeledContent(localized("Requests"), value: total.requests.formatted())
+                LabeledContent(localized("Input tokens"), value: total.inputTokens.formatted())
+                LabeledContent(localized("Output tokens"), value: total.outputTokens.formatted())
                 if model.settings.usageByAccount.isEmpty {
-                    Text("No provider usage has been recorded on this Mac.")
+                    Text(localized("No provider usage has been recorded on this Mac."))
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 ForEach(model.settings.usageByAccount.keys.sorted(), id: \.self) { accountID in
@@ -2746,14 +2979,14 @@ struct SettingsView: View {
                                 if let usage = account.providers[providerID] {
                                     VStack(alignment: .leading, spacing: 3) {
                                         Text(providerID).font(.caption.bold()).textSelection(.enabled)
-                                        Text("\(usage.requests.formatted()) requests · \(usage.inputTokens.formatted()) input · \(usage.outputTokens.formatted()) output")
+                                        Text(l10n("\(usage.requests.formatted()) requests · \(usage.inputTokens.formatted()) input · \(usage.outputTokens.formatted()) output"))
                                             .font(.caption).foregroundStyle(.secondary)
                                         if usage.cacheReadTokens > 0 || usage.cacheWriteTokens > 0 {
-                                            Text("Cache: \(usage.cacheReadTokens.formatted()) read · \(usage.cacheWriteTokens.formatted()) write")
+                                            Text(l10n("Cache: \(usage.cacheReadTokens.formatted()) read · \(usage.cacheWriteTokens.formatted()) write"))
                                                 .font(.caption).foregroundStyle(.secondary)
                                         }
                                         if usage.costMicros > 0 {
-                                            Text("Recorded cost: \(Double(usage.costMicros) / 1_000_000, format: .currency(code: Locale.current.currency?.identifier ?? "USD"))")
+                                            Text(l10n("Recorded cost: \(Double(usage.costMicros) / 1_000_000, format: .currency(code: Locale.current.currency?.identifier ?? "USD"))"))
                                                 .font(.caption).foregroundStyle(.secondary)
                                         }
                                     }
@@ -2762,9 +2995,11 @@ struct SettingsView: View {
                         }
                     }
                 }
-                Button("Reset usage", role: .destructive) { Task { await model.resetUsage() } }
+                Button(localized("Reset usage"), role: .destructive) { Task { await model.resetUsage() } }
             }
-        }.formStyle(.grouped)
+        }
+            .formStyle(.grouped)
+            .background(WindowTitleAccessor(title: l10n("Filicon \(localized("Settings"))")).frame(width: 0, height: 0))
             .task {
                 await model.systemNotifications.refreshAuthorization()
                 await model.reloadLocalToolSettings()
@@ -2775,41 +3010,45 @@ struct SettingsView: View {
             }
     }
 
+    private func localized(_ key: String) -> String {
+        FiliconLocalization.string(key)
+    }
+
     private var notificationStatusLabel: String {
         switch model.systemNotifications.authorizationStatus {
-        case .authorized: "Enabled"
-        case .denied: "Denied in System Settings"
-        case .provisional: "Provisional"
-        case .ephemeral: "Temporary"
-        case .notDetermined: "Not enabled"
-        @unknown default: "Unknown"
+        case .authorized: localized("Enabled")
+        case .denied: localized("Denied in System Settings")
+        case .provisional: localized("Provisional")
+        case .ephemeral: localized("Temporary")
+        case .notDetermined: localized("Not enabled")
+        @unknown default: localized("Unknown")
         }
     }
 
     private var securityKeyStatusLabel: String {
         switch model.securityKeyStatus {
-        case .disabled: "Disabled"
-        case .disconnected: "Disconnected"
-        case .reconnecting(let attempt): "Reconnecting (attempt \(attempt))"
-        case .connected: "Connected"
-        case .awaitingConsent(let origin, let rpID): "Awaiting approval for \(origin) (\(rpID))"
-        case .waitingForSystemPIN: "Follow the macOS PIN or verification prompt"
-        case .waitingForPresence: "Touch your hardware security key"
-        case .completed: "Last request completed"
+        case .disabled: localized("Disabled")
+        case .disconnected: localized("Disconnected")
+        case .reconnecting(let attempt): "\(localized("Reconnecting")) (\(localized("attempt")) \(attempt))"
+        case .connected: localized("Connected")
+        case .awaitingConsent(let origin, let rpID): "\(localized("Awaiting approval for")) \(origin) (\(rpID))"
+        case .waitingForSystemPIN: localized("Follow the macOS PIN or verification prompt")
+        case .waitingForPresence: localized("Touch your hardware security key")
+        case .completed: localized("Last request completed")
         case .failed(let message): message
         }
     }
 
     private var updateStatusLabel: String {
         switch model.updateState {
-        case .idle: "Update checks are idle"
-        case .checking: "Checking for updates…"
-        case .upToDate(let date): "Up to date · checked \(date.formatted(date: .omitted, time: .shortened))"
-        case .available(let release): "Version \(release.version) (\(release.build)) is available"
-        case .downloading(let release): "Downloading \(release.version)…"
-        case .staged(let update, _): "Version \(update.release.version) is verified and ready"
-        case .installing(let update): "Installing version \(update.release.version)…"
-        case .failed(let message): "Update failed: \(message)"
+        case .idle: localized("Update checks are idle")
+        case .checking: localized("Checking for updates…")
+        case .upToDate(let date): "\(localized("Up to date")) · \(localized("checked")) \(date.formatted(date: .omitted, time: .shortened))"
+        case .available(let release): "\(localized("Version")) \(release.version) (\(release.build)) \(localized("is available"))"
+        case .downloading(let release): "\(localized("Downloading")) \(release.version)…"
+        case .staged(let update, _): "\(localized("Version")) \(update.release.version) \(localized("is verified and ready"))"
+        case .installing(let update): "\(localized("Installing version")) \(update.release.version)…"
+        case .failed(let message): "\(localized("Update failed")): \(message)"
         }
     }
 
@@ -2824,11 +3063,11 @@ struct SettingsView: View {
 
     private func localToolActionLabel(_ action: LocalToolAction) -> String {
         switch action {
-        case .runCommand: "Run and manage processes"
-        case .sendInput: "Send process input"
-        case .readFile: "Read files"
-        case .listDirectory: "List directories"
-        case .writeFile: "Write files"
+        case .runCommand: localized("Run and manage processes")
+        case .sendInput: localized("Send process input")
+        case .readFile: localized("Read files")
+        case .listDirectory: localized("List directories")
+        case .writeFile: localized("Write files")
         }
     }
 }
@@ -2844,40 +3083,42 @@ private extension ThemePreference {
 }
 
 private struct LocalToolApprovalView: View {
+    @Environment(\.locale) private var uiLocale
     @EnvironmentObject private var model: AppModel
     let request: ToolApprovalRequest
 
     var body: some View {
+        let _ = uiLocale.identifier
         VStack(alignment: .leading, spacing: 18) {
-            Label("Allow this local action?", systemImage: "exclamationmark.shield")
+            Label(l10n("Allow this local action?"), systemImage: "exclamationmark.shield")
                 .font(.title2.bold())
             Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 10) {
                 GridRow {
-                    Text("Action").foregroundStyle(.secondary)
+                    Text(l10n("Action")).foregroundStyle(.secondary)
                     Text(actionLabel).fontWeight(.semibold)
                 }
                 GridRow {
-                    Text("Target").foregroundStyle(.secondary)
+                    Text(l10n("Target")).foregroundStyle(.secondary)
                     Text(request.title).font(.system(.body, design: .monospaced)).textSelection(.enabled)
                 }
                 GridRow {
-                    Text("Reason").foregroundStyle(.secondary)
+                    Text(l10n("Reason")).foregroundStyle(.secondary)
                     Text(request.reason).textSelection(.enabled)
                 }
             }
-            Text("Allow Once is bound to this exact tool call. Persistent choices apply to this action for every agent and can be changed in Settings.")
+            Text(l10n("Allow Once is bound to this exact tool call. Persistent choices apply to this action for every agent and can be changed in Settings."))
                 .font(.caption).foregroundStyle(.secondary)
             HStack {
-                Button("Deny") { model.resolveLocalToolApproval(id: request.id, allowed: false) }
+                Button(l10n("Deny")) { model.resolveLocalToolApproval(id: request.id, allowed: false) }
                     .keyboardShortcut(.cancelAction)
-                Button("Never") { model.persistLocalToolApproval(request, permission: .never) }
+                Button(l10n("Never")) { model.persistLocalToolApproval(request, permission: .never) }
                 Spacer()
-                Button("Always Allow") { model.persistLocalToolApproval(request, permission: .always) }
+                Button(l10n("Always Allow")) { model.persistLocalToolApproval(request, permission: .always) }
                     .disabled(!model.canPersistAlwaysLocalToolApproval())
                     .help(model.canPersistAlwaysLocalToolApproval()
-                          ? "Always allow this local action"
-                          : "Managed policy does not allow a persistent Always choice")
-                Button("Allow Once") { model.resolveLocalToolApproval(id: request.id, allowed: true) }
+                          ? l10n("Always allow this local action")
+                          : l10n("Managed policy does not allow a persistent Always choice"))
+                Button(l10n("Allow Once")) { model.resolveLocalToolApproval(id: request.id, allowed: true) }
                     .keyboardShortcut(.defaultAction)
             }
         }
@@ -2887,11 +3128,11 @@ private struct LocalToolApprovalView: View {
 
     private var actionLabel: String {
         switch request.action {
-        case .runCommand: "Run or manage process"
-        case .sendInput: "Send process input"
-        case .readFile: "Read file"
-        case .listDirectory: "List directory"
-        case .writeFile: "Write file"
+        case .runCommand: l10n("Run or manage process")
+        case .sendInput: l10n("Send process input")
+        case .readFile: l10n("Read file")
+        case .listDirectory: l10n("List directory")
+        case .writeFile: l10n("Write file")
         }
     }
 }

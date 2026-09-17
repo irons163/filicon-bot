@@ -4,7 +4,7 @@ import FiliconUpdater
 import FiliconComputer
 @testable import Filicon
 
-@Suite("Updater app presentation")
+@Suite("Updater app presentation", EnglishUITrait())
 struct UpdaterPresentationAppIntegrationTests {
     @Test func pillExposesDownloadInstallProgressAndRetryActions() throws {
         let release = fixtureRelease()

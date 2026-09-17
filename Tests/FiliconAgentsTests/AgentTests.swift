@@ -63,6 +63,11 @@ private actor RecordingGroupResponder: GroupAgentResponder {
     }
 }
 
+private actor GroupMessageRecorder {
+    private(set) var messages: [RoomMessage] = []
+    func append(_ message: RoomMessage) { messages.append(message) }
+}
+
 private actor BlockingGroupResponder: GroupAgentResponder {
     private var continuation: CheckedContinuation<[String], Never>?
     func respond(agent: AgentProfile, history: [RoomMessage]) async throws -> [String] {
@@ -71,6 +76,13 @@ private actor BlockingGroupResponder: GroupAgentResponder {
     func release(_ output: [String]) {
         continuation?.resume(returning: output)
         continuation = nil
+    }
+}
+
+private struct FailingGroupResponder: GroupAgentResponder {
+    struct Failure: Error, Equatable {}
+    func respond(agent: AgentProfile, history: [RoomMessage]) async throws -> [String] {
+        throw Failure()
     }
 }
 
@@ -236,7 +248,7 @@ struct AgentTests {
         let group = try await groups.create(name: "Pair", memberIDs: [a.id, b.id])
         _ = try await groups.postUserMessage("start", groupID: group.id)
         let firstRun = try await groups.run(groupID: group.id, responder: EchoResponder(passNames: ["B"]))
-        #expect(firstRun.count == 3)
+        #expect(firstRun.count == 1)
         let secondRun = try await groups.run(groupID: group.id, responder: EchoResponder(passNames: ["A", "B"]))
         #expect(secondRun.isEmpty)
         let target = firstRun[0]
@@ -261,14 +273,14 @@ struct AgentTests {
         _ = try await groups.postUserMessage("@alpha please", groupID: group.id)
         let mentionedResponder = RecordingGroupResponder(outputs: ["one", "two", "ignored"])
         let mentioned = try await groups.run(groupID: group.id, responder: mentionedResponder)
-        #expect(mentioned.count == 6)
-        #expect(await mentionedResponder.order == ["Alpha Agent", "Alpha Agent", "Alpha Agent"])
+        #expect(mentioned.count == 2)
+        #expect(await mentionedResponder.order == ["Alpha Agent"])
 
         _ = try await groups.postUserMessage("@everyone continue", groupID: group.id)
         let cappedResponder = RecordingGroupResponder(outputs: ["one", "two", "ignored"])
         let capped = try await groups.run(groupID: group.id, responder: cappedResponder)
-        #expect(capped.count == GroupService.maximumMemberMessages)
-        #expect(await cappedResponder.order == ["Alpha Agent", "Beta", "Beta", "Alpha Agent", "Alpha Agent"])
+        #expect(capped.count == 4)
+        #expect(await cappedResponder.order == ["Alpha Agent", "Beta"])
 
         _ = try await groups.postUserMessage("late", groupID: group.id)
         let blocker = BlockingGroupResponder()
@@ -278,6 +290,34 @@ struct AgentTests {
         await blocker.release(["must not publish"])
         #expect(try await running.value.isEmpty)
         #expect(await groups.messages(groupID: group.id).last?.text == "late")
+    }
+
+    @Test func groupSurfacesFailureWhenNoMemberCanRespond() async throws {
+        let (root, agents) = try sandbox(); defer { try? FileManager.default.removeItem(at: root) }
+        let member = try await agents.create(name: "Broken")
+        let groups = try GroupService(agents: agents, storeURL: root.appending(path: "groups-failure.json"))
+        let group = try await groups.create(name: "Failure", memberIDs: [member.id])
+        _ = try await groups.postUserMessage("hello", groupID: group.id)
+
+        await #expect(throws: FailingGroupResponder.Failure.self) {
+            _ = try await groups.run(groupID: group.id, responder: FailingGroupResponder())
+        }
+    }
+
+    @Test func groupPublishesEachMessageBeforeTheRunCompletes() async throws {
+        let (root, agents) = try sandbox(); defer { try? FileManager.default.removeItem(at: root) }
+        let member = try await agents.create(name: "Live")
+        let groups = try GroupService(agents: agents, storeURL: root.appending(path: "groups-live.json"))
+        let group = try await groups.create(name: "Live", memberIDs: [member.id])
+        _ = try await groups.postUserMessage("hello", groupID: group.id)
+        let recorder = GroupMessageRecorder()
+
+        let result = try await groups.run(groupID: group.id, responder: EchoResponder(passNames: []), onMessage: { message in
+            await recorder.append(message)
+        })
+
+        #expect(await recorder.messages == result)
+        #expect(result.isEmpty == false)
     }
 
     @Test func subagentCompletesAndCreatesAcknowledgableWake() async throws {
