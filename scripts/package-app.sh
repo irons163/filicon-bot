@@ -110,6 +110,7 @@ cp "$project_dir/Support/Info.plist" "$contents_dir/Info.plist"
 for localization_dir in "$project_dir"/Sources/Filicon/Resources/*.lproj; do
   cp -R "$localization_dir" "$contents_dir/Resources/"
 done
+cp -R "$project_dir/Sources/Filicon/Resources/PetAvatars" "$contents_dir/Resources/"
 
 # Production release jobs inject the real feed and public verification key.
 # They are intentionally absent from source control and never replaced with

@@ -73,7 +73,26 @@ public enum AgentAvailabilityStatus: String, Codable, CaseIterable, Hashable, Se
     case idle, running, awaitingInput, failed, offline
 }
 
-public enum AgentAvatarKind: String, Codable, Hashable, Sendable { case character, image }
+public enum AgentAvatarKind: String, Codable, Hashable, Sendable { case character, image, pet }
+
+public enum AgentPetAvatar: String, Codable, CaseIterable, Identifiable, Sendable {
+    case codex, dewey, fireball, hoots, rocky, seedy, stacky, bsod
+    case nullSignal = "null-signal"
+    public var id: String { rawValue }
+    public var name: String {
+        switch self {
+        case .codex: "Codex"
+        case .dewey: "Dewey"
+        case .fireball: "Fireball"
+        case .hoots: "Hoots"
+        case .rocky: "Rocky"
+        case .seedy: "Seedy"
+        case .stacky: "Stacky"
+        case .bsod: "BSOD"
+        case .nullSignal: "Null Signal"
+        }
+    }
+}
 public enum AgentAvatarShape: String, Codable, CaseIterable, Hashable, Sendable {
     case circle, roundedSquare, hexagon
 }
@@ -86,6 +105,7 @@ public struct AgentAvatar: Codable, Hashable, Sendable {
     public var shape: AgentAvatarShape
     public var imageHash: String?
     public var imageRelativePath: String?
+    public var petID: String?
 
     public init(
         kind: AgentAvatarKind = .character,
@@ -93,7 +113,8 @@ public struct AgentAvatar: Codable, Hashable, Sendable {
         colorHex: String = "#5B6CFF",
         shape: AgentAvatarShape = .circle,
         imageHash: String? = nil,
-        imageRelativePath: String? = nil
+        imageRelativePath: String? = nil,
+        petID: String? = nil
     ) {
         self.kind = kind
         self.character = character.map { String($0.prefix(2)) }
@@ -101,6 +122,7 @@ public struct AgentAvatar: Codable, Hashable, Sendable {
         self.shape = shape
         self.imageHash = imageHash
         self.imageRelativePath = imageRelativePath
+        self.petID = petID
     }
 
     public static func character(_ value: String, colorHex: String, shape: AgentAvatarShape) -> Self {
@@ -109,6 +131,10 @@ public struct AgentAvatar: Codable, Hashable, Sendable {
 
     public static func image(hash: String, relativePath: String, shape: AgentAvatarShape = .circle) -> Self {
         .init(kind: .image, shape: shape, imageHash: hash, imageRelativePath: relativePath)
+    }
+
+    public static func pet(_ pet: AgentPetAvatar, shape: AgentAvatarShape = .circle) -> Self {
+        .init(kind: .pet, shape: shape, petID: pet.rawValue)
     }
 
     private static func normalizedColor(_ value: String) -> String {

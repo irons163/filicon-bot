@@ -2029,6 +2029,10 @@ private struct GroupChatRow: View {
                             ForEach(model.groupMessages[group.id] ?? []) { message in
                                 VStack(alignment: .leading, spacing: 3) {
                                     HStack {
+                                        if let senderID = message.senderID,
+                                           let agent = model.agents.first(where: { $0.id == senderID }) {
+                                            AgentAvatarIcon(profile: agent, dimension: 28)
+                                        }
                                         Text(senderName(message)).font(.caption.bold())
                                         Spacer(); Text(message.createdAt, style: .time).font(.caption2).foregroundStyle(.secondary)
                                     }

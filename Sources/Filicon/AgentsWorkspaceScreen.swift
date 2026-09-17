@@ -239,6 +239,7 @@ private struct AgentEditorView: View {
     @State private var characterValue: String
     @State private var colorHexValue: String
     @State private var selectedAvatarShape: AgentAvatarShape
+    @State private var selectedPet: AgentPetAvatar
     let isNew: Bool
 
     init(profile: AgentProfile, isNew: Bool) {
@@ -247,6 +248,7 @@ private struct AgentEditorView: View {
         _characterValue = State(initialValue: profile.avatar?.character ?? String(profile.name.prefix(2)))
         _colorHexValue = State(initialValue: profile.avatar?.colorHex ?? "#5B6CFF")
         _selectedAvatarShape = State(initialValue: profile.avatar?.shape ?? .circle)
+        _selectedPet = State(initialValue: profile.avatar?.petID.flatMap(AgentPetAvatar.init(rawValue:)) ?? .codex)
         self.isNew = isNew
     }
 
@@ -258,10 +260,30 @@ private struct AgentEditorView: View {
                     AgentAvatarIcon(profile: profile, dimension: 72)
                     VStack(alignment: .leading) {
                         Picker(agentString("Avatar"), selection: $selectedAvatarKind) {
+                            Text(l10n("Built-in pets")).tag(AgentAvatarKind.pet)
                             Text(agentString("Character")).tag(AgentAvatarKind.character)
                             Text(agentString("Image")).tag(AgentAvatarKind.image)
                         }.pickerStyle(.segmented)
-                        if selectedAvatarKind != .image {
+                        if selectedAvatarKind == .pet {
+                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 84))], spacing: 8) {
+                                ForEach(AgentPetAvatar.allCases) { pet in
+                                    Button { petButtonTapped(pet) } label: {
+                                        VStack(spacing: 4) {
+                                            PetAvatarImage(pet: pet).frame(width: 48, height: 52)
+                                            Text(pet.name).font(.caption).lineLimit(1)
+                                        }
+                                        .frame(maxWidth: .infinity).padding(6)
+                                        .background(selectedPet == pet ? Color.accentColor.opacity(0.16) : Color.clear)
+                                        .clipShape(.rect(cornerRadius: 8))
+                                        .overlay { RoundedRectangle(cornerRadius: 8).stroke(selectedPet == pet ? Color.accentColor : .clear, lineWidth: 2) }
+                                    }
+                                    .buttonStyle(.plain)
+                                    .accessibilityLabel(pet.name)
+                                    .accessibilityAddTraits(selectedPet == pet ? [.isSelected] : [])
+                                    .accessibilityIdentifier("pet-avatar-\(pet.rawValue)")
+                                }
+                            }
+                        } else if selectedAvatarKind == .character {
                             TextField(agentString("Character (up to 2)"), text: $characterValue)
                                 .onChange(of: characterValue) { _, _ in updateCharacterPreview() }
                             TextField(agentString("Color (#RRGGBB)"), text: $colorHexValue)
@@ -303,9 +325,7 @@ private struct AgentEditorView: View {
             }
         }
         .formStyle(.grouped).padding().frame(minWidth: 560, minHeight: 620)
-        .onChange(of: selectedAvatarKind) { _, kind in
-            if kind == .character { updateCharacterPreview() } else { importingImage = true }
-        }
+        .onChange(of: selectedAvatarKind) { _, kind in avatarKindChanged(kind) }
         .fileImporter(isPresented: $importingImage, allowedContentTypes: [.image]) { result in
             guard case .success(let url) = result else { return }
             let accessed = url.startAccessingSecurityScopedResource()
@@ -321,10 +341,25 @@ private struct AgentEditorView: View {
         profile.avatar = .character(String(characterValue.prefix(2)), colorHex: colorHexValue, shape: selectedAvatarShape)
     }
 
+    private func petButtonTapped(_ pet: AgentPetAvatar) {
+        selectedPet = pet
+        profile.avatar = .pet(pet, shape: selectedAvatarShape)
+    }
+
+    private func avatarKindChanged(_ kind: AgentAvatarKind) {
+        switch kind {
+        case .character: updateCharacterPreview()
+        case .pet: petButtonTapped(selectedPet)
+        case .image: importingImage = true
+        }
+    }
+
     private func save() {
         var value = profile
         if selectedAvatarKind == .character {
             value.avatar = .character(String(characterValue.prefix(2)), colorHex: colorHexValue, shape: selectedAvatarShape)
+        } else if selectedAvatarKind == .pet {
+            value.avatar = .pet(selectedPet, shape: selectedAvatarShape)
         }
         Task {
             if isNew {
@@ -340,7 +375,7 @@ private extension AgentAvatarShape {
     var label: String { switch self { case .circle: l10n("Circle"); case .roundedSquare: l10n("Rounded square"); case .hexagon: l10n("Hexagon") } }
 }
 
-private struct AgentAvatarIcon: View {
+struct AgentAvatarIcon: View {
     @Environment(\.locale) private var uiLocale
     @EnvironmentObject private var model: AppModel
     let profile: AgentProfile
@@ -348,7 +383,10 @@ private struct AgentAvatarIcon: View {
     var body: some View {
         let _ = uiLocale.identifier
         Group {
-            if let url = model.agentAvatarURL(for: profile.avatar), let image = NSImage(contentsOf: url) {
+            if profile.avatar?.kind == .pet,
+               let petID = profile.avatar?.petID, let pet = AgentPetAvatar(rawValue: petID) {
+                PetAvatarImage(pet: pet).padding(dimension * 0.06)
+            } else if let url = model.agentAvatarURL(for: profile.avatar), let image = NSImage(contentsOf: url) {
                 Image(nsImage: image).resizable().scaledToFill()
             } else {
                 ZStack {

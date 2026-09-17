@@ -86,7 +86,7 @@ enum FiliconLocalization {
         return result
     }
 
-    private static func resourceRoots() -> [URL] {
+    static func resourceRoots() -> [URL] {
         var roots: [URL] = []
 
         // Xcode launches SwiftPM executable targets with the resource bundle
