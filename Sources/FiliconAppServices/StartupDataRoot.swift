@@ -40,21 +40,6 @@ public struct StartupDataRootOptions: Sendable {
         self.hasDataRootOverride = hasDataRootOverride; self.hasIsolatedUserData = hasIsolatedUserData
         self.legacyRoot = legacyRoot; self.canonicalRoot = canonicalRoot
     }
-
-    public static func macOS(
-        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
-        isPackaged: Bool,
-        isLabBuild: Bool = false,
-        hasDataRootOverride: Bool = false,
-        hasIsolatedUserData: Bool = false
-    ) -> Self {
-        .init(
-            isPackaged: isPackaged, isLabBuild: isLabBuild,
-            hasDataRootOverride: hasDataRootOverride, hasIsolatedUserData: hasIsolatedUserData,
-            legacyRoot: homeDirectory.appending(path: ".cursor/sand", directoryHint: .isDirectory),
-            canonicalRoot: homeDirectory.appending(path: "Library/Application Support/Filicon", directoryHint: .isDirectory)
-        )
-    }
 }
 
 public struct StartupDataRootDependencies: Sendable {
@@ -71,13 +56,52 @@ public struct StartupDataRootDependencies: Sendable {
     }
 }
 
-/// Resolves the one writable production root before any app-wide stores open.
-/// Unsafe or ambiguous legacy state always remains on legacy (fail closed).
+/// Production startup prepares only Filicon's own directory. Legacy settlement
+/// is retained for explicitly supplied migration paths, never automatic discovery.
 public enum StartupDataRootSettler {
     public static let markerFilename = ".filicon-data-root-v1"
     public static let writerDiscoveryFilename = "local-exec-daemon.json"
     public static let hostLockFilename = "host.lock"
     public static let signatureEntries: Set<String> = [markerFilename, writerDiscoveryFilename, hostLockFilename, "agents", "gateway.json", "host-secrets.json", "settings.json"]
+
+    /// Does not inspect, import, rename, or fall back to any other application's data.
+    /// Throws before stores open when the chosen directory cannot be safely used.
+    public static func prepareCanonicalRoot(_ root: URL) throws -> StartupDataRootSettlement {
+        guard root.isFileURL, root.path.hasPrefix("/"), !root.pathComponents.contains(".."), root.path != "/" else {
+            throw CocoaError(.fileReadInvalidFileName)
+        }
+        var current = URL(fileURLWithPath: "/", isDirectory: true)
+        for component in root.pathComponents.dropFirst() {
+            current.append(path: component, directoryHint: .isDirectory)
+            switch inspect(current) {
+            case .unsafe: throw CocoaError(.fileReadNoPermission)
+            case .directory, .absent: break
+            }
+        }
+        let existed = inspect(root) == .directory
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        let directory = open(root.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
+        guard directory >= 0 else { throw CocoaError(.fileReadNoPermission) }
+        defer { close(directory) }
+        guard fchmod(directory, 0o700) == 0 else { throw CocoaError(.fileWriteNoPermission) }
+        let marker = openat(directory, markerFilename, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)
+        if marker < 0 {
+            guard errno == EEXIST else { throw CocoaError(.fileWriteNoPermission) }
+            let existingMarker = openat(directory, markerFilename, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
+            guard existingMarker >= 0 else { throw CocoaError(.fileReadNoPermission) }
+            defer { close(existingMarker) }
+            var info = stat()
+            guard fstat(existingMarker, &info) == 0, info.st_mode & S_IFMT == S_IFREG,
+                  info.st_nlink == 1, fchmod(existingMarker, 0o600) == 0 else { throw CocoaError(.fileReadNoPermission) }
+        } else {
+            defer { close(marker) }
+            let bytes = Array("{\"version\":1}\n".utf8)
+            let count = bytes.withUnsafeBytes { Darwin.write(marker, $0.baseAddress, $0.count) }
+            guard count == bytes.count, fsync(marker) == 0 else { throw CocoaError(.fileWriteUnknown) }
+        }
+        guard fsync(directory) == 0 else { throw CocoaError(.fileWriteUnknown) }
+        return .init(route: .canonical, reason: existed ? .canonicalExisting : .canonicalFresh, root: root)
+    }
 
     public static func settle(_ options: StartupDataRootOptions, dependencies: StartupDataRootDependencies = .init()) -> StartupDataRootSettlement {
         if !options.isPackaged { return .init(route: .unchanged, reason: .unpackaged) }

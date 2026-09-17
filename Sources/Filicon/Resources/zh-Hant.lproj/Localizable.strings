@@ -1367,3 +1367,6 @@
 "Changes to this agent apply to every group." = "此代理人的變更會套用到所有群組。";
 "Groups can have up to {0} members." = "每個群組最多可有 {0} 位成員。";
 "New members are selected automatically. Save to apply membership changes." = "新增成員後會自動勾選；按「儲存」套用成員變更。";
+"Filicon could not open its data folder." = "Filicon 無法開啟自己的資料夾。";
+"No workspace data was opened or moved. Check folder permissions, then restart Filicon." = "尚未開啟或搬移任何工作區資料。請檢查資料夾權限後重新啟動 Filicon。";
+"Quit Filicon" = "結束 Filicon";

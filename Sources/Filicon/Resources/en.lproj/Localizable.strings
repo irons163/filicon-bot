@@ -1367,3 +1367,6 @@
 "Changes to this agent apply to every group." = "Changes to this agent apply to every group.";
 "Groups can have up to {0} members." = "Groups can have up to {0} members.";
 "New members are selected automatically. Save to apply membership changes." = "New members are selected automatically. Save to apply membership changes.";
+"Filicon could not open its data folder." = "Filicon could not open its data folder.";
+"No workspace data was opened or moved. Check folder permissions, then restart Filicon." = "No workspace data was opened or moved. Check folder permissions, then restart Filicon.";
+"Quit Filicon" = "Quit Filicon";

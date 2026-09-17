@@ -7,7 +7,9 @@ import FiliconChannels
 @Suite("Channel OAuth loopback callback")
 struct ChannelOAuthLoopbackTests {
     @Test @MainActor func appModelBootstrapPublishesTheRegisteredChannelDescriptors() async {
-        let model = AppModel()
+        let root = FileManager.default.temporaryDirectory.appending(path: "filicon-channel-bootstrap-\(UUID().uuidString)", directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = AppModel(applicationSupportRoot: root)
         for _ in 0..<20_000 where !model.isBootstrapped {
             await Task.yield()
         }

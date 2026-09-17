@@ -350,18 +350,13 @@ final class AppModel: ObservableObject {
     }
 
     convenience init(
-        applicationSupportRoot: URL? = nil,
+        applicationSupportRoot: URL,
         bootstrapImmediately: Bool = true,
         mcpOAuthTransport: any MCPOAuthTokenTransport = URLSessionMCPOAuthTokenTransport(),
         mcpOAuthBrowserOpener: @escaping @MainActor @Sendable (URL) -> Bool = { NSWorkspace.shared.open($0) }
     ) {
-        let context: AppStartupContext
-        if let applicationSupportRoot {
-            context = (try? .isolated(root: applicationSupportRoot, reason: .isolatedUserData))
-                ?? .init(root: applicationSupportRoot, settlement: .init(route: .unchanged, reason: .isolatedUserData, root: applicationSupportRoot), warning: "The isolated data root could not be fully verified.")
-        } else {
-            context = .production()
-        }
+        let context: AppStartupContext = (try? .isolated(root: applicationSupportRoot, reason: .isolatedUserData))
+            ?? .init(root: applicationSupportRoot, settlement: .init(route: .unchanged, reason: .isolatedUserData, root: applicationSupportRoot), warning: "The isolated data root could not be fully verified.")
         self.init(
             startupContext: context,
             bootstrapImmediately: bootstrapImmediately,

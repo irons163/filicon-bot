@@ -12,24 +12,21 @@ struct AppStartupContext: Sendable {
         environment: [String: String] = ProcessInfo.processInfo.environment,
         bundleURL: URL = Bundle.main.bundleURL,
         homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
-    ) -> AppStartupContext {
+    ) throws -> AppStartupContext {
         let canonical = homeDirectory.appending(path: "Library/Application Support/Filicon", directoryHint: .isDirectory)
+        var warning: String?
         if let raw = environment["FILICON_DATA_ROOT"], !raw.isEmpty {
             do {
                 let root = try validatedOverride(raw)
                 return .init(root: root, settlement: .init(route: .unchanged, reason: .dataRootOverride, root: root), warning: nil)
             } catch {
-                let settlement = StartupDataRootSettler.settle(.macOS(homeDirectory: homeDirectory, isPackaged: bundleURL.pathExtension.lowercased() == "app"))
-                let root = settlement.root ?? canonical
-                return .init(root: root, settlement: settlement, warning: "FILICON_DATA_ROOT was ignored because it is not a safe absolute directory: \(String(error.localizedDescription.prefix(500)))")
+                warning = "FILICON_DATA_ROOT was ignored because it is not a safe absolute directory: \(String(error.localizedDescription.prefix(500)))"
             }
         }
-        let settlement = StartupDataRootSettler.settle(.macOS(
-            homeDirectory: homeDirectory,
-            isPackaged: bundleURL.pathExtension.lowercased() == "app"
-        ))
-        let root = settlement.root ?? canonical
-        return .init(root: root, settlement: settlement, warning: settlementWarning(settlement))
+        // Packaged, swift run, and Xcode launches share the same data root.
+        // Never discover or migrate another application's private directory.
+        let settlement = try StartupDataRootSettler.prepareCanonicalRoot(canonical)
+        return .init(root: canonical, settlement: settlement, warning: warning)
     }
 
     static func isolated(root: URL, reason: StartupDataRootReason = .lab) throws -> AppStartupContext {
@@ -56,16 +53,6 @@ struct AppStartupContext: Sendable {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: root.path)
         return root
-    }
-
-    private static func settlementWarning(_ value: StartupDataRootSettlement) -> String? {
-        switch value.reason {
-        case .legacyUnsafe: "Filicon kept using the legacy data location because its path could not be verified safely."
-        case .liveLegacyHost, .busyLegacyWriter, .idleLegacyWriter, .unknownLegacyWriter: "Filicon kept using the legacy data location because another or unknown writer may still be active."
-        case .canonicalConflict: "Filicon found conflicting data at the preferred storage location and kept using the legacy location."
-        case .migrationFailed: "Filicon could not move the legacy data root and kept using it without deleting data."
-        default: nil
-        }
     }
 }
 

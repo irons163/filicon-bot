@@ -17,74 +17,123 @@ import FiliconSecurityKey
 @main
 struct FiliconApp: App {
     @NSApplicationDelegateAdaptor(FiliconApplicationDelegate.self) private var applicationDelegate
-    @StateObject private var model: AppModel
+    @StateObject private var launch = FiliconLaunchState()
     @AppStorage(FiliconLocalization.preferenceKey) private var preferredLanguage = AppLanguage.system.rawValue
 
-    init() {
-        let startup = AppStartupContext.production()
-        _model = StateObject(wrappedValue: AppModel(startupContext: startup))
-    }
     var body: some Scene {
         WindowGroup(id: "main") {
-            ContentView()
-                .environmentObject(model)
-                .frame(minWidth: 512, minHeight: 520)
-                .preferredColorScheme(model.settings.theme.colorScheme)
-                .environment(\.locale, selectedLanguage.locale)
-                .background(AppWindowAccessor().frame(width: 0, height: 0))
-                .onOpenURL(perform: model.handleDeepLink)
-                .onReceive(NotificationCenter.default.publisher(for: .filiconOpenDeepLink)) { notification in
-                    if let url = notification.object as? URL { model.handleDeepLink(url) }
-                }
+            if let model = launch.model {
+                ContentView()
+                    .environmentObject(model)
+                    .frame(minWidth: 512, minHeight: 520)
+                    .preferredColorScheme(model.settings.theme.colorScheme)
+                    .environment(\.locale, selectedLanguage.locale)
+                    .background(AppWindowAccessor().frame(width: 0, height: 0))
+                    .onOpenURL(perform: model.handleDeepLink)
+                    .onReceive(NotificationCenter.default.publisher(for: .filiconOpenDeepLink)) { notification in
+                        if let url = notification.object as? URL { model.handleDeepLink(url) }
+                    }
+            } else {
+                StartupStorageFailureView(detail: launch.failure ?? "")
+                    .environment(\.locale, selectedLanguage.locale)
+            }
         }
         .windowStyle(.hiddenTitleBar)
         .commands {
             AboutCommands()
             CommandGroup(after: .newItem) {
-                Button(FiliconLocalization.string("New Conversation")) { model.addConversation() }
-                    .keyboardShortcut("n")
-                    .disabled(!model.isBootstrapped)
+                if let model = launch.model {
+                    Button(FiliconLocalization.string("New Conversation")) { model.addConversation() }
+                        .keyboardShortcut("n")
+                        .disabled(!model.isBootstrapped)
+                }
             }
             CommandMenu(FiliconLocalization.string("Conversation")) {
-                Button(FiliconLocalization.string("Find in Chat")) {
-                    NotificationCenter.default.post(name: .filiconFindInChat, object: model.selection)
+                if let model = launch.model {
+                    Button(FiliconLocalization.string("Find in Chat")) {
+                        NotificationCenter.default.post(name: .filiconFindInChat, object: model.selection)
+                    }
+                    .keyboardShortcut("f")
+                    .disabled(model.selectedConversation == nil)
                 }
-                .keyboardShortcut("f")
-                .disabled(model.selectedConversation == nil)
             }
             CommandMenu(FiliconLocalization.string("Navigate")) {
-                Button(FiliconLocalization.string("Search")) { model.focusGlobalSearch() }
-                    .keyboardShortcut("k", modifiers: [.command])
-                Divider()
-                Button(FiliconLocalization.string("Back")) { model.goBack() }
-                    .keyboardShortcut("[", modifiers: [.command])
-                    .disabled(!model.canGoBack)
-                Button(FiliconLocalization.string("Forward")) { model.goForward() }
-                    .keyboardShortcut("]", modifiers: [.command])
-                    .disabled(!model.canGoForward)
-                Divider()
-                Button(FiliconLocalization.string("Reload Workspace")) { Task { await model.reloadRootWorkspace() } }
-                    .keyboardShortcut("r", modifiers: [.command])
+                if let model = launch.model {
+                    Button(FiliconLocalization.string("Search")) { model.focusGlobalSearch() }
+                        .keyboardShortcut("k", modifiers: [.command])
+                    Divider()
+                    Button(FiliconLocalization.string("Back")) { model.goBack() }
+                        .keyboardShortcut("[", modifiers: [.command])
+                        .disabled(!model.canGoBack)
+                    Button(FiliconLocalization.string("Forward")) { model.goForward() }
+                        .keyboardShortcut("]", modifiers: [.command])
+                        .disabled(!model.canGoForward)
+                    Divider()
+                    Button(FiliconLocalization.string("Reload Workspace")) { Task { await model.reloadRootWorkspace() } }
+                        .keyboardShortcut("r", modifiers: [.command])
+                }
             }
         }
         Settings {
-            SettingsView()
-                .environmentObject(model)
-                .preferredColorScheme(model.settings.theme.colorScheme)
-                .environment(\.locale, selectedLanguage.locale)
-                .frame(width: 660, height: 700)
+            if let model = launch.model {
+                SettingsView()
+                    .environmentObject(model)
+                    .preferredColorScheme(model.settings.theme.colorScheme)
+                    .environment(\.locale, selectedLanguage.locale)
+                    .frame(width: 660, height: 700)
+            } else {
+                StartupStorageFailureView(detail: launch.failure ?? "")
+                    .environment(\.locale, selectedLanguage.locale)
+            }
         }
         Window(l10n("About Filicon"), id: "about") {
-            AboutView()
-                .environmentObject(model)
-                .preferredColorScheme(model.settings.theme.colorScheme)
-                .environment(\.locale, selectedLanguage.locale)
+            if let model = launch.model {
+                AboutView()
+                    .environmentObject(model)
+                    .preferredColorScheme(model.settings.theme.colorScheme)
+                    .environment(\.locale, selectedLanguage.locale)
+            }
         }
         .windowResizability(.contentSize)
     }
 
     private var selectedLanguage: AppLanguage {
         AppLanguage(rawValue: preferredLanguage) ?? .system
+    }
+}
+
+/// Do not construct any stores if startup cannot safely use the app's own root.
+@MainActor
+final class FiliconLaunchState: ObservableObject {
+    let model: AppModel?
+    let failure: String?
+
+    init(context: () throws -> AppStartupContext = { try AppStartupContext.production() }) {
+        do {
+            model = AppModel(startupContext: try context())
+            failure = nil
+        } catch {
+            model = nil
+            failure = error.localizedDescription
+        }
+    }
+}
+
+private struct StartupStorageFailureView: View {
+    @Environment(\.locale) private var locale
+    let detail: String
+
+    var body: some View {
+        let _ = locale.identifier
+        VStack(spacing: 16) {
+            Image(systemName: "externaldrive.badge.exclamationmark").font(.system(size: 36))
+            Text(l10n("Filicon could not open its data folder.")).font(.title2)
+            Text(l10n("No workspace data was opened or moved. Check folder permissions, then restart Filicon."))
+                .multilineTextAlignment(.center)
+            Text(detail).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+            Button(l10n("Quit Filicon")) { NSApplication.shared.terminate(nil) }
+        }
+        .padding(32).frame(width: 520, height: 320)
     }
 }
 

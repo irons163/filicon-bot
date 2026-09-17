@@ -28,7 +28,7 @@ struct StartupRecoveryAppIntegrationTests {
     @Test func explicitOverrideIsSettledBeforeModelStoresAndAllPathsShareIt() throws {
         let home = try temporaryDirectory(); defer { try? FileManager.default.removeItem(at: home) }
         let override = home.appending(path: "Explicit Root", directoryHint: .isDirectory)
-        let context = AppStartupContext.production(
+        let context = try AppStartupContext.production(
             environment: ["FILICON_DATA_ROOT": override.path],
             bundleURL: home.appending(path: "Filicon.app"), homeDirectory: home
         )
@@ -43,13 +43,69 @@ struct StartupRecoveryAppIntegrationTests {
 
     @Test func unsafeOverrideFallsBackWithObservableWarningWithoutCredentials() throws {
         let home = try temporaryDirectory(); defer { try? FileManager.default.removeItem(at: home) }
-        let context = AppStartupContext.production(
+        let context = try AppStartupContext.production(
             environment: ["FILICON_DATA_ROOT": "relative/../secret?token=value"],
             bundleURL: home.appending(path: "Filicon.app"), homeDirectory: home
         )
         #expect(context.root.path.hasPrefix(home.path))
         #expect(context.warning?.contains("ignored") == true)
         #expect(!context.root.absoluteString.contains("token=value"))
+    }
+
+    @Test(arguments: ["Filicon.app", "DerivedData/Build/Products/Debug/Filicon"])
+    func packagedAndXcodeLaunchesUseOnlyFiliconDirectory(bundlePath: String) throws {
+        let home = try temporaryDirectory(); defer { try? FileManager.default.removeItem(at: home) }
+        let foreign = home.appending(path: ".cursor/sand")
+        let canonical = home.appending(path: "Library/Application Support/Filicon")
+        try FileManager.default.createDirectory(at: foreign, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: canonical, withIntermediateDirectories: true)
+        let oldData = Data("do not read or move this data".utf8)
+        try oldData.write(to: foreign.appending(path: "settings.json"))
+        // Even a live foreign host must not change which Filicon directory opens.
+        try Data("\(ProcessInfo.processInfo.processIdentifier)".utf8).write(to: foreign.appending(path: "host.lock"))
+        let existing = Data("existing Filicon data".utf8)
+        try existing.write(to: canonical.appending(path: "conversations.sqlite3"))
+        let context = try AppStartupContext.production(environment: [:], bundleURL: home.appending(path: bundlePath), homeDirectory: home)
+        #expect(context.root.path == canonical.path)
+        #expect(context.settlement.route == .canonical)
+        #expect(context.warning == nil)
+        #expect(try Data(contentsOf: canonical.appending(path: "conversations.sqlite3")) == existing)
+        #expect(try Data(contentsOf: foreign.appending(path: "settings.json")) == oldData)
+        #expect(!FileManager.default.fileExists(atPath: foreign.appending(path: StartupDataRootSettler.markerFilename).path))
+        #expect(!FileManager.default.fileExists(atPath: canonical.appending(path: "settings.json").path))
+    }
+
+    @Test func freshStartupIgnoresForeignSymlink() throws {
+        let home = try temporaryDirectory(); defer { try? FileManager.default.removeItem(at: home) }
+        let foreign = home.appending(path: ".cursor")
+        let target = home.appending(path: "OtherApp")
+        try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: foreign, withDestinationURL: target)
+        let context = try AppStartupContext.production(environment: [:], homeDirectory: home)
+        #expect(context.settlement.reason == .canonicalFresh)
+        #expect(context.root.path == home.appending(path: "Library/Application Support/Filicon").path)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: target.path).isEmpty)
+    }
+
+    @Test(arguments: ["root", "parent", "marker"])
+    func unsafeCanonicalPathStopsBeforeConstructingStores(location: String) throws {
+        let home = try temporaryDirectory(); defer { try? FileManager.default.removeItem(at: home) }
+        let canonical = home.appending(path: "Library/Application Support/Filicon")
+        let target = home.appending(path: "untouched")
+        try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
+        let link: URL
+        if location == "root" { link = canonical }
+        else if location == "parent" { link = canonical.deletingLastPathComponent() }
+        else { link = canonical.appending(path: StartupDataRootSettler.markerFilename) }
+        try FileManager.default.createDirectory(at: link.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: target)
+        let launch = FiliconLaunchState {
+            try AppStartupContext.production(environment: [:], homeDirectory: home)
+        }
+        #expect(launch.model == nil)
+        #expect(launch.failure != nil)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: target.path).isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: home.appending(path: ".cursor").path))
     }
 
     @Test func quotaWriterReconcilesReservesCommitsAndRollsBackFailedWrite() async throws {

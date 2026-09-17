@@ -1367,3 +1367,6 @@
 "Changes to this agent apply to every group." = "このエージェントの変更はすべてのグループに適用されます。";
 "Groups can have up to {0} members." = "グループには最大{0}人のメンバーを追加できます。";
 "New members are selected automatically. Save to apply membership changes." = "新しいメンバーは自動的に選択されます。「保存」でメンバーの変更を適用します。";
+"Filicon could not open its data folder." = "Filiconのデータフォルダを開けませんでした。";
+"No workspace data was opened or moved. Check folder permissions, then restart Filicon." = "ワークスペースのデータは開かれておらず、移動もされていません。フォルダのアクセス権を確認してからFiliconを再起動してください。";
+"Quit Filicon" = "Filiconを終了";
