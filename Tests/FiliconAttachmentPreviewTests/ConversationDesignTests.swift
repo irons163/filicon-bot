@@ -1,0 +1,153 @@
+import AppKit
+import SwiftUI
+import Testing
+import FiliconAgents
+import FiliconDomain
+@testable import Filicon
+
+@Suite("Conversation design", .serialized)
+@MainActor
+struct ConversationDesignTests {
+    @Test func inspectorCollapsesBeforeChatBecomesTooNarrow() {
+        #expect(!ConversationLayout.showsInlineInspector(detailWidth: 779))
+        #expect(ConversationLayout.showsInlineInspector(detailWidth: 780))
+        #expect(ConversationLayout.showsInlineInspector(detailWidth: 1_000))
+        #expect(ConversationLayout.sidebarWidth(for: 800) < ConversationLayout.sidebarWidth(for: 1_260))
+    }
+
+    @Test func memberSelectionAndPerGroupDraftsStayIndependent() {
+        let first = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
+        let second = UUID(uuidString: "00000000-0000-0000-0000-000000000002")!
+        var settings = GroupSettingsDraft()
+        #expect(!settings.isValid)
+        settings.name = "Design team"
+        settings.memberIDs[includes: first] = true
+        settings.memberIDs[includes: second] = true
+        settings.memberIDs[includes: first] = false
+        #expect(settings.isValid)
+        #expect(!settings.memberIDs.contains(first))
+        #expect(settings.memberIDs.contains(second))
+        settings.name = " \n "
+        #expect(!settings.isValid)
+
+        var drafts = GroupComposerDrafts()
+        drafts[first] = "Keep this unsent message"
+        drafts[second] = ""
+        #expect(!drafts[first].isEmpty)
+        #expect(drafts[second].isEmpty)
+    }
+
+    @Test func groupInspectorPersistsValidFieldsAndRejectsInvalidDrafts() async throws {
+        let root = temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+        await model.createAgent(name: "Designer", summary: "", instructions: "", providerID: "fake", modelID: "fake-stream")
+        let agent = try #require(model.agents.first)
+        #expect(await model.createGroup(name: "Team", summary: "Original", memberIDs: [agent.id]))
+        let group = try #require(model.groups.first)
+        #expect(await model.saveGroupSettings(groupID: group.id, name: "Renamed", summary: "Updated", memberIDs: [agent.id]))
+        #expect(!(await model.saveGroupSettings(groupID: group.id, name: " ", summary: "Invalid", memberIDs: [])))
+        #expect(!(await model.saveGroupSettings(groupID: group.id, name: "Duplicate", summary: "", memberIDs: [agent.id, agent.id])))
+
+        let reopened = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+        await reopened.reloadWorkspaceData()
+        let restored = try #require(reopened.groups.first)
+        #expect(restored.name.starts(with: "Renamed"))
+        #expect(restored.summary.starts(with: "Updated"))
+        #expect(restored.memberIDs.contains(agent.id))
+    }
+
+    @Test func renamingPreservesTranscriptAndExistingSpeakerOrder() async throws {
+        let root = temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let agents = try AgentService(storeURL: root.appending(path: "agents.json"))
+        let service = try GroupService(agents: agents, storeURL: root.appending(path: "groups.json"))
+        let group = try await service.create(name: "Before", memberIDs: [])
+        let message = try await service.postUserMessage("Keep this history", groupID: group.id)
+        try await service.update(groupID: group.id, name: "After", summary: "Updated", memberIDs: [])
+        let reopened = try GroupService(agents: agents, storeURL: root.appending(path: "groups.json"))
+        #expect(await reopened.messages(groupID: group.id).contains(message))
+
+        let first = AgentProfile(name: "First")
+        let second = AgentProfile(name: "Second")
+        let orderedGroup = AgentGroup(name: "Team", memberIDs: [second.id, first.id])
+        let draft = GroupSettingsDraft(group: orderedGroup)
+        #expect(draft.orderedMembers(agents: [first, second], preserving: orderedGroup.memberIDs).starts(with: [second.id, first.id]))
+    }
+
+    /// Opt-in PNGs use an isolated model and never seed the user's workspace.
+    /// FILICON_UI_REVIEW_OUTPUT=/absolute/temp/directory swift test --filter ConversationDesignTests
+    @Test func renderReferenceLayouts() throws {
+        let root = temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+        let first = AgentProfile(name: "設計", summary: "Product design", avatar: .pet(.dewey))
+        let second = AgentProfile(name: "工程", summary: "Engineering", avatar: .pet(.codex))
+        let group = AgentGroup(name: "一人公司", summary: "一起把想法變成值得使用的產品。", memberIDs: [first.id, second.id])
+        model.agents = [first, second]
+        model.groups = [group, AgentGroup(name: "Product studio", summary: "A space for the next idea", memberIDs: [first.id])]
+        model.selectedGroupID = group.id
+        model.route = .groups
+        let timestamp = Date(timeIntervalSince1970: 1_789_600_000)
+        model.groupMessages[group.id] = [
+            RoomMessage(groupID: group.id, senderID: first.id, text: "早安！今天想一起做什麼？我們可以從產品方向、介面設計或新的點子開始。", createdAt: timestamp),
+            RoomMessage(groupID: group.id, senderID: nil, text: "我想做一個讓獨立工作者管理專案的工具。\n\n請先研究需求，再提出簡單、有設計感的第一版。", createdAt: timestamp.addingTimeInterval(60)),
+            RoomMessage(groupID: group.id, senderID: first.id, text: "我會先整理使用情境，聚焦在每天最重要的三件事。畫面保持安靜，讓工作本身成為主角。", createdAt: timestamp.addingTimeInterval(90)),
+            RoomMessage(groupID: group.id, senderID: second.id, text: "收到。我會規劃資料結構與可行的開發步驟，先從專案列表和每日進度開始。", createdAt: timestamp.addingTimeInterval(120))
+        ]
+        let output = ProcessInfo.processInfo.environment["FILICON_UI_REVIEW_OUTPUT"].map { URL(fileURLWithPath: $0, isDirectory: true) }
+        if let output { try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true) }
+        let languages = output == nil ? ["zh-Hant"] : ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"]
+        for language in languages {
+            try FiliconLocalization.$languageOverride.withValue(language) {
+                try render(model, size: NSSize(width: 1_260, height: 780), language: language, output: output, name: "chat-\(language)")
+            }
+        }
+        if let output {
+            try FiliconLocalization.$languageOverride.withValue("zh-Hant") {
+                try render(model, size: NSSize(width: 800, height: 680), language: "zh-Hant", output: output, name: "chat-compact")
+                try render(model, size: NSSize(width: 580, height: 650), language: "zh-Hant", output: output, name: "chat-narrow")
+                try render(model, size: NSSize(width: 1_260, height: 780), language: "zh-Hant", output: output, name: "chat-dark", dark: true)
+                model.groups = []
+                try render(model, size: NSSize(width: 1_260, height: 780), language: "zh-Hant", output: output, name: "chat-empty")
+                let conversation = Conversation(title: "產品規劃", messages: [
+                    ChatMessage(role: .assistant, text: "你好！今天想一起做什麼？"),
+                    ChatMessage(role: .user, text: "請幫我規劃第一版。\n\n簡單、清楚，而且能真正解決問題。"),
+                    ChatMessage(role: .assistant, text: "我們先從三件事開始：\n\n1. 找到真正的使用情境\n2. 定義最小可行功能\n3. 用原型驗證方向")
+                ])
+                model.conversations = [conversation]
+                model.selection = conversation.id
+                model.route = .conversation(conversation.id)
+                try render(model, size: NSSize(width: 1_040, height: 720), language: "zh-Hant", output: output, name: "chat-direct")
+            }
+        }
+    }
+
+    private func render(_ model: AppModel, size: NSSize, language: String, output: URL?, name: String, dark: Bool = false) throws {
+        let view = FiliconWorkspaceShell {
+            if let conversation = model.selectedConversation, case .conversation = model.route {
+                ChatDetailView(conversation: conversation)
+            } else {
+                GroupWorkspaceView()
+            }
+        }
+            .environmentObject(model)
+            .environment(\.locale, Locale(identifier: language))
+            .environment(\.colorScheme, dark ? .dark : .light)
+            .frame(width: size.width, height: size.height)
+        let host = NSHostingView(rootView: view)
+        host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+        host.frame = NSRect(origin: .zero, size: size)
+        host.layoutSubtreeIfNeeded()
+        let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        let png = try #require(bitmap.representation(using: .png, properties: [:]))
+        #expect(!png.isEmpty)
+        if let output { try png.write(to: output.appending(path: "\(name).png")) }
+    }
+
+    private func temporaryRoot() -> URL {
+        FileManager.default.temporaryDirectory.appending(path: "filicon-conversation-design-\(UUID().uuidString)", directoryHint: .isDirectory)
+    }
+}

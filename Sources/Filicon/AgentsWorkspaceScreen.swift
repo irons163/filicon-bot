@@ -226,7 +226,7 @@ private struct AgentStatusLabel: View {
     }
 }
 
-private struct AgentEditorView: View {
+struct AgentEditorView: View {
     @Environment(\.locale) private var uiLocale
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss

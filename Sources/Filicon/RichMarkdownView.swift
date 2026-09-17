@@ -141,6 +141,7 @@ struct RichMarkdownView: View {
     let source: String
     let metadataController: RichLinkMetadataController?
     let maximumMetadataCards: Int
+    let fillsWidth: Bool
     let openLink: @MainActor (URL) -> Bool
 
     @State private var metadata: [URL: SafeLinkMetadata] = [:]
@@ -150,11 +151,13 @@ struct RichMarkdownView: View {
         source: String,
         metadataController: RichLinkMetadataController? = nil,
         maximumMetadataCards: Int = 0,
+        fillsWidth: Bool = true,
         openLink: @escaping @MainActor (URL) -> Bool = RichMarkdownDefaultLinkOpener.open
     ) {
         self.source = source
         self.metadataController = metadataController
         self.maximumMetadataCards = min(max(maximumMetadataCards, 0), 3)
+        self.fillsWidth = fillsWidth
         self.openLink = openLink
     }
 
@@ -166,6 +169,7 @@ struct RichMarkdownView: View {
             source: source,
             metadataController: AppRichLinkMetadata.productionController,
             maximumMetadataCards: 3,
+            fillsWidth: false,
             openLink: openLink
         )
     }
@@ -181,7 +185,7 @@ struct RichMarkdownView: View {
                 if let value = metadata[url] { RichLinkMetadataCard(metadata: value, openLink: open) }
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: fillsWidth ? .infinity : nil, alignment: .leading)
         .textSelection(.enabled)
         .task(id: "\(source.hashValue):\(maximumMetadataCards):\(metadataController != nil)") {
             metadata = [:]

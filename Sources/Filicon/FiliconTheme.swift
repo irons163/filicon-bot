@@ -1,67 +1,69 @@
 import SwiftUI
 import AppKit
 
-/// The native shell palette used by the conversation workspace.
-///
-/// The reconstructed renderer uses a deliberately quiet, dark surface with one
-/// high-contrast accent.  Keeping these values in one place makes it possible to
-/// match that visual language without bringing a web renderer into the app.
+/// Warm paper surfaces, peach incoming messages and ink outgoing messages.
+/// Dark appearance keeps the same hierarchy with warm charcoal surfaces.
 enum FiliconTheme {
     static let canvas = adaptive(
-        light: NSColor(calibratedWhite: 0.965, alpha: 1),
-        dark: NSColor(calibratedRed: 0.075, green: 0.086, blue: 0.078, alpha: 1)
+        light: NSColor(calibratedRed: 1.0, green: 0.989, blue: 0.927, alpha: 1),
+        dark: NSColor(calibratedRed: 0.12, green: 0.112, blue: 0.102, alpha: 1)
     )
     static let sidebar = adaptive(
-        light: NSColor(calibratedWhite: 0.94, alpha: 1),
-        dark: NSColor(calibratedRed: 0.090, green: 0.102, blue: 0.094, alpha: 1)
+        light: NSColor(calibratedRed: 0.992, green: 0.970, blue: 0.905, alpha: 1),
+        dark: NSColor(calibratedRed: 0.145, green: 0.133, blue: 0.118, alpha: 1)
     )
     static let surface = adaptive(
-        light: NSColor.white,
-        dark: NSColor(calibratedRed: 0.125, green: 0.141, blue: 0.125, alpha: 1)
+        light: NSColor(calibratedRed: 1.0, green: 0.989, blue: 0.927, alpha: 1),
+        dark: NSColor(calibratedRed: 0.15, green: 0.137, blue: 0.123, alpha: 1)
     )
     static let surfaceRaised = adaptive(
-        light: NSColor(calibratedWhite: 0.985, alpha: 1),
-        dark: NSColor(calibratedRed: 0.165, green: 0.184, blue: 0.157, alpha: 1)
+        light: NSColor(calibratedRed: 0.966, green: 0.900, blue: 0.820, alpha: 1),
+        dark: NSColor(calibratedRed: 0.23, green: 0.202, blue: 0.178, alpha: 1)
     )
     static let input = adaptive(
-        light: NSColor.white,
-        dark: NSColor(calibratedRed: 0.145, green: 0.161, blue: 0.141, alpha: 1)
+        light: NSColor(calibratedRed: 0.992, green: 0.937, blue: 0.863, alpha: 1),
+        dark: NSColor(calibratedRed: 0.19, green: 0.170, blue: 0.148, alpha: 1)
     )
     static let border = adaptive(
-        light: NSColor(calibratedWhite: 0.84, alpha: 1),
-        dark: NSColor(calibratedRed: 0.215, green: 0.239, blue: 0.208, alpha: 1)
+        light: NSColor(calibratedRed: 0.915, green: 0.869, blue: 0.790, alpha: 1),
+        dark: NSColor(calibratedRed: 0.29, green: 0.262, blue: 0.231, alpha: 1)
     )
     static let borderStrong = adaptive(
-        light: NSColor(calibratedWhite: 0.75, alpha: 1),
-        dark: NSColor(calibratedRed: 0.285, green: 0.318, blue: 0.269, alpha: 1)
+        light: NSColor(calibratedRed: 0.83, green: 0.77, blue: 0.68, alpha: 1),
+        dark: NSColor(calibratedRed: 0.38, green: 0.34, blue: 0.29, alpha: 1)
     )
     static let textPrimary = adaptive(
-        light: NSColor(calibratedWhite: 0.12, alpha: 1),
-        dark: NSColor(calibratedRed: 0.91, green: 0.94, blue: 0.88, alpha: 1)
+        light: NSColor(calibratedRed: 0.18, green: 0.16, blue: 0.13, alpha: 1),
+        dark: NSColor(calibratedRed: 0.97, green: 0.94, blue: 0.87, alpha: 1)
     )
     static let textSecondary = adaptive(
-        light: NSColor(calibratedWhite: 0.36, alpha: 1),
-        dark: NSColor(calibratedRed: 0.65, green: 0.69, blue: 0.62, alpha: 1)
+        light: NSColor(calibratedRed: 0.43, green: 0.39, blue: 0.32, alpha: 1),
+        dark: NSColor(calibratedRed: 0.76, green: 0.71, blue: 0.64, alpha: 1)
     )
     static let textTertiary = adaptive(
-        light: NSColor(calibratedWhite: 0.52, alpha: 1),
-        dark: NSColor(calibratedRed: 0.45, green: 0.49, blue: 0.43, alpha: 1)
+        light: NSColor(calibratedRed: 0.53, green: 0.48, blue: 0.40, alpha: 1),
+        dark: NSColor(calibratedRed: 0.64, green: 0.59, blue: 0.51, alpha: 1)
     )
     static let accent = adaptive(
-        light: NSColor(calibratedRed: 0.22, green: 0.43, blue: 0.11, alpha: 1),
-        dark: NSColor(calibratedRed: 0.78, green: 0.93, blue: 0.40, alpha: 1)
+        light: NSColor(calibratedWhite: 0.08, alpha: 1),
+        dark: NSColor(calibratedRed: 0.97, green: 0.88, blue: 0.73, alpha: 1)
     )
     static let accentStrong = adaptive(
-        light: NSColor(calibratedRed: 0.16, green: 0.34, blue: 0.07, alpha: 1),
-        dark: NSColor(calibratedRed: 0.86, green: 0.98, blue: 0.53, alpha: 1)
+        light: NSColor.black,
+        dark: NSColor(calibratedRed: 1, green: 0.94, blue: 0.84, alpha: 1)
     )
     static let accentText = adaptive(
         light: NSColor.white,
         dark: NSColor(calibratedRed: 0.08, green: 0.10, blue: 0.06, alpha: 1)
     )
     static let userBubble = adaptive(
-        light: NSColor(calibratedRed: 0.88, green: 0.94, blue: 0.82, alpha: 1),
-        dark: NSColor(calibratedRed: 0.18, green: 0.24, blue: 0.15, alpha: 1)
+        light: NSColor(calibratedWhite: 0.025, alpha: 1),
+        dark: NSColor(calibratedWhite: 0.035, alpha: 1)
+    )
+    static let userBubbleText = Color(red: 1, green: 0.98, blue: 0.93)
+    static let incomingBubble = adaptive(
+        light: NSColor(calibratedRed: 1, green: 0.933, blue: 0.858, alpha: 1),
+        dark: NSColor(calibratedRed: 0.235, green: 0.197, blue: 0.164, alpha: 1)
     )
     static let warning = adaptive(
         light: NSColor(calibratedRed: 0.52, green: 0.27, blue: 0.02, alpha: 1),
@@ -111,7 +113,6 @@ struct FiliconIconButton: View {
                 .frame(width: size, height: size)
                 .foregroundStyle(foreground)
                 .background(background, in: Circle())
-                .overlay(Circle().stroke(border, lineWidth: isProminent ? 0 : 0.8))
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
@@ -126,7 +127,7 @@ struct FiliconIconButton: View {
 
     private var background: Color {
         if isProminent { return FiliconTheme.accent }
-        return FiliconTheme.surfaceRaised.opacity(0.70)
+        return .clear
     }
 
     private var border: Color {

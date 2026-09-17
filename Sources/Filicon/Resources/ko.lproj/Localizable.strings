@@ -278,7 +278,7 @@
 "Denied" = "담당자: Mr. James";
 "Denied in System Settings" = "시스템 설정에서 Denied";
 "Deny" = "거부";
-"Description" = "제품 설명";
+"Description" = "설명";
 "Destructive" = "관련 기사";
 "Details" = "제품 정보";
 "Diagram fallback, {0}: {1}" = "다이어그램 백, {0} : {1}";
@@ -1338,7 +1338,7 @@
 "{0} is unavailable. The card was not completed and can be retried." = "{0}는 사용할 수 없습니다. 카드가 완료되지 않았고 다시 시도 할 수 있습니다.";
 "{0} listeners" = "{0} 청취인";
 "{0} masked" = "{0} 가면";
-"{0} members" = "{0} 회원";
+"{0} members" = "멤버 {0}명";
 "{0} members · up to {1} response rounds" = "멤버 {0}명 · 최대 {1}회 응답";
 "{0} of {1}" = "{1} 중 {0}";
 "{0} page{1}" = "{0} 페이지{1}";
@@ -1357,3 +1357,8 @@
 "· Working" = "· 작업";
 "⌘K" = "⌘K";
 "Built-in pets" = "기본 반려 캐릭터";
+"A little team. A lot of possibility." = "작은 팀, 무한한 가능성.";
+"Bring your agents together and start a conversation." = "에이전트를 모아 대화를 시작하세요.";
+"Add members to start chatting." = "멤버를 추가하여 대화를 시작하세요.";
+"No routines for this group yet." = "이 그룹에는 아직 루틴이 없습니다.";
+"Paused" = "일시 중지됨";

@@ -278,7 +278,7 @@
 "Denied" = "サインイン";
 "Denied in System Settings" = "システム設定で拒否";
 "Deny" = "拒否";
-"Description" = "説明:";
+"Description" = "説明";
 "Destructive" = "ディストリビューター";
 "Details" = "詳細を見る";
 "Diagram fallback, {0}: {1}" = "図フォールバック、{0}:{1}";
@@ -1338,7 +1338,7 @@
 "{0} is unavailable. The card was not completed and can be retried." = "{0}は利用できません。カードが完成せず、回収することができます。";
 "{0} listeners" = "{0} リスナー";
 "{0} masked" = "{0} マスク";
-"{0} members" = "{0} メンバー";
+"{0} members" = "メンバー {0} 人";
 "{0} members · up to {1} response rounds" = "メンバー {0} 人 · 最大 {1} ラウンドの応答";
 "{0} of {1}" = "{0} / {1}";
 "{0} page{1}" = "{0} ページ{1}";
@@ -1357,3 +1357,8 @@
 "· Working" = "· 作業";
 "⌘K" = "⌘K";
 "Built-in pets" = "内蔵ペット";
+"A little team. A lot of possibility." = "小さなチーム。大きな可能性。";
+"Bring your agents together and start a conversation." = "エージェントを集めて、会話を始めましょう。";
+"Add members to start chatting." = "メンバーを追加して会話を始めましょう。";
+"No routines for this group yet." = "このグループにはまだルーチンがありません。";
+"Paused" = "一時停止中";

@@ -278,7 +278,7 @@
 "Denied" = "Refusé";
 "Denied in System Settings" = "Refusé dans les paramètres du système";
 "Deny" = "Refuser";
-"Description" = "Désignation des marchandises";
+"Description" = "Description";
 "Destructive" = "Destructive";
 "Details" = "Détails";
 "Diagram fallback, {0}: {1}" = "Schéma de recul, {0}: {1}";
@@ -1357,3 +1357,8 @@
 "· Working" = "· Travail";
 "⌘K" = "⌘K";
 "Built-in pets" = "Compagnons intégrés";
+"A little team. A lot of possibility." = "Une petite équipe. De grandes possibilités.";
+"Bring your agents together and start a conversation." = "Réunissez vos agents et lancez la conversation.";
+"Add members to start chatting." = "Ajoutez des membres pour commencer à discuter.";
+"No routines for this group yet." = "Aucune routine pour ce groupe.";
+"Paused" = "En pause";

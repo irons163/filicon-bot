@@ -37,6 +37,7 @@ struct FiliconApp: App {
                     if let url = notification.object as? URL { model.handleDeepLink(url) }
                 }
         }
+        .windowStyle(.hiddenTitleBar)
         .commands {
             AboutCommands()
             CommandGroup(after: .newItem) {
@@ -139,17 +140,16 @@ struct ContentView: View {
     var body: some View {
         let _ = uiLocale.identifier
         VStack(spacing: 0) {
+            FiliconWorkspaceShell {
+                workspaceDetail
+            }
             AccountConnectionBanner()
             PersistenceRecoveryBanner()
             UpdateStatusPill()
-        NavigationSplitView {
-            FiliconSidebar()
-                .navigationSplitViewColumnWidth(min: 232, ideal: 274, max: 350)
-        } detail: {
-            workspaceDetail
         }
+        .ignoresSafeArea(.container, edges: .top)
         .background(FiliconTheme.canvas)
-        }
+        .tint(FiliconTheme.accent)
         .alert(l10n("Filicon"), isPresented: Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } })) { Button(l10n("OK")) { model.errorMessage = nil } } message: { Text(FiliconLocalization.message(model.errorMessage ?? "")) }
         .sheet(item: Binding(
             get: { model.pendingToolApprovals.first },
@@ -197,7 +197,7 @@ struct ContentView: View {
         switch model.route {
         case .conversation:
             if let conversation = model.selectedConversation { ChatDetailView(conversation: conversation) }
-            else { ContentUnavailableView(l10n("Conversation unavailable"), systemImage: "exclamationmark.bubble") }
+            else { GroupWorkspaceView() }
         case .search: SearchWorkspaceView()
         case .agents: AgentWorkspaceView()
         case .groups: GroupWorkspaceView()
@@ -209,181 +209,11 @@ struct ContentView: View {
         case .plugins: PluginsWorkspaceView()
         case .account: AccountWorkspaceView()
         case .hiddenChats: HiddenChatsView()
-        case nil: ContentUnavailableView(l10n("Choose a workspace"), systemImage: "sidebar.left")
+        case nil: GroupWorkspaceView()
         }
     }
 }
 
-private struct FiliconSidebar: View {
-    @Environment(\.locale) private var uiLocale
-    @EnvironmentObject private var model: AppModel
-    @Environment(\.openSettings) private var openSettings
-    @State private var showingSearchField = false
-    @FocusState private var searchFocused: Bool
-
-    var body: some View {
-        let _ = uiLocale.identifier
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 9) {
-                FiliconAvatar(title: l10n("Filicon"), systemName: "sparkles", size: 29)
-                Text(l10n("Filicon"))
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(FiliconTheme.textPrimary)
-                    .fixedSize(horizontal: true, vertical: false)
-                Spacer(minLength: 4)
-                FiliconIconButton(label: localized("Back"), systemName: "chevron.left", size: 27, action: model.goBack)
-                    .disabled(!model.canGoBack)
-                    .accessibilityIdentifier("workspace-back")
-                FiliconIconButton(label: localized("Forward"), systemName: "chevron.right", size: 27, action: model.goForward)
-                    .disabled(!model.canGoForward)
-                    .accessibilityIdentifier("workspace-forward")
-                FiliconIconButton(label: localized("New Group Chat"), systemName: "person.3.fill", size: 28, isProminent: true) {
-                    model.selectRoute(.groups)
-                }
-                    .disabled(!model.isBootstrapped)
-            }
-            .padding(.horizontal, 14)
-            .padding(.top, 13)
-            .padding(.bottom, 10)
-
-            if showingSearchField {
-                HStack(spacing: 8) {
-                    Image(systemName: "magnifyingglass")
-                        .font(.caption)
-                        .foregroundStyle(FiliconTheme.textTertiary)
-                    TextField(localized("Search chats"), text: $model.searchQuery)
-                        .textFieldStyle(.plain)
-                        .focused($searchFocused)
-                        .onSubmit { model.focusGlobalSearch() }
-                    FiliconIconButton(label: localized("Close search"), systemName: "xmark", size: 24) {
-                        showingSearchField = false
-                        model.searchQuery = ""
-                    }
-                }
-                .padding(.horizontal, 10)
-                .frame(height: 32)
-                .background(FiliconTheme.input, in: RoundedRectangle(cornerRadius: 9))
-                .overlay(RoundedRectangle(cornerRadius: 9).stroke(FiliconTheme.border, lineWidth: 0.8))
-                .padding(.horizontal, 12)
-                .padding(.bottom, 7)
-            } else {
-                Button {
-                    showingSearchField = true
-                    model.focusGlobalSearch()
-                    DispatchQueue.main.async { searchFocused = true }
-                } label: {
-                    HStack(spacing: 10) {
-                        Image(systemName: "magnifyingglass")
-                        Text(localized("Search"))
-                        Spacer()
-                        Text(l10n("⌘K")).font(.caption2.monospaced()).foregroundStyle(FiliconTheme.textTertiary)
-                    }
-                    .font(.system(size: 13.5))
-                    .foregroundStyle(FiliconTheme.textSecondary)
-                    .padding(.horizontal, 12)
-                    .frame(height: 33)
-                    .background(FiliconTheme.surfaceRaised.opacity(0.55), in: RoundedRectangle(cornerRadius: 9))
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(localized("Search"))
-                .padding(.horizontal, 12)
-                .padding(.bottom, 7)
-            }
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 1) {
-                    FiliconSectionLabel(title: localized("Group Chats"))
-                    ForEach(model.groups) { group in
-                        FiliconSidebarRow(
-                            title: group.name,
-                            systemName: "person.3",
-                            selected: model.route == .groups && model.selectedGroupID == group.id
-                        ) {
-                            model.selectGroup(id: group.id)
-                        }
-                    }
-                    if model.groups.isEmpty {
-                        Button(localized("Create your first group")) { model.selectRoute(.groups) }
-                            .buttonStyle(.plain)
-                            .font(.caption)
-                            .foregroundStyle(FiliconTheme.textTertiary)
-                            .padding(.horizontal, 12)
-                            .frame(height: 30)
-                    }
-
-                    FiliconSectionLabel(title: localized("Direct Chats"))
-                    ForEach(model.visibleConversations) { conversation in
-                        ConversationSidebarRow(conversation: conversation)
-                    }
-                    if model.hasMoreConversations {
-                        Button {
-                            Task { await model.loadMoreConversations() }
-                        } label: {
-                            HStack(spacing: 10) {
-                                if model.isLoadingMoreConversations { ProgressView().controlSize(.small) }
-                                else { Image(systemName: "arrow.down.circle") }
-                                Text(localized("Load more chats"))
-                            }
-                            .font(.caption)
-                            .foregroundStyle(FiliconTheme.textTertiary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 12)
-                            .frame(height: 30)
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(model.isLoadingMoreConversations)
-                    }
-                    FiliconSidebarRow(title: localized("Hidden Chats"), systemName: "archivebox", selected: model.route == .hiddenChats) {
-                        model.selectRoute(.hiddenChats)
-                    }
-
-                    FiliconSectionLabel(title: localized("Workspace"))
-                    workspaceRow("Agents", "person.2", .agents)
-                    workspaceRow("Automations", "clock.arrow.circlepath", .automations)
-                    workspaceRow("Channels", "number", .channels)
-                    workspaceRow("Shared Rooms", "person.3.sequence", .sharedRooms)
-                    workspaceRow("MCP Servers", "server.rack", .mcp)
-                    workspaceRow("Computer", "display", .computer)
-                    workspaceRow("Plugins", "puzzlepiece.extension", .plugins)
-                    workspaceRow("Account", "person.crop.circle", .account)
-                }
-                .padding(.horizontal, 8)
-                .padding(.bottom, 12)
-            }
-            .scrollIndicators(.hidden)
-
-            Divider().overlay(FiliconTheme.border)
-            HStack(spacing: 10) {
-                Circle()
-                    .fill(FiliconTheme.accent.opacity(0.22))
-                    .frame(width: 28, height: 28)
-                    .overlay(Image(systemName: "person.fill").font(.caption).foregroundStyle(FiliconTheme.accent))
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(localized("Local workspace")).font(.caption.weight(.semibold)).foregroundStyle(FiliconTheme.textPrimary)
-                    Text(model.dataRoot.lastPathComponent).font(.caption2).foregroundStyle(FiliconTheme.textTertiary).lineLimit(1)
-                }
-                Spacer()
-                FiliconIconButton(label: localized("Settings"), systemName: "gearshape", size: 26) { openSettings() }
-                    .accessibilityIdentifier("workspace-settings")
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 11)
-        }
-        .background(FiliconTheme.sidebar)
-        .foregroundStyle(FiliconTheme.textPrimary)
-    }
-
-    @ViewBuilder
-    private func workspaceRow(_ title: String, _ symbolName: String, _ route: WorkspaceRoute) -> some View {
-        FiliconSidebarRow(title: localized(title), systemName: symbolName, selected: model.route == route) {
-            model.selectRoute(route)
-        }
-    }
-
-    private func localized(_ key: String) -> String {
-        FiliconLocalization.string(key)
-    }
-}
 
 private struct UpdateStatusPill: View {
     @Environment(\.locale) private var uiLocale
@@ -472,70 +302,6 @@ private struct RequiredUpdateOverlay: View {
     }
 }
 
-private struct ConversationSidebarRow: View {
-    @Environment(\.locale) private var uiLocale
-    @EnvironmentObject private var model: AppModel
-    let conversation: Conversation
-    @State private var showingRename = false
-    @State private var title = ""
-
-    var body: some View {
-        let _ = uiLocale.identifier
-        HStack(spacing: 2) {
-            Button {
-                model.selectRoute(.conversation(conversation.id))
-            } label: {
-                HStack(spacing: 10) {
-                    Image(systemName: "bubble.left")
-                        .font(.system(size: 13, weight: .semibold))
-                        .frame(width: 18)
-                    Text(conversation.title == "New conversation" ? FiliconLocalization.string("New Conversation") : conversation.title)
-                        .font(.system(size: 13.5, weight: model.route == .conversation(conversation.id) ? .semibold : .regular))
-                        .lineLimit(1)
-                    Spacer(minLength: 2)
-                }
-                .foregroundStyle(model.route == .conversation(conversation.id) ? FiliconTheme.textPrimary : FiliconTheme.textSecondary)
-                .padding(.leading, 11)
-                .frame(height: 34)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            Menu {
-                Button(l10n("Rename…")) { title = conversation.title; showingRename = true }
-                Button(l10n("Hide")) { model.setConversationHidden(id: conversation.id, hidden: true) }
-                Divider()
-                Button(l10n("Delete"), role: .destructive) { model.deleteConversation(id: conversation.id) }
-            } label: {
-                Image(systemName: "ellipsis")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(FiliconTheme.textTertiary)
-                    .frame(width: 27, height: 27)
-                    .background(FiliconTheme.surfaceRaised.opacity(0.6), in: Circle())
-            }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
-            .padding(.trailing, 4)
-        }
-        .background(model.route == .conversation(conversation.id) ? FiliconTheme.surfaceRaised : .clear, in: RoundedRectangle(cornerRadius: 9))
-        .overlay {
-            if model.route == .conversation(conversation.id) {
-                RoundedRectangle(cornerRadius: 9).stroke(FiliconTheme.border, lineWidth: 0.7)
-            }
-        }
-        .sheet(isPresented: $showingRename) {
-            VStack(alignment: .leading, spacing: 14) {
-                Text(l10n("Rename Conversation")).font(.headline)
-                TextField(l10n("Title"), text: $title).onSubmit(rename)
-                HStack { Spacer(); Button(l10n("Cancel")) { showingRename = false }; Button(l10n("Rename"), action: rename).keyboardShortcut(.defaultAction) }
-            }.padding(20).frame(width: 420)
-        }
-    }
-
-    private func rename() {
-        model.renameConversation(id: conversation.id, title: title)
-        showingRename = false
-    }
-}
 
 private struct HiddenChatsView: View {
     @Environment(\.locale) private var uiLocale
@@ -608,10 +374,13 @@ private struct PluginsWorkspaceView: View {
                 } description: {
                     Text(localized("Filicon accepts a generic HTTPS catalog, so plugin distribution is not tied to one AI vendor."))
                 } actions: {
-                    HStack {
-                        TextField(l10n("https://…/catalog.json"), text: $catalogURL).frame(width: 360)
-                        Button(localized("Use Catalog")) { let value = catalogURL; Task { await model.configurePluginCatalog(value) } }
-                    }
+                    VStack(spacing: 12) {
+                        TextField(l10n("https://…/catalog.json"), text: $catalogURL)
+                            .textFieldStyle(.roundedBorder)
+                        Button(localized("Use Catalog"), action: configureCatalog)
+                            .buttonStyle(FiliconPrimaryButtonStyle())
+                            .disabled(catalogURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }.frame(maxWidth: 340).padding(.horizontal, 16)
                 }
             } else {
                 List {
@@ -665,6 +434,11 @@ private struct PluginsWorkspaceView: View {
 
     private func localized(_ key: String) -> String {
         FiliconLocalization.string(key)
+    }
+
+    private func configureCatalog() {
+        let value = catalogURL
+        Task { await model.configurePluginCatalog(value) }
     }
 
     private var visibleInstalled: [InstalledPlugin] {
@@ -996,10 +770,10 @@ private struct FiliconChatHeader: View {
     var body: some View {
         let _ = uiLocale.identifier
         HStack(spacing: 11) {
-            FiliconAvatar(title: title, systemName: "sparkles", size: 32)
+            PetAvatarImage(pet: .codex).frame(width: 28, height: 30)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
-                    .font(.system(size: 14.5, weight: .semibold))
+                    .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(FiliconTheme.textPrimary)
                     .lineLimit(1)
                 HStack(spacing: 5) {
@@ -1013,7 +787,7 @@ private struct FiliconChatHeader: View {
                         ProgressView().controlSize(.mini)
                     }
                 }
-                .font(.caption)
+                .font(.system(size: 10))
                 .foregroundStyle(FiliconTheme.textSecondary)
             }
             Spacer(minLength: 10)
@@ -1021,10 +795,9 @@ private struct FiliconChatHeader: View {
             FiliconIconButton(label: l10n("Find in Chat (⌘F)"), systemName: "magnifyingglass", action: onFind)
             FiliconIconButton(label: l10n("Full conversation"), systemName: "list.bullet", action: onOutline)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 11)
-        .background(FiliconTheme.surface)
-        .overlay(alignment: .bottom) { Rectangle().fill(FiliconTheme.border).frame(height: 0.7) }
+        .padding(.horizontal, 20)
+        .frame(height: 54)
+        .background(FiliconTheme.canvas)
     }
 }
 
@@ -1105,7 +878,7 @@ private struct ChatConfigurationPopover: View {
     }
 }
 
-private struct ChatDetailView: View {
+struct ChatDetailView: View {
     @Environment(\.locale) private var uiLocale
     @EnvironmentObject private var model: AppModel
     let conversation: Conversation
@@ -1126,7 +899,7 @@ private struct ChatDetailView: View {
         let _ = uiLocale.identifier
         VStack(spacing: 0) {
             FiliconChatHeader(
-                title: conversation.title,
+                title: conversation.title == "New conversation" ? l10n("New Conversation") : conversation.title,
                 providerName: model.descriptors.first(where: { $0.id == conversation.providerID })?.displayName ?? conversation.providerID.rawValue,
                 modelName: model.availableModels.first(where: { $0.id == conversation.modelID })?.displayName ?? conversation.modelID.rawValue,
                 isWorking: model.running.contains(conversation.id),
@@ -1147,6 +920,13 @@ private struct ChatDetailView: View {
                     HStack(alignment: .top, spacing: 0) {
                         Spacer(minLength: 16)
                         LazyVStack(alignment: .leading, spacing: 16) {
+                        if conversation.messages.isEmpty && !model.loadingMessageHistory.contains(conversation.id) {
+                            VStack(spacing: 14) {
+                                PetAvatarImage(pet: .codex).frame(width: 72, height: 80)
+                                Text(l10n("New Conversation")).font(.system(size: 23, weight: .semibold, design: .rounded))
+                                Text(l10n("Message")).font(.system(size: 13)).foregroundStyle(FiliconTheme.textTertiary)
+                            }.frame(maxWidth: .infinity).padding(.vertical, 100)
+                        }
                         if conversation.messages.isEmpty && model.loadingMessageHistory.contains(conversation.id) {
                             ProgressView("Loading messages…")
                                 .frame(maxWidth: .infinity)
@@ -1210,7 +990,6 @@ private struct ChatDetailView: View {
                     performGlobalJump(id, proxy: proxy)
                 }
             }
-            Rectangle().fill(FiliconTheme.border).frame(height: 0.7)
             MCPApprovalPanel()
             if !model.pendingAttachments.isEmpty {
                 ScrollView(.horizontal) {
@@ -1322,7 +1101,6 @@ private struct ChatDetailView: View {
             .padding(9)
             .background(FiliconTheme.input, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(FiliconTheme.borderStrong, lineWidth: 0.8))
-            .shadow(color: .black.opacity(0.12), radius: 12, y: 4)
             .frame(maxWidth: 760)
             .frame(maxWidth: .infinity)
             .padding(.horizontal, 18)
@@ -1534,9 +1312,7 @@ private struct TranscriptMessageView: View {
         let _ = uiLocale.identifier
         let isUser = message.role == .user
         HStack(alignment: .bottom, spacing: 8) {
-            if !isUser {
-                FiliconAvatar(title: roleLabel, systemName: message.role == .tool ? "wrench.and.screwdriver.fill" : "sparkles", size: 25)
-            }
+            if isUser { Spacer(minLength: 50) }
             VStack(alignment: isUser ? .trailing : .leading, spacing: 5) {
                 messageBubble
                 if !message.reactions.isEmpty {
@@ -1552,7 +1328,7 @@ private struct TranscriptMessageView: View {
                 }
                 messageActions
             }
-            if isUser { Spacer(minLength: 25) }
+            if !isUser { Spacer(minLength: 50) }
         }
         .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
         .onHover { isHovered = $0 }
@@ -1560,11 +1336,7 @@ private struct TranscriptMessageView: View {
 
     @ViewBuilder
     private var messageBubble: some View {
-        if message.role == .user {
-            messageBubbleContent.fixedSize(horizontal: true, vertical: false)
-        } else {
-            messageBubbleContent.frame(maxWidth: 640, alignment: .leading)
-        }
+        messageBubbleContent.frame(maxWidth: 520, alignment: message.role == .user ? .trailing : .leading)
     }
 
     private var messageBubbleContent: some View {
@@ -1598,8 +1370,13 @@ private struct TranscriptMessageView: View {
                 .font(.callout)
             }
             if !message.text.isEmpty {
-                MarkdownText(source: message.text)
-                    .foregroundStyle(FiliconTheme.textPrimary)
+                if message.role == .user {
+                    Text(message.text).textSelection(.enabled)
+                        .foregroundStyle(FiliconTheme.userBubbleText)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    MarkdownText(source: message.text).foregroundStyle(FiliconTheme.textPrimary)
+                }
             } else if message.reasoningText.isEmpty && message.toolActivities.isEmpty && message.transcriptCards.isEmpty {
                 Text(message.deliveryStatus == .failed ? l10n("No response was delivered.") : "…")
                     .foregroundStyle(FiliconTheme.textSecondary)
@@ -1633,8 +1410,7 @@ private struct TranscriptMessageView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
-        .background(message.role == .user ? FiliconTheme.userBubble : FiliconTheme.surface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(FiliconTheme.border.opacity(0.75), lineWidth: 0.7))
+        .background(message.role == .user ? FiliconTheme.userBubble : FiliconTheme.incomingBubble, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay {
             if isReplyJumpTarget {
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
@@ -1964,182 +1740,6 @@ private struct AgentWorkspaceView: View {
     }
 }
 
-private struct GroupWorkspaceView: View {
-    @Environment(\.locale) private var uiLocale
-    @EnvironmentObject private var model: AppModel
-    @State private var name = ""
-    @State private var summary = ""
-    @State private var selected: Set<UUID> = []
-    var body: some View {
-        let _ = uiLocale.identifier
-        Form {
-            Section(l10n("Group chat")) {
-                ForEach(model.groups) { group in
-                    GroupChatRow(group: group, initiallyExpanded: model.selectedGroupID == group.id)
-                }
-            }
-            Section {
-                DisclosureGroup(l10n("Create another group")) {
-                    TextField(l10n("Name"), text: $name)
-                    TextField(l10n("Summary"), text: $summary)
-                    ForEach(model.agents.filter { $0.archivedAt == nil }) { agent in
-                        Toggle(agent.name, isOn: Binding(get: { selected.contains(agent.id) }, set: { if $0 { selected.insert(agent.id) } else { selected.remove(agent.id) } })).disabled(!selected.contains(agent.id) && selected.count >= GroupService.maximumMembers)
-                    }
-                    Button(l10n("Create group")) { let ids = model.agents.map(\.id).filter(selected.contains); let values = (name, summary); name = ""; summary = ""; selected.removeAll(); Task { await model.createGroup(name: values.0, summary: values.1, memberIDs: ids) } }
-                }
-            }
-        }.formStyle(.grouped).navigationTitle(l10n("Groups"))
-    }
-}
-
-private struct GroupChatRow: View {
-    @Environment(\.locale) private var uiLocale
-    @EnvironmentObject private var model: AppModel
-    let group: AgentGroup
-    @State private var isExpanded: Bool
-    @State private var draft = ""
-    @State private var members: Set<UUID> = []
-
-    init(group: AgentGroup, initiallyExpanded: Bool) {
-        self.group = group
-        _isExpanded = State(initialValue: initiallyExpanded)
-    }
-
-    var body: some View {
-        let _ = uiLocale.identifier
-        DisclosureGroup(isExpanded: $isExpanded) {
-            VStack(alignment: .leading, spacing: 10) {
-                if !group.summary.isEmpty { Text(group.summary).foregroundStyle(.secondary) }
-                DisclosureGroup(l10n("Group settings")) {
-                    GroupBox(l10n("Members")) {
-                        ForEach(model.agents.filter { $0.archivedAt == nil }) { agent in
-                            Toggle(agent.name, isOn: Binding(
-                                get: { members.contains(agent.id) },
-                                set: { selected in
-                                    if selected { members.insert(agent.id) } else { members.remove(agent.id) }
-                                }
-                            )).disabled(!members.contains(agent.id) && members.count >= GroupService.maximumMembers)
-                        }
-                        Button(l10n("Update Members")) { Task { await model.updateGroupMembers(groupID: group.id, memberIDs: Array(members)) } }
-                    }
-                }
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 8) {
-                            ForEach(model.groupMessages[group.id] ?? []) { message in
-                                VStack(alignment: .leading, spacing: 3) {
-                                    HStack {
-                                        if let senderID = message.senderID,
-                                           let agent = model.agents.first(where: { $0.id == senderID }) {
-                                            AgentAvatarIcon(profile: agent, dimension: 28)
-                                        }
-                                        Text(senderName(message)).font(.caption.bold())
-                                        Spacer(); Text(message.createdAt, style: .time).font(.caption2).foregroundStyle(.secondary)
-                                    }
-                                    Text(message.text).textSelection(.enabled)
-                                    if message.senderID != nil {
-                                        Button("👍") { Task { await model.toggleGroupReaction(groupID: group.id, messageID: message.id, emoji: "👍") } }
-                                            .buttonStyle(.plain).controlSize(.mini)
-                                    }
-                                }
-                                .padding(8).background(.quaternary, in: RoundedRectangle(cornerRadius: 7))
-                                .id(message.id)
-                            }
-                            if let agentID = model.thinkingGroupMembers[group.id],
-                               let agent = model.agents.first(where: { $0.id == agentID }) {
-                                GroupThinkingIndicator(agentName: agent.name)
-                                    .id(thinkingAnchorID)
-                            }
-                        }
-                    }
-                    .onChange(of: model.groupMessages[group.id]?.count ?? 0) {
-                        scrollToLatest(using: proxy)
-                    }
-                    .onChange(of: model.thinkingGroupMembers[group.id]) { _, agentID in
-                        if agentID != nil {
-                            withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(thinkingAnchorID, anchor: .bottom) }
-                        } else {
-                            scrollToLatest(using: proxy)
-                        }
-                    }
-                }.frame(minHeight: 120, maxHeight: 320)
-                HStack {
-                    TextField(
-                        l10n("Group message"),
-                        text: $draft,
-                        prompt: Text(l10n("Message the group; @name and @everyone are supported"))
-                    )
-                        .labelsHidden()
-                        .textFieldStyle(.roundedBorder)
-                        .onSubmit(send)
-                    if model.runningGroups.contains(group.id) {
-                        Button(l10n("Stop")) { Task { await model.stopGroup(id: group.id) } }
-                    } else {
-                        Button(l10n("Send"), action: send).disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    }
-                }
-            }.padding(.top, 8)
-        } label: {
-            VStack(alignment: .leading) {
-                Text(group.name)
-                Text(l10n("\(group.memberIDs.count) members · up to \(GroupService.maximumRounds) response rounds"))
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-        }
-        .onAppear { members = Set(group.memberIDs) }
-        .onChange(of: group.memberIDs) { _, value in members = Set(value) }
-        .onChange(of: model.selectedGroupID) { _, id in
-            if id == group.id { isExpanded = true }
-        }
-    }
-
-    private func send() {
-        let value = draft; draft = ""
-        Task { await model.sendGroupMessage(groupID: group.id, text: value) }
-    }
-
-    private var thinkingAnchorID: String { "group-thinking-\(group.id.uuidString)" }
-
-    private func scrollToLatest(using proxy: ScrollViewProxy) {
-        guard let id = model.groupMessages[group.id]?.last?.id else { return }
-        withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(id, anchor: .bottom) }
-    }
-
-    private func senderName(_ message: RoomMessage) -> String {
-        guard let id = message.senderID else { return l10n("You") }
-        return model.agents.first(where: { $0.id == id })?.name ?? "Agent"
-    }
-}
-
-private struct GroupThinkingIndicator: View {
-    @Environment(\.locale) private var uiLocale
-    let agentName: String
-
-    var body: some View {
-        let _ = uiLocale.identifier
-        TimelineView(.animation(minimumInterval: 0.25)) { context in
-            let phase = Int(context.date.timeIntervalSinceReferenceDate * 4) % 4
-            HStack(spacing: 7) {
-                Text(agentName).font(.caption.bold())
-                Text(l10n("Thinking")).font(.caption).foregroundStyle(.secondary)
-                HStack(spacing: 4) {
-                    ForEach(0..<3) { index in
-                        Circle()
-                            .fill(FiliconTheme.accent)
-                            .frame(width: 5, height: 5)
-                            .opacity(index < phase ? 1 : 0.25)
-                    }
-                }
-                .frame(width: 23, alignment: .leading)
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 9)
-            .background(FiliconTheme.surfaceRaised, in: RoundedRectangle(cornerRadius: 8))
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(Text(l10n("\(agentName) Thinking")))
-    }
-}
 
 struct RoutineAutomationWorkspaceView: View {
     @Environment(\.locale) private var uiLocale

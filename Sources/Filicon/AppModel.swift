@@ -2680,13 +2680,28 @@ final class AppModel: ObservableObject {
         UserDefaults.standard.set(pinnedAgentIDs.map(\.uuidString).sorted(), forKey: "FiliconPinnedAgentIDs")
     }
 
-    func createGroup(name: String, summary: String, memberIDs: [UUID]) async {
-        guard let groupService else { errorMessage = l10n("Group storage is unavailable."); return }
+    @discardableResult
+    func createGroup(name: String, summary: String, memberIDs: [UUID]) async -> Bool {
+        guard let groupService else { errorMessage = l10n("Group storage is unavailable."); return false }
         do {
             let group = try await groupService.create(name: name, summary: summary, memberIDs: memberIDs)
             groups = await groupService.list(); groupMessages[group.id] = []; selectedGroupID = group.id
+            selectGroup(id: group.id)
+            return true
         }
-        catch { errorMessage = error.localizedDescription }
+        catch { errorMessage = error.localizedDescription; return false }
+    }
+
+    func saveGroupSettings(groupID: UUID, name: String, summary: String, memberIDs: [UUID]) async -> Bool {
+        guard let groupService else { errorMessage = l10n("Group storage is unavailable."); return false }
+        do {
+            try await groupService.update(groupID: groupID, name: name, summary: summary, memberIDs: memberIDs)
+            groups = await groupService.list()
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
     }
 
     func updateGroupMembers(groupID: UUID, memberIDs: [UUID]) async {

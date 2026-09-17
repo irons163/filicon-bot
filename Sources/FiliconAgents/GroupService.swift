@@ -34,6 +34,26 @@ public actor GroupService {
 
     public func list() -> [AgentGroup] { state.groups }
 
+    /// Save the inspector's fields together, after validating the entire draft.
+    public func update(groupID: UUID, name: String, summary: String, memberIDs: [UUID]) async throws {
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { throw AgentServiceError.invalidName }
+        guard memberIDs.count <= Self.maximumMembers else { throw AgentServiceError.groupMemberLimit }
+        guard Set(memberIDs).count == memberIDs.count else { throw AgentServiceError.duplicateMember }
+        for id in memberIDs where await agents.profile(id: id) == nil { throw AgentServiceError.unknownAgent(id) }
+        guard let index = state.groups.firstIndex(where: { $0.id == groupID }) else { throw AgentServiceError.unknownGroup(groupID) }
+        let previous = state.groups[index]
+        var updated = previous
+        updated.name = String(name.prefix(120))
+        updated.summary = String(summary.prefix(2_000))
+        updated.memberIDs = memberIDs
+        if previous.memberIDs != memberIDs { updated.nextSpeakerOffset = 0 }
+        state.groups[index] = updated
+        do { try persist() }
+        catch { state.groups[index] = previous; throw error }
+        if previous.memberIDs != memberIDs { epochs[groupID, default: 0] &+= 1 }
+    }
+
     public func updateMembers(groupID: UUID, memberIDs: [UUID]) async throws {
         guard let index = state.groups.firstIndex(where: { $0.id == groupID }) else {
             throw AgentServiceError.unknownGroup(groupID)
