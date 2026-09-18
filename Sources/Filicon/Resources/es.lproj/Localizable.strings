@@ -1448,3 +1448,10 @@
 "Only a ranked selection is sent each turn. Low-importance notes rank below equally recent dated facts. Omitted facts remain saved until you forget them." = "En cada turno solo se envía una selección ordenada. Las notas de poca importancia tienen menor prioridad que los hechos fechados igual de recientes. Los hechos omitidos siguen guardados hasta que los olvides.";
 "Use memory write/forget with one fact of at most 1,000 characters, scope agent or user, and tier profile, log or note. Forget requires exact recorded text, the same scope, and no tier." = "Usa memory write/forget con un solo hecho de hasta 1.000 caracteres, scope agent o user y tier profile, log o note. Para olvidar, se requieren el texto exacto registrado, el mismo scope y ningún tier.";
 "This saves the reply and images in this group. It does not add responders or automatically resend images to other models." = "La respuesta y las imágenes se guardarán en este grupo. No se añadirán participantes a las respuestas ni se reenviarán automáticamente las imágenes a otros modelos.";
+"Change own avatar" = "Cambiar avatar propio";
+"Reset own avatar" = "Restablecer avatar propio";
+"Current avatar" = "Avatar actual";
+"New avatar" = "Nuevo avatar";
+"Custom or default avatar" = "Avatar personalizado o predeterminado";
+"Only this agent's avatar changes. Names, private instructions, models and permissions stay unchanged. Reset restores Codex; no image files are deleted." = "Solo cambia el avatar de este agente. El nombre, las instrucciones privadas, los modelos y los permisos no cambian. Restablecer vuelve a Codex sin eliminar archivos de imagen.";
+"For avatar changes, use target avatar with action set and a listed pet_id, or action clear without pet_id. Paths, URLs and other fields are not supported." = "Para cambiar el avatar, usa target avatar, action set y un pet_id de la lista, o action clear sin pet_id. No se admiten rutas, URL ni otros campos.";

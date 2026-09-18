@@ -517,6 +517,8 @@ struct GroupToolApprovalPanel: View {
                 }
                 if approval.action.context.metadata["agentStateTarget"] == "memory" {
                     AgentMemoryApprovalDetails(metadata: approval.action.context.metadata)
+                } else if approval.action.context.metadata["agentStateTarget"] == "avatar" {
+                    AgentAvatarApprovalDetails(metadata: approval.action.context.metadata)
                 } else if ["CreateAgent", "UpdateAgent", "update_state"].contains(approval.action.context.metadata["tool"] ?? "") {
                     AgentProfileApprovalDetails(metadata: approval.action.context.metadata)
                 }
@@ -605,6 +607,37 @@ extension AgentMemory.Scope {
         self == .user
             ? "Shared facts are sent to every current and future agent's configured model in this account during group and mailbox turns, including agents outside this group. Sharing does not grant tool permissions."
             : "Saved facts are sent to this agent's configured model in future group and mailbox turns in this account. They are not shared with other agents or used as tool permissions."
+    }
+}
+
+struct AgentAvatarApprovalDetails: View {
+    let metadata: [String: String]
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(l10n(metadata["agentAvatarAction"] == "clear" ? "Reset own avatar" : "Change own avatar"))
+                .font(.headline)
+            Text(verbatim: metadata["agentName"] ?? "").font(.callout.weight(.semibold))
+            HStack(alignment: .top, spacing: 16) {
+                avatarColumn("Current avatar", petID: metadata["previousAgentAvatarPet"])
+                Image(systemName: "arrow.right").padding(.top, 44).accessibilityHidden(true)
+                avatarColumn("New avatar", petID: metadata["agentAvatarPet"])
+            }
+            Text(l10n("Only this agent's avatar changes. Names, private instructions, models and permissions stay unchanged. Reset restores Codex; no image files are deleted."))
+                .font(.caption).foregroundStyle(FiliconTheme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+    private func avatarColumn(_ title: String, petID: String?) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(FiliconLocalization.string(title)).font(.caption)
+            if let petID, let pet = AgentPetAvatar(rawValue: petID) {
+                PetAvatarImage(pet: pet).frame(width: 64, height: 70)
+                Text(verbatim: pet.name).font(.callout)
+            } else {
+                Image(systemName: "person.crop.square").font(.largeTitle).frame(width: 64, height: 70)
+                Text(l10n("Custom or default avatar")).font(.caption).fixedSize(horizontal: false, vertical: true)
+            }
+        }.frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

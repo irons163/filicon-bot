@@ -52,6 +52,17 @@ responders or automatically resend images to other models. Group-target image
 broadcasts, arbitrary paths, URLs and generated images remain unsupported.
 Imported blobs are not yet automatically cleaned up when removed from a draft.
 
+In group and mailbox turns, an agent can also propose changing **its own avatar**
+with `update_state(target:"avatar", action:"set", pet_id:"hoots")`, or restore
+the default Codex companion with `action:"clear"` and no `pet_id`. Each change
+shows a preview and requires explicit approval, even with auto-review enabled.
+Only the nine bundled companions are available to this tool; arbitrary files,
+URLs, generated images and changes to another agent's avatar are not supported.
+The approved change preserves names, private instructions, models and permissions;
+resetting does not delete custom image files. Stop/account changes revoke pending
+proposals, and an intervening manual avatar edit invalidates the old proposal.
+Avatar, profile and memory changes share the four-change limit per request.
+
 In group and mailbox turns, agents can propose remembering or forgetting a short
 fact using `update_state(target:"memory", action:"write"|"forget", fact:...)`.
 Each change needs explicit approval. Omitted scope (or `scope:"agent"`) remains

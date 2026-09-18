@@ -1448,3 +1448,10 @@
 "Only a ranked selection is sent each turn. Low-importance notes rank below equally recent dated facts. Omitted facts remain saved until you forget them." = "매 차례 순위에 따른 일부 기억만 전송합니다. 중요도가 낮은 메모는 같은 시기의 날짜가 있는 사실보다 순위가 낮습니다. 제외된 사실도 잊기 전까지 저장됩니다.";
 "Use memory write/forget with one fact of at most 1,000 characters, scope agent or user, and tier profile, log or note. Forget requires exact recorded text, the same scope, and no tier." = "memory write/forget에는 최대 1,000자의 사실 하나, scope는 agent 또는 user, tier는 profile, log 또는 note를 사용하세요. 잊으려면 기록된 정확한 문구와 같은 scope가 필요하며 tier를 지정하면 안 됩니다.";
 "This saves the reply and images in this group. It does not add responders or automatically resend images to other models." = "답변과 이미지를 이 그룹에 저장합니다. 응답자를 추가하거나 다른 모델에 이미지를 자동으로 다시 전송하지 않습니다.";
+"Change own avatar" = "내 아바타 변경";
+"Reset own avatar" = "내 아바타 초기화";
+"Current avatar" = "현재 아바타";
+"New avatar" = "새 아바타";
+"Custom or default avatar" = "사용자 지정 또는 기본 아바타";
+"Only this agent's avatar changes. Names, private instructions, models and permissions stay unchanged. Reset restores Codex; no image files are deleted." = "이 에이전트의 아바타만 변경됩니다. 이름, 비공개 지침, 모델 및 권한은 유지됩니다. 초기화하면 Codex로 돌아가며 이미지 파일은 삭제되지 않습니다.";
+"For avatar changes, use target avatar with action set and a listed pet_id, or action clear without pet_id. Paths, URLs and other fields are not supported." = "아바타를 변경하려면 target avatar, action set과 목록의 pet_id를 사용하거나 pet_id 없이 action clear를 사용하세요. 경로, URL 및 다른 필드는 지원하지 않습니다.";

@@ -64,6 +64,98 @@ private actor ManagementWakeProbe {
         throw PendingApprovalError.stale("Mailbox execution did not finish")
     }
 
+    @Test(arguments: ["approve", "deny", "stop", "account", "stale"], ["set", "clear"])
+    func ownAvatarUsesExplicitPreviewAndLifecycleFences(mode: String, action: String) async throws {
+        let (root, model, groupID, original, peer) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        var owner = original; owner.avatar = .pet(.dewey)
+        #expect(await model.updateAgent(owner))
+        let expectedPet: AgentPetAvatar = action == "set" ? .hoots : .codex
+        await model.registry.register(ManagingAgentProvider { _, execute in
+            var fields = ["target": "avatar", "action": action]
+            if action == "set" { fields["pet_id"] = "hoots" }
+            let result = try await execute(.init(id: "avatar", name: "update_state", argumentsJSON: JSONEncoder().encode(fields)))
+            expectNoDifference(result.isError, mode != "approve")
+            return "PASS"
+        })
+        let run = Task { await model.sendGroupMessage(groupID: groupID, text: "Change your avatar") }
+        let approval = try await pending(model, tool: "update_state")
+        expectNoDifference(approval.action.target, .resource(kind: "agent", identifier: owner.id.uuidString))
+        expectNoDifference(approval.action.context.metadata["agentStateTarget"], "avatar")
+        expectNoDifference(approval.action.context.metadata["agentAvatarAction"], action)
+        expectNoDifference(approval.action.context.metadata["agentAvatarPet"], expectedPet.rawValue)
+        expectNoDifference(approval.action.context.metadata["previousAgentAvatarPet"], "dewey")
+        expectNoDifference(approval.action.context.metadata["agentName"], owner.name)
+        #expect(!approval.action.context.metadata.values.joined().contains("PRIVATE_"))
+        expectNoDifference(model.agents.first { $0.id == owner.id }?.avatar, .pet(.dewey))
+        if mode == "stop" { await model.stopGroup(id: groupID) }
+        if mode == "account" { await model.cancelAutoReviewApprovals(nextAccountID: "other") }
+        if mode == "stale" { owner.avatar = .pet(.seedy); #expect(await model.updateAgent(owner)) }
+        await model.resolveGroupApproval(approval, groupID: groupID, approve: mode != "deny")
+        await run.value
+        await model.resolveGroupApproval(approval, groupID: groupID, approve: true) // A late click cannot resurrect it.
+        let expected: AgentAvatar = .pet(mode == "approve" ? expectedPet : mode == "stale" ? .seedy : .dewey)
+        let saved = try #require(model.agents.first { $0.id == owner.id })
+        expectNoDifference(saved.avatar, expected)
+        expectNoDifference(saved.name, original.name); expectNoDifference(saved.instructions, original.instructions)
+        expectNoDifference(saved.modelID, original.modelID); expectNoDifference(saved.summary, original.summary)
+        expectNoDifference(model.agents.first { $0.id == peer.id }?.avatar, peer.avatar)
+        #expect(model.pendingAutoReviewApprovals.isEmpty && model.runningGroups.isEmpty && model.agentMessages.isEmpty)
+        let restored = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+        await restored.reloadWorkspaceData()
+        expectNoDifference(restored.agents.first { $0.id == owner.id }?.avatar, expected)
+    }
+
+    @Test func mailboxAvatarIsBoundToRecipientNotSender() async throws {
+        let (root, model, _, sender, recipient) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        await model.registry.register(ManagingAgentProvider { _, execute in
+            let result = try await execute(.init(id: "avatar", name: "update_state",
+                argumentsJSON: Data(#"{"target":"avatar","action":"set","pet_id":"fireball"}"#.utf8)))
+            #expect(!result.isError)
+            return "PASS"
+        })
+        #expect(await model.sendAgentMessage(senderID: sender.id, recipientID: recipient.id, text: "Use Fireball for your avatar"))
+        let approval = try await pending(model, tool: "update_state")
+        expectNoDifference(approval.action.target, .resource(kind: "agent", identifier: recipient.id.uuidString))
+        expectNoDifference(approval.action.context.metadata["agentName"], recipient.name)
+        await model.resolveGroupApproval(approval, groupID: approval.action.context.conversationID, approve: true)
+        try await waitForMailbox(model)
+        expectNoDifference(model.agents.first { $0.id == recipient.id }?.avatar, .pet(.fireball))
+        expectNoDifference(model.agents.first { $0.id == sender.id }?.avatar, sender.avatar)
+        expectNoDifference(model.agentMessages.first?.delivery?.state, .completed)
+    }
+
+    @Test func avatarPreviewRendersInSevenLanguages() throws {
+        let disclosure = "Only this agent's avatar changes. Names, private instructions, models and permissions stay unchanged. Reset restores Codex; no image files are deleted."
+        let output = ProcessInfo.processInfo.environment["FILICON_UI_REVIEW_OUTPUT"].map { URL(fileURLWithPath: $0) }
+        for pet in AgentPetAvatar.allCases { #expect(PetAvatarImages.image(for: pet) != nil) }
+        for language in ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"] {
+            for action in ["set", "clear"] {
+                try FiliconLocalization.$languageOverride.withValue(language) {
+                    if language != "en" { #expect(FiliconLocalization.string(disclosure) != disclosure) }
+                    let metadata = ["agentName": "Designer", "agentAvatarAction": action,
+                                    "agentAvatarPet": action == "set" ? "hoots" : "codex",
+                                    "previousAgentAvatarPet": action == "set" ? "dewey" : ""]
+                    let host = NSHostingView(rootView: AgentAvatarApprovalDetails(metadata: metadata)
+                        .padding(20).frame(width: 380).background(FiliconTheme.canvas)
+                        .environment(\.locale, Locale(identifier: language)).environment(\.colorScheme, .light))
+                    host.appearance = NSAppearance(named: .aqua)
+                    host.frame = .init(x: 0, y: 0, width: 380, height: 390)
+                    host.layoutSubtreeIfNeeded()
+                    #expect(host.fittingSize.height <= 390)
+                    let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                    host.cacheDisplay(in: host.bounds, to: bitmap)
+                    let data = try #require(bitmap.representation(using: .png, properties: [:]))
+                    if let output {
+                        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+                        try data.write(to: output.appending(path: "avatar-\(action)-\(language).png"))
+                    }
+                }
+            }
+        }
+    }
+
     @Test(arguments: ["deny", "stop", "account"], [AgentMemory.Scope.agent, .user])
     func pendingMemoryWritesCannotBypassApprovalOrLifecycle(mode: String, scope: AgentMemory.Scope) async throws {
         let (root, model, groupID, owner, _) = try await fixture()

@@ -1448,3 +1448,10 @@
 "Only a ranked selection is sent each turn. Low-importance notes rank below equally recent dated facts. Omitted facts remain saved until you forget them." = "每回合只會傳送排序後的部分記憶。低重要性筆記的順位低於同樣近期的日期事實。未傳送的事實仍會保存，直到你將其忘記。";
 "Use memory write/forget with one fact of at most 1,000 characters, scope agent or user, and tier profile, log or note. Forget requires exact recorded text, the same scope, and no tier." = "請用 memory write/forget 處理單一事實（最多 1,000 字元），scope 為 agent 或 user，tier 為 profile、log 或 note。忘記時須使用記錄原文及相同 scope，不可指定 tier。";
 "This saves the reply and images in this group. It does not add responders or automatically resend images to other models." = "這會將回覆與圖片儲存在此群組，不會新增回覆者或自動將圖片重送給其他模型。";
+"Change own avatar" = "更換自己的頭像";
+"Reset own avatar" = "重設自己的頭像";
+"Current avatar" = "目前頭像";
+"New avatar" = "新頭像";
+"Custom or default avatar" = "自訂或預設頭像";
+"Only this agent's avatar changes. Names, private instructions, models and permissions stay unchanged. Reset restores Codex; no image files are deleted." = "只變更這位代理人的頭像，名稱、私人指令、模型與權限維持不變。重設會恢復 Codex，不會刪除任何圖片檔案。";
+"For avatar changes, use target avatar with action set and a listed pet_id, or action clear without pet_id. Paths, URLs and other fields are not supported." = "變更頭像時，請使用 target avatar、action set 及清單中的 pet_id；或使用 action clear 且不提供 pet_id。不支援路徑、網址或其他欄位。";

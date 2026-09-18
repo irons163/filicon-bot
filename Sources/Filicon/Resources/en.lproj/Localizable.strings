@@ -1448,3 +1448,10 @@
 "Only a ranked selection is sent each turn. Low-importance notes rank below equally recent dated facts. Omitted facts remain saved until you forget them." = "Only a ranked selection is sent each turn. Low-importance notes rank below equally recent dated facts. Omitted facts remain saved until you forget them.";
 "Use memory write/forget with one fact of at most 1,000 characters, scope agent or user, and tier profile, log or note. Forget requires exact recorded text, the same scope, and no tier." = "Use memory write/forget with one fact of at most 1,000 characters, scope agent or user, and tier profile, log or note. Forget requires exact recorded text, the same scope, and no tier.";
 "This saves the reply and images in this group. It does not add responders or automatically resend images to other models." = "This saves the reply and images in this group. It does not add responders or automatically resend images to other models.";
+"Change own avatar" = "Change own avatar";
+"Reset own avatar" = "Reset own avatar";
+"Current avatar" = "Current avatar";
+"New avatar" = "New avatar";
+"Custom or default avatar" = "Custom or default avatar";
+"Only this agent's avatar changes. Names, private instructions, models and permissions stay unchanged. Reset restores Codex; no image files are deleted." = "Only this agent's avatar changes. Names, private instructions, models and permissions stay unchanged. Reset restores Codex; no image files are deleted.";
+"For avatar changes, use target avatar with action set and a listed pet_id, or action clear without pet_id. Paths, URLs and other fields are not supported." = "For avatar changes, use target avatar with action set and a listed pet_id, or action clear without pet_id. Paths, URLs and other fields are not supported.";
