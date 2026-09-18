@@ -179,8 +179,22 @@ extension AppModel {
 struct AppWorkflowPromptExecutor: AgentWorkflowPromptExecuting {
     let registry: ProviderRegistry
     let agents: AgentService
+    let scheduler: AgentExecutionScheduler
+
+    init(registry: ProviderRegistry, agents: AgentService, scheduler: AgentExecutionScheduler = AgentExecutionScheduler()) {
+        self.registry = registry; self.agents = agents; self.scheduler = scheduler
+    }
 
     func executePrompt(_ request: AgentWorkflowPromptRequest) async throws -> String {
+        guard let agentID = request.agentID else {
+            throw ProviderError.transport("The workflow's selected agent or provider is unavailable.")
+        }
+        return try await scheduler.withExclusiveAccess(agentID: agentID) {
+            try await executeExclusive(request)
+        }
+    }
+
+    private func executeExclusive(_ request: AgentWorkflowPromptRequest) async throws -> String {
         guard let agentID = request.agentID,
               let profile = await agents.profile(id: agentID), profile.archivedAt == nil,
               let provider = await registry.provider(id: profile.providerID) else {
@@ -198,6 +212,7 @@ struct AppWorkflowPromptExecutor: AgentWorkflowPromptExecuting {
         let inference = InferenceRequest(conversationID: request.runID, modelID: profile.modelID, messages: messages)
         var output = ""
         for try await event in provider.stream(inference) {
+            try Task.checkCancellation()
             if case .textDelta(let delta) = event {
                 guard output.utf8.count + delta.utf8.count <= AgentWorkflowLimits.maximumBodyBytes else {
                     throw AgentWorkflowError.boundsExceeded("prompt output")

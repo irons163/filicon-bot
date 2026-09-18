@@ -1,6 +1,7 @@
 import Foundation
 import FiliconDomain
 import FiliconProviderKit
+import FiliconAgents
 
 public struct ModelRefreshTicket: Equatable, Sendable {
     fileprivate let generation: UInt64
@@ -48,6 +49,9 @@ public actor TurnCoordinator {
         let provider: any AIProvider
         let additionalTools: [any ToolExecutor]
         let toolContext: ToolContext
+        let agentID: UUID?
+        let executionTimeout: Duration?
+        let onStart: @Sendable () async throws -> Void
         let onEvent: @Sendable (InferenceEvent) async throws -> Void
         let continuation: CheckedContinuation<Void, any Error>
     }
@@ -60,16 +64,23 @@ public actor TurnCoordinator {
 
     private let registry: ProviderRegistry
     private let toolCatalog: ToolCatalog?
+    private let agentScheduler: AgentExecutionScheduler
     private var active: [UUID: ActiveTurn] = [:]
     private var pending: [UUID: [Submission]] = [:]
 
-    public init(registry: ProviderRegistry, toolCatalog: ToolCatalog? = nil) { self.registry = registry; self.toolCatalog = toolCatalog }
+    public init(registry: ProviderRegistry, toolCatalog: ToolCatalog? = nil,
+                agentScheduler: AgentExecutionScheduler = AgentExecutionScheduler()) {
+        self.registry = registry; self.toolCatalog = toolCatalog; self.agentScheduler = agentScheduler
+    }
 
     public func send(
         request: InferenceRequest,
         providerID: ProviderID,
         additionalTools: [any ToolExecutor] = [],
         toolContext: ToolContext? = nil,
+        agentID: UUID? = nil,
+        executionTimeout: Duration? = nil,
+        onStart: @escaping @Sendable () async throws -> Void = {},
         onEvent: @escaping @Sendable (InferenceEvent) async throws -> Void
     ) async throws {
         guard let provider = await registry.provider(id: providerID) else {
@@ -89,6 +100,9 @@ public actor TurnCoordinator {
                     provider: provider,
                     additionalTools: additionalTools,
                     toolContext: toolContext ?? ToolContext(conversationID: request.conversationID),
+                    agentID: agentID,
+                    executionTimeout: executionTimeout,
+                    onStart: onStart,
                     onEvent: onEvent,
                     continuation: continuation
                 )
@@ -133,19 +147,14 @@ public actor TurnCoordinator {
         }
 
         let catalog = toolCatalog
+        let scheduler = agentScheduler
         let task = Task {
-            let stream: AsyncThrowingStream<InferenceEvent, Error>
-            if let catalog, submission.provider.descriptor.supportsToolCalling {
-                stream = await ToolLoop(provider: submission.provider, catalog: catalog, additionalTools: submission.additionalTools).run(
-                    submission.request,
-                    context: submission.toolContext
-                )
+            if let agentID = submission.agentID {
+                try await scheduler.withExclusiveAccess(agentID: agentID) {
+                    try await Self.execute(submission, catalog: catalog)
+                }
             } else {
-                stream = submission.provider.stream(submission.request)
-            }
-            for try await event in stream {
-                try Task.checkCancellation()
-                try await submission.onEvent(event)
+                try await Self.execute(submission, catalog: catalog)
             }
         }
         active[conversationID] = ActiveTurn(
@@ -157,6 +166,45 @@ public actor TurnCoordinator {
         Task {
             let result = await task.result
             finishActive(token: submission.token, conversationID: conversationID, result: result)
+        }
+    }
+
+    private static func execute(_ submission: Submission, catalog: ToolCatalog?) async throws {
+        try Task.checkCancellation()
+        try await submission.onStart()
+        if let timeout = submission.executionTimeout {
+            try await withThrowingTaskGroup(of: Void.self) { tasks in
+                tasks.addTask { try await consume(submission, catalog: catalog) }
+                tasks.addTask {
+                    try await Task.sleep(for: timeout)
+                    throw AgentTurnTimeout()
+                }
+                defer { tasks.cancelAll() }
+                _ = try await tasks.next()
+            }
+        } else { try await consume(submission, catalog: catalog) }
+    }
+
+    private static func consume(_ submission: Submission, catalog: ToolCatalog?) async throws {
+        try Task.checkCancellation()
+        let stream: AsyncThrowingStream<InferenceEvent, Error>
+        let toolRun: ToolLoopRun?
+        if let catalog, submission.provider.descriptor.supportsToolCalling {
+            let run = await ToolLoop(provider: submission.provider, catalog: catalog, additionalTools: submission.additionalTools).start(
+                submission.request, context: submission.toolContext
+            )
+            toolRun = run; stream = run.events
+        } else { toolRun = nil; stream = submission.provider.stream(submission.request) }
+        do {
+            for try await event in stream {
+                try Task.checkCancellation()
+                try await submission.onEvent(event)
+            }
+            try Task.checkCancellation()
+            await toolRun?.finish()
+        } catch {
+            await toolRun?.cancelAndWait()
+            throw error
         }
     }
 
@@ -191,4 +239,8 @@ public actor TurnCoordinator {
         }
         submission.continuation.resume(throwing: CancellationError())
     }
+}
+
+private struct AgentTurnTimeout: LocalizedError {
+    var errorDescription: String? { "The delegated agent response timed out." }
 }

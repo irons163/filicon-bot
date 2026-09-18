@@ -21,6 +21,7 @@ enum AppMCPApprovalDecision: Sendable {
 actor AppMCPApprovalBroker {
     typealias ChangeHandler = @Sendable ([MCPApprovalPresentation]) -> Void
     private struct Pending {
+        let token: UUID
         let presentation: MCPApprovalPresentation
         let continuation: CheckedContinuation<AppMCPApprovalDecision, Never>
         let expiry: Task<Void, Never>
@@ -39,19 +40,21 @@ actor AppMCPApprovalBroker {
         // fence advanced in between, invalidate() removed this target and the stale request must
         // never be republished to the UI.
         guard knownTargets.contains(presentation.request.target) else { return .cancelled }
+        let token = UUID()
         return await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
                 guard !Task.isCancelled else { continuation.resume(returning: .cancelled); return }
                 let id = presentation.id
                 let delay = max(0, presentation.request.expiresAt.timeIntervalSinceNow)
                 let expiry = Task { [weak self] in
-                    try? await Task.sleep(for: .seconds(delay))
-                    await self?.expire(id: id)
+                    do { try await Task.sleep(for: .seconds(delay)) }
+                    catch { return }
+                    await self?.expire(id: id, token: token)
                 }
-                pending[id] = .init(presentation: presentation, continuation: continuation, expiry: expiry)
+                pending[id] = .init(token: token, presentation: presentation, continuation: continuation, expiry: expiry)
                 publish()
             }
-        } onCancel: { Task { await self.cancel(id: presentation.id) } }
+        } onCancel: { Task { await self.cancel(id: presentation.id, token: token) } }
     }
 
     @discardableResult
@@ -76,7 +79,15 @@ actor AppMCPApprovalBroker {
 
     func cancelAll() -> [MCPCallTarget] { invalidate { _ in true } }
 
-    private func expire(id: UUID) { finish(id: id, decision: .expired) }
+    private func expire(id: UUID, token: UUID) {
+        guard pending[id]?.token == token else { return }
+        finish(id: id, decision: .expired)
+    }
+
+    private func cancel(id: UUID, token: UUID) {
+        guard pending[id]?.token == token else { return }
+        finish(id: id, decision: .cancelled)
+    }
 
     private func finish(id: UUID, decision: AppMCPApprovalDecision) {
         guard let value = pending.removeValue(forKey: id) else { return }

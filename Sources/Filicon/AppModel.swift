@@ -298,7 +298,8 @@ final class AppModel: ObservableObject {
     private lazy var mcpApprovalBroker = AppMCPApprovalBroker { [weak self] requests in
         Task { @MainActor in self?.pendingMCPApprovals = requests }
     }
-    private lazy var coordinator = TurnCoordinator(registry: registry, toolCatalog: toolCatalog)
+    let agentExecutionScheduler = AgentExecutionScheduler()
+    private lazy var coordinator = TurnCoordinator(registry: registry, toolCatalog: toolCatalog, agentScheduler: agentExecutionScheduler)
     private var modelRefreshGuard = ModelRefreshGuard()
     private var turnTasks: [UUID: Task<Void, Never>] = [:]
     private var draftSaveTask: Task<Void, Never>?
@@ -437,7 +438,7 @@ final class AppModel: ObservableObject {
         agentConversations = try? AgentConversationStore(url: root.appending(path: "agent-conversations.json"))
         if let agentService {
             agentMessenger = try? AgentMessenger(service: agentService, storeURL: root.appending(path: "agent-messages.json"))
-            subagentService = SubagentService(agents: agentService)
+            subagentService = SubagentService(agents: agentService, scheduler: agentExecutionScheduler)
             groupService = try? GroupService(agents: agentService, storeURL: root.appending(path: "groups.json"))
         } else {
             agentMessenger = nil
@@ -472,12 +473,12 @@ final class AppModel: ObservableObject {
             workflowService = try? WorkflowService.persistent(
                 workflowsURL: root.appending(path: "workflows.json"),
                 runHistoryURL: root.appending(path: "runs.json"),
-                promptExecutor: AppWorkflowPromptExecutor(registry: registry, agents: agentService),
+                promptExecutor: AppWorkflowPromptExecutor(registry: registry, agents: agentService, scheduler: agentExecutionScheduler),
                 actionHandler: AppWorkflowNoAuthorityActionHandler()
             )
         }
         if let automationService, let agentService {
-            let executor = AppAutomationExecutor(registry: registry, agents: agentService)
+            let executor = AppAutomationExecutor(registry: registry, agents: agentService, scheduler: agentExecutionScheduler)
             automationScheduler = AutomationScheduler(service: automationService, executor: executor)
             let hub = AutomationTriggerHub(service: automationService, executor: executor)
             automationTriggerHub = hub
@@ -2595,10 +2596,13 @@ final class AppModel: ObservableObject {
     }
 
     func launchAgentTask(kind: AgentTaskKind, agentID: UUID, title: String, prompt: String) async {
+        guard !agentMessagingAccountTransition else { return }
+        let generation = autoReviewAccountGeneration
         guard let subagentService, let agentService,
               let profile = await agentService.profile(id: agentID), profile.archivedAt == nil else {
             errorMessage = l10n("The selected agent is unavailable."); return
         }
+        guard !agentMessagingAccountTransition, generation == autoReviewAccountGeneration else { return }
         let runtime: any AgentAsyncTaskRuntime
         switch kind {
         case .shell:
@@ -3126,31 +3130,46 @@ final class AppModel: ObservableObject {
     }
 
     private func respondToInboundChannel(_ envelope: ChannelEnvelope) async {
-        guard let channelService,
-              let connection = channelConnections.first(where: { $0.id == envelope.connectionID }),
-              let agentID = connection.agentID,
-              let agentService,
-              let profile = await agentService.profile(id: agentID), profile.archivedAt == nil,
-              let provider = await registry.provider(id: profile.providerID) else { return }
+        guard !agentMessagingAccountTransition,
+              let connection = channelConnections.first(where: { $0.id == envelope.connectionID && $0.enabled }),
+              let agentID = connection.agentID else { return }
+        let generation = autoReviewAccountGeneration
         do {
-            let request = InferenceRequest(
-                conversationID: UUID(),
-                modelID: profile.modelID,
-                messages: [
-                    .init(role: .system, text: profile.instructions),
-                    .init(role: .user, text: "\(envelope.senderDisplayName): \(envelope.text)"),
-                ]
-            )
-            var response = ""
-            for try await event in provider.stream(request) {
-                if case .textDelta(let value) = event { response += value }
+            try await agentExecutionScheduler.withExclusiveAccess(agentID: agentID) {
+                try await self.respondToScheduledChannel(envelope, agentID: agentID, generation: generation)
             }
-            let trimmed = response.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else { return }
-            _ = try await channelService.enqueue(.init(text: trimmed), to: envelope.address, connectionID: connection.id)
-            await channelService.flush()
-            await reloadChannelState()
+        } catch is CancellationError { /* Stopped or superseded while waiting for this agent. */
         } catch { errorMessage = error.localizedDescription }
+    }
+
+    private func respondToScheduledChannel(_ envelope: ChannelEnvelope, agentID: UUID, generation: UInt64) async throws {
+        guard let channelService, let agentService else { return }
+        // Revalidate after waiting: a queued reply must not revive a disabled
+        // connection or run a profile captured before an account transition.
+        let connections = await channelService.connections()
+        guard connections.contains(where: { $0.id == envelope.connectionID && $0.enabled && $0.agentID == agentID }),
+              let profile = await agentService.profile(id: agentID), profile.archivedAt == nil,
+              let provider = await registry.provider(id: profile.providerID),
+              !agentMessagingAccountTransition, generation == autoReviewAccountGeneration else { return }
+        try Task.checkCancellation()
+        let request = InferenceRequest(conversationID: UUID(), modelID: profile.modelID, messages: [
+            .init(role: .system, text: profile.instructions),
+            .init(role: .user, text: "\(envelope.senderDisplayName): \(envelope.text)"),
+        ])
+        var response = ""
+        for try await event in provider.stream(request) {
+            try Task.checkCancellation()
+            if case .textDelta(let value) = event { response += value }
+        }
+        let currentConnections = await channelService.connections()
+        try Task.checkCancellation()
+        guard !agentMessagingAccountTransition, generation == autoReviewAccountGeneration,
+              currentConnections.contains(where: { $0.id == envelope.connectionID && $0.enabled && $0.agentID == agentID }) else { return }
+        let trimmed = response.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        _ = try await channelService.enqueue(.init(text: trimmed), to: envelope.address, connectionID: envelope.connectionID)
+        await channelService.flush()
+        await reloadChannelState()
     }
 
     private func observeChannelDeliveries() {
@@ -3211,7 +3230,7 @@ final class AppModel: ObservableObject {
     func runAutomationNow(id: UUID) async {
         guard let automationService, let agentService else { return }
         do {
-            _ = try await automationService.runNow(id: id, executor: AppAutomationExecutor(registry: registry, agents: agentService))
+            _ = try await automationService.runNow(id: id, executor: AppAutomationExecutor(registry: registry, agents: agentService, scheduler: agentExecutionScheduler))
             await reloadAutomationDetails(markViewed: false)
         } catch { errorMessage = error.localizedDescription }
     }
@@ -4076,6 +4095,8 @@ final class AppModel: ObservableObject {
         agentMessagingAccountTransition = true
         autoReviewAccountGeneration &+= 1
         defer { agentMessagingAccountTransition = false }
+        await agentExecutionScheduler.cancelAll()
+        await subagentService?.cancelAll()
         for scopeID in Array(agentMessagingSessions.keys) {
             if runningAgentMessageScopes.contains(scopeID) { await stopAgentMessages(scopeID: scopeID) }
             else { await stopGroup(id: scopeID) }
@@ -5972,7 +5993,13 @@ private struct AppPluginSecretStore: PluginSecretStore {
 private struct AppAutomationExecutor: AutomationExecutor {
     let registry: ProviderRegistry
     let agents: AgentService
+    let scheduler: AgentExecutionScheduler
     func execute(automation: Automation, prompt: String, events: [AutomationEvent]) async throws -> AutomationExecutionResult {
+        try await scheduler.withExclusiveAccess(agentID: automation.agentID) {
+            try await executeExclusive(automation: automation, prompt: prompt)
+        }
+    }
+    private func executeExclusive(automation: Automation, prompt: String) async throws -> AutomationExecutionResult {
         guard let profile = await agents.profile(id: automation.agentID), profile.archivedAt == nil,
               let provider = await registry.provider(id: profile.providerID) else {
             throw ProviderError.transport("Automation agent or provider is unavailable.")
@@ -5981,6 +6008,7 @@ private struct AppAutomationExecutor: AutomationExecutor {
         let request = InferenceRequest(conversationID: UUID(), modelID: profile.modelID, messages: [system, .init(role: .user, text: prompt)])
         var text = "", usage: Usage?
         for try await event in provider.stream(request) {
+            try Task.checkCancellation()
             if case .textDelta(let delta) = event { text += delta }
             if case .usage(let value) = event { usage = value }
         }

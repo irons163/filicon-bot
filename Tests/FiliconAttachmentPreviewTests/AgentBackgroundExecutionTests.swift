@@ -35,6 +35,36 @@ private actor BackgroundProbe {
     func record(_ request: InferenceRequest) { requests.append(request) }
 }
 
+private actor BackgroundExecutionGate {
+    private var opened = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+    var isWaiting: Bool { !waiters.isEmpty }
+    func wait() async {
+        if opened { return }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+    func open() {
+        opened = true
+        let pending = waiters; waiters.removeAll()
+        for waiter in pending { waiter.resume() }
+    }
+}
+
+private struct PlainScheduledAgentProvider: AIProvider {
+    let descriptor = ProviderDescriptor(id: "background-fixture", displayName: "Background fixture", requiresAPIKey: false, supportsToolCalling: false)
+    let probe: BackgroundProbe
+    func models() async throws -> [AIModel] { [.init(id: "test")] }
+    func stream(_ request: InferenceRequest) -> AsyncThrowingStream<InferenceEvent, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                await probe.record(request)
+                continuation.yield(.textDelta("Completed fixture")); continuation.yield(.completed(.stop)); continuation.finish()
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+}
+
 @Suite("Agent background execution", .timeLimit(.minutes(1)))
 @MainActor struct AgentBackgroundExecutionTests {
     private func fixture() async throws -> (URL, AppModel, AgentProfile, AgentProfile) {
@@ -54,6 +84,111 @@ private actor BackgroundProbe {
         let deadline = ContinuousClock.now.advanced(by: .seconds(8))
         while !predicate(), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
         try #require(predicate(), "Background operation did not reach its expected state")
+    }
+
+    private func waitForAgentQueue(_ model: AppModel, agentID: UUID, count: Int) async throws {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(8))
+        while await model.agentExecutionScheduler.snapshot(agentID: agentID).queuedCount != count,
+              ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
+        let snapshot = await model.agentExecutionScheduler.snapshot(agentID: agentID)
+        try #require(snapshot.queuedCount == count)
+    }
+
+    @Test(arguments: [false, true]) func groupQueuesBehindTheSameAgentMailboxAndCanBeStoppedIndependently(stopQueued: Bool) async throws {
+        let (root, model, sender, recipient) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let gate = BackgroundExecutionGate(), probe = BackgroundProbe()
+        await model.registry.register(BackgroundAgentProvider { request, _ in
+            await probe.record(request)
+            if request.messages.first?.text.contains("You are Recipient,") == true { await gate.wait() }
+            return "PASS"
+        })
+        #expect(await model.createGroup(name: "Scheduled group", summary: "", memberIDs: [recipient.id]))
+        let groupID = try #require(model.groups.first?.id)
+        #expect(await model.sendAgentMessage(senderID: sender.id, recipientID: recipient.id, text: "First task"))
+        try await waitUntil { model.agentMessages.first?.delivery?.state == .running }
+        let group = Task { await model.sendGroupMessage(groupID: groupID, text: "Second task") }
+        try await waitForAgentQueue(model, agentID: recipient.id, count: 1)
+        let before = await probe.requests.count
+        expectNoDifference(before, 1)
+        if stopQueued {
+            await model.stopGroup(id: groupID)
+            await group.value
+            #expect(!model.runningAgentMessageScopes.isEmpty)
+            expectNoDifference(model.agentMessages.first?.delivery?.state, .running)
+        }
+        await gate.open()
+        await group.value
+        try await waitUntil { model.runningAgentMessageScopes.isEmpty }
+        let after = await probe.requests.count
+        expectNoDifference(after, stopQueued ? 1 : 2)
+        expectNoDifference(model.agentMessages.first?.delivery?.state, .completed)
+    }
+
+    @Test func queuedGroupPeerWakeStopsWithoutCancellingAnotherOrigin() async throws {
+        let (root, model, sender, recipient) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let gate = BackgroundExecutionGate(), probe = BackgroundProbe()
+        await model.registry.register(BackgroundAgentProvider { request, execute in
+            await probe.record(request)
+            if request.messages.first?.text.contains("You are Recipient,") == true {
+                await gate.wait()
+            } else {
+                _ = try await execute(.init(id: "handoff", name: "SendToAgent", argumentsJSON: JSONEncoder().encode(["recipientID": recipient.id.uuidString, "message": "Review this group result"])))
+            }
+            return "PASS"
+        })
+        #expect(await model.createGroup(name: "Delegating group", summary: "", memberIDs: [sender.id]))
+        let groupID = try #require(model.groups.first?.id)
+        #expect(await model.sendAgentMessage(senderID: sender.id, recipientID: recipient.id, text: "Independent mailbox work"))
+        try await waitUntil { model.agentMessages.first?.delivery?.state == .running }
+        let group = Task { await model.sendGroupMessage(groupID: groupID, text: "Ask Recipient to review") }
+        try await waitUntil { !model.pendingAutoReviewApprovals.isEmpty }
+        let approval = try #require(model.pendingAutoReviewApprovals.first)
+        await model.resolveGroupApproval(approval, groupID: groupID, approve: true)
+        try await waitForAgentQueue(model, agentID: recipient.id, count: 1)
+        #expect(model.agentMessages.contains { $0.delivery?.originConversationID == groupID && $0.delivery?.state == .queued })
+        await model.stopGroup(id: groupID)
+        await group.value
+        await gate.open()
+        try await waitUntil { model.runningAgentMessageScopes.isEmpty }
+        let requests = await probe.requests
+        expectNoDifference(requests.count, 2) // Original mailbox + foreground group; no stale peer wake.
+        expectNoDifference(model.agentMessages.first { $0.delivery?.originConversationID == groupID }?.delivery?.state, .cancelled)
+        #expect(model.agentMessages.contains { $0.delivery?.originConversationID != groupID && $0.delivery?.state == .completed })
+    }
+
+    @Test func automationWorkflowAndSubagentShareTheAppAgentLane() async throws {
+        let (root, model, sender, _) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let gate = BackgroundExecutionGate(), probe = BackgroundProbe()
+        await model.registry.register(PlainScheduledAgentProvider(probe: probe))
+        let owner = Task { try await model.agentExecutionScheduler.withExclusiveAccess(agentID: sender.id) { await gate.wait() } }
+        let deadline = ContinuousClock.now.advanced(by: .seconds(8))
+        while !(await gate.isWaiting), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
+        try #require(await gate.isWaiting)
+        await model.createAutomation(agentID: sender.id, name: "Fixture", prompt: "AUTOMATION_TASK", schedule: "0 0 * * *")
+        let automationID = try #require(model.automations.first?.id)
+        let automation = Task { await model.runAutomationNow(id: automationID) }
+        try await waitForAgentQueue(model, agentID: sender.id, count: 1)
+        #expect(await model.saveWorkflow(.init(id: "scheduler-fixture", agentID: sender.id, name: "Fixture", steps: [.prompt("WORKFLOW_TASK")])))
+        let workflow = Task { await model.runWorkflowNow(id: "scheduler-fixture") }
+        try await waitForAgentQueue(model, agentID: sender.id, count: 2)
+        await model.launchAgentTask(kind: .subagent, agentID: sender.id, title: "Fixture", prompt: "SUBAGENT_TASK")
+        try await waitForAgentQueue(model, agentID: sender.id, count: 3)
+        await model.reloadAgentTasks()
+        expectNoDifference(model.agentAsyncTasks.first?.status, .queued)
+        let before = await probe.requests.count
+        expectNoDifference(before, 0)
+        await gate.open(); try await owner.value
+        await automation.value; await workflow.value
+        try await waitUntil { model.agentAsyncTasks.first?.status == .succeeded }
+        let requests = await probe.requests
+        expectNoDifference(requests.count, 3)
+        #expect(requests[0].messages.last?.text.contains("AUTOMATION_TASK") == true)
+        #expect(requests[1].messages.last?.text.contains("WORKFLOW_TASK") == true)
+        #expect(requests[2].messages.last?.text.contains("SUBAGENT_TASK") == true)
+        expectNoDifference(model.workflowRuns.first?.status, .succeeded)
     }
 
     @Test func manualSendWakesPeerAndReplyWakesSenderWithoutSelectingEitherChat() async throws {

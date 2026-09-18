@@ -49,13 +49,18 @@ public actor SubagentService {
     public static let maximumSteerCharacters = 8_000
 
     private let agents: AgentService
+    private let scheduler: AgentExecutionScheduler
     private var tasks: [UUID: Task<Void, Never>] = [:]
     private var runtimes: [UUID: any SubagentRuntime] = [:]
     private var pendingSteers: [UUID: String] = [:]
     private var cancelling: Set<UUID> = []
+    private var executing: Set<UUID> = []
     private var parentScopes: [UUID: SubagentExecutionScope] = [:]
+    private var cancellationGeneration: UInt64 = 0
 
-    public init(agents: AgentService) { self.agents = agents }
+    public init(agents: AgentService, scheduler: AgentExecutionScheduler = AgentExecutionScheduler()) {
+        self.agents = agents; self.scheduler = scheduler
+    }
 
     @discardableResult
     public func launch(
@@ -64,6 +69,8 @@ public actor SubagentService {
         parentScope: SubagentExecutionScope,
         runtime: any SubagentRuntime
     ) async throws -> UUID {
+        let generation = cancellationGeneration
+        try Task.checkCancellation()
         let prompt = spec.prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         let title = spec.title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !prompt.isEmpty, prompt.count <= Self.maximumPromptCharacters,
@@ -106,8 +113,13 @@ public actor SubagentService {
             taskKind: spec.taskKind,
             parentAgentID: spec.parentAgentID
         )
+        guard generation == cancellationGeneration else { throw CancellationError() }
         try await agents.registerSubagent(record)
-        try await agents.updateSubagent(id: record.id, status: .running)
+        guard generation == cancellationGeneration, !Task.isCancelled else {
+            try? await agents.settleSubagent(id: record.id, status: .cancelled,
+                                            result: "Stopped before execution.", usage: .init())
+            throw CancellationError()
+        }
         runtimes[record.id] = runtime
         parentScopes[record.id] = parentScope
         tasks[record.id] = Task { [weak self] in
@@ -134,7 +146,7 @@ public actor SubagentService {
         }
         pendingSteers[id] = message
         try await agents.updateSubagent(id: id, status: .awaitingInput)
-        await runtime.interrupt(reason: "Steering message from the parent agent.")
+        if executing.contains(id) { await runtime.interrupt(reason: "Steering message from the parent agent.") }
     }
 
     public func cancel(_ id: UUID) async {
@@ -142,7 +154,12 @@ public actor SubagentService {
         cancelling.insert(id)
         pendingSteers[id] = nil
         task.cancel()
-        await runtime.interrupt(reason: "Stopped by the parent agent.")
+        if executing.contains(id) { await runtime.interrupt(reason: "Stopped by the parent agent.") }
+    }
+
+    public func cancelAll() async {
+        cancellationGeneration &+= 1
+        for id in Array(tasks.keys) { await cancel(id) }
     }
 
     public func cancel(parentRunID: UUID) async {
@@ -166,7 +183,12 @@ public actor SubagentService {
                 return
             }
             do {
-                let outcome = try await runtime.run(prompt: prompt, scope: spec.scope)
+                let nextPrompt = prompt
+                let outcome = try await scheduler.withExclusiveAccess(agentID: spec.agentID) {
+                    let effectivePrompt = try await self.beginExecution(id: id, prompt: nextPrompt)
+                    return try await runtime.run(prompt: effectivePrompt, scope: spec.scope)
+                }
+                executing.remove(id)
                 if cancelling.contains(id) || Task.isCancelled {
                     await finish(id: id, status: .cancelled, result: "Stopped by the parent agent.", usage: cumulativeUsage)
                     return
@@ -178,7 +200,7 @@ public actor SubagentService {
                         return
                     }
                     prompt = "A parent agent sent this steering message. Preserve prior context and continue:\n\n\(steer)"
-                    try await agents.updateSubagent(id: id, status: .running)
+                    try await agents.updateSubagent(id: id, status: .queued)
                 case .completed(let text, let usage):
                     cumulativeUsage.inputTokens += usage.inputTokens
                     cumulativeUsage.outputTokens += usage.outputTokens
@@ -195,10 +217,26 @@ public actor SubagentService {
                 await finish(id: id, status: .cancelled, result: "Stopped by the parent agent.", usage: cumulativeUsage)
                 return
             } catch {
-                await finish(id: id, status: .failed, result: error.localizedDescription, usage: cumulativeUsage)
+                if cancelling.contains(id) || Task.isCancelled {
+                    await finish(id: id, status: .cancelled, result: "Stopped by the parent agent.", usage: cumulativeUsage)
+                } else {
+                    await finish(id: id, status: .failed, result: error.localizedDescription, usage: cumulativeUsage)
+                }
                 return
             }
         }
+    }
+
+    private func beginExecution(id: UUID, prompt: String) async throws -> String {
+        try Task.checkCancellation()
+        guard !cancelling.contains(id) else { throw CancellationError() }
+        executing.insert(id)
+        try await agents.updateSubagent(id: id, status: .running)
+        try Task.checkCancellation()
+        if let steer = pendingSteers.removeValue(forKey: id) {
+            return "\(prompt)\n\nThe parent updated this queued task before execution:\n\(steer)"
+        }
+        return prompt
     }
 
     private func finish(id: UUID, status: AgentRunStatus, result: String, usage: Usage) async {
@@ -207,6 +245,7 @@ public actor SubagentService {
         runtimes[id] = nil
         pendingSteers[id] = nil
         cancelling.remove(id)
+        executing.remove(id)
         parentScopes[id] = nil
     }
 }

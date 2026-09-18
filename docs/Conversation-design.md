@@ -93,12 +93,31 @@ IDs across requests/restarts, isolated by account, origin conversation and agent
 It stores no system instructions, tools, approval receipts or permission grants.
 `SendMessage` during a peer wake publishes to the originating group/mailbox.
 
+The App now injects one `AgentExecutionScheduler` into group turns, peer/manual
+mailbox wakes, subagent tasks, automations, workflows and inbound channel replies.
+It provides a FIFO lane per agent across those origins; different agents can run
+concurrently. Stopping a queued conversation removes only its own submission.
+Execution timeouts start after acquiring the lane, not while waiting. ToolLoop
+joins active host-tool cleanup before unlocking and closes its callback ledger
+against late tool calls. Account transitions cancel queued work and interrupt
+active subagent runtimes without releasing their lane before they unwind.
+
 This remains narrower than the reference's full background session runtime:
-contexts are origin-isolated, not a unified personal DM/group memory service;
-there is no cross-origin per-agent exclusive scheduler, group target broadcast,
-image payload or priority interruption. Unfinished work is cancelled at restart,
+contexts are origin-isolated, not a unified personal DM/group memory service.
+Generic direct chats are not bound to agent profiles and retain conversation-only
+serialization. There is no cross-process coordination, group target broadcast,
+image payload or priority interruption. An uncooperative operation keeps its lane
+until it unwinds; this is not a promise of immediate remote backend cancellation.
+Unfinished work is cancelled at restart,
 not replayed with stale approval. Model-facing CreateAgent/UpdateAgent remain
 unwired despite existing UI/service CRUD. See [the itemized audit](Agent-collaboration-parity.md).
+
+`AgentExecutionSchedulerTests` covers FIFO/parallel lanes, owner-specific Stop,
+cleanup joining, late callback rejection, post-queue execution deadlines, and
+steering/cancelling queued subagents. `AgentBackgroundExecutionTests` additionally
+queues real AppModel group/manual/peer work against the same agent and checks
+the shared automation, workflow and subagent wiring. Providers are scripted;
+these are not end-to-end live Slack/Discord or model-service tests.
 
 `AgentMessagingSessionTests` exercises real tool-loop dispatch with scripted
 providers, reply wakes, context isolation, permissions scope, denial, spoofed
@@ -122,7 +141,7 @@ Codex tests were skipped. Native `Filicon App` Debug build succeeded. All seven
 catalogs passed the localization audit; PASS/failure notices rendered in all
 seven languages, with Traditional Chinese and French PNGs visually inspected.
 
-Latest validation (2026-09-18), including manual wakes, scoped persistent context,
+Prior validation (`324d62e`, 2026-09-18), including manual wakes, scoped persistent context,
 text-only SendMessage, and preservation of published progress after failure/Stop:
 134 XCTest tests and a 561-test Swift Testing run reported zero failures; the two
 opt-in live Codex tests remained skipped. Native `Filicon App` Debug build and
@@ -132,6 +151,16 @@ Traditional Chinese and French were visually inspected, including long French
 mailbox labels. One earlier full rerun hung in the existing cross-process file-lock
 test's `Process.waitUntilExit` cleanup; that test passed in isolation and the final
 full rerun passed. No live provider was contacted and the user's app was not restarted.
+
+Subsequent per-agent scheduling validation (2026-09-18): 134 XCTest and a
+575-test Swift Testing run passed with zero failures (two opt-in live Codex tests
+skipped). Native Debug build, strict deep codesign verification and the seven
+1,393-key localization audits passed. Regression coverage includes cancelled
+shell-like runtimes that throw during cleanup. Full-suite findings also corrected
+the CLI test's startup race, fenced MCP expiry/cancellation callbacks to their
+exact request instance, and replaced the file-lock test's hanging synchronous
+`waitUntilExit()` with an asynchronous termination notification. The last two full
+runs passed; neither contacted live providers or restarted the user's app.
 
 `ConversationDesignTests` covers the responsive breakpoint, draft separation, membership binding, persistence validation, transcript preservation and native SwiftUI rendering. To export review PNGs without changing the user's data:
 

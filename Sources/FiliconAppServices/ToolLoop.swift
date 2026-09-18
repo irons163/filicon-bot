@@ -72,6 +72,14 @@ public struct NoopToolLoopTransactionHook: ToolLoopTransactionHook {
     public func persist(step: Int, calls: [NormalizedToolCall], results: [NormalizedToolResult], context: ToolContext) async throws {}
 }
 
+/// The consumer must join host-tool cleanup before releasing an agent lane.
+public struct ToolLoopRun: Sendable {
+    public let events: AsyncThrowingStream<InferenceEvent, Error>
+    fileprivate let task: Task<Void, Never>
+    public func finish() async { await task.value }
+    public func cancelAndWait() async { task.cancel(); await task.value }
+}
+
 public actor ToolLoop {
     public static let maximumSteps = 8
     private let provider: any AIProvider
@@ -85,13 +93,17 @@ public actor ToolLoop {
     }
 
     public func run(_ request: InferenceRequest, context: ToolContext) -> AsyncThrowingStream<InferenceEvent, Error> {
-        AsyncThrowingStream { continuation in
-            let task = Task { [self] in
-                do { try await execute(request, context: context, continuation: continuation); continuation.finish() }
-                catch { continuation.finish(throwing: error) }
-            }
-            continuation.onTermination = { @Sendable _ in task.cancel() }
+        start(request, context: context).events
+    }
+
+    public func start(_ request: InferenceRequest, context: ToolContext) -> ToolLoopRun {
+        let (events, continuation) = AsyncThrowingStream<InferenceEvent, Error>.makeStream()
+        let task = Task { [self] in
+            do { try await execute(request, context: context, continuation: continuation); continuation.finish() }
+            catch { continuation.finish(throwing: error) }
         }
+        continuation.onTermination = { @Sendable _ in task.cancel() }
+        return .init(events: events, task: task)
     }
 
     private func execute(_ initial: InferenceRequest, context: ToolContext, continuation: AsyncThrowingStream<InferenceEvent, Error>.Continuation) async throws {
@@ -156,18 +168,29 @@ public actor ToolLoop {
             messages: messages, tools: snapshot.descriptors, toolExchanges: initial.toolExchanges,
             attachmentsByMessageID: initial.attachmentsByMessageID, reasoningEffort: initial.reasoningEffort)
         let calls = InteractiveCallLedger()
-        for try await event in provider.stream(request, executeTool: { [self] call in
-            try Task.checkCancellation()
-            let step = try await calls.claim(call.id)
-            return try await executeInteractiveCall(call, step: step, snapshot: snapshot, context: context, continuation: continuation)
-        }) {
-            try Task.checkCancellation()
-            // All tool events come from the host callback, not provider assertions.
-            switch event {
-            case .toolCallStarted, .toolCallArgumentsDelta, .toolCallCompleted, .toolResult:
-                throw ProviderError.invalidResponse
-            default: continuation.yield(event)
+        do {
+            for try await event in provider.stream(request, executeTool: { [self] call in
+                try Task.checkCancellation()
+                let step = try await calls.claim(call.id)
+                do {
+                    let result = try await executeInteractiveCall(call, step: step, snapshot: snapshot, context: context, continuation: continuation)
+                    await calls.finishCall()
+                    return result
+                } catch { await calls.finishCall(); throw error }
+            }) {
+                try Task.checkCancellation()
+                // All tool events come from the host callback, not provider assertions.
+                switch event {
+                case .toolCallStarted, .toolCallArgumentsDelta, .toolCallCompleted, .toolResult:
+                    throw ProviderError.invalidResponse
+                default: continuation.yield(event)
+                }
             }
+            await calls.closeAndWait()
+            try Task.checkCancellation()
+        } catch {
+            await calls.closeAndWait()
+            throw error
         }
     }
 
@@ -245,9 +268,26 @@ public actor ToolLoop {
 
 private actor InteractiveCallLedger {
     private var seen = Set<ToolCallID>()
+    private var active = 0
+    private var closed = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
     func claim(_ id: ToolCallID) throws -> Int {
+        guard !closed else { throw CancellationError() }
         guard seen.insert(id).inserted else { throw ToolLoopError.duplicateCallID(id) }
         guard seen.count < ToolLoop.maximumSteps else { throw ToolLoopError.toolStepLimit(maximum: ToolLoop.maximumSteps) }
+        active += 1
         return seen.count
+    }
+    func finishCall() {
+        active -= 1
+        if active == 0 {
+            let pending = waiters; waiters.removeAll()
+            for waiter in pending { waiter.resume() }
+        }
+    }
+    func closeAndWait() async {
+        closed = true
+        guard active != 0 else { return }
+        await withCheckedContinuation { waiters.append($0) }
     }
 }

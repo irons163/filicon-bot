@@ -228,6 +228,11 @@ private func invite(from response: SharedRoomResponse) throws -> SharedRoomInvit
     let signalURL = root.appending(path: "locked")
     let releaseURL = root.appending(path: "release")
     let process = Process()
+    let (exits, exitContinuation) = AsyncStream<Int32>.makeStream()
+    process.terminationHandler = { task in
+        exitContinuation.yield(task.terminationStatus)
+        exitContinuation.finish()
+    }
     process.executableURL = URL(fileURLWithPath: "/usr/bin/perl")
     process.arguments = [
         "-e",
@@ -239,7 +244,7 @@ private func invite(from response: SharedRoomResponse) throws -> SharedRoomInvit
     try process.run()
     defer {
         if process.isRunning { process.terminate() }
-        process.waitUntilExit()
+        exitContinuation.finish()
     }
     for _ in 0..<100 where !FileManager.default.fileExists(atPath: signalURL.path) {
         try await Task.sleep(for: .milliseconds(10))
@@ -264,6 +269,10 @@ private func invite(from response: SharedRoomResponse) throws -> SharedRoomInvit
     try Data("release".utf8).write(to: releaseURL, options: .atomic)
     _ = try await operation.value
     #expect(await probe.completed)
+    // waitUntilExit() spins a Foundation run loop and can hang here on a Swift
+    // concurrency worker even after the child exited. Join via its notification.
+    var exitIterator = exits.makeAsyncIterator()
+    _ = await exitIterator.next()
 }
 
 @Test func agentsRemovalDenialAndMemberCascadeAreAuthorized() async throws {

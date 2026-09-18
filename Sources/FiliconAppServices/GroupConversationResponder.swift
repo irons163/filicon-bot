@@ -85,7 +85,7 @@ public struct GroupConversationResponder: GroupAgentResponder {
         let publisher = onMessage.map { AgentUserMessageTool(conversationID: groupID, publish: $0) }
         if let publisher { additionalTools.append(publisher) }
         do {
-            try await coordinator.send(request: request, providerID: agent.providerID, additionalTools: additionalTools) { event in
+            try await coordinator.send(request: request, providerID: agent.providerID, additionalTools: additionalTools, agentID: agent.id) { event in
                 try await output.consume(event)
             }
         } catch {

@@ -178,9 +178,6 @@ public actor AgentMessagingSession {
                 await onChange()
                 continue
             }
-            await onAgentChange(agent.id)
-            try await messenger.updateDelivery(id: inbound.id, state: .running)
-            await onChange()
             let output = AgentInboundOutput(groupID: originConversationID, agentID: agent.id, onUpdate: onUpdate)
             let publisher = AgentUserMessageTool(conversationID: originConversationID) { [messenger, onChange] text in
                 try await output.publish(text)
@@ -208,21 +205,16 @@ public actor AgentMessagingSession {
                 ] + history + [incoming]
                 let request = InferenceRequest(conversationID: conversationID, modelID: agent.modelID, messages: messages)
                 let tool = SendToAgentTool(session: self, senderID: agent.id, replyTo: inbound)
-                let coordinator = coordinator
-                let timeout = turnTimeout
-                try await withThrowingTaskGroup(of: Void.self) { tasks in
-                    tasks.addTask {
-                        try await coordinator.send(request: request, providerID: agent.providerID,
-                            additionalTools: [tool, publisher], toolContext: ToolContext(conversationID: self.originConversationID)) { event in
-                            try await output.consume(event)
-                        }
-                    }
-                    tasks.addTask {
-                        try await Task.sleep(for: timeout)
-                        throw AgentMessagingTimeout()
-                    }
-                    defer { tasks.cancelAll() }
-                    _ = try await tasks.next()
+                try await coordinator.send(request: request, providerID: agent.providerID,
+                    additionalTools: [tool, publisher], toolContext: ToolContext(conversationID: originConversationID),
+                    agentID: agent.id, executionTimeout: turnTimeout, onStart: { [messenger, onChange] in
+                        try await self.checkOpen()
+                        try await messenger.updateDelivery(id: inbound.id, state: .running)
+                        await onChange()
+                        await onAgentChange(agent.id)
+                        try await self.checkOpen()
+                    }) { event in
+                    try await output.consume(event)
                 }
                 try checkOpen()
                 await publisher.close()
@@ -277,10 +269,6 @@ public actor AgentMessagingSession {
             messageID = message.id; senderID = message.senderID; recipientID = message.recipientID; text = message.text
         }
     }
-}
-
-private struct AgentMessagingTimeout: LocalizedError {
-    var errorDescription: String? { "The delegated agent response timed out." }
 }
 
 private struct SendToAgentTool: ToolExecutor, ToolRuntimeContextProviding {

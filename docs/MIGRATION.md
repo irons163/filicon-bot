@@ -106,5 +106,9 @@ source parity. The September 18 reconstructed-source audit found group
 collaboration gaps; see AGENT-01/AGENT-02/AGENT-04 in PARITY.md and the itemized
 Agent-collaboration-parity.md audit. Manual peer sends now wake real inference,
 scoped peer context survives restarts, and text-only SendMessage publishes through
-the host. Unified personal memory, a cross-origin agent scheduler, the full
+the host. An App-injected cross-origin per-agent FIFO scheduler now covers group
+turns, mailbox wakes, subagent tasks, automations, workflows and channel replies,
+including owner-specific cancellation and host-tool cleanup joining. Generic
+direct chats without an agent profile remain conversation-scoped. Unified
+personal memory, priority preemption, cross-process/restart scheduling, full
 messaging variants, and model-facing CreateAgent/UpdateAgent remain incomplete.

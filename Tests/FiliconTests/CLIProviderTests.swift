@@ -32,15 +32,19 @@ private final class FixtureCLIRunner: CLIProcessRunning, @unchecked Sendable {
 
 private final class HangingCLIRunner: CLIProcessRunning, @unchecked Sendable {
     private let lock = NSLock()
+    private var started = false
     private var terminated = false
     func events(for request: CLIProcessRequest) -> AsyncThrowingStream<CLIProcessEvent, Error> {
         AsyncThrowingStream { continuation in
             continuation.onTermination = { [weak self] _ in
-                self?.lock.lock(); self?.terminated = true; self?.lock.unlock()
+                guard let self else { return }
+                lock.withLock { terminated = true }
             }
+            lock.withLock { started = true }
         }
     }
-    func wasTerminated() -> Bool { lock.lock(); defer { lock.unlock() }; return terminated }
+    func wasStarted() -> Bool { lock.withLock { started } }
+    func wasTerminated() -> Bool { lock.withLock { terminated } }
 }
 
 private func cliRequest(model: ModelID, text: String = "Hello", reasoning: ReasoningEffort = .disabled) -> InferenceRequest {
@@ -138,10 +142,20 @@ struct CLIProviderTests {
         let runner = HangingCLIRunner()
         let provider = CodexCLIProvider(executableURL: URL(fileURLWithPath: "/fixture/codex"), runner: runner)
         let task = Task { try await collectCLI(provider, cliRequest(model: "codex-default")) }
-        await Task.yield()
+        defer { task.cancel() }
+        // A yield does not guarantee the runner started. Cancelling an unstarted
+        // stream cannot test whether cancellation propagates into a running one.
+        let startDeadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while !runner.wasStarted(), ContinuousClock.now < startDeadline {
+            try await Task.sleep(for: .milliseconds(1))
+        }
+        try #require(runner.wasStarted())
         task.cancel()
         _ = await task.result
-        for _ in 0..<20 where !runner.wasTerminated() { await Task.yield() }
+        let stopDeadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while !runner.wasTerminated(), ContinuousClock.now < stopDeadline {
+            try await Task.sleep(for: .milliseconds(1))
+        }
         #expect(runner.wasTerminated())
     }
 }
