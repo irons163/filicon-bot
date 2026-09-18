@@ -1458,9 +1458,12 @@
 "Pause own routine" = "暫停自身自動化";
 "Resume own routine" = "恢復自身自動化";
 "Task and trigger" = "任務與觸發條件";
+"Delete own routine" = "刪除自身自動化";
+"Routine ID" = "自動化 ID";
+"Delete removes this routine and prevents future triggers. There is no undo. Execution history stays in storage; already started or queued runs are not cancelled." = "刪除會移除此自動化並停止後續觸發，且無法復原。執行歷史仍保留於儲存空間；已開始或已排入執行佇列的工作不會被取消。";
 "Pause disables future triggers. Already started or queued runs are not cancelled. Task, trigger and history stay unchanged." = "暫停會停用後續觸發，不會取消已開始或已排入執行佇列的工作。任務、觸發條件及歷史紀錄保持不變。";
 "Resume enables future triggers and may incur model costs. It does not run immediately or replay missed runs. Task, trigger and history stay unchanged." = "恢復會啟用後續觸發，可能產生模型費用。不會立即執行或補跑錯過的工作。任務、觸發條件及歷史紀錄保持不變。";
-"Use target routine with action pause or resume and the id of your own existing automation. Other fields and routine actions are not supported." = "請使用 target routine、action pause 或 resume，以及自身既有自動化的 id。不支援其他欄位或自動化操作。";
+"Use target routine with action pause, resume or delete and the id of your own existing automation. Other fields and routine actions are not supported." = "請使用 target routine、action pause、resume 或 delete，並提供自身既有自動化的 id。不支援其他欄位或自動化操作。";
 "The automation is unavailable, belongs to another agent, or already has the requested state." = "此自動化無法使用、屬於其他代理人，或已處於要求的狀態。";
 "The automation changed while awaiting approval. Inspect it and request approval again." = "等待核准期間自動化已變更。請確認目前設定後重新要求核准。";
 "This automation cannot be resumed by the agent. Review its spend protection and trigger in Automations." = "代理人無法恢復此自動化。請到「自動化」檢查費用防護及觸發條件。";

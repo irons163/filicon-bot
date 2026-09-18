@@ -90,12 +90,21 @@ public actor AutomationService {
                 throw AutomationStateChangeError.unavailable
             }
             var value = state.automations[index]
+            var candidate = state
+            if change.operation == .delete {
+                // The receipt returns the removed definition, not a live task.
+                // History, wakes, claims and in-flight executors are preserved.
+                candidate.automations.remove(at: index)
+                candidate.spendGuard.guardPausedAutomationIDs.remove(value.id)
+                try Self.save(candidate, to: storeURL)
+                state = candidate
+                return value
+            }
             value.enabled = change.enabled
             value.revision += 1
             value.nextRunAt = try computeNextRun(for: value, after: now)
             // Save a candidate first: a failed disk write must not arm a task
             // in memory, nor lose its previous next-run date or history.
-            var candidate = state
             candidate.automations[index] = value
             try Self.save(candidate, to: storeURL)
             state = candidate
@@ -106,6 +115,9 @@ public actor AutomationService {
     public func validateStateChange(_ change: AutomationStateChange) throws {
         guard let value = state.automations.first(where: { $0.id == change.automation.id }) else { throw AutomationStateChangeError.unavailable }
         guard change.matchesDefinition(value) else { throw AutomationStateChangeError.stale }
+        // Deleting a disabled/protected/unknown definition is safe: it cannot
+        // arm future work or weaken protection on any remaining automation.
+        if change.operation == .delete { return }
         guard value.enabled != change.enabled else { throw AutomationStateChangeError.unavailable }
         if change.enabled {
             guard !value.guardPaused, !state.spendGuard.guardPausedAutomationIDs.contains(value.id),

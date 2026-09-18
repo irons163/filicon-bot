@@ -2814,9 +2814,11 @@ final class AppModel: ObservableObject {
         await autoReviewBroker.activate(fence)
         let metadata = ["tool": "update_state", "agentStateTarget": "routine", "agentRoutineAction": change.operation.rawValue,
                         "agentName": sender.name, "agentRoutineName": change.automation.name,
+                        "agentRoutineID": change.automation.id.uuidString,
                         "agentRoutinePrompt": change.automation.prompt, "agentRoutineTrigger": try change.triggerJSON]
         let action = AutoReviewAction(summary: "\(sender.name) → \(change.operation.rawValue): \(change.automation.name)",
-            target: .resource(kind: "automation", identifier: change.automation.id.uuidString), risks: [.sensitive],
+            target: .resource(kind: "automation", identifier: change.automation.id.uuidString),
+            risks: change.operation == .delete ? [.sensitive, .destructive] : [.sensitive],
             context: .init(fence: fence, conversationID: context.conversationID, toolCallID: call.id.rawValue, metadata: metadata))
         let pending = PendingApproval(action: action, reason: "Approval required", expiresAt: Date().addingTimeInterval(300))
         try await autoReviewBroker.waitForApprovalToExecute(pending) { [weak self] in await self?.registerAutoReviewApproval($0) }

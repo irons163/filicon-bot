@@ -1458,9 +1458,12 @@
 "Pause own routine" = "Pausar rutina propia";
 "Resume own routine" = "Reanudar rutina propia";
 "Task and trigger" = "Tarea y desencadenante";
+"Delete own routine" = "Eliminar rutina propia";
+"Routine ID" = "ID de la rutina";
+"Delete removes this routine and prevents future triggers. There is no undo. Execution history stays in storage; already started or queued runs are not cancelled." = "Eliminar borra esta rutina e impide futuros disparos. No se puede deshacer. El historial queda almacenado; no se cancelan las ejecuciones ya iniciadas o en cola.";
 "Pause disables future triggers. Already started or queued runs are not cancelled. Task, trigger and history stay unchanged." = "Pausar desactiva los futuros desencadenamientos. No cancela ejecuciones iniciadas o en cola. La tarea, el desencadenante y el historial no cambian.";
 "Resume enables future triggers and may incur model costs. It does not run immediately or replay missed runs. Task, trigger and history stay unchanged." = "Reanudar activa futuros desencadenamientos y puede generar costes del modelo. No ejecuta de inmediato ni recupera ejecuciones omitidas. La tarea, el desencadenante y el historial no cambian.";
-"Use target routine with action pause or resume and the id of your own existing automation. Other fields and routine actions are not supported." = "Usa target routine, action pause o resume y el id de tu propia automatización existente. No se admiten otros campos ni acciones.";
+"Use target routine with action pause, resume or delete and the id of your own existing automation. Other fields and routine actions are not supported." = "Usa target routine con action pause, resume o delete y el id de una automatización propia existente. No se admiten otros campos ni acciones.";
 "The automation is unavailable, belongs to another agent, or already has the requested state." = "La automatización no está disponible, pertenece a otro agente o ya tiene el estado solicitado.";
 "The automation changed while awaiting approval. Inspect it and request approval again." = "La automatización cambió mientras esperaba aprobación. Revísala y solicita aprobación de nuevo.";
 "This automation cannot be resumed by the agent. Review its spend protection and trigger in Automations." = "El agente no puede reanudar esta automatización. Revisa su protección de gastos y su desencadenante en Automatizaciones.";

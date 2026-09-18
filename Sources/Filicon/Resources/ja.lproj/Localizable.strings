@@ -1458,9 +1458,12 @@
 "Pause own routine" = "自身のルーチンを一時停止";
 "Resume own routine" = "自身のルーチンを再開";
 "Task and trigger" = "タスクとトリガー";
+"Delete own routine" = "自身のルーチンを削除";
+"Routine ID" = "ルーチン ID";
+"Delete removes this routine and prevents future triggers. There is no undo. Execution history stays in storage; already started or queued runs are not cancelled." = "削除するとこのルーチンがなくなり、今後の実行は開始されません。元に戻せません。実行履歴は保存され、開始済みまたは実行待ちの処理はキャンセルされません。";
 "Pause disables future triggers. Already started or queued runs are not cancelled. Task, trigger and history stay unchanged." = "一時停止すると今後のトリガーが無効になります。開始済みまたは実行待ちの処理はキャンセルされません。タスク、トリガー、履歴は変更されません。";
 "Resume enables future triggers and may incur model costs. It does not run immediately or replay missed runs. Task, trigger and history stay unchanged." = "再開すると今後のトリガーが有効になり、モデルの利用料金が発生する場合があります。即時実行や未実行分の再実行は行いません。タスク、トリガー、履歴は変更されません。";
-"Use target routine with action pause or resume and the id of your own existing automation. Other fields and routine actions are not supported." = "target routine、action pause または resume と、自身の既存の自動化の id を指定してください。他のフィールドや操作には対応していません。";
+"Use target routine with action pause, resume or delete and the id of your own existing automation. Other fields and routine actions are not supported." = "target routine、action pause、resume または delete と、自身の既存の自動化の id を指定してください。他のフィールドや操作はサポートされていません。";
 "The automation is unavailable, belongs to another agent, or already has the requested state." = "この自動化は利用できないか、他のエージェントに属しているか、すでに指定した状態です。";
 "The automation changed while awaiting approval. Inspect it and request approval again." = "承認待ちの間に自動化が変更されました。現在の設定を確認して、再度承認を求めてください。";
 "This automation cannot be resumed by the agent. Review its spend protection and trigger in Automations." = "エージェントはこの自動化を再開できません。「自動化」で支出保護とトリガーを確認してください。";

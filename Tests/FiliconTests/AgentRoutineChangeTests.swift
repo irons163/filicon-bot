@@ -63,6 +63,13 @@ struct AgentRoutineChangeTests {
         try .init(id: id, name: "update_state", argumentsJSON: JSONEncoder().encode([
             "target": "routine", "action": action, "id": (routineID ?? f.routine.id).uuidString]))
     }
+    private func persisted<Value: Codable>(_ value: Value) throws -> Value {
+        // The store round-trips Dates through Unix milliseconds. Compare the
+        // complete persisted value, including dates at that representation.
+        let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .millisecondsSince1970
+        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .millisecondsSince1970
+        return try decoder.decode(Value.self, from: encoder.encode(value))
+    }
 
     @Test(arguments: [true, false])
     func explicitPreviewThenTogglePreservesDefinitionAndRestart(enabled: Bool) async throws {
@@ -96,19 +103,100 @@ struct AgentRoutineChangeTests {
         session.close()
     }
 
-    @Test func invalidFieldsScopeOwnerAndDefaultDenial() async throws {
+    @Test(arguments: [true, false]) func deletionRetainsHistoryAndCannotBeResumed(enabled: Bool) async throws {
+        let f = try await fixture(enabled: enabled); defer { try? FileManager.default.removeItem(at: f.root) }
+        _ = try await f.automations.runNow(id: f.routine.id, executor: RoutineExecutor(), now: Date(timeIntervalSince1970: 2_000))
+        let history = await f.automations.history(automationID: f.routine.id)
+        let wakes = await f.automations.pendingWakes()
+        let session = f.session(authorize: { sender, change, _, _ in
+            expectNoDifference(sender.id, f.owner.id); expectNoDifference(change.operation, .delete)
+            expectNoDifference(change.automation.prompt, f.routine.prompt)
+            expectNoDifference(change.automation.lastRunAt, Date(timeIntervalSince1970: 2_000))
+            #expect(await f.automations.list(agentID: sender.id).contains { $0.id == f.routine.id })
+        })
+        let tool = session.tools(for: f.owner.id)[2]
+        let result = try await tool.execute(call(f, action: "delete"), context: f.context)
+        #expect(result.content.contains { if case .text(let text) = $0 { return text.contains("Deleted routine") && text.contains("no undo") }; return false })
+        let remaining = await f.automations.list(), keptHistory = await f.automations.history(automationID: f.routine.id)
+        expectNoDifference(remaining, [f.peerRoutine]); expectNoDifference(keptHistory, history)
+        let keptWakes = await f.automations.pendingWakes()
+        expectNoDifference(keptWakes, wakes)
+        let restored = try AutomationService(storeURL: f.file)
+        let durable = await restored.list(), durableHistory = await restored.history(automationID: f.routine.id)
+        expectNoDifference(durable, remaining); expectNoDifference(durableHistory, try persisted(history))
+        await #expect(throws: AutomationStateChangeError.unavailable) {
+            _ = try await tool.execute(call(f, action: "resume", id: "resume-deleted"), context: f.context)
+        }
+        await #expect(throws: AutomationServiceError.unknownAutomation(f.routine.id)) {
+            _ = try await restored.runNow(id: f.routine.id, executor: RoutineExecutor())
+        }
+        let freshSession = f.session()
+        await #expect(throws: AutomationStateChangeError.unavailable) {
+            _ = try await freshSession.tools(for: f.owner.id)[2].execute(call(f, action: "delete"), context: f.context)
+        }
+        session.close(); freshSession.close()
+    }
+
+    @Test(arguments: ["guard", "unknown", "nested-unknown"])
+    func deleteProtectedRoutineDoesNotResumeOtherTasks(kind: String) async throws {
+        let unknown = AutomationTrigger.unknown(kind: "future", payloadJSON: Data("{}".utf8))
+        let trigger: AutomationTrigger? = kind == "unknown" ? unknown : kind == "nested-unknown"
+            ? .anyOf([.cron(expression: "@daily", timeZoneIdentifier: "UTC"), unknown]) : nil
+        let f = try await fixture(trigger: trigger); defer { try? FileManager.default.removeItem(at: f.root) }
+        try await f.automations.answerSpendGuard(.pause, at: Date(timeIntervalSince1970: 2_000))
+        let before = await f.automations.list(agentID: f.peer.id)
+        var expectedGuard = await f.automations.spendGuardState()
+        expectedGuard.guardPausedAutomationIDs.remove(f.routine.id)
+        let session = f.session()
+        _ = try await session.tools(for: f.owner.id)[2].execute(call(f, action: "delete"), context: f.context)
+        let remaining = await f.automations.list(), guardAfter = await f.automations.spendGuardState()
+        expectNoDifference(remaining, before); expectNoDifference(guardAfter, expectedGuard)
+        let restored = try AutomationService(storeURL: f.file)
+        let durable = await restored.list(), durableGuard = await restored.spendGuardState()
+        expectNoDifference(durable, before); expectNoDifference(durableGuard, try persisted(expectedGuard))
+        try await restored.answerSpendGuard(.resume, at: Date(timeIntervalSince1970: 3_000))
+        let revived = await restored.list(agentID: f.owner.id)
+        expectNoDifference(revived, [])
+        session.close()
+    }
+
+    @Test func deleteWhileRunningKeepsCompletionWithoutRecreatingDefinition() async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let gate = RoutineGate()
+        let run = Task {
+            try await f.automations.runNow(id: f.routine.id, executor: RoutineExecutor { _ in await gate.hold() },
+                                           now: Date(timeIntervalSince1970: 2_000))
+        }
+        await gate.waitForEntry()
+        let session = f.session()
+        do { _ = try await session.tools(for: f.owner.id)[2].execute(call(f, action: "delete"), context: f.context) }
+        catch { await gate.release(); _ = try? await run.value; throw error }
+        let beforeCompletion = await f.automations.history(automationID: f.routine.id)
+        expectNoDifference(beforeCompletion.first?.status, .running)
+        await gate.release()
+        let finished = try await run.value
+        expectNoDifference(finished.status, .ok)
+        let restored = try AutomationService(storeURL: f.file)
+        let definitions = await restored.list(), history = await restored.history(automationID: f.routine.id)
+        expectNoDifference(definitions, [f.peerRoutine]); expectNoDifference(history, try persisted([finished]))
+        let wakes = await restored.pendingWakes(agentID: f.owner.id)
+        expectNoDifference(wakes.first?.runID, finished.id); expectNoDifference(wakes.first?.status, .ok)
+        session.close()
+    }
+
+    @Test(arguments: ["pause", "delete"]) func invalidFieldsScopeOwnerAndDefaultDenial(action: String) async throws {
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
         let session = AgentManagementSession(originID: f.context.conversationID, agents: f.agents, automations: f.automations)
         let tool = session.tools(for: f.owner.id)[2]
-        await #expect(throws: AgentMessagingError.approvalRequired) { _ = try await tool.execute(call(f), context: f.context) }
+        await #expect(throws: AgentMessagingError.approvalRequired) { _ = try await tool.execute(call(f, action: action), context: f.context) }
         for target in [f.peerRoutine.id, UUID()] {
-            await #expect(throws: AutomationStateChangeError.unavailable) { _ = try await tool.execute(call(f, routineID: target), context: f.context) }
+            await #expect(throws: AutomationStateChangeError.unavailable) { _ = try await tool.execute(call(f, action: action, routineID: target), context: f.context) }
         }
-        for action in ["create", "update", "delete", "set", "PAUSE", ""] {
+        for action in ["create", "update", "set", "PAUSE", "DELETE", ""] {
             await #expect(throws: AutomationStateChangeError.invalid) { _ = try await tool.execute(call(f, action: action), context: f.context) }
         }
         for field in ["agent_id", "accountID", "name", "prompt", "schedule", "trigger", "enabled", "scope", "pet_id", "fact"] {
-            let data = try JSONEncoder().encode(["target": "routine", "action": "pause", "id": f.routine.id.uuidString, field: "unexpected"])
+            let data = try JSONEncoder().encode(["target": "routine", "action": action, "id": f.routine.id.uuidString, field: "unexpected"])
             await #expect(throws: AutomationStateChangeError.invalid) {
                 _ = try await tool.execute(.init(id: "bad", name: "update_state", argumentsJSON: data), context: f.context)
             }
@@ -119,14 +207,14 @@ struct AgentRoutineChangeTests {
                 _ = try await tool.execute(.init(id: "bad", name: "update_state", argumentsJSON: Data(json.utf8)), context: f.context)
             }
         }
-        await #expect(throws: AgentMessagingError.scopeMismatch) { _ = try await tool.execute(call(f), context: .init(conversationID: UUID())) }
+        await #expect(throws: AgentMessagingError.scopeMismatch) { _ = try await tool.execute(call(f, action: action), context: .init(conversationID: UUID())) }
         let unchanged = await f.automations.list()
         expectNoDifference(unchanged, [f.routine, f.peerRoutine])
         session.close()
     }
 
-    @Test(arguments: ["edit", "delete", "archive", "save-failure", "history"])
-    func rechecksDefinitionAndPreservesLatestHistory(mutation: String) async throws {
+    @Test(arguments: ["edit", "delete", "replace", "archive", "save-failure", "history"], ["pause", "delete"])
+    func rechecksDefinitionAndPreservesLatestHistory(mutation: String, action: String) async throws {
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
         let session = f.session(authorize: { _, _, _, _ in
             switch mutation {
@@ -134,6 +222,11 @@ struct AgentRoutineChangeTests {
                 var edited = f.routine; edited.prompt = "New task"
                 _ = try await f.automations.save(edited, now: Date(timeIntervalSince1970: 2_000))
             case "delete": try await f.automations.delete(id: f.routine.id)
+            case "replace":
+                try await f.automations.delete(id: f.routine.id)
+                _ = try await f.automations.save(.init(id: f.routine.id, agentID: f.owner.id,
+                    name: f.routine.name, prompt: f.routine.prompt, trigger: f.routine.trigger,
+                    createdAt: Date(timeIntervalSince1970: 2_000)))
             case "archive": try await f.agents.archive(id: f.owner.id)
             case "save-failure":
                 try FileManager.default.moveItem(at: f.file, to: f.root.appending(path: "backup.json"))
@@ -143,18 +236,19 @@ struct AgentRoutineChangeTests {
         })
         let tool = session.tools(for: f.owner.id)[2]
         if mutation == "history" {
-            _ = try await tool.execute(call(f), context: f.context)
-            let saved = try #require(await f.automations.list(agentID: f.owner.id).first)
+            _ = try await tool.execute(call(f, action: action), context: f.context)
+            let saved = await f.automations.list(agentID: f.owner.id).first
             var expected = f.routine; expected.enabled = false; expected.revision += 1
             expected.nextRunAt = nil; expected.lastRunAt = Date(timeIntervalSince1970: 2_000)
-            expectNoDifference(saved, expected)
+            expectNoDifference(saved, action == "delete" ? nil : expected)
             let history = await f.automations.history(automationID: f.routine.id)
             expectNoDifference(history.count, 1); expectNoDifference(history.first?.status, .ok)
         } else {
-            await #expect(throws: (any Error).self) { _ = try await tool.execute(call(f), context: f.context) }
+            await #expect(throws: (any Error).self) { _ = try await tool.execute(call(f, action: action), context: f.context) }
             let saved = await f.automations.list(agentID: f.owner.id).first
             if mutation == "edit" { expectNoDifference(saved?.prompt, "New task"); expectNoDifference(saved?.enabled, true) }
             else if mutation == "delete" { #expect(saved == nil) }
+            else if mutation == "replace" { expectNoDifference(saved?.createdAt, Date(timeIntervalSince1970: 2_000)) }
             else { expectNoDifference(saved, f.routine) }
             if mutation == "save-failure" {
                 try FileManager.default.removeItem(at: f.file)
@@ -167,7 +261,7 @@ struct AgentRoutineChangeTests {
         session.close()
     }
 
-    @Test(arguments: [false, true]) func stopRevokesApprovalAndDelayedCommit(duringCommit: Bool) async throws {
+    @Test(arguments: [false, true], ["pause", "delete"]) func stopRevokesApprovalAndDelayedCommit(duringCommit: Bool, action: String) async throws {
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
         let gate = RoutineGate()
         let session = f.session(authorize: { _, _, _, _ in if !duringCommit { await gate.hold() } }, commit: { change, lifetime in
@@ -175,26 +269,26 @@ struct AgentRoutineChangeTests {
             return try await f.automations.applyStateChange(change, lifetime: lifetime)
         })
         let tool = session.tools(for: f.owner.id)[2]
-        let work = Task { try await tool.execute(call(f), context: f.context) }
+        let work = Task { try await tool.execute(call(f, action: action), context: f.context) }
         await gate.waitForEntry(); session.close(); await gate.release()
         await #expect(throws: CancellationError.self) { _ = try await work.value }
         let saved = await f.automations.list()
         expectNoDifference(saved, [f.routine, f.peerRoutine])
     }
 
-    @Test func budgetReplayAndCommittedReceipt() async throws {
+    @Test(arguments: ["pause", "delete"]) func budgetReplayAndCommittedReceipt(action: String) async throws {
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
         let session = f.session(commit: { change, lifetime in
             _ = try await f.automations.applyStateChange(change, lifetime: lifetime)
             throw AutomationStateChangeError.invalid
         })
-        let tool = session.tools(for: f.owner.id)[2], request = try call(f)
+        let tool = session.tools(for: f.owner.id)[2], request = try call(f, action: action)
         let result = try await tool.execute(request, context: f.context)
         #expect(!result.isError)
         let replay = try await tool.execute(request, context: f.context)
         expectNoDifference(replay, result)
         await #expect(throws: AgentProfileChangeError.duplicate) { _ = try await tool.execute(call(f, action: "resume"), context: f.context) }
-        await #expect(throws: AgentProfileChangeError.duplicate) { _ = try await tool.execute(call(f, id: "again"), context: f.context) }
+        await #expect(throws: AgentProfileChangeError.duplicate) { _ = try await tool.execute(call(f, action: action, id: "again"), context: f.context) }
         for (id, fields) in [("memory", ["target": "memory", "action": "write", "fact": "Use contrast"]),
                              ("avatar", ["target": "avatar", "action": "clear"]),
                              ("profile", ["target": "profile", "action": "set", "name": "Visual designer"])] {
@@ -202,7 +296,8 @@ struct AgentRoutineChangeTests {
         }
         await #expect(throws: AgentProfileChangeError.limitReached) { _ = try await tool.execute(call(f, action: "resume", id: "fifth"), context: f.context) }
         let saved = await f.automations.list(agentID: f.owner.id).first
-        expectNoDifference(saved?.enabled, false); expectNoDifference(saved?.revision, f.routine.revision + 1)
+        expectNoDifference(saved?.enabled, action == "delete" ? nil : false)
+        expectNoDifference(saved?.revision, action == "delete" ? nil : f.routine.revision + 1)
         session.close()
     }
 
@@ -225,7 +320,8 @@ struct AgentRoutineChangeTests {
         session.close()
     }
 
-    @Test(arguments: [false, true]) func pauseInvalidatesPendingBatchSnapshot(events: Bool) async throws {
+    @Test(arguments: [false, true], [AutomationStateChange.Operation.pause, .delete])
+    func stateChangeInvalidatesPendingBatchSnapshot(events: Bool, operation: AutomationStateChange.Operation) async throws {
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
         let connector = UUID(), gate = RoutineGate()
         if events {
@@ -236,7 +332,7 @@ struct AgentRoutineChangeTests {
         }
         let executor = RoutineExecutor { routine in
             if routine.id == f.routine.id { await gate.hold() }
-            else { Issue.record("A paused future task must not start from a stale batch snapshot") }
+            else { Issue.record("A paused/deleted future task must not start from a stale batch snapshot") }
         }
         let task = Task {
             if events {
@@ -246,7 +342,7 @@ struct AgentRoutineChangeTests {
         }
         await gate.waitForEntry()
         let second = try #require(await f.automations.list(agentID: f.peer.id).first)
-        _ = try await f.automations.applyStateChange(.init(operation: .pause, automation: second), lifetime: .init())
+        _ = try await f.automations.applyStateChange(.init(operation: operation, automation: second), lifetime: .init())
         await gate.release()
         let fired = await task.value
         expectNoDifference(fired.count, 1); expectNoDifference(fired.first?.automationID, f.routine.id)

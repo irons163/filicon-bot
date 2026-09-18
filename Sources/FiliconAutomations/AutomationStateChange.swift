@@ -3,7 +3,7 @@ import Foundation
 /// The host captures the complete definition presented for approval. Runtime
 /// history may advance meanwhile; definition edits invalidate this proposal.
 public struct AutomationStateChange: Equatable, Sendable {
-    public enum Operation: String, Sendable { case pause, resume }
+    public enum Operation: String, Sendable { case pause, resume, delete }
     public let operation: Operation
     public let automation: Automation
     public init(operation: Operation, automation: Automation) {
@@ -13,6 +13,7 @@ public struct AutomationStateChange: Equatable, Sendable {
     public func matchesDefinition(_ current: Automation) -> Bool {
         let expected = automation
         return current.id == expected.id && current.agentID == expected.agentID
+            && current.createdAt == expected.createdAt
             && current.name == expected.name && current.prompt == expected.prompt
             && current.trigger == expected.trigger && current.revision == expected.revision
             && current.enabled == expected.enabled && current.guardPaused == expected.guardPaused
@@ -26,7 +27,7 @@ public struct AutomationStateChange: Equatable, Sendable {
 }
 
 public enum AutomationStateChangeError: String, LocalizedError, Sendable {
-    case invalid = "Use target routine with action pause or resume and the id of your own existing automation. Other fields and routine actions are not supported."
+    case invalid = "Use target routine with action pause, resume or delete and the id of your own existing automation. Other fields and routine actions are not supported."
     case unavailable = "The automation is unavailable, belongs to another agent, or already has the requested state."
     case stale = "The automation changed while awaiting approval. Inspect it and request approval again."
     case protected = "This automation cannot be resumed by the agent. Review its spend protection and trigger in Automations."

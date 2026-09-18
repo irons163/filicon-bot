@@ -63,17 +63,22 @@ resetting does not delete custom image files. Stop/account changes revoke pendin
 proposals, and an intervening manual avatar edit invalidates the old proposal.
 Avatar, profile, memory and routine changes share the four-change limit per request.
 
-Group and mailbox agents can propose **pausing or resuming their own existing
-automations** with `update_state(target:"routine", action:"pause"|"resume", id:...)`.
-The host supplies an own-agent routine directory; each toggle shows the full task
-and trigger for fresh approval, even with auto-review enabled. Pause disables
+Group and mailbox agents can propose **pausing, resuming or deleting their own existing
+automations** with `update_state(target:"routine", action:"pause"|"resume"|"delete", id:...)`.
+The host supplies an own-agent routine directory; each change shows the routine ID,
+full task and trigger for fresh approval, even with auto-review enabled. Pause disables
 future triggers, not already started/queued runs. Resume enables future triggers
 and possible model costs; it does not request an immediate run or replay missed
-firings. Definition and history are preserved. Stop/account changes revoke
+firings. Pause/resume preserve the definition and history. Delete removes the
+definition and future triggers, with **no undo**; execution history stays in storage
+but is no longer reachable through the deleted routine's UI. Deletion does not
+cancel already started/queued runs, delete their output files, or disconnect any
+external service. Stop/account changes revoke
 pending proposals, definition edits invalidate stale approvals, and failed writes
 do not arm an in-memory task. Spend-protection pauses and unsupported triggers
-must be reviewed by the user in Automations. This tool does not create, edit or
-delete routines, operate on another agent's tasks, or add tools to automation runs.
+must be reviewed by the user in Automations before resuming; deleting them cannot
+resume other protected tasks. This tool does not create or edit routine definitions,
+operate on another agent's tasks, or add tools to automation runs.
 
 In group and mailbox turns, agents can propose remembering or forgetting a short
 fact using `update_state(target:"memory", action:"write"|"forget", fact:...)`.

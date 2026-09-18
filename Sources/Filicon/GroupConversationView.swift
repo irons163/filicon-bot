@@ -614,17 +614,31 @@ extension AgentMemory.Scope {
 
 struct AgentRoutineApprovalDetails: View {
     let metadata: [String: String]
+    private var title: LocalizedText {
+        switch metadata["agentRoutineAction"] {
+        case "delete": "Delete own routine"
+        case "resume": "Resume own routine"
+        default: "Pause own routine"
+        }
+    }
+    private var disclosure: LocalizedText {
+        switch metadata["agentRoutineAction"] {
+        case "delete": "Delete removes this routine and prevents future triggers. There is no undo. Execution history stays in storage; already started or queued runs are not cancelled."
+        case "resume": "Resume enables future triggers and may incur model costs. It does not run immediately or replay missed runs. Task, trigger and history stay unchanged."
+        default: "Pause disables future triggers. Already started or queued runs are not cancelled. Task, trigger and history stay unchanged."
+        }
+    }
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(l10n(metadata["agentRoutineAction"] == "resume" ? "Resume own routine" : "Pause own routine")).font(.headline)
+            Text(l10n(title)).font(.headline)
             Text(verbatim: metadata["agentName"] ?? "").font(.callout.weight(.semibold))
             Text(verbatim: metadata["agentRoutineName"] ?? "").font(.callout.weight(.semibold))
+            Text(l10n("Routine ID")).font(.caption.weight(.semibold))
+            Text(verbatim: metadata["agentRoutineID"] ?? "").font(.caption.monospaced())
             Text(l10n("Task and trigger")).font(.caption.weight(.semibold))
             Text(verbatim: metadata["agentRoutinePrompt"] ?? "")
             Text(verbatim: metadata["agentRoutineTrigger"] ?? "").font(.caption.monospaced())
-            Text(l10n(metadata["agentRoutineAction"] == "resume"
-                      ? "Resume enables future triggers and may incur model costs. It does not run immediately or replay missed runs. Task, trigger and history stay unchanged."
-                      : "Pause disables future triggers. Already started or queued runs are not cancelled. Task, trigger and history stay unchanged."))
+            Text(l10n(disclosure))
                 .font(.caption).foregroundStyle(FiliconTheme.textSecondary)
         }.fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
     }
