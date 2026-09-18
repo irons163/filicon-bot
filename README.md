@@ -40,10 +40,14 @@ limit the recipients. Every addressed model must support images before the user
 message is posted. Invalid, oversized, missing or unsupported images leave the
 draft intact. Image-only messages work, and restarted history keeps previews.
 Only the current request supplies image bytes to models: later text-only turns
-and delegated peer wakes do not reload historical images. Direct group images
-cannot currently be forwarded with `SendToAgent` or republished with `SendMessage`;
-those image operations remain limited to incoming peer images. Arbitrary paths,
-URLs and generated images remain unsupported. Imported blobs are not yet
+and delegated peer wakes do not reload historical images. An addressed group
+member may propose forwarding this request's exact image IDs to one peer via
+`SendToAgent`. Every forwarding needs a fresh recipient/message/image preview
+approval, even when the recipient is in the same group. The current request and
+sender's membership are rechecked after approval. Group-target image broadcasts
+and direct group `SendMessage` image publication remain unsupported; the latter
+is still limited to incoming peer images. Arbitrary paths, URLs and generated
+images remain unsupported. Imported blobs are not yet
 automatically cleaned up when removed from a draft.
 
 In group and mailbox turns, agents can propose remembering or forgetting a short

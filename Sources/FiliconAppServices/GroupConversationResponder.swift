@@ -116,7 +116,10 @@ public struct GroupConversationResponder: GroupAgentResponder {
             messages: messages, attachmentsByMessageID: attachments
         )
         let output = GroupResponseOutput(supportsTools: supportsTools, onTools: onTools)
-        var additionalTools = messaging?.tools(for: agent.id) ?? []
+        // Only a normal, image-bearing user turn grants forwarding handles.
+        // A delegated room wake must never inherit the source room's images.
+        let forwardingMessageID = attachments.isEmpty ? nil : latestUser?.id
+        var additionalTools = messaging?.tools(for: agent.id, groupUserMessageID: forwardingMessageID) ?? []
         let publisher = onMessage.map { AgentUserMessageTool(conversationID: toolScopeID, publish: $0) }
         if let publisher { additionalTools.append(publisher) }
         do {

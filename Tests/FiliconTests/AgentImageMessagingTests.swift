@@ -95,6 +95,77 @@ struct AgentImageMessagingTests {
             store: AgentImageStore(rootURL: root.appending(path: "images")))
     }
 
+    @Test func groupForwardingOnlyExposesTheAddressedCurrentRequest() async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let groups = try GroupService(agents: f.agents, storeURL: f.root.appending(path: "groups.json"))
+        let group = try await groups.create(name: "Review", memberIDs: [f.sender.id, f.recipient.id])
+        let other = try await groups.create(name: "Other room", memberIDs: [f.sender.id])
+        let oldImage = try await f.store.importImage(data: peerImageBytes(), filename: "old.png")
+        let image = try await f.store.importImage(data: peerImageBytes(shade: 0.75), filename: "current.png")
+        let old = try await groups.postUserMessage("@Sender old", groupID: group.id, images: [oldImage])
+        let foreign = try await groups.postUserMessage("@Sender foreign", groupID: other.id, images: [oldImage])
+        let current = try await groups.postUserMessage("@Sender review", groupID: group.id, images: [image])
+        let session = AgentMessagingSession(originConversationID: group.id, agents: f.agents, messenger: f.messenger,
+            registry: f.registry, coordinator: TurnCoordinator(registry: f.registry, toolCatalog: ToolCatalog()),
+            groups: groups, imageStore: f.store, authorizeImages: { _, _, _, images, _, _ in await f.probe.approve(images) })
+        let context = ToolContext(conversationID: group.id)
+        for id in [old.id, foreign.id, UUID()] {
+            let tool = session.tool(for: f.sender.id, groupUserMessageID: id)
+            #expect(try await tool.execute(forwardImage(f.recipient.id, ids: [image.id]), context: context).isError)
+        }
+        let unaddressed = session.tool(for: f.recipient.id, groupUserMessageID: current.id)
+        #expect(try await unaddressed.execute(forwardImage(f.sender.id, ids: [image.id]), context: context).isError)
+        let unbound = session.tool(for: f.sender.id) // Used by delegated room wakes; never inherits source images.
+        #expect(try await unbound.execute(forwardImage(f.recipient.id, ids: [image.id]), context: context).isError)
+        let unboundContext = try #require(unbound as? any ToolRuntimeContextProviding)
+        let unboundDirectory = try await unboundContext.runtimeContext(for: context)
+        #expect(!unboundDirectory.contains(image.id) && !unboundDirectory.contains(oldImage.id))
+        let tool = session.tool(for: f.sender.id, groupUserMessageID: current.id)
+        let runtime = try #require(tool as? any ToolRuntimeContextProviding)
+        let directory = try await runtime.runtimeContext(for: context)
+        #expect(directory.contains(image.id) && !directory.contains(oldImage.id))
+        for id in [oldImage.id, "file:///private.png", "https://example.invalid/private.png"] {
+            #expect(try await tool.execute(forwardImage(f.recipient.id, ids: [id]), context: context).isError)
+        }
+        #expect(try await tool.execute(forwardImage(other.id, ids: [image.id]), context: context).isError)
+        let approvalsBeforeSend = await f.probe.approvals
+        expectNoDifference(approvalsBeforeSend, [])
+        let call = try forwardImage(f.recipient.id, ids: [image.id])
+        let accepted = try await tool.execute(call, context: context)
+        #expect(!accepted.isError)
+        let replay = try await tool.execute(call, context: context)
+        expectNoDifference(replay, accepted)
+        let approvals = await f.probe.approvals
+        expectNoDifference(approvals, [[image]])
+        let messages = await f.messenger.allMessages()
+        expectNoDifference(messages.map { $0.images?.map(\.id) }, [[image.id]])
+        expectNoDifference(messages.first?.delivery?.originConversationID, group.id)
+        try await session.close()
+    }
+
+    @Test(arguments: ["new-request", "membership"])
+    func groupImageSourceIsRevalidatedAfterApproval(change: String) async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let groups = try GroupService(agents: f.agents, storeURL: f.root.appending(path: "groups.json"))
+        let group = try await groups.create(name: "Review", memberIDs: [f.sender.id, f.recipient.id])
+        let image = try await f.store.importImage(data: peerImageBytes(), filename: "review.png")
+        let current = try await groups.postUserMessage("@Sender review", groupID: group.id, images: [image])
+        let session = AgentMessagingSession(originConversationID: group.id, agents: f.agents, messenger: f.messenger,
+            registry: f.registry, coordinator: TurnCoordinator(registry: f.registry, toolCatalog: ToolCatalog()),
+            groups: groups, imageStore: f.store, authorizeImages: { _, _, _, images, _, _ in
+                await f.probe.approve(images)
+                if change == "new-request" { _ = try await groups.postUserMessage("Follow up without images", groupID: group.id) }
+                else { try await groups.updateMembers(groupID: group.id, memberIDs: [f.recipient.id]) }
+            })
+        let tool = session.tool(for: f.sender.id, groupUserMessageID: current.id)
+        let result = try await tool.execute(forwardImage(f.recipient.id, ids: [image.id]), context: .init(conversationID: group.id))
+        #expect(result.isError)
+        let approvals = await f.probe.approvals, messages = await f.messenger.allMessages()
+        expectNoDifference(approvals, [[image]])
+        expectNoDifference(messages, [])
+        try await session.close()
+    }
+
     @Test func imagePublicationIsBoundedScopedAndIdempotent() async throws {
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
         let images = try await [f.store.importImage(data: peerImageBytes(), filename: "first.png"),

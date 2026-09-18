@@ -53,6 +53,81 @@ private actor AppImageProbe {
         try #require(predicate())
     }
 
+    @Test(arguments: ["approve", "outside-group", "deny", "stop", "account", "corrupt", "members"])
+    func groupImageForwardingRequiresFreshApprovalAndCurrentScope(mode: String) async throws {
+        let shouldSend = mode == "approve" || mode == "outside-group"
+        let root = FileManager.default.temporaryDirectory.appending(path: "filicon-group-forward-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+        let sender = try #require(await model.createAgent(name: "Sender", summary: "", instructions: "", providerID: "app-image", modelID: "vision"))
+        let recipient = try #require(await model.createAgent(name: "Reviewer", summary: "", instructions: "", providerID: "app-image", modelID: "vision"))
+        #expect(await model.createGroup(name: "Review room", summary: "", memberIDs: mode == "outside-group" ? [sender.id] : [sender.id, recipient.id]))
+        let group = try #require(model.groups.first)
+        let file = root.appending(path: "review.png"), bytes = try imageData()
+        try bytes.write(to: file)
+        let images = try await model.importAgentMessageImages([file]), image = try #require(images.first)
+        let probe = AppImageProbe()
+        await model.setAutoReviewEnabled(true)
+        await model.setAutoReviewRules(allow: ["SendToAgent"], ask: [])
+        await model.registry.register(AppImageProvider { request, execute in
+            let count = await probe.record(request)
+            expectNoDifference(request.attachmentsByMessageID.values.flatMap { $0 }.map(\.data), [bytes])
+            #expect(request.messages.contains { $0.text.contains(image.id) })
+            if count == 1 {
+                struct Forward: Encodable { let recipientID: UUID; let images: [String]; let message = "Review the selected image" }
+                let result = try await execute(.init(id: "group-image-forward", name: "SendToAgent",
+                    argumentsJSON: JSONEncoder().encode(Forward(recipientID: recipient.id, images: [image.id]))))
+                if shouldSend { #expect(!result.isError) }
+                if mode == "deny" || mode == "corrupt" { #expect(result.isError) }
+            } else {
+                #expect(request.conversationID != group.id) // A real peer wake, not a second foreground response.
+                #expect(!request.messages.contains { $0.text.contains("PRIVATE-ROOM-CONTEXT") })
+            }
+            return "PASS"
+        })
+        // Being a fellow group member is not permission to receive the addressed user's image.
+        let send = Task { await model.sendGroupMessage(groupID: group.id, text: "@Sender PRIVATE-ROOM-CONTEXT", images: images) }
+        try await waitUntil { !model.pendingAutoReviewApprovals.isEmpty }
+        let approval = try #require(model.pendingAutoReviewApprovals.first)
+        expectNoDifference(approval.action.context.metadata["tool"], "SendToAgent")
+        expectNoDifference(approval.action.context.metadata["agentMessage"], "Review the selected image")
+        #expect(approval.action.summary.contains("Sender → Reviewer"))
+        let encoded = try #require(approval.action.context.metadata["agentImages"])
+        let proposed = try JSONDecoder().decode([AttachmentMetadata].self, from: Data(encoded.utf8))
+        expectNoDifference(proposed.map(\.id), [image.id])
+        expectNoDifference(model.agentMessages.count, 0)
+        let requestsBeforeApproval = await probe.requests
+        expectNoDifference(requestsBeforeApproval.count, 1)
+        switch mode {
+        case "stop": await model.stopGroup(id: group.id)
+        case "account": await model.cancelAutoReviewApprovals(nextAccountID: "different-account")
+        case "members": await model.updateGroupMembers(groupID: group.id, memberIDs: [recipient.id])
+        default:
+            if mode == "corrupt" {
+                try Data(repeating: 0, count: Int(image.byteCount)).write(to: root.appending(path: "agent-message-images/\(image.id.prefix(2))/\(image.id)"))
+            }
+            await model.resolveGroupApproval(approval, groupID: group.id, approve: mode != "deny")
+        }
+        // An old callback must not revive a denied or revoked image proposal.
+        await model.resolveGroupApproval(approval, groupID: group.id, approve: true)
+        await send.value
+        let requests = await probe.requests
+        expectNoDifference(requests.count, shouldSend ? 2 : 1)
+        expectNoDifference(model.agentMessages.count, shouldSend ? 1 : 0)
+        #expect(model.pendingAutoReviewApprovals.isEmpty)
+        #expect(model.runningGroups.isEmpty)
+        if shouldSend {
+            expectNoDifference(model.agentMessages.first?.images?.map(\.id), [image.id])
+            expectNoDifference(model.agentMessages.first?.delivery?.state, .completed)
+            let restarted = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+            await restarted.reloadWorkspaceData()
+            expectNoDifference(restarted.agentMessages.first?.images?.map(\.id), [image.id])
+            expectNoDifference(restarted.groupMessages[group.id]?.first?.images?.map(\.id), [image.id])
+            let restored = try await restarted.agentMessageImageData(image)
+            expectNoDifference(restored, bytes)
+        }
+    }
+
     @Test(arguments: ["approve", "deny", "stop", "account", "corrupt", "stop-after-publication"])
     func imagePublicationRequiresPreviewAndSurvivesStopAndRestart(mode: String) async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-app-publication-\(UUID())")

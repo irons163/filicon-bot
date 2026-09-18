@@ -90,6 +90,24 @@ public actor GroupService {
 
     public func list() -> [AgentGroup] { state.groups }
 
+    /// Host-bound image handles for this request only. Being a room member is
+    /// insufficient: the user must also have addressed this member in this turn.
+    public func imagesForCurrentUserRequest(groupID: UUID, messageID: UUID, memberID: UUID) async throws -> [AttachmentMetadata] {
+        guard let group = state.groups.first(where: { $0.id == groupID }), group.memberIDs.contains(memberID),
+              let message = state.roomMessages.last(where: { $0.groupID == groupID && $0.senderID == nil }),
+              message.id == messageID else { throw AgentGroupPostError.changed }
+        let epoch = epochs[groupID]
+        let members = await resolveMembers(group.memberIDs)
+        try Task.checkCancellation()
+        guard epochs[groupID] == epoch,
+              state.groups.first(where: { $0.id == groupID })?.memberIDs == group.memberIDs,
+              state.roomMessages.last(where: { $0.groupID == groupID && $0.senderID == nil }) == message,
+              Self.resolveResponderIDs(members: members, history: [message]).contains(memberID) else {
+            throw AgentGroupPostError.changed
+        }
+        return message.images ?? []
+    }
+
     public func audience(groupID: UUID, senderID: UUID) async throws -> AgentGroupAudience {
         guard let group = state.groups.first(where: { $0.id == groupID }), group.memberIDs.contains(senderID) else {
             throw AgentGroupPostError.unavailable
