@@ -108,9 +108,24 @@ Generic direct chats are not bound to agent profiles and retain conversation-onl
 serialization. There is no cross-process coordination, group target broadcast,
 image payload or priority interruption. An uncooperative operation keeps its lane
 until it unwinds; this is not a promise of immediate remote backend cancellation.
-Unfinished work is cancelled at restart,
-not replayed with stale approval. Model-facing CreateAgent/UpdateAgent remain
-unwired despite existing UI/service CRUD. See [the itemized audit](Agent-collaboration-parity.md).
+Unfinished work is cancelled at restart, not replayed with stale approval.
+See [the itemized audit](Agent-collaboration-parity.md).
+
+Group turns and manual/peer mailbox wakes now also receive scoped `CreateAgent`
+and `UpdateAgent` tools. Every change requires explicit approval of the complete
+public fields, independently of auto-review allow rules. Creation inherits the
+requester's provider/model and uses the supplied description as the new public
+summary and initial instructions; it copies no private context and does not add
+group membership, execute the agent, or grant permissions. A subsequent
+`SendToAgent` is separately approved. Update accepts `agent_id` plus a name and/or
+public description; omitted fields stay unchanged and existing private
+instructions, model, avatar and status survive. The reference's own-profile
+`update_state` is not implemented. Stop/account transitions synchronously revoke
+profile write authority before awaiting cleanup. The service checks that fence
+and the reviewed public values at commit, rolls back memory on save failure,
+and retains an in-session receipt after a durable commit. A session permits at
+most four profile changes and rejects duplicate/replayed changes with different
+payloads. Normal direct chats without an agent identity do not get these tools.
 
 `AgentExecutionSchedulerTests` covers FIFO/parallel lanes, owner-specific Stop,
 cleanup joining, late callback rejection, post-queue execution deadlines, and

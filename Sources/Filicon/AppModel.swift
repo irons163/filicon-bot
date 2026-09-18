@@ -2505,6 +2505,7 @@ final class AppModel: ObservableObject {
 
     func stopAgentMessages(scopeID: UUID) async {
         guard runningAgentMessageScopes.contains(scopeID) else { return }
+        agentMessagingSessions[scopeID]?.revokeProfileChanges()
         agentMessageTasks[scopeID]?.cancel()
         do { try await agentMessagingSessions[scopeID]?.close() }
         catch { errorMessage = error.localizedDescription }
@@ -2524,15 +2525,74 @@ final class AppModel: ObservableObject {
 
     private func makeAgentMessagingSession(originID: UUID) -> AgentMessagingSession? {
         guard let agentService, let agentMessenger, let agentConversations else { return nil }
+        let generation = autoReviewAccountGeneration
+        let management = AgentManagementSession(originID: originID, agents: agentService,
+            authorize: { [weak self] sender, change, call, context in
+                guard let self else { throw CancellationError() }
+                try await self.authorizeAgentProfileChange(sender: sender, change: change, call: call, context: context)
+            }, commit: { [weak self] change, lifetime in
+                guard let self else { throw CancellationError() }
+                return try await self.commitAgentProfileChange(change, lifetime: lifetime, originID: originID, generation: generation)
+            })
         return AgentMessagingSession(
             originConversationID: originID, agents: agentService, messenger: agentMessenger,
             registry: registry, coordinator: coordinator, conversations: agentConversations,
-            accountID: settings.accountScope ?? "local",
+            accountID: settings.accountScope ?? "local", management: management,
             authorize: { [weak self] sender, recipient, text, call, context in
                 guard let self else { throw CancellationError() }
                 try await self.authorizeAgentDelegation(sender: sender, recipient: recipient, text: text, call: call, context: context)
             }, onChange: { [weak self] in await self?.reloadAgentMessages() }
         )
+    }
+
+    private func commitAgentProfileChange(_ change: AgentProfileChange, lifetime: AgentProfileChangeLifetime,
+                                          originID: UUID, generation: UInt64) async throws -> AgentProfile {
+        guard let agentService, isAgentMessagingScopeActive(originID), generation == autoReviewAccountGeneration else {
+            throw CancellationError()
+        }
+        var proposed = await agentService.profile(id: change.targetID) ?? AgentProfile(
+            id: change.targetID, name: change.name, instructions: change.description,
+            providerID: change.providerID, modelID: change.modelID)
+        proposed.name = change.name; proposed.summary = change.description
+        let payload = try JSONEncoder().encode(proposed)
+        let profile: AgentProfile
+        do {
+            profile = try await quotaWrite(scope: "workflow", key: "agent-\(change.targetID)", data: payload) {
+                try await agentService.applyProfileChange(change, lifetime: lifetime)
+            }
+        } catch {
+            guard let saved = lifetime.committedProfile(for: change) else { throw error }
+            errorMessage = Self.quotaMessage(error)
+            profile = saved
+        }
+        agents = await agentService.list(includeArchived: true)
+        return profile
+    }
+
+    private func authorizeAgentProfileChange(sender: AgentProfile, change: AgentProfileChange,
+                                             call: NormalizedToolCall, context: ToolContext) async throws {
+        guard isAgentMessagingScopeActive(context.conversationID) else { throw CancellationError() }
+        let generation = autoReviewAccountGeneration
+        let fence = ApprovalFence(accountID: settings.accountScope ?? "local", agentID: context.conversationID.uuidString.lowercased(),
+                                  runID: context.runID, generation: generation)
+        await autoReviewBroker.activate(fence)
+        var metadata = ["tool": change.operation.rawValue, "agentName": change.name, "agentDescription": change.description,
+                        "agentProvider": change.providerID.rawValue, "agentModel": change.modelID.rawValue]
+        metadata["previousAgentName"] = change.previousName
+        metadata["previousAgentDescription"] = change.previousDescription
+        let action = AutoReviewAction(summary: "\(sender.name) → \(change.operation.rawValue): \(change.name)",
+            target: .resource(kind: "agent", identifier: change.targetID.uuidString), risks: [.sensitive],
+            context: .init(fence: fence, conversationID: context.conversationID, toolCallID: call.id.rawValue, metadata: metadata))
+        let pending = PendingApproval(action: action, reason: "Approval required", expiresAt: Date().addingTimeInterval(300))
+        // Profile writes always ask, even when a general auto-review rule allows
+        // the tool name. Approval of a message is not profile-write permission.
+        try await autoReviewBroker.waitForApprovalToExecute(pending) { [weak self] pending in
+            await self?.registerAutoReviewApproval(pending)
+        }
+        try Task.checkCancellation()
+        guard isAgentMessagingScopeActive(context.conversationID), generation == autoReviewAccountGeneration else {
+            throw CancellationError()
+        }
     }
 
     private func isAgentMessagingScopeActive(_ scopeID: UUID) -> Bool {
@@ -2865,6 +2925,7 @@ final class AppModel: ObservableObject {
 
     func stopGroup(id: UUID) async {
         guard runningGroups.contains(id), stoppingGroups.insert(id).inserted else { return }
+        agentMessagingSessions[id]?.revokeProfileChanges()
         cancelledGroupRuns.insert(id)
         workspaceFolders.cancel(conversationID: id)
         defer { stoppingGroups.remove(id) }
@@ -4093,6 +4154,7 @@ final class AppModel: ObservableObject {
     func cancelAutoReviewApprovals(nextAccountID: String) async {
         // Queued peer work is scoped to the account that approved the exchange.
         agentMessagingAccountTransition = true
+        for session in agentMessagingSessions.values { session.revokeProfileChanges() }
         autoReviewAccountGeneration &+= 1
         defer { agentMessagingAccountTransition = false }
         await agentExecutionScheduler.cancelAll()

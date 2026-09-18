@@ -110,5 +110,10 @@ the host. An App-injected cross-origin per-agent FIFO scheduler now covers group
 turns, mailbox wakes, subagent tasks, automations, workflows and channel replies,
 including owner-specific cancellation and host-tool cleanup joining. Generic
 direct chats without an agent profile remain conversation-scoped. Unified
-personal memory, priority preemption, cross-process/restart scheduling, full
-messaging variants, and model-facing CreateAgent/UpdateAgent remain incomplete.
+personal memory, priority preemption, cross-process/restart scheduling and full
+messaging variants remain incomplete. Scoped CreateAgent/UpdateAgent now run in
+group and mailbox turns with mandatory exact-field approval, a four-change cap,
+stop/account revocation and replay protection. Creation inherits the requester's
+model but no private context, membership or permissions. Updates change only
+name/public summary, not private persona; own-profile update_state remains
+unimplemented. See the collaboration audit for current validation limits.

@@ -35,6 +35,7 @@ public actor AgentMessagingSession {
     private let registry: ProviderRegistry
     private let coordinator: TurnCoordinator
     private let conversations: AgentConversationStore?
+    private let management: AgentManagementSession?
     private let accountID: String
     private let authorize: Authorizer
     private let onChange: @Sendable () async -> Void
@@ -55,18 +56,27 @@ public actor AgentMessagingSession {
 
     public init(id: UUID = UUID(), originConversationID: UUID, agents: AgentService, messenger: AgentMessenger,
                 registry: ProviderRegistry, coordinator: TurnCoordinator, turnTimeout: Duration = .seconds(180),
-                conversations: AgentConversationStore? = nil, accountID: String = "local",
+                conversations: AgentConversationStore? = nil, accountID: String = "local", management: AgentManagementSession? = nil,
                 authorize: @escaping Authorizer = { _, _, _, _, _ in throw AgentMessagingError.approvalRequired },
                 onChange: @escaping @Sendable () async -> Void = {}) {
         self.id = id; self.originConversationID = originConversationID
         self.agents = agents; self.messenger = messenger; self.registry = registry; self.coordinator = coordinator
         self.conversations = conversations; self.accountID = accountID
+        self.management = management
         self.authorize = authorize; self.onChange = onChange; self.turnTimeout = turnTimeout
     }
 
     public nonisolated func tool(for senderID: UUID) -> any ToolExecutor {
         SendToAgentTool(session: self, senderID: senderID, replyTo: nil)
     }
+
+    public nonisolated func tools(for senderID: UUID) -> [any ToolExecutor] {
+        [tool(for: senderID)] + (management?.tools(for: senderID) ?? [])
+    }
+
+    /// Revoke write authority before the caller's first suspension on Stop or
+    /// account transition, even if this session actor is busy unwinding a turn.
+    public nonisolated func revokeProfileChanges() { management?.close() }
 
     /// Only the host's explicit Send button may call this entry point. Model
     /// tools always use `send`, including its recipient/payload approval gate.
@@ -206,7 +216,7 @@ public actor AgentMessagingSession {
                 let request = InferenceRequest(conversationID: conversationID, modelID: agent.modelID, messages: messages)
                 let tool = SendToAgentTool(session: self, senderID: agent.id, replyTo: inbound)
                 try await coordinator.send(request: request, providerID: agent.providerID,
-                    additionalTools: [tool, publisher], toolContext: ToolContext(conversationID: originConversationID),
+                    additionalTools: [tool, publisher] + (management?.tools(for: agent.id) ?? []), toolContext: ToolContext(conversationID: originConversationID),
                     agentID: agent.id, executionTimeout: turnTimeout, onStart: { [messenger, onChange] in
                         try await self.checkOpen()
                         try await messenger.updateDelivery(id: inbound.id, state: .running)
@@ -245,6 +255,7 @@ public actor AgentMessagingSession {
     /// Closing always fences sends first, before any suspension/cancellation.
     public func close() async throws {
         closed = true
+        revokeProfileChanges()
         queue.removeAll()
         if let activeConversationID { await coordinator.cancel(conversationID: activeConversationID) }
         for message in accepted.values { try await messenger.updateDelivery(id: message.id, state: .cancelled) }

@@ -15,13 +15,13 @@ public struct AgentServiceSnapshot: Sendable {
 
 public actor AgentService {
     public static let maximumAgents = 50
-    private let store: AgentStateStore
+    private let storeURL: URL
     private var state: AgentPersistentState
+    private var persistedState: AgentPersistentState
     private var revision: UInt64 = 0
     private var snapshotListeners: [UUID: AsyncStream<AgentServiceSnapshot>.Continuation] = [:]
 
     public init(storeURL: URL) throws {
-        let store = AgentStateStore(url: storeURL)
         var loadedState = try Self.loadSynchronously(url: storeURL)
         let now = Date()
         var recoveredInterruptedRun = false
@@ -52,8 +52,9 @@ public actor AgentService {
         if recoveredInterruptedRun {
             try Self.saveSynchronously(loadedState, url: storeURL)
         }
-        self.store = store
+        self.storeURL = storeURL
         self.state = loadedState
+        self.persistedState = loadedState
     }
 
     public func list(includeArchived: Bool = false) -> [AgentProfile] {
@@ -63,16 +64,16 @@ public actor AgentService {
     @discardableResult
     public func create(name: String, summary: String = "", instructions: String = "",
                        providerID: ProviderID = "fake", modelID: ModelID = "fake-stream",
-                       title: String = "", avatar: AgentAvatar? = nil) async throws -> AgentProfile {
+                       title: String = "", avatar: AgentAvatar? = nil, at: Date = Date()) async throws -> AgentProfile {
         guard state.agents.count < Self.maximumAgents else { throw AgentServiceError.limitExceeded(Self.maximumAgents) }
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { throw AgentServiceError.invalidName }
         let profile = AgentProfile(
             name: String(name.prefix(120)), summary: String(summary.prefix(2_000)),
             instructions: String(instructions.prefix(32_000)), providerID: providerID,
-            modelID: modelID, title: String(title.prefix(160)), avatar: avatar
+            modelID: modelID, createdAt: at, title: String(title.prefix(160)), avatar: avatar
         )
-        state.agents.append(profile); try await persist(); return profile
+        state.agents.append(profile); try persist(); return profile
     }
 
     public func update(_ profile: AgentProfile) async throws {
@@ -86,7 +87,7 @@ public actor AgentService {
         safe.instructions = String(profile.instructions.prefix(32_000))
         safe.unreadCount = max(0, profile.unreadCount)
         safe.updatedAt = Date()
-        state.agents[index] = safe; try await persist()
+        state.agents[index] = safe; try persist()
     }
 
     public func archive(id: UUID, at: Date = Date()) async throws {
@@ -94,7 +95,7 @@ public actor AgentService {
         state.agents[index].archivedAt = at
         state.agents[index].status = .offline
         state.agents[index].updatedAt = at
-        try await persist()
+        try persist()
     }
 
     public func restore(id: UUID, at: Date = Date()) async throws {
@@ -102,21 +103,21 @@ public actor AgentService {
         state.agents[index].archivedAt = nil
         state.agents[index].status = .idle
         state.agents[index].updatedAt = at
-        try await persist()
+        try persist()
     }
 
     public func setPresence(id: UUID, status: AgentAvailabilityStatus, at: Date = Date()) async throws {
         guard let index = state.agents.firstIndex(where: { $0.id == id }) else { throw AgentServiceError.unknownAgent(id) }
         state.agents[index].status = state.agents[index].archivedAt == nil ? status : .offline
         state.agents[index].updatedAt = at
-        try await persist()
+        try persist()
     }
 
     public func setUnreadCount(id: UUID, count: Int, at: Date = Date()) async throws {
         guard let index = state.agents.firstIndex(where: { $0.id == id }) else { throw AgentServiceError.unknownAgent(id) }
         state.agents[index].unreadCount = max(0, count)
         state.agents[index].updatedAt = at
-        try await persist()
+        try persist()
     }
 
     public func clone(id: UUID, includeHistory: Bool = false) async throws -> AgentProfile {
@@ -128,6 +129,47 @@ public actor AgentService {
     }
 
     public func profile(id: UUID) -> AgentProfile? { state.agents.first { $0.id == id } }
+
+    /// Only the approved public fields are merged. Persist and publish in the
+    /// same actor turn so failed writes cannot leave a phantom agent in memory.
+    public func applyProfileChange(_ change: AgentProfileChange, lifetime: AgentProfileChangeLifetime,
+                                   at: Date = Date()) throws -> AgentProfile {
+        try lifetime.commit(change) {
+            guard !change.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  change.name.count <= 120, change.description.count <= 2_000 else { throw AgentProfileChangeError.invalidFields }
+            guard let requester = state.agents.first(where: { $0.id == change.requesterID }), requester.archivedAt == nil else {
+                throw AgentProfileChangeError.unavailable
+            }
+            let result: AgentProfile
+            switch change.operation {
+            case .create:
+                guard state.agents.count < Self.maximumAgents else { throw AgentServiceError.limitExceeded(Self.maximumAgents) }
+                guard !state.agents.contains(where: { $0.id == change.targetID }),
+                      requester.providerID == change.providerID, requester.modelID == change.modelID else {
+                    throw AgentProfileChangeError.stale
+                }
+                result = AgentProfile(id: change.targetID, name: change.name, summary: change.description,
+                                      instructions: change.description, providerID: change.providerID, modelID: change.modelID,
+                                      createdAt: at)
+                state.agents.append(result)
+            case .update:
+                guard change.requesterID != change.targetID,
+                      let index = state.agents.firstIndex(where: { $0.id == change.targetID }),
+                      state.agents[index].archivedAt == nil else { throw AgentProfileChangeError.unavailable }
+                guard state.agents[index].name == change.previousName,
+                      state.agents[index].summary == change.previousDescription else { throw AgentProfileChangeError.stale }
+                guard !change.description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || change.description == change.previousDescription else {
+                    throw AgentProfileChangeError.invalidFields
+                }
+                state.agents[index].name = change.name
+                state.agents[index].summary = change.description
+                state.agents[index].updatedAt = at
+                result = state.agents[index]
+            }
+            try persist()
+            return result
+        }
+    }
 
     public func persistentStateSnapshot() -> Data? { try? JSONEncoder().encode(state) }
 
@@ -151,7 +193,7 @@ public actor AgentService {
         }
         state.subagents.append(record)
         state.wakes.append(.init(parentRunID: record.parentRunID, workID: record.id))
-        try await persist()
+        try persist()
     }
 
     public func updateSubagent(
@@ -168,7 +210,7 @@ public actor AgentService {
         if let result { state.subagents[index].result = result }
         if let usage { state.subagents[index].usage = usage }
         if let finishedAt { state.subagents[index].finishedAt = finishedAt }
-        try await persist()
+        try persist()
     }
 
     public func settleSubagent(
@@ -193,7 +235,7 @@ public actor AgentService {
             state.wakes[wakeIndex].result = result
             state.wakes[wakeIndex].readyAt = at
         }
-        try await persist()
+        try persist()
     }
 
     public func subagent(id: UUID) -> SubagentRecord? {
@@ -214,11 +256,13 @@ public actor AgentService {
 
     public func acknowledgeWake(id: UUID) async throws {
         state.wakes.removeAll { $0.id == id }
-        try await persist()
+        try persist()
     }
 
-    private func persist() async throws {
-        try await store.save(state)
+    private func persist() throws {
+        do { try Self.saveSynchronously(state, url: storeURL) }
+        catch { state = persistedState; throw error }
+        persistedState = state
         revision &+= 1
         let value = snapshot()
         for continuation in snapshotListeners.values { continuation.yield(value) }
@@ -239,6 +283,6 @@ public actor AgentService {
     private static func saveSynchronously(_ state: AgentPersistentState, url: URL) throws {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .millisecondsSince1970; encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try encoder.encode(state).write(to: url, options: .atomic)
+        try encoder.encode(state).write(to: url, options: [.atomic, .completeFileProtectionUnlessOpen])
     }
 }

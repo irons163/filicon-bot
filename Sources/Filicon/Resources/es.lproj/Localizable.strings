@@ -1393,3 +1393,5 @@
 "Waiting for folder selection" = "Esperando la selección de carpeta";
 "Member response failed. Send a message to retry." = "La respuesta del miembro falló. Envía un mensaje para reintentar.";
 "No new contribution this turn." = "No hay nuevas aportaciones en este turno.";
+"New agents use this description as their initial instructions. Group membership and permissions are unchanged." = "Los nuevos agentes usan esta descripción como instrucciones iniciales. Los miembros del grupo y los permisos no cambian.";
+"Only the name and public description change. Private instructions, model and permissions are unchanged." = "Solo cambian el nombre y la descripción pública. Las instrucciones privadas, el modelo y los permisos no cambian.";

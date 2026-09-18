@@ -81,7 +81,7 @@ public struct GroupConversationResponder: GroupAgentResponder {
             messages: messages
         )
         let output = GroupResponseOutput(supportsTools: supportsTools, onTools: onTools)
-        var additionalTools = messaging.map { [$0.tool(for: agent.id)] } ?? []
+        var additionalTools = messaging?.tools(for: agent.id) ?? []
         let publisher = onMessage.map { AgentUserMessageTool(conversationID: groupID, publish: $0) }
         if let publisher { additionalTools.append(publisher) }
         do {

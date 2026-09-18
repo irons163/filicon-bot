@@ -435,6 +435,9 @@ struct GroupToolApprovalPanel: View {
                     // outgoing payload must be visible in full before approval.
                     Text(verbatim: text).font(.callout).textSelection(.enabled)
                 }
+                if ["CreateAgent", "UpdateAgent"].contains(approval.action.context.metadata["tool"] ?? "") {
+                    AgentProfileApprovalDetails(metadata: approval.action.context.metadata)
+                }
                 Text(FiliconLocalization.string(approval.reason)).font(.caption).foregroundStyle(FiliconTheme.textSecondary)
                 HStack {
                     Button(l10n("Approve")) { Task { await resolve(approval, approve: true) } }
@@ -450,6 +453,36 @@ struct GroupToolApprovalPanel: View {
 
     private func resolve(_ approval: PendingApproval, approve: Bool) async {
         await model.resolveGroupApproval(approval, groupID: groupID, approve: approve)
+    }
+}
+
+struct AgentProfileApprovalDetails: View {
+    let metadata: [String: String]
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            field("Name", before: metadata["previousAgentName"], after: metadata["agentName"])
+            field("Description", before: metadata["previousAgentDescription"], after: metadata["agentDescription"])
+            if metadata["tool"] == "CreateAgent" {
+                field("Provider", after: metadata["agentProvider"])
+                field("Model", after: metadata["agentModel"])
+                Text(l10n("New agents use this description as their initial instructions. Group membership and permissions are unchanged."))
+                    .font(.caption).foregroundStyle(FiliconTheme.textSecondary)
+            } else {
+                Text(l10n("Only the name and public description change. Private instructions, model and permissions are unchanged."))
+                    .font(.caption).foregroundStyle(FiliconTheme.textSecondary)
+            }
+        }
+        .textSelection(.enabled)
+    }
+    private func field(_ label: String, before: String? = nil, after: String?) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(FiliconLocalization.string(label)).font(.caption).foregroundStyle(FiliconTheme.textSecondary)
+            if let before, before != after {
+                Text(verbatim: before).font(.callout)
+                Image(systemName: "arrow.down").font(.caption)
+            }
+            Text(verbatim: after ?? "").font(.callout).fixedSize(horizontal: false, vertical: true)
+        }
     }
 }
 

@@ -1393,3 +1393,5 @@
 "Waiting for folder selection" = "等待選擇資料夾";
 "Member response failed. Send a message to retry." = "成員回應失敗。傳送訊息可重試。";
 "No new contribution this turn." = "本輪沒有新的補充。";
+"New agents use this description as their initial instructions. Group membership and permissions are unchanged." = "新代理人會以此說明作為初始指令。群組成員與權限不會變更。";
+"Only the name and public description change. Private instructions, model and permissions are unchanged." = "僅修改名稱與公開說明。私人指令、模型與權限不會變更。";
