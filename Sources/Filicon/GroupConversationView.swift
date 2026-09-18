@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 import FiliconAgents
 import FiliconDomain
 import FiliconAutomations
@@ -9,12 +10,13 @@ struct GroupWorkspaceView: View {
     @Environment(\.locale) private var locale
     @State private var showingNewGroup = false
     @State private var drafts = GroupComposerDrafts()
+    @State private var imageDrafts = GroupImageDrafts()
 
     var body: some View {
         let _ = locale.identifier
         Group {
             if let group = model.groups.first(where: { $0.id == model.selectedGroupID }) ?? model.groups.first {
-                GroupConversationView(group: group, draft: $drafts[group.id])
+                GroupConversationView(group: group, draft: $drafts[group.id], images: $imageDrafts[group.id])
                     .id(group.id)
             } else {
                 VStack(spacing: 0) {
@@ -45,6 +47,9 @@ struct GroupWorkspaceView: View {
         }
         .background(FiliconTheme.canvas)
         .sheet(isPresented: $showingNewGroup) { CreateGroupSheet() }
+        .onChange(of: model.settings.accountScope) {
+            drafts = GroupComposerDrafts(); imageDrafts = GroupImageDrafts()
+        }
     }
 }
 
@@ -53,6 +58,7 @@ struct GroupConversationView: View {
     @Environment(\.locale) private var locale
     let group: AgentGroup
     @Binding var draft: String
+    @Binding var images: [AttachmentMetadata]
     @State private var inspectorVisible = true
     @State private var compactInspectorPresented = false
     @State private var composerSelection = NSRange(location: 0, length: 0)
@@ -61,6 +67,8 @@ struct GroupConversationView: View {
     @State private var dismissedMention: GroupMentionCompletion.Query?
     @State private var selectedMention = 0
     @State private var folderPromptHeight: CGFloat = 180
+    @State private var importingImages = false
+    @State private var posting = false
 
     private var messages: [RoomMessage] { model.groupMessages[group.id] ?? [] }
     private var isRunning: Bool { model.runningGroups.contains(group.id) }
@@ -202,8 +210,16 @@ struct GroupConversationView: View {
                 Text(l10n("Add members to start chatting."))
                     .font(.caption).foregroundStyle(FiliconTheme.textSecondary)
             }
+            if !images.isEmpty {
+                GroupImageDraftPreview(onRemove: removeImages) {
+                    AgentMessageImagePreviews(images: images, compact: true)
+                }.disabled(isRunning || posting)
+            }
             if mentionQuery != nil { mentionMenu }
             HStack(alignment: .bottom, spacing: 10) {
+                FiliconIconButton(label: l10n("Attach images…"), systemName: "photo.badge.plus", size: 30, action: attachImages)
+                    .disabled(isRunning || posting || importingImages)
+                    .accessibilityIdentifier("group-attach-images")
                 GroupComposerEditor(
                     text: $draft, selection: $composerSelection,
                     focused: $composerFocused, composing: $composerComposing,
@@ -214,7 +230,7 @@ struct GroupConversationView: View {
                     FiliconIconButton(label: l10n("Stop"), systemName: "stop.fill", size: 30, isProminent: true, action: stop)
                 } else {
                     FiliconIconButton(label: l10n("Send"), systemName: "arrow.up", size: 30, isProminent: true, action: send)
-                        .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || group.memberIDs.isEmpty)
+                        .disabled((draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && images.isEmpty) || group.memberIDs.isEmpty || posting || importingImages)
                         .keyboardShortcut(.return, modifiers: .command)
                 }
             }
@@ -314,22 +330,70 @@ struct GroupConversationView: View {
     }
 
     private func send() {
-        guard !isRunning, !group.memberIDs.isEmpty, !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        guard !isRunning, !posting, !importingImages, !group.memberIDs.isEmpty,
+              !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !images.isEmpty else { return }
         let members = model.agents.filter { group.memberIDs.contains($0.id) && $0.archivedAt == nil }
         if let unknown = GroupService.unknownMentions(in: draft, members: members).first {
             model.errorMessage = l10n("No group member matches @\(unknown). Add the member or choose an existing name.")
             return
         }
         let value = draft
-        draft = ""
-        composerSelection = NSRange(location: 0, length: 0)
-        dismissedMention = nil
-        Task { await model.sendGroupMessage(groupID: group.id, text: value) }
+        let selectedImages = images
+        posting = true
+        Task {
+            defer { posting = false }
+            await model.sendGroupMessage(groupID: group.id, text: value, images: selectedImages) {
+                // Preserve the draft if validation/persistence failed, and never
+                // clear text the user started editing while preflight awaited.
+                if draft == value { draft = ""; composerSelection = NSRange(location: 0, length: 0) }
+                if images == selectedImages { images = [] }
+                dismissedMention = nil
+            }
+        }
+    }
+
+    private func removeImages() { images = [] }
+
+    private func attachImages() { Task { await chooseImages() } }
+
+    private func chooseImages() async {
+        importingImages = true
+        defer { importingImages = false }
+        let account = model.settings.accountScope
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.png, .jpeg]
+        panel.allowsMultipleSelection = true
+        panel.canChooseDirectories = false
+        guard await panel.begin() == .OK, account == model.settings.accountScope else { return }
+        do {
+            let selected = try await model.importAgentMessageImages(panel.urls)
+            guard account == model.settings.accountScope else { return }
+            images = selected
+        } catch is CancellationError {} catch { model.errorMessage = FiliconLocalization.string(error.localizedDescription) }
     }
 
     private func stop() { Task { await model.stopGroup(id: group.id) } }
     private func scrollToBottom(_ proxy: ScrollViewProxy) {
         withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo("group-bottom", anchor: .bottom) }
+    }
+}
+
+struct GroupImageDraftPreview<Previews: View>: View {
+    let onRemove: () -> Void
+    @ViewBuilder var previews: () -> Previews
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .top) {
+                Text(l10n("Images are saved in this group and sent to the responding members' configured models. @mentions limit this turn's recipients."))
+                    .font(.caption).foregroundStyle(FiliconTheme.textSecondary).fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 8)
+                Button(l10n("Remove images"), systemImage: "xmark", action: onRemove).labelStyle(.iconOnly)
+            }
+            ScrollView { previews() }.frame(maxHeight: 150)
+            Text(l10n("Use at most 4 images, 5 MB each and 12 MB total."))
+                .font(.caption2).foregroundStyle(FiliconTheme.textTertiary)
+        }
+        .accessibilityIdentifier("group-image-draft")
     }
 }
 
@@ -618,6 +682,14 @@ struct GroupComposerDrafts {
     private var values: [UUID: String] = [:]
     subscript(groupID: UUID) -> String {
         get { values[groupID] ?? "" }
+        set { values[groupID] = newValue }
+    }
+}
+
+struct GroupImageDrafts {
+    private var values: [UUID: [AttachmentMetadata]] = [:]
+    subscript(groupID: UUID) -> [AttachmentMetadata] {
+        get { values[groupID] ?? [] }
         set { values[groupID] = newValue }
     }
 }

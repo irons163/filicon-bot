@@ -148,7 +148,11 @@ public actor AgentMessagingSession {
     /// history/persona into another member's independent inference context.
     public func remember(agentID: UUID, messages: [ChatMessage], response: String) {
         guard !closed else { return }
-        ownHistories[agentID] = messages + [.init(role: .assistant, text: String(response.prefix(8_000)))]
+        // Remember text, not attachment handles whose bytes are authorized only
+        // for the current turn. A later peer wake must not replay group images.
+        ownHistories[agentID] = messages.map { message in
+            var textOnly = message; textOnly.attachments = []; return textOnly
+        } + [.init(role: .assistant, text: String(response.prefix(8_000)))]
     }
 
     fileprivate func directory(senderID: UUID, images: [AttachmentMetadata] = []) async throws -> String {

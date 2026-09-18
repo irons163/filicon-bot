@@ -1,4 +1,6 @@
 "" = "";
+"Images are saved in this group and sent to the responding members' configured models. @mentions limit this turn's recipients." = "Les images sont enregistrées dans ce groupe et envoyées aux modèles configurés des membres répondant à ce tour. Les @mentions limitent les destinataires de ce tour.";
+"Forwarding images to a group with SendToAgent is not supported." = "Le transfert d’images à un groupe avec SendToAgent n’est pas pris en charge.";
 "Attach images…" = "Joindre des images…";
 "PNG/JPEG only · up to 4 images · 5 MB each · 12 MB total" = "PNG/JPEG uniquement · 4 images max. · 5 Mo chacune · 12 Mo au total";
 "Remove images" = "Retirer les images";

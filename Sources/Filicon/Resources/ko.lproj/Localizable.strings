@@ -1,4 +1,6 @@
 "" = "";
+"Images are saved in this group and sent to the responding members' configured models. @mentions limit this turn's recipients." = "이미지는 이 그룹에 저장되며 이번 턴에 응답하는 멤버의 설정된 모델로 전송됩니다. @멘션으로 이번 턴의 수신자를 제한할 수 있습니다.";
+"Forwarding images to a group with SendToAgent is not supported." = "SendToAgent를 사용한 그룹 이미지 전달은 지원하지 않습니다.";
 "Attach images…" = "이미지 첨부…";
 "PNG/JPEG only · up to 4 images · 5 MB each · 12 MB total" = "PNG/JPEG만 · 최대 4장 · 장당 5 MB · 총 12 MB";
 "Remove images" = "이미지 제거";

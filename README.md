@@ -31,9 +31,20 @@ configured model supports image input. Agents may forward only images from the
 current incoming peer message, after a new preview approval. `SendMessage` can
 publish those same incoming image IDs and a text report to the user after a
 separate preview approval. Published images remain visible in the mailbox after
-Stop, failure, or restart; this does not message another agent. Ordinary group
-image input, arbitrary paths/URLs, and generated images are not supported;
-unsupported inputs fail explicitly.
+Stop, failure, or restart; this does not message another agent.
+
+The **group composer → Attach images…** also accepts PNG/JPEG (up to four,
+5 MB each, 12 MB total), with removable previews. Images are saved in that group
+and sent to the configured models of this turn's responding members; `@mentions`
+limit the recipients. Every addressed model must support images before the user
+message is posted. Invalid, oversized, missing or unsupported images leave the
+draft intact. Image-only messages work, and restarted history keeps previews.
+Only the current request supplies image bytes to models: later text-only turns
+and delegated peer wakes do not reload historical images. Direct group images
+cannot currently be forwarded with `SendToAgent` or republished with `SendMessage`;
+those image operations remain limited to incoming peer images. Arbitrary paths,
+URLs and generated images remain unsupported. Imported blobs are not yet
+automatically cleaned up when removed from a draft.
 
 In group and mailbox turns, agents can propose remembering or forgetting a short
 fact using `update_state(target:"memory", action:"write"|"forget", fact:...)`.

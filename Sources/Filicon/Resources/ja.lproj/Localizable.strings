@@ -1,4 +1,6 @@
 "" = "";
+"Images are saved in this group and sent to the responding members' configured models. @mentions limit this turn's recipients." = "画像はこのグループに保存され、このターンに応答するメンバーの設定済みモデルに送信されます。@メンションで今回の宛先を指定できます。";
+"Forwarding images to a group with SendToAgent is not supported." = "SendToAgent によるグループへの画像転送には対応していません。";
 "Attach images…" = "画像を添付…";
 "PNG/JPEG only · up to 4 images · 5 MB each · 12 MB total" = "PNG/JPEG のみ · 最大4枚 · 1枚5 MB · 合計12 MB";
 "Remove images" = "画像を削除";

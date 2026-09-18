@@ -289,9 +289,10 @@ struct AgentPublishedResponses: View {
 /// Reused by the draft, durable mailbox, and exact-payload approval card.
 struct AgentMessageImagePreviews: View {
     let images: [AttachmentMetadata]
+    var compact = false
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            ForEach(images) { image in AgentMessageImagePreview(image: image) }
+            ForEach(images) { image in AgentMessageImagePreview(image: image, compact: compact) }
         }
     }
 }
@@ -299,10 +300,11 @@ struct AgentMessageImagePreviews: View {
 private struct AgentMessageImagePreview: View {
     @EnvironmentObject private var model: AppModel
     let image: AttachmentMetadata
+    var compact = false
     @State private var preview: NSImage?
     @State private var failed = false
     var body: some View {
-        AgentMessageImagePreviewContent(image: image, preview: preview, failed: failed)
+        AgentMessageImagePreviewContent(image: image, preview: preview, failed: failed, compact: compact)
             .task(id: "\(model.settings.accountScope ?? "local"):\(image.id)") { await loadPreview() }
     }
     private func loadPreview() async {
@@ -319,15 +321,18 @@ struct AgentMessageImagePreviewContent: View {
     let image: AttachmentMetadata
     let preview: NSImage?
     var failed = false
+    var compact = false
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             if let preview {
-                Image(nsImage: preview).resizable().scaledToFit().frame(maxWidth: 280, maxHeight: 160)
+                Image(nsImage: preview).resizable().scaledToFit().frame(maxWidth: 280, maxHeight: compact ? 96 : 160)
             } else if failed { Text(l10n("Image preview unavailable")).foregroundStyle(.secondary) }
             else { ProgressView().controlSize(.small) }
             Text(verbatim: image.filename).font(.caption).textSelection(.enabled)
-            Text(verbatim: image.id).font(.caption2.monospaced()).textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
+            if !compact {
+                Text(verbatim: image.id).font(.caption2.monospaced()).textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 }

@@ -1,4 +1,5 @@
 import Foundation
+import FiliconDomain
 
 /// Public room identity only. Never include another member's private instructions
 /// or one-to-one history in the shared roster.
@@ -162,14 +163,27 @@ public actor GroupService {
         try persist()
     }
 
-    public func postUserMessage(_ text: String, groupID: UUID) async throws -> RoomMessage {
+    public func postUserMessage(_ text: String, groupID: UUID, images: [AttachmentMetadata] = [],
+                                expectedMemberIDs: [UUID]? = nil) async throws -> RoomMessage {
+        // Truncating can remove a trailing @mention and turn a targeted image
+        // request into a broadcast. Reject oversized input without posting it.
+        guard text.count <= 8_000 else { throw AgentServiceError.messageTooLong }
         guard let group = state.groups.first(where: { $0.id == groupID }) else { throw AgentServiceError.unknownGroup(groupID) }
+        if let expectedMemberIDs, group.memberIDs != expectedMemberIDs { throw CancellationError() }
+        let epoch = epochs[groupID]
         let members = await resolveMembers(group.memberIDs)
+        try Task.checkCancellation()
+        guard epochs[groupID] == epoch, state.groups.first(where: { $0.id == groupID })?.memberIDs == group.memberIDs else {
+            throw CancellationError()
+        }
         if let unknown = Self.unknownMentions(in: text, members: members).first {
             throw AgentServiceError.unknownGroupMention(unknown)
         }
-        let message = RoomMessage(groupID: groupID, senderID: nil, text: String(text.prefix(8_000)))
-        state.roomMessages.append(message); try persist(); return message
+        let message = RoomMessage(groupID: groupID, senderID: nil, text: text, images: images)
+        state.roomMessages.append(message)
+        do { try persist() }
+        catch { state.roomMessages.removeAll { $0.id == message.id }; throw error }
+        return message
     }
 
     public func run(

@@ -1,4 +1,6 @@
 "" = "";
+"Images are saved in this group and sent to the responding members' configured models. @mentions limit this turn's recipients." = "Images are saved in this group and sent to the responding members' configured models. @mentions limit this turn's recipients.";
+"Forwarding images to a group with SendToAgent is not supported." = "Forwarding images to a group with SendToAgent is not supported.";
 "Attach images…" = "Attach images…";
 "PNG/JPEG only · up to 4 images · 5 MB each · 12 MB total" = "PNG/JPEG only · up to 4 images · 5 MB each · 12 MB total";
 "Remove images" = "Remove images";

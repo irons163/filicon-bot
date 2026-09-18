@@ -8,7 +8,7 @@ public enum AgentImageError: String, LocalizedError, Sendable {
     case limit = "Use at most 4 images, 5 MB each and 12 MB total."
     case unavailable = "This image is not available in the current peer message."
     case unsupported = "The recipient model does not support image input. No image was sent to the model."
-    case group = "Image messages are currently supported only for a single peer, not groups."
+    case group = "Forwarding images to a group with SendToAgent is not supported."
     public var errorDescription: String? { rawValue }
 }
 

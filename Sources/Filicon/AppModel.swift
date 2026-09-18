@@ -3058,16 +3058,21 @@ final class AppModel: ObservableObject {
         catch { errorMessage = error.localizedDescription }
     }
 
-    func sendGroupMessage(groupID: UUID, text: String) async {
+    func sendGroupMessage(groupID: UUID, text: String, images: [AttachmentMetadata] = [],
+                          onPosted: @MainActor () -> Void = {}) async {
         guard let groupService, !agentMessagingAccountTransition,
               !runningGroups.contains(groupID), !stoppingGroups.contains(groupID) else { return }
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
+        guard !text.isEmpty || !images.isEmpty,
+              let group = groups.first(where: { $0.id == groupID }), !group.memberIDs.isEmpty else { return }
+        let generation = autoReviewAccountGeneration
         // Reserve before the first suspension so two sends cannot race.
         runningGroups.insert(groupID)
         workspaceFolders.beginTurn(conversationID: groupID)
         let messaging = makeAgentMessagingSession(originID: groupID)
         agentMessagingSessions[groupID] = messaging
+        var imageRecipientName: String?
+        var imageRecipientIDs: Set<UUID> = []
         defer {
             agentMessagingSessions[groupID] = nil
             runningGroups.remove(groupID)
@@ -3075,12 +3080,36 @@ final class AppModel: ObservableObject {
             thinkingGroupMembers[groupID] = nil
         }
         do {
-            _ = try await groupService.postUserMessage(text, groupID: groupID)
+            guard text.count <= 8_000 else { throw AgentServiceError.messageTooLong }
+            let loadedImages = try await agentImageStore.load(images)
+            if !images.isEmpty {
+                let members = agents.filter { group.memberIDs.contains($0.id) && $0.archivedAt == nil }
+                if let unknown = GroupService.unknownMentions(in: text, members: members).first {
+                    throw AgentServiceError.unknownGroupMention(unknown)
+                }
+                let mentions = GroupService.parseMentions(in: text, members: members)
+                let recipients = members.filter { mentions.everyone || mentions.memberIDs.isEmpty || mentions.memberIDs.contains($0.id) }
+                guard !recipients.isEmpty else { throw AgentImageError.unsupported }
+                for recipient in recipients {
+                    imageRecipientName = recipient.name
+                    try await GroupConversationResponder.validateImageInput(agent: recipient, registry: registry)
+                }
+                imageRecipientName = nil
+                imageRecipientIDs = Set(recipients.map(\.id))
+            }
+            guard generation == autoReviewAccountGeneration, !agentMessagingAccountTransition,
+                  !cancelledGroupRuns.contains(groupID) else { throw CancellationError() }
+            try Task.checkCancellation()
+            let posted = try await groupService.postUserMessage(text, groupID: groupID, images: images, expectedMemberIDs: group.memberIDs)
+            guard generation == autoReviewAccountGeneration, !agentMessagingAccountTransition else { throw CancellationError() }
+            onPosted()
             groupMessages[groupID] = await groupService.messages(groupID: groupID)
-            guard !cancelledGroupRuns.contains(groupID) else { return }
+            guard generation == autoReviewAccountGeneration, !agentMessagingAccountTransition,
+                  !cancelledGroupRuns.contains(groupID) else { throw CancellationError() }
             _ = try await groupService.run(
                 groupID: groupID,
-                responder: GroupConversationResponder(groupID: groupID, registry: registry, coordinator: coordinator, messaging: messaging),
+                responder: GroupConversationResponder(groupID: groupID, registry: registry, coordinator: coordinator, messaging: messaging,
+                    userMessageID: posted.id, userImages: loadedImages, imageRecipientIDs: imageRecipientIDs),
                 onAgentChange: { [weak self] agentID in
                     await MainActor.run { self?.thinkingGroupMembers[groupID] = agentID }
                 }
@@ -3102,10 +3131,15 @@ final class AppModel: ObservableObject {
             }
             groupMessages[groupID] = await groupService.messages(groupID: groupID)
         } catch is CancellationError {
-            groupMessages[groupID] = await groupService.messages(groupID: groupID)
+            let messages = await groupService.messages(groupID: groupID)
+            if generation == autoReviewAccountGeneration { groupMessages[groupID] = messages }
         } catch {
-            groupMessages[groupID] = await groupService.messages(groupID: groupID)
-            if !stoppingGroups.contains(groupID) { errorMessage = error.localizedDescription }
+            let messages = await groupService.messages(groupID: groupID)
+            if generation == autoReviewAccountGeneration { groupMessages[groupID] = messages }
+            if !stoppingGroups.contains(groupID), !cancelledGroupRuns.contains(groupID), generation == autoReviewAccountGeneration {
+                let detail = FiliconLocalization.string(error.localizedDescription)
+                errorMessage = imageRecipientName.map { "\($0): \(detail)" } ?? detail
+            }
         }
         do { try await messaging?.close() }
         catch { errorMessage = error.localizedDescription }

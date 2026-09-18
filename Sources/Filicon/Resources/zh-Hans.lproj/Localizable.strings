@@ -1,4 +1,6 @@
 "" = "";
+"Images are saved in this group and sent to the responding members' configured models. @mentions limit this turn's recipients." = "图片会保存在此群组，并发送给本轮回复成员配置的模型；可用 @名字 限定本轮接收人。";
+"Forwarding images to a group with SendToAgent is not supported." = "尚不支持使用 SendToAgent 将图片转发至群组。";
 "Attach images…" = "附加图片…";
 "PNG/JPEG only · up to 4 images · 5 MB each · 12 MB total" = "仅限 PNG/JPEG · 最多 4 张 · 每张 5 MB · 总计 12 MB";
 "Remove images" = "移除图片";
