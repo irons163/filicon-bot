@@ -50,6 +50,11 @@ private func sendCall(_ target: UUID, _ text: String = "Review the layout", id: 
     try .init(id: id, name: "SendToAgent", argumentsJSON: JSONEncoder().encode(["recipientID": target.uuidString, "message": text]))
 }
 
+private func prioritySendCall(_ target: UUID, _ text: String, id: ToolCallID = "urgent") throws -> NormalizedToolCall {
+    struct Payload: Encodable { let recipientID: UUID; let message: String; let priority = true }
+    return try .init(id: id, name: "SendToAgent", argumentsJSON: JSONEncoder().encode(Payload(recipientID: target, message: text)))
+}
+
 @Suite("SendToAgent messaging session", .timeLimit(.minutes(1)))
 struct AgentMessagingSessionTests {
     private struct Fixture {
@@ -146,6 +151,68 @@ struct AgentMessagingSessionTests {
         #expect(duplicate.isError && duplicate.wireText.contains("already sent"))
         let messages = await f.messenger.allMessages()
         expectNoDifference(messages.count, 1)
+        try await session.close()
+    }
+
+    @Test func priorityIsApprovedPersistedSortedAndCannotEscalateAnExistingSend() async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let session = f.session(), context = ToolContext(conversationID: f.origin), tool = session.tool(for: f.sender.id)
+        await f.registry.register(MessagingProvider { request, _ in
+            _ = await f.probe.request(request); return "PASS"
+        })
+        let normal = try sendCall(f.recipient.id, "Ordinary review")
+        _ = try await tool.execute(normal, context: context)
+        let escalation = try await tool.execute(prioritySendCall(f.recipient.id, "Ordinary review", id: normal.id), context: context)
+        #expect(escalation.isError)
+        let duplicate = try await tool.execute(prioritySendCall(f.recipient.id, "Ordinary review", id: "new-id"), context: context)
+        #expect(duplicate.isError)
+        let urgent = try prioritySendCall(f.recipient.id, "Urgent result")
+        let first = try await tool.execute(urgent, context: context)
+        let replay = try await tool.execute(urgent, context: context)
+        expectNoDifference(first, replay)
+        #expect(first.wireText.contains("when this session drains"))
+        let before = await f.messenger.allMessages(), approvals = await f.probe.authorizations
+        expectNoDifference(before.map(\.priority), [.normal, .priority])
+        expectNoDifference(approvals.count, 2)
+        try await session.drain()
+        let requests = await f.probe.requests
+        expectNoDifference(requests.count, 2)
+        #expect(requests[0].messages.last?.text.contains("Urgent result") == true)
+        #expect(requests[1].messages.last?.text.contains("Ordinary review") == true)
+        try await session.close()
+    }
+
+    @Test func priorityReplyDoesNotInheritTheNormalReplyApprovalExemption() async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let session = f.session()
+        await f.registry.register(MessagingProvider { request, execute in
+            let index = await f.probe.request(request)
+            if index == 1 {
+                let result = try await execute(prioritySendCall(f.sender.id, "Urgent findings"))
+                #expect(!result.isError)
+            }
+            return "PASS"
+        })
+        _ = try await session.tool(for: f.sender.id).execute(sendCall(f.recipient.id), context: .init(conversationID: f.origin))
+        try await session.drain()
+        let approvals = await f.probe.authorizations, messages = await f.messenger.allMessages()
+        expectNoDifference(approvals.count, 2)
+        expectNoDifference(messages.map(\.priority), [.normal, .priority])
+        try await session.close()
+    }
+
+    @Test func malformedAndDeniedPriorityNeverQueue() async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let session = f.session(approve: false), tool = session.tool(for: f.sender.id), context = ToolContext(conversationID: f.origin)
+        for value in ["null", "1", "\"true\"", "[]"] {
+            let payload = "{\"recipientID\":\"\(f.recipient.id)\",\"message\":\"Urgent\",\"priority\":\(value)}"
+            let result = try await tool.execute(.init(id: "invalid", name: "SendToAgent", argumentsJSON: Data(payload.utf8)), context: context)
+            #expect(result.isError)
+        }
+        let denied = try await tool.execute(prioritySendCall(f.recipient.id, "Denied urgent task"), context: context)
+        #expect(denied.isError)
+        let messages = await f.messenger.allMessages()
+        expectNoDifference(messages, [])
         try await session.close()
     }
 

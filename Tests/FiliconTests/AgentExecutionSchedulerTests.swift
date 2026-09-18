@@ -117,6 +117,65 @@ struct AgentExecutionSchedulerTests {
         expectNoDifference(after, ["first start", "independent", "first end", "second", "third"])
     }
 
+    @Test func priorityWaitsForBackgroundCleanupAndDoesNotReplayIt() async throws {
+        let scheduler = AgentExecutionScheduler(), gate = ExecutionGate(), log = ExecutionLog()
+        let owner = Task { try await scheduler.withExclusiveAccess(agentID: agentID, lane: .background) {
+            await gate.wait()
+            #expect(Task.isCancelled)
+            await log.append("cleanup")
+        } }
+        try await waitUntil { await gate.isWaiting }
+        let ordinary = Task { try await scheduler.withExclusiveAccess(agentID: agentID, lane: .background) { await log.append("ordinary") } }
+        try await waitUntil { await scheduler.snapshot(agentID: agentID).queuedCount == 1 }
+        let urgent = Task { try await scheduler.withExclusiveAccess(agentID: agentID, lane: .background, priority: true) { await log.append("priority") } }
+        try await waitUntil { await scheduler.snapshot(agentID: agentID).queuedCount == 2 }
+        let before = await log.values
+        expectNoDifference(before, [])
+        await gate.open()
+        await #expect(throws: AgentExecutionSuperseded.self) { try await owner.value }
+        try await urgent.value; try await ordinary.value
+        let after = await log.values
+        expectNoDifference(after, ["cleanup", "priority", "ordinary"])
+    }
+
+    @Test func priorityProtectsActiveAndQueuedUserTurnsAndKeepsPriorityFIFO() async throws {
+        let scheduler = AgentExecutionScheduler(), gate = ExecutionGate(), log = ExecutionLog()
+        let owner = Task { try await scheduler.withExclusiveAccess(agentID: agentID) {
+            await gate.wait(); #expect(!Task.isCancelled); await log.append("user")
+        } }
+        try await waitUntil { await gate.isWaiting }
+        let queuedUser = Task { try await scheduler.withExclusiveAccess(agentID: agentID) { await log.append("queued user") } }
+        try await waitUntil { await scheduler.snapshot(agentID: agentID).queuedCount == 1 }
+        let ordinary = Task { try await scheduler.withExclusiveAccess(agentID: agentID, lane: .background) { await log.append("ordinary") } }
+        try await waitUntil { await scheduler.snapshot(agentID: agentID).queuedCount == 2 }
+        let first = Task { try await scheduler.withExclusiveAccess(agentID: agentID, lane: .background, priority: true) { await log.append("first") } }
+        try await waitUntil { await scheduler.snapshot(agentID: agentID).queuedCount == 3 }
+        let second = Task { try await scheduler.withExclusiveAccess(agentID: agentID, lane: .background, priority: true) { await log.append("second") } }
+        try await waitUntil { await scheduler.snapshot(agentID: agentID).queuedCount == 4 }
+        await gate.open()
+        try await owner.value; try await queuedUser.value; try await ordinary.value; try await first.value; try await second.value
+        let values = await log.values
+        expectNoDifference(values, ["user", "queued user", "first", "second", "ordinary"])
+    }
+
+    @Test func cancelledPriorityCannotRunOrInterruptAnotherAgent() async throws {
+        let scheduler = AgentExecutionScheduler(), gate = ExecutionGate(), log = ExecutionLog()
+        let owner = Task { try await scheduler.withExclusiveAccess(agentID: otherID, lane: .background) {
+            await gate.wait(); #expect(!Task.isCancelled)
+        } }
+        try await waitUntil { await gate.isWaiting }
+        let cancelled = Task {
+            await gate.wait()
+            try await scheduler.withExclusiveAccess(agentID: otherID, lane: .background, priority: true) { await log.append("stale priority") }
+        }
+        cancelled.cancel()
+        try await scheduler.withExclusiveAccess(agentID: agentID, lane: .background, priority: true) { await log.append("other agent") }
+        await gate.open(); try await owner.value
+        await #expect(throws: CancellationError.self) { try await cancelled.value }
+        let values = await log.values
+        expectNoDifference(values, ["other agent"])
+    }
+
     @Test func cancellingQueuedWorkDoesNotCancelTheActiveOwner() async throws {
         let scheduler = AgentExecutionScheduler(), gate = ExecutionGate(), log = ExecutionLog()
         let first = Task { try await scheduler.withExclusiveAccess(agentID: agentID) { await gate.wait() } }
@@ -231,27 +290,28 @@ struct AgentExecutionSchedulerTests {
         expectNoDifference(entries, ["provider"])
     }
 
-    @Test func cancelledToolLoopHoldsAgentLaneUntilHostToolCleanupFinishes() async throws {
+    @Test(arguments: [false, true]) func cancelledToolLoopHoldsAgentLaneUntilHostToolCleanupFinishes(priority: Bool) async throws {
         let scheduler = AgentExecutionScheduler(), gate = ExecutionGate(), log = ExecutionLog()
         let registry = ProviderRegistry()
         await registry.register(CleanupProvider(log: log))
         let coordinator = TurnCoordinator(registry: registry, toolCatalog: ToolCatalog([SlowCleanupTool(gate: gate, log: log)]), agentScheduler: scheduler)
         let first = Task {
             try await coordinator.send(request: .init(conversationID: agentID, modelID: "test", messages: [.init(role: .user, text: "first")]),
-                                       providerID: "cleanup-test", agentID: agentID) { _ in }
+                                       providerID: "cleanup-test", agentID: agentID, agentLane: .background) { _ in }
         }
         try await waitUntil { await gate.isWaiting }
         let next = Task {
             try await coordinator.send(request: .init(conversationID: otherID, modelID: "test", messages: [.init(role: .user, text: "next")]),
-                                       providerID: "cleanup-test", agentID: agentID) { _ in }
+                                       providerID: "cleanup-test", agentID: agentID, agentLane: .background, priority: priority) { _ in }
         }
         try await waitUntil { await scheduler.snapshot(agentID: agentID).queuedCount == 1 }
-        await coordinator.cancel(conversationID: agentID)
+        if !priority { await coordinator.cancel(conversationID: agentID) }
         try await waitUntil { await log.values.contains("transport cancelled") }
         let blocked = await scheduler.snapshot(agentID: agentID)
         expectNoDifference(blocked.queuedCount, 1)
         await gate.open()
-        await #expect(throws: CancellationError.self) { try await first.value }
+        if priority { await #expect(throws: AgentExecutionSuperseded.self) { try await first.value } }
+        else { await #expect(throws: CancellationError.self) { try await first.value } }
         try await next.value
         let entries = await log.values
         expectNoDifference(entries.filter { $0 != "transport cancelled" }, ["tool cleanup finished", "next provider"])

@@ -104,6 +104,7 @@ struct AgentMessagingView: View {
                 }
                 .frame(width: 150)
             }
+            if priority == .priority { AgentPriorityMessageNotice() }
             HStack(alignment: .bottom) {
                 TextEditor(text: $draft)
                     .font(.body)
@@ -154,7 +155,8 @@ struct AgentMessagingView: View {
                 if let delivery = message.delivery {
                     Text(deliveryTitle(delivery.state)).font(.caption).foregroundStyle(.secondary)
                     if let response = delivery.response, !response.isEmpty, response.uppercased() != "PASS" {
-                        Text(response).font(.callout).textSelection(.enabled)
+                        Text(delivery.state == .cancelled && response == AgentExecutionSuperseded().localizedDescription
+                             ? FiliconLocalization.string(response) : response).font(.callout).textSelection(.enabled)
                     }
                 }
             }

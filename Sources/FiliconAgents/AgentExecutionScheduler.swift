@@ -1,5 +1,17 @@
 import Foundation
 
+public enum AgentExecutionLane: Sendable {
+    /// Default to protecting work unless the host explicitly classifies it.
+    case user, background
+}
+
+public struct AgentExecutionSuperseded: LocalizedError, Sendable {
+    public init() {}
+    public var errorDescription: String? {
+        "Interrupted by an approved priority agent message. Work was not resumed automatically."
+    }
+}
+
 /// One execution lane per agent in a running app. Different origins retain
 /// separate history and permissions; sharing a lane shares neither of those.
 /// Cancellation never releases an active lane before its operation unwinds.
@@ -11,12 +23,16 @@ public actor AgentExecutionScheduler {
 
     private struct Submission {
         let token: UUID
+        let lane: AgentExecutionLane
+        let priority: Bool
         let run: @Sendable () async -> Void
         let reject: @Sendable () -> Void
     }
     private struct Active {
         let token: UUID
         let task: Task<Void, Never>
+        let lane: AgentExecutionLane
+        var superseded = false
     }
     private var active: [UUID: Active] = [:]
     private var pending: [UUID: [Submission]] = [:]
@@ -26,6 +42,8 @@ public actor AgentExecutionScheduler {
 
     public func withExclusiveAccess<Value: Sendable>(
         agentID: UUID,
+        lane: AgentExecutionLane = .user,
+        priority: Bool = false,
         operation: @escaping @Sendable () async throws -> Value
     ) async throws -> Value {
         let token = makeID()
@@ -35,15 +53,27 @@ public actor AgentExecutionScheduler {
                     continuation.resume(throwing: CancellationError())
                     return
                 }
-                let submission = Submission(token: token, run: {
+                let submission = Submission(token: token, lane: lane, priority: priority, run: {
                     do {
                         try Task.checkCancellation()
                         let result = try await operation()
                         try Task.checkCancellation()
                         continuation.resume(returning: result)
-                    } catch { continuation.resume(throwing: error) }
+                    } catch {
+                        let superseded = await self.wasSuperseded(agentID: agentID, token: token)
+                        continuation.resume(throwing: superseded ? AgentExecutionSuperseded() : error)
+                    }
                 }, reject: { continuation.resume(throwing: CancellationError()) })
-                pending[agentID, default: []].append(submission)
+                if priority {
+                    // Never jump ahead of queued user work or older priority
+                    // messages. Only ordinary background entries are bypassed.
+                    let index = pending[agentID]?.lastIndex(where: { $0.lane == .user || $0.priority }).map { $0 + 1 } ?? 0
+                    pending[agentID, default: []].insert(submission, at: index)
+                    if active[agentID]?.lane == .background {
+                        active[agentID]?.superseded = true
+                        active[agentID]?.task.cancel()
+                    }
+                } else { pending[agentID, default: []].append(submission) }
                 startNext(agentID: agentID)
             }
         } onCancel: {
@@ -72,7 +102,11 @@ public actor AgentExecutionScheduler {
             await submission.run()
             finish(agentID: agentID, token: submission.token)
         }
-        active[agentID] = .init(token: submission.token, task: task)
+        active[agentID] = .init(token: submission.token, task: task, lane: submission.lane)
+    }
+
+    private func wasSuperseded(agentID: UUID, token: UUID) -> Bool {
+        active[agentID]?.token == token && active[agentID]?.superseded == true
     }
 
     private func finish(agentID: UUID, token: UUID) {

@@ -1400,3 +1400,5 @@
 "Group audience" = "群组收件成员";
 "This posts to the shared room and wakes its other active members. Replies appear there. Tool actions still need approval." = "消息会发送到共享聊天室，并唤醒其他启用中的成员。回复将显示在该群组；工具操作仍须批准。";
 "Group reply stopped or failed. The posted message was kept." = "群组回复已停止或失败。已发送的消息会保留。";
+"Priority messages may stop background work after the current response ends. User turns are protected; interrupted work is not automatically resumed." = "优先消息可能在当前回复结束后停止后台工作。用户回合不受影响；被中断的工作不会自动继续。";
+"Interrupted by an approved priority agent message. Work was not resumed automatically." = "已被获准的优先代理消息中断。任务未自动继续。";

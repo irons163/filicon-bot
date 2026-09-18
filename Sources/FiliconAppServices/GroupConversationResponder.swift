@@ -96,6 +96,7 @@ public struct GroupConversationResponder: GroupAgentResponder {
         do {
             try await coordinator.send(request: request, providerID: agent.providerID, additionalTools: additionalTools,
                                        toolContext: ToolContext(conversationID: toolScopeID), agentID: agent.id,
+                                       agentLane: delegatedMessage == nil ? .user : .background,
                                        executionTimeout: delegatedMessage == nil ? nil : .seconds(180)) { event in
                 try await output.consume(event)
             }

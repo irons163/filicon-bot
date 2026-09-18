@@ -3052,10 +3052,13 @@ final class AppModel: ObservableObject {
         let fence = ApprovalFence(accountID: settings.accountScope ?? "local", agentID: context.conversationID.uuidString.lowercased(),
                                   runID: context.runID, generation: autoReviewAccountGeneration)
         await autoReviewBroker.activate(fence)
+        struct Options: Decodable { let priority: Bool? }
+        let priority = try JSONDecoder().decode(Options.self, from: call.argumentsJSON).priority == true
         let action = AutoReviewAction(
             summary: "\(sender.name) → \(recipient.name)", target: .recipient(identifier: recipient.id.uuidString),
             risks: [.sensitive], context: .init(fence: fence, conversationID: context.conversationID,
-                                             toolCallID: call.id.rawValue, metadata: ["tool": "SendToAgent", "agentMessage": text])
+                                             toolCallID: call.id.rawValue, metadata: ["tool": "SendToAgent", "agentMessage": text,
+                                                 "agentMessagePriority": priority ? "priority" : "normal"])
         )
         // Always show the exact recipient and payload. General auto-review allow
         // rules never authorize expanding the participating agent set implicitly.
@@ -3386,7 +3389,7 @@ final class AppModel: ObservableObject {
     func runAutomationNow(id: UUID) async {
         guard let automationService, let agentService else { return }
         do {
-            _ = try await automationService.runNow(id: id, executor: AppAutomationExecutor(registry: registry, agents: agentService, scheduler: agentExecutionScheduler))
+            _ = try await automationService.runNow(id: id, executor: AppAutomationExecutor(registry: registry, agents: agentService, scheduler: agentExecutionScheduler, lane: .user))
             await reloadAutomationDetails(markViewed: false)
         } catch { errorMessage = error.localizedDescription }
     }
@@ -6151,8 +6154,9 @@ private struct AppAutomationExecutor: AutomationExecutor {
     let registry: ProviderRegistry
     let agents: AgentService
     let scheduler: AgentExecutionScheduler
+    var lane: AgentExecutionLane = .background
     func execute(automation: Automation, prompt: String, events: [AutomationEvent]) async throws -> AutomationExecutionResult {
-        try await scheduler.withExclusiveAccess(agentID: automation.agentID) {
+        try await scheduler.withExclusiveAccess(agentID: automation.agentID, lane: lane) {
             try await executeExclusive(automation: automation, prompt: prompt)
         }
     }

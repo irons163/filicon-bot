@@ -106,11 +106,18 @@ source parity. The September 18 reconstructed-source audit found group
 collaboration gaps; see AGENT-01/AGENT-02/AGENT-04 in PARITY.md and the itemized
 Agent-collaboration-parity.md audit. Manual peer sends now wake real inference,
 scoped peer context survives restarts, and text-only SendMessage publishes through
-the host. An App-injected cross-origin per-agent FIFO scheduler now covers group
+the host. An App-injected cross-origin per-agent scheduler now covers group
 turns, mailbox wakes, subagent tasks, automations, workflows and channel replies,
-including owner-specific cancellation and host-tool cleanup joining. Generic
+including owner-specific cancellation and host-tool cleanup joining.
+Peer `priority:true` now requires explicit approval (including replies); the
+manual Priority selector is also wired. When the source session drains, it may
+interrupt background peer/shared-room wakes or scheduled automations, after host
+cleanup. User work, manual automation runs, workflows, subtasks and channel replies
+remain protected. Group priority is rejected, interrupted tasks are not replayed,
+and priority never silently expands tool permissions. This is not the reference's
+immediate interruption on enqueue. Generic
 direct chats without an agent profile remain conversation-scoped. Unified
-personal memory, priority preemption, cross-process/restart scheduling and full
+personal memory, cross-process/restart scheduling and full
 messaging variants remain incomplete. Scoped CreateAgent/UpdateAgent now run in
 group and mailbox turns with mandatory exact-field approval, a four-change cap,
 stop/account revocation and replay protection. Creation inherits the requester's

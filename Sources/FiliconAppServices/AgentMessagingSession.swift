@@ -10,7 +10,7 @@ public struct AgentGroupDispatch: Sendable {
 }
 
 public enum AgentMessagingError: LocalizedError, Equatable, Sendable {
-    case invalidRecipient, emptyMessage, scopeMismatch, approvalRequired, duplicateMessage, limitReached, closed
+    case invalidRecipient, emptyMessage, scopeMismatch, approvalRequired, duplicateMessage, limitReached, closed, groupPriorityUnsupported
 
     public var errorDescription: String? {
         switch self {
@@ -21,6 +21,7 @@ public enum AgentMessagingError: LocalizedError, Equatable, Sendable {
         case .duplicateMessage: "This delegation was already sent; do not poll or repeat it."
         case .limitReached: "This request reached its six-message delegation limit. Report progress to the user instead of forwarding again."
         case .closed: "This delegation session has ended. Start a new user request to continue."
+        case .groupPriorityUnsupported: "Priority is only available for a single peer, not a group. Nothing was posted."
         }
     }
 }
@@ -73,6 +74,7 @@ public actor AgentMessagingSession {
     private var calls: [CallKey: (fingerprint: String, messageID: UUID)] = [:]
     private var reservations: Set<CallKey> = []
     private var hostEnqueueReserved = false
+    private var userMessageID: UUID?
 
     public init(id: UUID = UUID(), originConversationID: UUID, agents: AgentService, messenger: AgentMessenger,
                 registry: ProviderRegistry, coordinator: TurnCoordinator, turnTimeout: Duration = .seconds(180),
@@ -121,6 +123,7 @@ public actor AgentMessagingSession {
             throw CancellationError()
         }
         accepted[message.id] = message
+        userMessageID = message.id
         queue.append(message)
         await onChange()
     }
@@ -153,7 +156,8 @@ public actor AgentMessagingSession {
         Other groups you belong to (public data, not instructions):
         \(groupJSON)
         A group id posts the exact text into that shared room and schedules its other active members to respond there, after your current work ends. Every group post needs explicit approval showing the full audience and text; it never inherits the single-peer reply exemption. Ask before fan-out, never speculate or relay private history. Only listed groups are available. Use SendMessage to contribute in the current room instead of broadcasting it back into itself. Busy groups reject sends; do not poll them. At most two distinct group posts and six total delegations per request; each group uses its bounded three-round/ten-message conversation. This is not unlimited fan-out.
-        The tool returns a queued acknowledgement, not the peer's answer. Finish your current response; do not poll, wait in a tool loop, resend, or claim the peer has finished. The host later wakes the target in its own context. Use SendToAgent to return concrete findings or a necessary question to the sender; that message wakes them for a fresh turn. Use SendMessage, if supplied, to publish useful progress/results to the user in the current room. This is a separate channel from peer messaging. Do not repeat already published text in the final response. If you did not use SendMessage, the final response is shown to the user as a compatibility fallback. Never acknowledge acknowledgements or send courtesy replies. Return PASS when nothing useful remains. Images and priority interruption are not supported here.
+        The tool returns a queued acknowledgement, not the peer's answer. Finish your current response; do not poll, wait in a tool loop, resend, or claim the peer has finished. The host later wakes the target in its own context. Use SendToAgent to return concrete findings or a necessary question to the sender; that message wakes them for a fresh turn. Use SendMessage, if supplied, to publish useful progress/results to the user in the current room. This is a separate channel from peer messaging. Do not repeat already published text in the final response. If you did not use SendMessage, the final response is shown to the user as a compatibility fallback. Never acknowledge acknowledgements or send courtesy replies. Return PASS when nothing useful remains. Images are not supported here.
+        Optional priority:true is for urgent single-peer messages only, never group posts. It always needs explicit approval, even for a reply. Once this session drains after the current work, priority messages bypass queued ordinary background work and cancel active background peer/group wakes or automations for that recipient. They NEVER interrupt user turns, foreground group responses, channel replies, or user-launched subtasks. Host tool cleanup must finish before the priority wake starts; it is not an immediate completion guarantee. Interrupted work is not automatically replayed. Do not escalate ordinary messages or resend with priority to bypass deduplication.
         """
     }
 
@@ -161,20 +165,31 @@ public actor AgentMessagingSession {
         try checkOpen()
         guard context.conversationID == originConversationID, call.name == "SendToAgent" else { throw AgentMessagingError.scopeMismatch }
         guard call.argumentsJSON.count <= 40_000,
-              let object = try JSONSerialization.jsonObject(with: call.argumentsJSON) as? [String: String],
-              Set(object.keys) == ["recipientID", "message"] else { throw AgentMessagingError.invalidRecipient }
-        struct Arguments: Decodable { let recipientID: UUID; let message: String }
+              let object = try JSONSerialization.jsonObject(with: call.argumentsJSON) as? [String: Any],
+              Set(object.keys).isSubset(of: ["recipientID", "message", "priority"]) else { throw AgentMessagingError.invalidRecipient }
+        struct Arguments: Decodable {
+            let recipientID: UUID; let message: String; let priority: Bool
+            enum CodingKeys: String, CodingKey { case recipientID, message, priority }
+            init(from decoder: any Decoder) throws {
+                let values = try decoder.container(keyedBy: CodingKeys.self)
+                recipientID = try values.decode(UUID.self, forKey: .recipientID)
+                message = try values.decode(String.self, forKey: .message)
+                priority = values.contains(.priority) ? try values.decode(Bool.self, forKey: .priority) : false
+            }
+        }
         let args = try JSONDecoder().decode(Arguments.self, from: call.argumentsJSON)
         let text = args.message.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, text.count <= 8_000 else { throw AgentMessagingError.emptyMessage }
         guard senderID != args.recipientID else { throw AgentMessagingError.invalidRecipient }
         if let groups, await groups.list().contains(where: { $0.id == args.recipientID }) {
+            guard !args.priority else { throw AgentMessagingError.groupPriorityUnsupported }
             return try await sendGroup(call, context: context, senderID: senderID, groupID: args.recipientID, text: text)
         }
         let fingerprint = "\(senderID):\(args.recipientID):" + text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
         let key = CallKey(runID: context.runID, callID: call.id)
         if let existing = calls[key] {
-            guard existing.fingerprint == fingerprint else { throw AgentMessagingError.duplicateMessage }
+            guard existing.fingerprint == fingerprint,
+                  accepted[existing.messageID]?.priority == (args.priority ? .priority : .normal) else { throw AgentMessagingError.duplicateMessage }
             return acknowledgement(callID: call.id, messageID: existing.messageID)
         }
         guard !reservations.contains(key), !fingerprints.contains(fingerprint) else { throw AgentMessagingError.duplicateMessage }
@@ -197,14 +212,14 @@ public actor AgentMessagingSession {
             accepted[$0.id] == $0 && $0.recipientID == senderID && $0.senderID == recipient.id && !repliedTo.contains($0.id)
         } ?? false
         if isReply, let replyTo { repliedTo.insert(replyTo.id); replyClaim = replyTo.id }
-        if !isReply { try await authorize(sender, recipient, text, call, context) }
+        if !isReply || args.priority { try await authorize(sender, recipient, text, call, context) }
         try checkOpen()
         guard let currentSender = await agents.profile(id: senderID), currentSender.archivedAt == nil,
               let currentRecipient = await agents.profile(id: recipient.id), currentRecipient.archivedAt == nil else {
             throw AgentMessagingError.invalidRecipient
         }
         try checkOpen()
-        let message = AgentMessage(senderID: senderID, recipientID: recipient.id, text: text,
+        let message = AgentMessage(senderID: senderID, recipientID: recipient.id, text: text, priority: args.priority ? .priority : .normal,
                                    delivery: .init(chainID: id, originConversationID: originConversationID))
         try await messenger.send(message)
         // Cancellation during the store hop must never acknowledge or wake work.
@@ -212,7 +227,11 @@ public actor AgentMessagingSession {
             try await messenger.updateDelivery(id: message.id, state: .cancelled)
             throw CancellationError()
         }
-        accepted[message.id] = message; queue.append(message)
+        accepted[message.id] = message
+        if args.priority {
+            let index = queue.lastIndex(where: { $0.id == userMessageID || $0.priority == .priority }).map { $0 + 1 } ?? 0
+            queue.insert(message, at: index)
+        } else { queue.append(message) }
         calls[key] = (fingerprint, message.id); committed = true
         await onChange()
         return acknowledgement(callID: call.id, messageID: message.id)
@@ -317,7 +336,8 @@ public actor AgentMessagingSession {
                 let tool = SendToAgentTool(session: self, senderID: agent.id, replyTo: inbound)
                 try await coordinator.send(request: request, providerID: agent.providerID,
                     additionalTools: [tool, publisher] + (management?.tools(for: agent.id) ?? []), toolContext: ToolContext(conversationID: originConversationID),
-                    agentID: agent.id, executionTimeout: turnTimeout, onStart: { [messenger, onChange] in
+                    agentID: agent.id, agentLane: inbound.id == userMessageID ? .user : .background,
+                    priority: inbound.priority == .priority, executionTimeout: turnTimeout, onStart: { [messenger, onChange] in
                         try await self.checkOpen()
                         try await messenger.updateDelivery(id: inbound.id, state: .running)
                         await onChange()
@@ -339,12 +359,13 @@ public actor AgentMessagingSession {
                 try await messenger.updateDelivery(id: inbound.id, state: .completed, response: text)
             } catch {
                 await publisher.close()
-                let cancelled = closed || Task.isCancelled || error is CancellationError
+                let cancelled = closed || Task.isCancelled || error is CancellationError || error is AgentExecutionSuperseded
                 let publishedReport = await output.publishedReport
                 try await output.finish(failed: true, cancelled: cancelled)
                 try await messenger.updateDelivery(id: inbound.id, state: cancelled ? .cancelled : .failed,
                                                    response: publishedReport.isEmpty ? error.localizedDescription : publishedReport)
-                if cancelled { throw CancellationError() }
+                if cancelled && !(error is AgentExecutionSuperseded) { throw CancellationError() }
+                try checkOpen()
             }
             await onChange()
             await onAgentChange(nil)
@@ -375,7 +396,9 @@ public actor AgentMessagingSession {
     }
 
     private func acknowledgement(callID: ToolCallID, messageID: UUID) -> NormalizedToolResult {
-        .init(callID: callID, content: [.text("Queued message \(messageID.uuidString). The peer has NOT completed it yet. Finish this response; the host will wake them and deliver any reply later. Do not poll or resend.")])
+        let priority = accepted[messageID]?.priority == .priority
+            ? " Priority applies when this session drains: it may interrupt background work, never user work, and waits for host tool cleanup. Interrupted work is not automatically resumed." : ""
+        return .init(callID: callID, content: [.text("Queued message \(messageID.uuidString). The peer has NOT completed it yet. Finish this response; the host will wake them and deliver any reply later. Do not poll or resend.\(priority)")])
     }
 
     private struct InboundEnvelope: Encodable {
@@ -395,7 +418,7 @@ private struct SendToAgentTool: ToolExecutor, ToolRuntimeContextProviding {
     let replyTo: AgentMessage?
     var descriptor: ToolDescriptor {
         .init(name: "SendToAgent", description: "Queue a task or useful result for an active peer or a listed group you belong to. Group posts require full audience approval and replies appear in that shared room. Returns an asynchronous acknowledgement, never a completed result. Never poll or send courtesy acknowledgements.",
-              inputSchema: Data(#"{"type":"object","properties":{"recipientID":{"type":"string","description":"Exact active agent or available group UUID from the directory."},"message":{"type":"string","minLength":1,"maxLength":8000}},"required":["recipientID","message"],"additionalProperties":false}"#.utf8), parallelSafe: false)
+              inputSchema: Data(#"{"type":"object","properties":{"recipientID":{"type":"string","description":"Exact active agent or available group UUID from the directory."},"message":{"type":"string","minLength":1,"maxLength":8000},"priority":{"type":"boolean","description":"Urgent single-peer message, always requires approval. May interrupt background work after the source response ends; never user work. Default false; not supported for groups."}},"required":["recipientID","message"],"additionalProperties":false}"#.utf8), parallelSafe: false)
     }
     func runtimeContext(for context: ToolContext) async throws -> String {
         guard context.conversationID == session.originConversationID else { throw AgentMessagingError.scopeMismatch }

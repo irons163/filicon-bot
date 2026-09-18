@@ -205,6 +205,9 @@ struct AgentGroupMessagingTests {
         let tool = session.tool(for: f.sender.id), context = ToolContext(conversationID: f.origin)
         let denied = try await tool.execute(call(f.group.id), context: context)
         #expect(denied.isError)
+        let priority = try await tool.execute(.init(id: "priority", name: "SendToAgent",
+            argumentsJSON: Data("{\"recipientID\":\"\(f.group.id)\",\"message\":\"Review\",\"priority\":true}".utf8)), context: context)
+        #expect(priority.isError && priority.wireText.contains("single peer"))
         for field in ["senderID", "images", "priority"] {
             let payload = ["recipientID": f.group.id.uuidString, "message": "Review", field: "spoof"]
             let result = try await tool.execute(.init(id: "invalid", name: "SendToAgent", argumentsJSON: JSONEncoder().encode(payload)), context: context)

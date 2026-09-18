@@ -113,18 +113,37 @@ It stores no system instructions, tools, approval receipts or permission grants.
 
 The App now injects one `AgentExecutionScheduler` into group turns, peer/manual
 mailbox wakes, subagent tasks, automations, workflows and inbound channel replies.
-It provides a FIFO lane per agent across those origins; different agents can run
+It provides a lane per agent across those origins (ordinary work is FIFO); different agents can run
 concurrently. Stopping a queued conversation removes only its own submission.
 Execution timeouts start after acquiring the lane, not while waiting. ToolLoop
 joins active host-tool cleanup before unlocking and closes its callback ledger
 against late tool calls. Account transitions cancel queued work and interrupt
 active subagent runtimes without releasing their lane before they unwind.
 
+`SendToAgent` now accepts optional `priority:true` for a single peer, and the
+manual message page's Priority choice uses the same scheduler. Model priority
+sends always require explicit approval, even when replying to an approved sender;
+the card and manual composer explain the interruption. A changed priority cannot
+replay an accepted call or bypass duplicate-message detection. Group priority
+posts are rejected, not silently downgraded.
+
+Priority applies only when the source session drains after its current response,
+not at the moment the send tool acknowledges enqueueing. It goes ahead of ordinary
+queued background work, but never jumps over queued user work or older priority
+messages. Active background peer wakes, delegated shared-room replies and scheduled
+automations can be superseded. Foreground group/user turns, the first manual-mailbox
+wake, manual Run Now automations, channel replies, workflows and subtasks are
+protected. Unclassified host submissions default to the protected user lane.
+The interrupted operation retains the lane until host cleanup finishes. A peer
+mailbox records cancellation and keeps any published progress; it does not replay
+the interrupted task. Other queued messages may still run. This is deliberately
+narrower than the reference's immediate non-user-lane interruption.
+
 This remains narrower than the reference's full background session runtime:
 contexts are origin-isolated, not a unified personal DM/group memory service.
 Generic direct chats are not bound to agent profiles and retain conversation-only
-serialization. There is no cross-process coordination, image payload or priority
-interruption. Group targets follow the narrower shared-room rules above.
+serialization. There is no cross-process coordination or image payload.
+Group targets and priority interruption follow the narrower rules above.
 An uncooperative operation keeps its lane
 until it unwinds; this is not a promise of immediate remote backend cancellation.
 Unfinished work is cancelled at restart, not replayed with stale approval.

@@ -94,6 +94,121 @@ private struct PlainScheduledAgentProvider: AIProvider {
         try #require(snapshot.queuedCount == count)
     }
 
+    @Test(arguments: ["background", "user", "denied", "stop"])
+    func approvedPriorityInterruptsOnlyBackgroundPeerWork(mode: String) async throws {
+        let (root, model, sender, recipient) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let gate = BackgroundExecutionGate(), probe = BackgroundProbe()
+        #expect(await model.createGroup(name: "Ordinary origin", summary: "", memberIDs: [sender.id]))
+        #expect(await model.createGroup(name: "Urgent origin", summary: "", memberIDs: [sender.id]))
+        let ordinaryID = try #require(model.groups.first { $0.name == "Ordinary origin" }?.id)
+        let urgentID = try #require(model.groups.first { $0.name == "Urgent origin" }?.id)
+        await model.setAutoReviewEnabled(true)
+        await model.setAutoReviewRules(allow: ["SendToAgent"], ask: [])
+        await model.registry.register(BackgroundAgentProvider { request, execute in
+            await probe.record(request)
+            if request.conversationID == ordinaryID || request.conversationID == urgentID {
+                struct Payload: Encodable { let recipientID: UUID; let message: String; let priority: Bool }
+                let urgent = request.conversationID == urgentID
+                _ = try await execute(.init(id: "delegate", name: "SendToAgent",
+                    argumentsJSON: JSONEncoder().encode(Payload(recipientID: recipient.id, message: urgent ? "URGENT_TASK" : "ORDINARY_TASK", priority: urgent))))
+            } else if request.messages.last?.text.contains("ORDINARY_TASK") == true {
+                await withTaskCancellationHandler { await gate.wait() } onCancel: { Task { await gate.open() } }
+                try Task.checkCancellation()
+            }
+            return "PASS"
+        })
+        let ordinary: Task<Void, Never>?
+        if mode == "user" {
+            ordinary = nil
+            #expect(await model.sendAgentMessage(senderID: sender.id, recipientID: recipient.id, text: "ORDINARY_TASK"))
+        } else {
+            ordinary = Task { await model.sendGroupMessage(groupID: ordinaryID, text: "Delegate ordinary work") }
+            try await waitUntil { !model.pendingAutoReviewApprovals.isEmpty }
+            let approval = try #require(model.pendingAutoReviewApprovals.first)
+            await model.resolveGroupApproval(approval, groupID: ordinaryID, approve: true)
+        }
+        try await waitUntil { model.agentMessages.contains { $0.text == "ORDINARY_TASK" && $0.delivery?.state == .running } }
+        let urgent = Task { await model.sendGroupMessage(groupID: urgentID, text: "Send urgent work") }
+        try await waitUntil { !model.pendingAutoReviewApprovals.isEmpty }
+        let approval = try #require(model.pendingAutoReviewApprovals.first)
+        expectNoDifference(approval.action.context.metadata["agentMessagePriority"], "priority")
+        expectNoDifference(approval.action.context.metadata["agentMessage"], "URGENT_TASK")
+        #expect(!model.agentMessages.contains { $0.priority == .priority })
+        expectNoDifference(model.agentMessages.first { $0.text == "ORDINARY_TASK" }?.delivery?.state, .running)
+        if mode == "stop" { await model.stopGroup(id: urgentID) }
+        await model.resolveGroupApproval(approval, groupID: urgentID, approve: mode != "denied")
+        if mode == "user" {
+            try await waitForAgentQueue(model, agentID: recipient.id, count: 1)
+            expectNoDifference(model.agentMessages.first { $0.text == "ORDINARY_TASK" }?.delivery?.state, .running)
+            await gate.open()
+        } else if mode == "denied" || mode == "stop" {
+            await urgent.value
+            expectNoDifference(model.agentMessages.first { $0.text == "ORDINARY_TASK" }?.delivery?.state, .running)
+            await gate.open()
+        }
+        await urgent.value; await ordinary?.value
+        try await waitUntil { model.runningAgentMessageScopes.isEmpty && model.runningGroups.isEmpty }
+        expectNoDifference(model.agentMessages.first { $0.text == "ORDINARY_TASK" }?.delivery?.state, mode == "background" ? .cancelled : .completed)
+        let sent = mode == "background" || mode == "user"
+        expectNoDifference(model.agentMessages.filter { $0.priority == .priority }.count, sent ? 1 : 0)
+        if sent {
+            expectNoDifference(model.agentMessages.first { $0.priority == .priority }?.delivery?.state, .completed)
+        }
+        let requests = await probe.requests
+        expectNoDifference(requests.filter { $0.messages.last?.text.contains("ORDINARY_TASK") == true }.count, 1)
+        #expect(model.pendingAutoReviewApprovals.isEmpty)
+    }
+
+    @Test(arguments: [false, true]) func manualPriorityProtectsUserLaneAndCancelsBackgroundLane(user: Bool) async throws {
+        let (root, model, sender, recipient) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let gate = BackgroundExecutionGate(), probe = BackgroundProbe()
+        await model.registry.register(PlainScheduledAgentProvider(probe: probe))
+        let scheduler = model.agentExecutionScheduler
+        let owner = Task {
+            try await scheduler.withExclusiveAccess(agentID: recipient.id, lane: user ? .user : .background) {
+                await gate.wait()
+                expectNoDifference(Task.isCancelled, !user)
+            }
+        }
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while !(await gate.isWaiting), ContinuousClock.now < deadline { await Task.yield() }
+        try #require(await gate.isWaiting)
+        #expect(await model.sendAgentMessage(senderID: sender.id, recipientID: recipient.id, text: "Urgent manual task", priority: .priority))
+        try await waitForAgentQueue(model, agentID: recipient.id, count: 1)
+        expectNoDifference(model.agentMessages.first?.delivery?.state, .queued)
+        await gate.open()
+        if user { try await owner.value }
+        else { await #expect(throws: AgentExecutionSuperseded.self) { try await owner.value } }
+        try await waitUntil { model.runningAgentMessageScopes.isEmpty }
+        expectNoDifference(model.agentMessages.first?.delivery?.state, .completed)
+    }
+
+    @Test func priorityWarningRendersInSevenLanguages() throws {
+        let key = "Priority messages may stop background work after the current response ends. User turns are protected; interrupted work is not automatically resumed."
+        let output = ProcessInfo.processInfo.environment["FILICON_UI_REVIEW_OUTPUT"].map { URL(fileURLWithPath: $0) }
+        for language in ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"] {
+            try FiliconLocalization.$languageOverride.withValue(language) {
+                if language != "en" { #expect(FiliconLocalization.string(key) != key) }
+                let host = NSHostingView(rootView: AgentPriorityMessageNotice()
+                    .environment(\.locale, Locale(identifier: language)).environment(\.colorScheme, .light)
+                    .padding(20).frame(width: 360).background(FiliconTheme.canvas))
+                host.appearance = NSAppearance(named: .aqua)
+                host.frame = .init(x: 0, y: 0, width: 360, height: 180)
+                host.layoutSubtreeIfNeeded()
+                #expect(host.fittingSize.height <= 180)
+                let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                host.cacheDisplay(in: host.bounds, to: bitmap)
+                let data = try #require(bitmap.representation(using: .png, properties: [:]))
+                if let output {
+                    try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+                    try data.write(to: output.appending(path: "priority-warning-\(language).png"))
+                }
+            }
+        }
+    }
+
     @Test(arguments: [false, true]) func groupQueuesBehindTheSameAgentMailboxAndCanBeStoppedIndependently(stopQueued: Bool) async throws {
         let (root, model, sender, recipient) = try await fixture()
         defer { try? FileManager.default.removeItem(at: root) }

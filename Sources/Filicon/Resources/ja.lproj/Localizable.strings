@@ -1400,3 +1400,5 @@
 "Group audience" = "グループの宛先メンバー";
 "This posts to the shared room and wakes its other active members. Replies appear there. Tool actions still need approval." = "共有チャットに投稿し、他の有効なメンバーを起動します。返信はそのグループに表示されます。ツールの操作には引き続き承認が必要です。";
 "Group reply stopped or failed. The posted message was kept." = "グループの返信が停止したか、失敗しました。投稿済みのメッセージは保持されています。";
+"Priority messages may stop background work after the current response ends. User turns are protected; interrupted work is not automatically resumed." = "優先メッセージは現在の応答後にバックグラウンド作業を停止する場合があります。ユーザーのターンは中断されません。中断した作業は自動再開されません。";
+"Interrupted by an approved priority agent message. Work was not resumed automatically." = "承認済みの優先エージェントメッセージにより中断されました。作業は自動再開されていません。";

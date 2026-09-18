@@ -263,7 +263,7 @@ public actor GroupService {
                     produced += published
                     total += published.count
                     messagesThisRound += published.count
-                    try await finishPendingTools(messageID: activityMessage.id, cancelled: error is CancellationError || epochs[groupID] != epoch || Task.isCancelled, onMessage: onMessage)
+                    try await finishPendingTools(messageID: activityMessage.id, cancelled: error is CancellationError || error is AgentExecutionSuperseded || epochs[groupID] != epoch || Task.isCancelled, onMessage: onMessage)
                     await onAgentChange(nil)
                     guard epochs[groupID] == epoch, !Task.isCancelled else { return produced }
                     activeResponses[groupID] = nil

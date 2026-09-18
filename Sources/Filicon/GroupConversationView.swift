@@ -433,6 +433,9 @@ struct GroupToolApprovalPanel: View {
                 if let members = approval.action.context.metadata["agentGroupMembers"] {
                     AgentGroupApprovalDetails(members: members)
                 }
+                if approval.action.context.metadata["agentMessagePriority"] == "priority" {
+                    AgentPriorityMessageNotice()
+                }
                 if approval.action.context.metadata["tool"] == "SendToAgent",
                    let text = approval.action.context.metadata["agentMessage"] {
                     // The summary is bounded to 2,000 characters; the actual
@@ -457,6 +460,14 @@ struct GroupToolApprovalPanel: View {
 
     private func resolve(_ approval: PendingApproval, approve: Bool) async {
         await model.resolveGroupApproval(approval, groupID: groupID, approve: approve)
+    }
+}
+
+struct AgentPriorityMessageNotice: View {
+    var body: some View {
+        Label(l10n("Priority messages may stop background work after the current response ends. User turns are protected; interrupted work is not automatically resumed."), systemImage: "exclamationmark.triangle")
+            .font(.caption).foregroundStyle(FiliconTheme.textSecondary)
+            .fixedSize(horizontal: false, vertical: true)
     }
 }
 
