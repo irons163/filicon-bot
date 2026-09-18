@@ -46,4 +46,15 @@ struct AgentUserMessageToolTests {
         let published = await tool.publishedTexts
         expectNoDifference(published, [])
     }
+
+    @Test func unsupportedImageAndIdentityFieldsNeverSilentlyPublishText() async throws {
+        let origin = UUID(), output = PublishedMessages()
+        let tool = AgentUserMessageTool(conversationID: origin) { await output.append($0) }
+        for payload in [#"{"text":"Hello","images":["private.png"]}"#, #"{"text":"Hello","images":[]}"#,
+                        #"{"text":"Hello","senderID":"someone"}"#, #"{"text":"Hello","recipientID":"someone"}"#] {
+            let result = try await tool.execute(.init(id: "unsupported", name: "SendMessage", argumentsJSON: Data(payload.utf8)), context: .init(conversationID: origin))
+            #expect(result.isError)
+        }
+        let texts = await output.texts; expectNoDifference(texts, [])
+    }
 }

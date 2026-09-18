@@ -1,4 +1,15 @@
 "" = "";
+"Attach images…" = "Joindre des images…";
+"PNG/JPEG only · up to 4 images · 5 MB each · 12 MB total" = "PNG/JPEG uniquement · 4 images max. · 5 Mo chacune · 12 Mo au total";
+"Remove images" = "Retirer les images";
+"Image preview unavailable" = "Aperçu de l’image indisponible";
+"Forward these images to the recipient model?" = "Transférer ces images au modèle du destinataire ?";
+"Images will be sent to the selected recipient's configured model." = "Les images seront envoyées au modèle configuré pour le destinataire sélectionné.";
+"Choose a valid, single-frame PNG or JPEG image." = "Choisissez une image PNG ou JPEG valide et non animée.";
+"Use at most 4 images, 5 MB each and 12 MB total." = "Limite : 4 images, 5 Mo chacune et 12 Mo au total.";
+"This image is not available in the current peer message." = "Cette image n’est pas disponible dans le message actuel de l’autre agent.";
+"The recipient model does not support image input. No image was sent to the model." = "Le modèle du destinataire ne prend pas en charge les images. Aucune image ne lui a été envoyée.";
+"Image messages are currently supported only for a single peer, not groups." = "Les messages avec images sont actuellement réservés à un seul agent, pas aux groupes.";
 " typing…" = "Dactylographie...";
 "%.1f×" = "%.1f×";
 "A native, macOS-only workspace for mainstream AI providers." = "Un espace de travail natif, macOS-seulement pour les fournisseurs principaux d'IA.";

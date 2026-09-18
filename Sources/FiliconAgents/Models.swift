@@ -324,13 +324,16 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
     public let createdAt: Date
     public var deliveredAt: Date?
     public var delivery: AgentMessageDelivery?
+    /// Optional for backward compatibility with text-only persisted mailboxes.
+    public let images: [AttachmentMetadata]?
 
     public init(id: UUID = UUID(), senderID: UUID, recipientID: UUID, text: String,
                 priority: AgentMessagePriority = .normal, createdAt: Date = Date(), deliveredAt: Date? = nil,
-                delivery: AgentMessageDelivery? = nil) {
+                delivery: AgentMessageDelivery? = nil, images: [AttachmentMetadata] = []) {
         self.id = id; self.senderID = senderID; self.recipientID = recipientID
         self.text = text; self.priority = priority; self.createdAt = createdAt; self.deliveredAt = deliveredAt
         self.delivery = delivery
+        self.images = images.isEmpty ? nil : images
     }
 }
 

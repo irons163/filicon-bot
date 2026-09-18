@@ -33,6 +33,11 @@ public actor AgentUserMessageTool: ToolExecutor {
         guard context.conversationID == conversationID else { throw AgentMessagingError.scopeMismatch }
         struct Arguments: Decodable { let text: String }
         do {
+            guard call.name == "SendMessage", call.argumentsJSON.count <= 40_000,
+                  let object = try JSONSerialization.jsonObject(with: call.argumentsJSON) as? [String: String],
+                  Set(object.keys) == ["text"] else {
+                return .init(callID: call.id, content: [.text("SendMessage currently accepts text only. Images and other fields are not published.")], isError: true)
+            }
             let args = try JSONDecoder().decode(Arguments.self, from: call.argumentsJSON)
             let text = args.text.trimmingCharacters(in: .whitespacesAndNewlines)
             let key = Key(runID: context.runID, callID: call.id)

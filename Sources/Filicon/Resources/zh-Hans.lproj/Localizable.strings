@@ -1,4 +1,15 @@
 "" = "";
+"Attach images…" = "附加图片…";
+"PNG/JPEG only · up to 4 images · 5 MB each · 12 MB total" = "仅限 PNG/JPEG · 最多 4 张 · 每张 5 MB · 总计 12 MB";
+"Remove images" = "移除图片";
+"Image preview unavailable" = "无法显示图片预览";
+"Forward these images to the recipient model?" = "要将这些图片转交给接收代理的模型吗？";
+"Images will be sent to the selected recipient's configured model." = "图片将发送至所选接收代理配置的模型。";
+"Choose a valid, single-frame PNG or JPEG image." = "请选择有效的单帧 PNG 或 JPEG 图片。";
+"Use at most 4 images, 5 MB each and 12 MB total." = "最多 4 张图片，每张 5 MB，总计 12 MB。";
+"This image is not available in the current peer message." = "本次收到的代理消息中没有这张图片。";
+"The recipient model does not support image input. No image was sent to the model." = "接收代理的模型不支持图片输入，未将图片发送至模型。";
+"Image messages are currently supported only for a single peer, not groups." = "目前图片消息仅支持单个代理，不支持群组。";
 " typing…" = "输入中...";
 "%.1f×" = "%.1f×";
 "A native, macOS-only workspace for mainstream AI providers." = "一个本地的,macOS只用于主流AI提供者的工作空间.";

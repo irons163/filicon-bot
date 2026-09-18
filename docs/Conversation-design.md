@@ -142,12 +142,41 @@ narrower than the reference's immediate non-user-lane interruption.
 This remains narrower than the reference's full background session runtime:
 contexts are origin-isolated, not a unified personal DM/group memory service.
 Generic direct chats are not bound to agent profiles and retain conversation-only
-serialization. There is no cross-process coordination or image payload.
+serialization. There is no cross-process coordination. Peer images follow the
+narrower rules below; group and SendMessage image payloads remain unsupported.
 Group targets and priority interruption follow the narrower rules above.
 An uncooperative operation keeps its lane
 until it unwinds; this is not a promise of immediate remote backend cancellation.
 Unfinished work is cancelled at restart, not replayed with stale approval.
 See [the itemized audit](Agent-collaboration-parity.md).
+
+### Bounded peer image messages
+
+Agents → Messages → Attach images imports user-selected, single-frame PNG/JPEG
+files and shows the exact previews before Send. Limits are four images, 5 MiB per
+image, 12 MiB total, 8,192 pixels per dimension and 16 million pixels per image.
+The UI uses familiar MB labels for these binary limits. Bytes are decoded,
+content-addressed and integrity-checked in `agent-message-images/`; filenames,
+not source paths, enter the mailbox. Removed/abandoned draft imports currently
+remain on disk; this store is separate from ordinary chat attachment garbage
+collection and has no retention/cleanup UI yet.
+
+The recipient receives real `attachmentsByMessageID` image bytes. A model whose
+catalog does not explicitly advertise image input fails with a visible error;
+there is no text-only fallback that silently discards images. The task remains
+assistant-role. For provider compatibility the bytes travel in a separate
+user-role image block explicitly labeled as untrusted peer data, not a new user
+request or permission. Existing host approval gates still control every action.
+
+`SendToAgent` can forward exact IDs from that wake's incoming image list only.
+Even a reply requires new approval showing recipient, text, previews and content
+hashes. Images are checked again after approval; Stop/account change/denial cannot
+continue the send. Reused call IDs and changed image lists cannot send twice.
+Arbitrary file paths, remote URLs, base64 and old/private-message IDs are rejected.
+No URLs are fetched. Durable mailboxes retain metadata/bytes across restart,
+without restarting unfinished work or replaying image bytes into later history.
+Group targets and `SendMessage` reject image fields instead of dropping them.
+This is partial parity, not the reference's broader image source/publishing API.
 
 Group turns and manual/peer mailbox wakes now also receive scoped `CreateAgent`,
 `UpdateAgent` and `update_state` profile tools. Every change requires explicit approval of the complete

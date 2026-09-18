@@ -24,6 +24,13 @@ workflows, Shared Rooms, plugins and private skills, remote-computer controls,
 isolated VNC viewing, Teach capture, account/WebAuthn flows, notifications,
 deep links, recovery, storage quotas, and signed update handling.
 
+Agent collaboration is still partial parity with the unofficial reconstruction;
+see [the itemized audit](docs/Agent-collaboration-parity.md). **Agents → Messages →
+Attach images…** sends user-selected PNG/JPEG images to a single agent whose
+configured model supports image input. Agents may forward only images from the
+current incoming peer message, after a new preview approval. Group images and
+`SendMessage` images are not supported; unsupported inputs fail explicitly.
+
 ## Requirements
 
 - macOS 14 or newer

@@ -252,6 +252,7 @@ final class AppModel: ObservableObject {
     private let store: ConversationStore
     private let attachmentStore: AttachmentStore
     private let channelAttachmentStore: AttachmentStore
+    private let agentImageStore: AgentImageStore
     private let attachmentLifecycle: AttachmentLifecycle?
     private let attachmentPreviewMaterializer = AttachmentPreviewMaterializer()
     private let draftStore: ComposerDraftStore
@@ -399,6 +400,7 @@ final class AppModel: ObservableObject {
         quotaWriter = liveQuota.map(AppQuotaWriter.init)
         attachmentStore = AttachmentStore(rootURL: root.appending(path: "attachments", directoryHint: .isDirectory))
         channelAttachmentStore = AttachmentStore(rootURL: root.appending(path: "channel-attachments", directoryHint: .isDirectory))
+        agentImageStore = AgentImageStore(rootURL: root.appending(path: "agent-message-images", directoryHint: .isDirectory))
         attachmentLifecycle = try? AttachmentLifecycle.live(
             applicationSupportDirectory: root,
             configuration: .init(quotaCheck: { usage, requested in
@@ -2429,7 +2431,8 @@ final class AppModel: ObservableObject {
         senderID: UUID,
         recipientID: UUID,
         text: String,
-        priority: AgentMessagePriority = .normal
+        priority: AgentMessagePriority = .normal,
+        images: [AttachmentMetadata] = []
     ) async -> Bool {
         let generation = autoReviewAccountGeneration
         let accountID = settings.accountScope ?? "local"
@@ -2471,7 +2474,7 @@ final class AppModel: ObservableObject {
             agentMessagingSessions[scopeID] = session
             workspaceFolders.beginTurn(conversationID: scopeID)
             do {
-                try await session.enqueueUserMessage(senderID: sender.id, recipientID: recipient.id, text: trimmed, priority: priority)
+                try await session.enqueueUserMessage(senderID: sender.id, recipientID: recipient.id, text: trimmed, priority: priority, images: images)
                 guard generation == autoReviewAccountGeneration, !Task.isCancelled,
                       runningAgentMessageScopes.contains(scopeID) else { throw CancellationError() }
             } catch {
@@ -2503,6 +2506,27 @@ final class AppModel: ObservableObject {
         agentMessagingSessions[scopeID] = nil
         agentMessageTasks[scopeID] = nil
         runningAgentMessageScopes.remove(scopeID)
+    }
+
+    func importAgentMessageImages(_ urls: [URL]) async throws -> [AttachmentMetadata] {
+        let generation = autoReviewAccountGeneration
+        guard !agentMessagingAccountTransition, urls.count <= 4 else { throw AgentImageError.limit }
+        var images: [AttachmentMetadata] = []
+        for url in urls {
+            let image = try await agentImageStore.importImage(fileURL: url)
+            if !images.contains(where: { $0.id == image.id }) { images.append(image) }
+        }
+        _ = try await agentImageStore.load(images)
+        guard generation == autoReviewAccountGeneration, !agentMessagingAccountTransition else { throw CancellationError() }
+        return images
+    }
+
+    func agentMessageImageData(_ image: AttachmentMetadata) async throws -> Data {
+        let generation = autoReviewAccountGeneration
+        let loaded = try await agentImageStore.load([image])
+        guard generation == autoReviewAccountGeneration, !agentMessagingAccountTransition,
+              let bytes = loaded.first?.data else { throw CancellationError() }
+        return bytes
     }
 
     func stopAgentMessages(scopeID: UUID) async {
@@ -2552,6 +2576,11 @@ final class AppModel: ObservableObject {
                 try await self.runGroupDelegation(dispatch, session: session, originID: originID, generation: generation)
             }, finishGroup: { [weak self] groupID, failed in
                 await self?.finishGroupDelegation(groupID: groupID, originID: originID, failed: failed)
+            },
+            imageStore: agentImageStore,
+            authorizeImages: { [weak self] sender, recipient, text, images, call, context in
+                guard let self else { throw CancellationError() }
+                try await self.authorizeAgentDelegation(sender: sender, recipient: recipient, text: text, call: call, context: context, images: images)
             },
             authorize: { [weak self] sender, recipient, text, call, context in
                 guard let self else { throw CancellationError() }
@@ -3045,7 +3074,7 @@ final class AppModel: ObservableObject {
     }
 
     private func authorizeAgentDelegation(sender: AgentProfile, recipient: AgentProfile, text: String,
-                                           call: NormalizedToolCall, context: ToolContext) async throws {
+                                           call: NormalizedToolCall, context: ToolContext, images: [AttachmentMetadata] = []) async throws {
         guard isAgentMessagingScopeActive(context.conversationID) else {
             throw CancellationError()
         }
@@ -3054,11 +3083,12 @@ final class AppModel: ObservableObject {
         await autoReviewBroker.activate(fence)
         struct Options: Decodable { let priority: Bool? }
         let priority = try JSONDecoder().decode(Options.self, from: call.argumentsJSON).priority == true
+        var metadata = ["tool": "SendToAgent", "agentMessage": text, "agentMessagePriority": priority ? "priority" : "normal"]
+        if !images.isEmpty { metadata["agentImages"] = String(decoding: try JSONEncoder().encode(images), as: UTF8.self) }
         let action = AutoReviewAction(
             summary: "\(sender.name) → \(recipient.name)", target: .recipient(identifier: recipient.id.uuidString),
             risks: [.sensitive], context: .init(fence: fence, conversationID: context.conversationID,
-                                             toolCallID: call.id.rawValue, metadata: ["tool": "SendToAgent", "agentMessage": text,
-                                                 "agentMessagePriority": priority ? "priority" : "normal"])
+                                             toolCallID: call.id.rawValue, metadata: metadata)
         )
         // Always show the exact recipient and payload. General auto-review allow
         // rules never authorize expanding the participating agent set implicitly.

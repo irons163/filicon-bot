@@ -1,5 +1,8 @@
 import SwiftUI
 import FiliconAgents
+import FiliconDomain
+import FiliconAppServices
+import UniformTypeIdentifiers
 
 struct AgentMessagingView: View {
     @Environment(\.locale) private var uiLocale
@@ -10,6 +13,9 @@ struct AgentMessagingView: View {
     @State private var priority = AgentMessagePriority.normal
     @State private var mailbox = Mailbox.thread
     @State private var feedback: String?
+    @State private var images: [AttachmentMetadata] = []
+    @State private var importing = false
+    @State private var sending = false
 
     private enum Mailbox: String, CaseIterable, Identifiable {
         case thread = "Thread"
@@ -83,6 +89,7 @@ struct AgentMessagingView: View {
         }
         .onChange(of: model.agents) { _, _ in normalizeSelection() }
         .onChange(of: senderID) { _, _ in normalizeSelection() }
+        .onChange(of: model.settings.accountScope) { _, _ in images.removeAll() }
     }
 
     private var controls: some View {
@@ -105,6 +112,19 @@ struct AgentMessagingView: View {
                 .frame(width: 150)
             }
             if priority == .priority { AgentPriorityMessageNotice() }
+            HStack {
+                Button(l10n("Attach images…"), systemImage: "photo.on.rectangle") { Task { await attachImagesButtonTapped() } }
+                    .disabled(importing || sending)
+                if importing { ProgressView().controlSize(.small) }
+                Text(l10n("PNG/JPEG only · up to 4 images · 5 MB each · 12 MB total"))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            if !images.isEmpty {
+                Text(l10n("Images will be sent to the selected recipient's configured model."))
+                    .font(.caption).foregroundStyle(.secondary)
+                ScrollView { AgentMessageImagePreviews(images: images) }.frame(maxHeight: 200)
+                Button(l10n("Remove images")) { images.removeAll() }.disabled(sending)
+            }
             HStack(alignment: .bottom) {
                 TextEditor(text: $draft)
                     .font(.body)
@@ -152,10 +172,12 @@ struct AgentMessagingView: View {
                     Text(message.createdAt.formatted(date: .abbreviated, time: .shortened)).font(.caption).foregroundStyle(.secondary)
                 }
                 Text(message.text).textSelection(.enabled)
+                if let images = message.images { AgentMessageImagePreviews(images: images) }
                 if let delivery = message.delivery {
                     Text(deliveryTitle(delivery.state)).font(.caption).foregroundStyle(.secondary)
                     if let response = delivery.response, !response.isEmpty, response.uppercased() != "PASS" {
-                        Text(delivery.state == .cancelled && response == AgentExecutionSuperseded().localizedDescription
+                        Text((delivery.state == .cancelled && response == AgentExecutionSuperseded().localizedDescription)
+                             || AgentImageError(rawValue: response) != nil
                              ? FiliconLocalization.string(response) : response).font(.callout).textSelection(.enabled)
                     }
                 }
@@ -175,7 +197,7 @@ struct AgentMessagingView: View {
 
     private var canSend: Bool {
         guard let senderID, let recipientID else { return false }
-        return senderID != recipientID && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        return !importing && !sending && senderID != recipientID && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private func deliveryTitle(_ state: AgentMessageDelivery.State) -> String {
@@ -214,17 +236,81 @@ struct AgentMessagingView: View {
     }
 
     private func send() {
-        guard let senderID, let recipientID else { return }
+        guard canSend, let senderID, let recipientID else { return }
         let message = draft
+        let selectedImages = images
+        let selectedPriority = priority
+        sending = true
         feedback = nil
         Task {
-            if await model.sendAgentMessage(senderID: senderID, recipientID: recipientID, text: message, priority: priority) {
-                draft = ""
+            defer { sending = false }
+            if await model.sendAgentMessage(senderID: senderID, recipientID: recipientID, text: message, priority: selectedPriority, images: selectedImages) {
+                if draft == message { draft = "" }
+                images.removeAll()
                 feedback = agentMessageString("Queued")
                 mailbox = .thread
             } else {
                 feedback = agentMessageString("Not sent. You can edit and retry.")
             }
+        }
+    }
+
+    private func attachImagesButtonTapped() async {
+        importing = true
+        defer { importing = false }
+        let accountScope = model.settings.accountScope
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.png, .jpeg]
+        panel.allowsMultipleSelection = true; panel.canChooseDirectories = false
+        guard await panel.begin() == .OK, accountScope == model.settings.accountScope else { return }
+        do { images = try await model.importAgentMessageImages(panel.urls); feedback = nil }
+        catch is CancellationError {}
+        catch { feedback = FiliconLocalization.string(error.localizedDescription) }
+    }
+}
+
+/// Reused by the draft, durable mailbox, and exact-payload approval card.
+struct AgentMessageImagePreviews: View {
+    let images: [AttachmentMetadata]
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(images) { image in AgentMessageImagePreview(image: image) }
+        }
+    }
+}
+
+private struct AgentMessageImagePreview: View {
+    @EnvironmentObject private var model: AppModel
+    let image: AttachmentMetadata
+    @State private var preview: NSImage?
+    @State private var failed = false
+    var body: some View {
+        AgentMessageImagePreviewContent(image: image, preview: preview, failed: failed)
+            .task(id: "\(model.settings.accountScope ?? "local"):\(image.id)") { await loadPreview() }
+    }
+    private func loadPreview() async {
+        preview = nil; failed = false
+        do {
+            let bytes = try await model.agentMessageImageData(image)
+            try Task.checkCancellation()
+            preview = NSImage(data: bytes); failed = preview == nil
+        } catch is CancellationError {} catch { failed = true }
+    }
+}
+
+struct AgentMessageImagePreviewContent: View {
+    let image: AttachmentMetadata
+    let preview: NSImage?
+    var failed = false
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if let preview {
+                Image(nsImage: preview).resizable().scaledToFit().frame(maxWidth: 280, maxHeight: 160)
+            } else if failed { Text(l10n("Image preview unavailable")).foregroundStyle(.secondary) }
+            else { ProgressView().controlSize(.small) }
+            Text(verbatim: image.filename).font(.caption).textSelection(.enabled)
+            Text(verbatim: image.id).font(.caption2.monospaced()).textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 }

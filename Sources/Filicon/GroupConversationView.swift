@@ -1,5 +1,6 @@
 import SwiftUI
 import FiliconAgents
+import FiliconDomain
 import FiliconAutomations
 import FiliconAutoReview
 
@@ -435,6 +436,11 @@ struct GroupToolApprovalPanel: View {
                 }
                 if approval.action.context.metadata["agentMessagePriority"] == "priority" {
                     AgentPriorityMessageNotice()
+                }
+                if let encoded = approval.action.context.metadata["agentImages"],
+                   let images = try? JSONDecoder().decode([AttachmentMetadata].self, from: Data(encoded.utf8)) {
+                    Text(l10n("Forward these images to the recipient model?")).font(.callout.weight(.semibold))
+                    AgentMessageImagePreviews(images: images)
                 }
                 if approval.action.context.metadata["tool"] == "SendToAgent",
                    let text = approval.action.context.metadata["agentMessage"] {
