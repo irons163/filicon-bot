@@ -146,7 +146,7 @@ public actor AgentService {
 
     private func sortedMemories(_ memories: [AgentMemory]) -> [AgentMemory] {
         memories.sorted {
-            if $0.tier != $1.tier { return $0.tier == .profile }
+            if ($0.tier == .profile) != ($1.tier == .profile) { return $0.tier == .profile }
             if $0.createdAt != $1.createdAt { return $0.createdAt < $1.createdAt }
             return $0.id.uuidString < $1.id.uuidString
         }

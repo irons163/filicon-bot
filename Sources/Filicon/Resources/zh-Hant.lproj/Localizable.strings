@@ -1442,3 +1442,6 @@
 "Forget this fact?" = "要忘記這項事實嗎？";
 "Saved facts are sent to this agent's configured model in future group and mailbox turns in this account. They are not shared with other agents or used as tool permissions." = "此帳號中，這位代理人之後的群組與訊息工作會將已保存事實傳送給其設定的模型。事實不會與其他代理人共用，也不會作為工具授權。";
 "Forgetting stops future memory injection. Existing messages and running requests are not erased." = "忘記後不再向後續請求載入此記憶。既有訊息與執行中的請求不會被清除。";
+"Low-importance note" = "低重要性筆記";
+"Only a ranked selection is sent each turn. Low-importance notes rank below equally recent dated facts. Omitted facts remain saved until you forget them." = "每回合只會傳送排序後的部分記憶。低重要性筆記的順位低於同樣近期的日期事實。未傳送的事實仍會保存，直到你將其忘記。";
+"Use memory write/forget with one fact of at most 1,000 characters, scope agent or user, and tier profile, log or note. Forget requires exact recorded text, the same scope, and no tier." = "請用 memory write/forget 處理單一事實（最多 1,000 字元），scope 為 agent 或 user，tier 為 profile、log 或 note。忘記時須使用記錄原文及相同 scope，不可指定 tier。";

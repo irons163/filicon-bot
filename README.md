@@ -48,8 +48,20 @@ lets the user inspect and forget records, including shared facts from another
 agent. Forgetting stops future injection, not already-sent messages or in-flight
 requests. Each private agent store and the entire shared account store have
 separate limits of 48 facts / 8 foundational facts / 12,000 characters. This is
-bounded `profile`/`log` memory, not project memory, automatic transcript capture,
+bounded `profile`/`log`/`note` memory, not project memory, automatic transcript capture,
 memory in other execution entry points, or full parity with the reference runtime.
+
+Recall is read-only and bounded separately from storage. Foundational facts have
+separate budgets; recent facts are ranked by date, with low-importance `note`
+facts weighted at half the importance of `log` facts on a 30-day relative scale.
+Case/whitespace-equivalent facts collapse within each scope and profile/recent
+pool, preserving the newest original text and author. Nothing is automatically
+deleted or expired. The runtime reports how many records were omitted; the editor
+still lists every saved record. JSON recall budgets (including UTF-8 metadata and
+escaping) are 8,000 / 4,000 bytes for private profile / recent pools and
+4,000 / 2,000 bytes for shared profile / recent pools. Oversized records are
+omitted intact, never truncated. This is not semantic conflict resolution,
+automatic transcript extraction, or searchable archival memory.
 
 ## Requirements
 

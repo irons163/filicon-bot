@@ -508,15 +508,27 @@ struct AgentMemoryApprovalDetails: View {
             Text(l10n(title)).font(.headline)
             Text(verbatim: metadata["agentMemoryOwner"] ?? "").font(.callout.weight(.semibold))
             Text(l10n(scope.memoryTitleKey)).font(.callout.weight(.semibold))
-            Text(l10n(metadata["agentMemoryTier"] == "profile" ? "Foundational fact" : "Dated fact")).font(.caption)
+            Text(l10n((AgentMemory.Tier(rawValue: metadata["agentMemoryTier"] ?? "log") ?? .log).memoryTitleKey)).font(.caption)
             Text(verbatim: metadata["agentMemoryFact"] ?? "").fixedSize(horizontal: false, vertical: true)
             Text(l10n(scope.memoryDisclosureKey))
+                .font(.caption).foregroundStyle(FiliconTheme.textSecondary)
+            Text(l10n("Only a ranked selection is sent each turn. Low-importance notes rank below equally recent dated facts. Omitted facts remain saved until you forget them."))
                 .font(.caption).foregroundStyle(FiliconTheme.textSecondary)
             if metadata["agentMemoryAction"] == "forget" {
                 Text(l10n("Forgetting stops future memory injection. Existing messages and running requests are not erased."))
                     .font(.caption).foregroundStyle(FiliconTheme.textSecondary)
             }
         }.textSelection(.enabled)
+    }
+}
+
+extension AgentMemory.Tier {
+    var memoryTitleKey: LocalizedText {
+        switch self {
+        case .profile: "Foundational fact"
+        case .log: "Dated fact"
+        case .note: "Low-importance note"
+        }
     }
 }
 

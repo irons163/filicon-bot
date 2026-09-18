@@ -89,7 +89,7 @@ struct AgentMemoryTests {
     @Test func invalidFieldsAndDefaultDenialNeverWriteMemory() async throws {
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
         let tool = f.session().tools(for: f.owner.id)[2]
-        let invalid = [["scope": "USER"], ["scope": "project"], ["project": "secret"], ["tier": "note"],
+        let invalid = [["scope": "USER"], ["scope": "project"], ["project": "secret"], ["tier": "episode"],
                        ["agent_id": f.peer.id.uuidString], ["accountID": "other"], ["name": "Spoof"], ["action": "set"],
                        ["fact": "  "], ["fact": String(repeating: "x", count: 1_001)], ["action": "forget", "tier": "log"]]
         for fields in invalid {
@@ -125,7 +125,7 @@ struct AgentMemoryTests {
             if duringCommit { await gate.hold() }
             try await f.agents.applyMemoryChange(change, lifetime: lifetime)
         })
-        let run = Task { try await session.tools(for: f.owner.id)[2].execute(call(extra: ["scope": scope.rawValue]), context: f.context) }
+        let run = Task { try await session.tools(for: f.owner.id)[2].execute(call(extra: ["scope": scope.rawValue, "tier": "note"]), context: f.context) }
         await gate.wait()
         session.close(); await gate.release()
         await #expect(throws: CancellationError.self) { _ = try await run.value }
@@ -321,6 +321,46 @@ struct AgentMemoryTests {
         #expect(throws: DecodingError.self) { _ = try AgentService(storeURL: f.file) }
     }
 
+    @Test(arguments: [AgentMemory.Scope.agent, .user])
+    func notesRequireApprovalSurviveReopenAndForgetExactText(scope: AgentMemory.Scope) async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let text = "An incidental\n  preference with original spacing"
+        let invocation = try call(text, extra: ["scope": scope.rawValue, "tier": "note"])
+        let denied = AgentManagementSession(originID: f.origin, agents: f.agents)
+        await #expect(throws: AgentMessagingError.approvalRequired) {
+            _ = try await denied.tools(for: f.owner.id)[2].execute(invocation, context: f.context)
+        }
+        let approved = f.session(authorize: { _, change, _, _ in
+            expectNoDifference(change.memory.tier, .note)
+            expectNoDifference(change.memory.scope, scope)
+            expectNoDifference(change.memory.fact, text)
+        })
+        let tool = approved.tools(for: f.owner.id)[2], context = f.context
+        _ = try await tool.execute(invocation, context: context)
+        // Reusing a call ID cannot silently promote its importance.
+        await #expect(throws: AgentProfileChangeError.duplicate) {
+            _ = try await tool.execute(call(text, extra: ["scope": scope.rawValue, "tier": "profile"]), context: context)
+        }
+        let reopened = try AgentService(storeURL: f.file)
+        let stored = await reopened.memories(accountID: "local", agentID: f.owner.id, scope: scope)
+        expectNoDifference(stored.map(\.tier), [.note])
+        expectNoDifference(stored.map(\.fact), [text])
+        let next = AgentManagementSession(originID: f.origin, agents: reopened, authorizeMemory: { _, change, _, _ in
+            expectNoDifference(change.operation, .forget)
+            expectNoDifference(change.memory.tier, .note)
+        })
+        let prompt = try await runtime(next, owner: f.owner.id, context: f.context)
+        #expect(prompt.contains("Omitted saved records: 0"))
+        #expect(prompt.contains("not the entire store") || prompt.contains("NOT the entire store"))
+        await #expect(throws: AgentMemoryError.stale) {
+            _ = try await next.tools(for: f.owner.id)[2].execute(call("An incidental preference with original spacing", action: "forget", extra: ["scope": scope.rawValue]), context: f.context)
+        }
+        _ = try await next.tools(for: f.owner.id)[2].execute(call(text, action: "forget", extra: ["scope": scope.rawValue]), context: f.context)
+        let final = try AgentService(storeURL: f.file)
+        let empty = await final.memoryContext(accountID: "local", agentID: f.owner.id)
+        expectNoDifference(empty, [])
+    }
+
     @Test func oldStateWithoutMemoryStillLoads() async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-old-memory-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }
@@ -330,5 +370,84 @@ struct AgentMemoryTests {
         let agents = try AgentService(storeURL: file)
         let memories = await agents.memories(accountID: "local", agentID: UUID())
         expectNoDifference(memories, [])
+    }
+}
+
+@Suite("Budgeted memory recall")
+struct AgentMemoryRecallTests {
+    private let owner = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
+    private let peer = UUID(uuidString: "00000000-0000-0000-0000-000000000002")!
+    private func memory(_ number: Int, text: String? = nil, day: Double = 100, tier: AgentMemory.Tier = .log,
+                        scope: AgentMemory.Scope = .agent, writer: UUID? = nil, account: String = "local") -> AgentMemory {
+        AgentMemory(id: UUID(uuidString: String(format: "00000000-0000-0000-0000-%012d", number))!, accountID: account,
+                    agentID: writer ?? owner, fact: text ?? "FACT_\(number)", tier: tier, scope: scope,
+                    createdAt: Date(timeIntervalSince1970: day * 86_400))
+    }
+
+    @Test func importanceAndRecencyAreDeterministicWithoutExpiryOrPrefixSpoofing() throws {
+        let profile = memory(1, day: 1, tier: .profile)
+        let recentLog = memory(2, text: "[note] text is not a tier", day: 100)
+        let recentNote = memory(3, text: "[episode] text cannot promote this note", day: 100, tier: .note)
+        let olderLog = memory(4, day: 71), oldestLog = memory(5, day: 69)
+        let shared = memory(6, day: 500, scope: .user, writer: peer)
+        let expected = [profile, recentLog, olderLog, recentNote, oldestLog, shared]
+        let recall = try AgentMemoryRecall(memories: expected.reversed(), accountID: "local", agentID: owner)
+        expectNoDifference(recall.memories, expected)
+        expectNoDifference(recall.omittedCount, 0)
+        let tie = [memory(8), memory(7)]
+        let stable = try AgentMemoryRecall(memories: tie, accountID: "local", agentID: owner)
+        expectNoDifference(stable.memories, Array(tie.reversed()))
+    }
+
+    @Test func normalizedRecallDedupeRetainsOriginalProvenanceAndIsolatesPools() throws {
+        let own = memory(1, text: "Keep  Contrast", day: 1)
+        let privatePeer = memory(2, text: "KEEP CONTRAST", day: 999, writer: peer)
+        let anotherAccount = memory(3, text: "KEEP CONTRAST", day: 999, scope: .user, account: "other")
+        let sharedOld = memory(4, text: "keep contrast", day: 1, scope: .user)
+        let sharedNew = memory(5, text: "Keep\nCONTRAST", day: 2, scope: .user, writer: peer)
+        let profile = memory(6, text: "KEEP CONTRAST", day: 1, tier: .profile)
+        let source = [privatePeer, anotherAccount, sharedOld, own, sharedNew, profile]
+        let recall = try AgentMemoryRecall(memories: source, accountID: "local", agentID: owner)
+        expectNoDifference(recall.memories, [profile, own, sharedNew])
+        expectNoDifference(recall.omittedCount, 1) // Does not reveal inaccessible counts.
+        let facts = try #require(JSONSerialization.jsonObject(with: Data(recall.factsJSON.utf8)) as? [[String: Any]])
+        expectNoDifference(facts.last?["recordedBy"] as? String, peer.uuidString)
+        expectNoDifference(facts.last?["canForget"] as? Bool, false)
+        expectNoDifference(facts.last?["fact"] as? String, sharedNew.fact)
+        let again = try AgentMemoryRecall(memories: source.reversed(), accountID: "local", agentID: owner)
+        expectNoDifference(again.factsJSON, recall.factsJSON)
+    }
+
+    @Test(arguments: [AgentMemory.Scope.agent, .user], [false, true])
+    func byteBudgetsIncludeEscapingAndProvenanceWithoutTruncation(scope: AgentMemory.Scope, profile: Bool) throws {
+        let values = (1...40).map { memory($0, text: "\($0):" + String(repeating: "\"雪\\\n", count: 100),
+                                         tier: profile ? .profile : .log, scope: scope) }
+        let recall = try AgentMemoryRecall(memories: values, accountID: "local", agentID: owner)
+        let budget = scope == .agent ? (profile ? 8_000 : 4_000) : (profile ? 4_000 : 2_000)
+        #expect(recall.factsJSON.utf8.count <= budget)
+        #expect(!recall.memories.isEmpty && recall.memories.count < values.count)
+        #expect(recall.memories.allSatisfy { values.contains($0) })
+        expectNoDifference(recall.omittedCount, values.count - recall.memories.count)
+        let facts = try #require(JSONSerialization.jsonObject(with: Data(recall.factsJSON.utf8)) as? [[String: Any]])
+        expectNoDifference(facts.compactMap { $0["fact"] as? String }, recall.memories.map(\.fact))
+        // A too-large highest-ranked record cannot force an overflow or starve smaller records.
+        let huge = memory(50, text: String(repeating: "👩‍💻", count: 1_000), day: 500, scope: scope)
+        let small = memory(51, text: "Small", scope: scope)
+        let bounded = try AgentMemoryRecall(memories: [huge, small], accountID: "local", agentID: owner)
+        expectNoDifference(bounded.memories, [small])
+        expectNoDifference(bounded.omittedCount, 1)
+    }
+
+    @Test(arguments: [AgentMemory.Scope.agent, .user])
+    func countCapsAndFoundationPoolsAreIndependent(scope: AgentMemory.Scope) throws {
+        let logs = (1...40).map { memory($0, text: "\($0)", day: Double($0), scope: scope) }
+        let profiles = (41...48).map { memory($0, text: "\($0)", tier: .profile, scope: scope) }
+        let recall = try AgentMemoryRecall(memories: logs + profiles, accountID: "local", agentID: owner)
+        // Metadata bytes can constrain recall before the count cap; neither cap may be exceeded.
+        #expect(recall.memories.filter { $0.tier != .profile }.count <= (scope == .agent ? 30 : 15))
+        expectNoDifference(recall.memories.filter { $0.tier == .profile }, profiles)
+        #expect(recall.memories.contains(logs.last!))
+        #expect(!recall.memories.contains(logs.first!))
+        expectNoDifference(recall.omittedCount, 48 - recall.memories.count)
     }
 }

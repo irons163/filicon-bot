@@ -417,11 +417,13 @@ private struct AgentMemorySection: View {
         Section(l10n(scope.memoryTitleKey)) {
             Text(l10n(scope.memoryDisclosureKey))
                 .font(.caption).foregroundStyle(.secondary)
+            Text(l10n("Only a ranked selection is sent each turn. Low-importance notes rank below equally recent dated facts. Omitted facts remain saved until you forget them."))
+                .font(.caption).foregroundStyle(.secondary)
             if memories.isEmpty { Text(l10n("No saved facts.")).foregroundStyle(.secondary) }
             ForEach(memories) { memory in
                 HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(l10n(memory.tier == .profile ? "Foundational fact" : "Dated fact")).font(.caption).foregroundStyle(.secondary)
+                        Text(l10n(memory.tier.memoryTitleKey)).font(.caption).foregroundStyle(.secondary)
                         if scope == .user {
                             Text(String(format: l10n("Recorded by %@"), model.agents.first { $0.id == memory.agentID }?.name ?? memory.agentID.uuidString))
                                 .font(.caption).foregroundStyle(.secondary)
