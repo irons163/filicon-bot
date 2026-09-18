@@ -27,6 +27,21 @@ public struct GroupTurnContext: Sendable {
     }
 }
 
+/// Host-only publication envelope. The model supplies text/image IDs, never
+/// the source request, lifetime, room, or author of the resulting message.
+public struct GroupAgentPublication: Sendable {
+    public let text: String
+    public let images: [AttachmentMetadata]
+    public let sourceUserMessageID: UUID?
+    public let lifetime: AgentPublicationLifetime?
+
+    public init(text: String, images: [AttachmentMetadata] = [], sourceUserMessageID: UUID? = nil,
+                lifetime: AgentPublicationLifetime? = nil) {
+        self.text = text; self.images = images
+        self.sourceUserMessageID = sourceUserMessageID; self.lifetime = lifetime
+    }
+}
+
 public protocol GroupAgentResponder: Sendable {
     func respond(agent: AgentProfile, history: [RoomMessage]) async throws -> [String]
     func respond(agent: AgentProfile, history: [RoomMessage], onTools: @escaping @Sendable ([RoomToolActivity]) async throws -> Void) async throws -> [String]
@@ -34,9 +49,19 @@ public protocol GroupAgentResponder: Sendable {
     func respond(agent: AgentProfile, history: [RoomMessage], context: GroupTurnContext,
                  onTools: @escaping @Sendable ([RoomToolActivity]) async throws -> Void,
                  onMessage: @escaping @Sendable (String) async throws -> Void) async throws -> [String]
+    func respond(agent: AgentProfile, history: [RoomMessage], context: GroupTurnContext,
+                 onTools: @escaping @Sendable ([RoomToolActivity]) async throws -> Void,
+                 onPublication: @escaping @Sendable (GroupAgentPublication) async throws -> Void) async throws -> [String]
 }
 
 public extension GroupAgentResponder {
+    func respond(agent: AgentProfile, history: [RoomMessage], context: GroupTurnContext,
+                 onTools: @escaping @Sendable ([RoomToolActivity]) async throws -> Void,
+                 onPublication: @escaping @Sendable (GroupAgentPublication) async throws -> Void) async throws -> [String] {
+        try await respond(agent: agent, history: history, context: context, onTools: onTools,
+                          onMessage: { try await onPublication(.init(text: $0)) })
+    }
+
     func respond(agent: AgentProfile, history: [RoomMessage], context: GroupTurnContext,
                  onTools: @escaping @Sendable ([RoomToolActivity]) async throws -> Void,
                  onMessage: @escaping @Sendable (String) async throws -> Void) async throws -> [String] {
@@ -279,8 +304,8 @@ public actor GroupService {
                     try Task.checkCancellation()
                     return try await responder.respond(agent: agent, history: history, context: context, onTools: { tools in
                         try await self.recordTools(tools, message: activityMessage, epoch: epoch, onMessage: onMessage)
-                    }, onMessage: { text in
-                        try await self.recordExplicitReply(text, activity: activityMessage, epoch: epoch,
+                    }, onPublication: { publication in
+                        try await self.recordExplicitReply(publication, activity: activityMessage, epoch: epoch,
                                                            remainingBudget: remainingBudget, previousTexts: previousTexts, onMessage: onMessage)
                     })
                 }
@@ -367,10 +392,21 @@ public actor GroupService {
         text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
     }
 
-    private func recordExplicitReply(_ text: String, activity: RoomMessage, epoch: UInt64, remainingBudget: Int,
+    private func recordExplicitReply(_ publication: GroupAgentPublication, activity: RoomMessage, epoch: UInt64, remainingBudget: Int,
                                      previousTexts: Set<String>, onMessage: @Sendable (RoomMessage) async -> Void) async throws {
         try Task.checkCancellation()
         guard epochs[activity.groupID] == epoch else { throw CancellationError() }
+        let text = publication.text, images = publication.images
+        if !images.isEmpty {
+            guard publication.lifetime != nil, images.count <= 4, Set(images.map(\.id)).count == images.count,
+                  let user = state.roomMessages.last(where: { $0.groupID == activity.groupID && $0.senderID == nil }),
+                  user.id == publication.sourceUserMessageID,
+                  images.allSatisfy({ user.images?.contains($0) == true }),
+                  let senderID = activity.senderID,
+                  state.groups.first(where: { $0.id == activity.groupID })?.memberIDs.contains(senderID) == true else {
+                throw AgentPublicationError.invalid
+            }
+        }
         let replies = explicitReplies[activity.id] ?? []
         let fingerprint = Self.replyFingerprint(text)
         guard !fingerprint.isEmpty, text.count <= 8_000,
@@ -378,10 +414,14 @@ public actor GroupService {
               !previousTexts.contains(fingerprint), !replies.contains(where: { Self.replyFingerprint($0.text) == fingerprint }) else {
             throw AgentServiceError.invalidName
         }
-        let message = RoomMessage(groupID: activity.groupID, senderID: activity.senderID, text: text)
-        state.roomMessages.append(message)
-        do { try persist() } catch { state.roomMessages.removeLast(); throw error }
-        explicitReplies[activity.id, default: []].append(message)
+        let message = RoomMessage(groupID: activity.groupID, senderID: activity.senderID, text: text, images: images)
+        let commit = {
+            self.state.roomMessages.append(message)
+            do { try self.persist() } catch { self.state.roomMessages.removeLast(); throw error }
+            self.explicitReplies[activity.id, default: []].append(message)
+        }
+        if let lifetime = publication.lifetime { try lifetime.commit(commit) }
+        else { try commit() }
         await onMessage(message)
     }
 

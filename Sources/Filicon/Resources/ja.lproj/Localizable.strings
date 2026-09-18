@@ -1447,3 +1447,4 @@
 "Low-importance note" = "重要度の低いメモ";
 "Only a ranked selection is sent each turn. Low-importance notes rank below equally recent dated facts. Omitted facts remain saved until you forget them." = "各ターンでは順位に基づく一部の記憶のみを送信します。重要度の低いメモは、同じ新しさの日付付きの事実より順位が下がります。送信されない事実も、忘れる操作をするまで保存されます。";
 "Use memory write/forget with one fact of at most 1,000 characters, scope agent or user, and tier profile, log or note. Forget requires exact recorded text, the same scope, and no tier." = "memory write/forget には1,000文字以内の事実を1つ、scope に agent または user、tier に profile、log または note を指定してください。忘れる操作には記録された正確な文面と同じ scope が必要で、tier は指定できません。";
+"This saves the reply and images in this group. It does not add responders or automatically resend images to other models." = "返信と画像をこのグループに保存します。返信するメンバーを追加したり、他のモデルに画像を自動で再送信したりすることはありません。";

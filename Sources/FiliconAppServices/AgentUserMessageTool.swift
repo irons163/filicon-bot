@@ -39,7 +39,7 @@ public actor AgentUserMessageTool: ToolExecutor, ToolRuntimeContextProviding {
     }
 
     private nonisolated static func makeDescriptor(supportsImages: Bool) -> ToolDescriptor {
-        let images = supportsImages ? #", "images":{"type":"array","maxItems":4,"uniqueItems":true,"items":{"type":"string"},"description":"Exact IDs from this incoming peer message, never paths or URLs. Requires fresh preview approval."}"# : ""
+        let images = supportsImages ? #", "images":{"type":"array","maxItems":4,"uniqueItems":true,"items":{"type":"string"},"description":"Exact IDs from the current host-provided image directory only, never paths or URLs. Requires fresh preview approval."}"# : ""
         return .init(name: "SendMessage",
             description: "Publish a useful message to the user in the current conversation, not to a peer. At most two messages per turn; do not repeat them in final text. " + (supportsImages ? "May include current incoming image IDs after preview approval." : "This context is text-only; images are not accepted."),
             inputSchema: Data("{\"type\":\"object\",\"properties\":{\"text\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":8000}\(images)},\"required\":[\"text\"],\"additionalProperties\":false}".utf8), parallelSafe: false)

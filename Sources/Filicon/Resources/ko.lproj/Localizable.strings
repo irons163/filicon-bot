@@ -1447,3 +1447,4 @@
 "Low-importance note" = "중요도가 낮은 메모";
 "Only a ranked selection is sent each turn. Low-importance notes rank below equally recent dated facts. Omitted facts remain saved until you forget them." = "매 차례 순위에 따른 일부 기억만 전송합니다. 중요도가 낮은 메모는 같은 시기의 날짜가 있는 사실보다 순위가 낮습니다. 제외된 사실도 잊기 전까지 저장됩니다.";
 "Use memory write/forget with one fact of at most 1,000 characters, scope agent or user, and tier profile, log or note. Forget requires exact recorded text, the same scope, and no tier." = "memory write/forget에는 최대 1,000자의 사실 하나, scope는 agent 또는 user, tier는 profile, log 또는 note를 사용하세요. 잊으려면 기록된 정확한 문구와 같은 scope가 필요하며 tier를 지정하면 안 됩니다.";
+"This saves the reply and images in this group. It does not add responders or automatically resend images to other models." = "답변과 이미지를 이 그룹에 저장합니다. 응답자를 추가하거나 다른 모델에 이미지를 자동으로 다시 전송하지 않습니다.";

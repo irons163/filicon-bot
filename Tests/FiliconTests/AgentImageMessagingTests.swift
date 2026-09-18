@@ -54,6 +54,19 @@ private actor ImagePublicationProbe {
     func append(_ value: RoomMessage) { values.append(value) }
 }
 
+private struct ImageGroupPublicationResponder: GroupAgentResponder {
+    let run: @Sendable (@escaping @Sendable (GroupAgentPublication) async throws -> Void) async throws -> [String]
+    func respond(agent: AgentProfile, history: [RoomMessage]) async throws -> [String] {
+        Issue.record("GroupService must use the publication callback")
+        return []
+    }
+    func respond(agent: AgentProfile, history: [RoomMessage], context: GroupTurnContext,
+                 onTools: @escaping @Sendable ([RoomToolActivity]) async throws -> Void,
+                 onPublication: @escaping @Sendable (GroupAgentPublication) async throws -> Void) async throws -> [String] {
+        try await run(onPublication)
+    }
+}
+
 private func publishImage(_ ids: [String], text: String = "Reviewed layout", id: ToolCallID = "publish") throws -> NormalizedToolCall {
     struct Payload: Encodable { let text: String; let images: [String] }
     return try .init(id: id, name: "SendMessage", argumentsJSON: JSONEncoder().encode(Payload(text: text, images: ids)))
@@ -93,6 +106,76 @@ struct AgentImageMessagingTests {
         return try .init(root: root, agents: agents, sender: sender, recipient: recipient,
             messenger: AgentMessenger(service: agents, storeURL: root.appending(path: "messages.json")),
             store: AgentImageStore(rootURL: root.appending(path: "images")))
+    }
+
+    @Test(arguments: ["valid", "wrong-source", "foreign-image", "missing-lifetime", "revoked", "save-failure"])
+    func canonicalGroupPublicationFencesSourceRevocationAndPersistence(mode: String) async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let file = f.root.appending(path: "groups.json")
+        let groups = try GroupService(agents: f.agents, storeURL: file)
+        let group = try await groups.create(name: "Review", memberIDs: [f.sender.id])
+        let image = try await f.store.importImage(data: peerImageBytes(), filename: "review.png")
+        let foreign = try await f.store.importImage(data: peerImageBytes(shade: 0.75), filename: "foreign.png")
+        let user = try await groups.postUserMessage("Review", groupID: group.id, images: [image])
+        let lifetime = AgentPublicationLifetime()
+        let responder = ImageGroupPublicationResponder { publish in
+            if mode == "revoked" { lifetime.close() }
+            let backup = f.root.appending(path: "groups.backup")
+            if mode == "save-failure" {
+                try FileManager.default.moveItem(at: file, to: backup)
+                try FileManager.default.createDirectory(at: file, withIntermediateDirectories: false)
+            }
+            defer {
+                if mode == "save-failure" {
+                    try? FileManager.default.removeItem(at: file)
+                    try? FileManager.default.moveItem(at: backup, to: file)
+                }
+            }
+            try await publish(.init(text: "Reviewed layout", images: [mode == "foreign-image" ? foreign : image],
+                                    sourceUserMessageID: mode == "wrong-source" ? UUID() : user.id,
+                                    lifetime: mode == "missing-lifetime" ? nil : lifetime))
+            return []
+        }
+        if mode == "valid" {
+            let result = try await groups.run(groupID: group.id, responder: responder)
+            expectNoDifference(result.map(\.senderID), [f.sender.id])
+            expectNoDifference(result.map(\.groupID), [group.id])
+            expectNoDifference(result.first?.images?.map(\.id), [image.id])
+        } else {
+            await #expect(throws: (any Error).self) { _ = try await groups.run(groupID: group.id, responder: responder) }
+        }
+        let messages = await groups.messages(groupID: group.id)
+        let saved = messages.filter { $0.senderID != nil && $0.images?.isEmpty == false }
+        expectNoDifference(saved.count, mode == "valid" ? 1 : 0)
+        let reopened = try GroupService(agents: f.agents, storeURL: file)
+        let restored = await reopened.messages(groupID: group.id)
+        expectNoDifference(restored.filter { $0.senderID != nil && $0.images?.isEmpty == false }.map(\.id), saved.map(\.id))
+    }
+
+    @Test(arguments: ["new-request", "membership", "missing-authorizer"])
+    func groupPublisherRejectsStaleImagesAndMissingApproval(change: String) async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let groups = try GroupService(agents: f.agents, storeURL: f.root.appending(path: "groups.json"))
+        let group = try await groups.create(name: "Review", memberIDs: [f.sender.id, f.recipient.id])
+        let image = try await f.store.importImage(data: peerImageBytes(), filename: "review.png")
+        let user = try await groups.postUserMessage("@Sender review", groupID: group.id, images: [image])
+        let output = ImagePublicationProbe()
+        let session: AgentMessagingSession
+        if change == "missing-authorizer" { session = .init(originConversationID: group.id, agents: f.agents, messenger: f.messenger,
+            registry: f.registry, coordinator: TurnCoordinator(registry: f.registry, toolCatalog: ToolCatalog()), groups: groups, imageStore: f.store) }
+        else { session = .init(originConversationID: group.id, agents: f.agents, messenger: f.messenger,
+            registry: f.registry, coordinator: TurnCoordinator(registry: f.registry, toolCatalog: ToolCatalog()),
+            groups: groups, imageStore: f.store, authorizePublication: { _, _, _, _, _ in
+                if change == "new-request" { _ = try await groups.postUserMessage("Follow up", groupID: group.id) }
+                else { try await groups.updateMembers(groupID: group.id, memberIDs: [f.recipient.id]) }
+            }) }
+        let tool = try await session.groupPublisher(for: f.sender.id, userMessageID: user.id) { value in
+            await output.append(.init(groupID: group.id, senderID: f.sender.id, text: value.text, images: value.images))
+        }
+        #expect(try await tool.execute(publishImage([image.id]), context: .init(conversationID: group.id)).isError)
+        let values = await output.values
+        expectNoDifference(values, [])
+        try await session.close()
     }
 
     @Test func groupForwardingOnlyExposesTheAddressedCurrentRequest() async throws {

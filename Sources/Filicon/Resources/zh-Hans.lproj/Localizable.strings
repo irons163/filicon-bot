@@ -1447,3 +1447,4 @@
 "Low-importance note" = "低重要性笔记";
 "Only a ranked selection is sent each turn. Low-importance notes rank below equally recent dated facts. Omitted facts remain saved until you forget them." = "每回合只会发送排序后的部分记忆。低重要性笔记的顺位低于同样近期的日期事实。未发送的事实仍会保存，直到你将其忘记。";
 "Use memory write/forget with one fact of at most 1,000 characters, scope agent or user, and tier profile, log or note. Forget requires exact recorded text, the same scope, and no tier." = "请用 memory write/forget 处理单一事实（最多 1,000 字符），scope 为 agent 或 user，tier 为 profile、log 或 note。忘记时须使用记录原文及相同 scope，不可指定 tier。";
+"This saves the reply and images in this group. It does not add responders or automatically resend images to other models." = "这会将回复与图片保存在此群组，不会新增回复者或自动将图片重新发送给其他模型。";

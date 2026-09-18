@@ -44,11 +44,13 @@ and delegated peer wakes do not reload historical images. An addressed group
 member may propose forwarding this request's exact image IDs to one peer via
 `SendToAgent`. Every forwarding needs a fresh recipient/message/image preview
 approval, even when the recipient is in the same group. The current request and
-sender's membership are rechecked after approval. Group-target image broadcasts
-and direct group `SendMessage` image publication remain unsupported; the latter
-is still limited to incoming peer images. Arbitrary paths, URLs and generated
-images remain unsupported. Imported blobs are not yet
-automatically cleaned up when removed from a draft.
+sender's membership are rechecked after approval. An addressed member may also
+publish a text reply with this request's images via `SendMessage`, after a
+separate preview approval that identifies the group and its members. The saved
+reply survives Stop, later inference failure and restart; it does not add
+responders or automatically resend images to other models. Group-target image
+broadcasts, arbitrary paths, URLs and generated images remain unsupported.
+Imported blobs are not yet automatically cleaned up when removed from a draft.
 
 In group and mailbox turns, agents can propose remembering or forgetting a short
 fact using `update_state(target:"memory", action:"write"|"forget", fact:...)`.

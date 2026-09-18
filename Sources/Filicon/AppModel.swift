@@ -3115,7 +3115,7 @@ final class AppModel: ObservableObject {
                 }
             ) { [weak self] message in
                 await MainActor.run {
-                    guard let self else { return }
+                    guard let self, self.autoReviewAccountGeneration == generation else { return }
                     if let index = self.groupMessages[groupID, default: []].firstIndex(where: { $0.id == message.id }) {
                         self.groupMessages[groupID]?[index] = message
                     } else { self.groupMessages[groupID, default: []].append(message) }
@@ -3213,11 +3213,19 @@ final class AppModel: ObservableObject {
         let fence = ApprovalFence(accountID: settings.accountScope ?? "local", agentID: context.conversationID.uuidString.lowercased(),
                                   runID: context.runID, generation: generation)
         await autoReviewBroker.activate(fence)
-        let action = AutoReviewAction(summary: "\(sender.name) → \(l10n("User in this conversation"))",
+        var metadata = ["tool": "SendMessage", "agentMessage": text, "agentImagePublication": "true",
+                        "agentImages": String(decoding: try JSONEncoder().encode(images), as: UTF8.self)]
+        let group = groups.first { $0.id == context.conversationID }
+        if let group {
+            metadata["agentGroupName"] = group.name
+            metadata["agentGroupMembers"] = group.memberIDs.map { id in
+                "\(agents.first(where: { $0.id == id })?.name ?? id.uuidString) (\(id.uuidString))"
+            }.joined(separator: "\n")
+        }
+        let action = AutoReviewAction(summary: "\(sender.name) → \(group?.name ?? l10n("User in this conversation"))",
             target: .resource(kind: "conversation", identifier: context.conversationID.uuidString), risks: [.sensitive],
             context: .init(fence: fence, conversationID: context.conversationID, toolCallID: call.id.rawValue,
-                metadata: ["tool": "SendMessage", "agentMessage": text, "agentImagePublication": "true",
-                           "agentImages": String(decoding: try JSONEncoder().encode(images), as: UTF8.self)]))
+                metadata: metadata))
         let pending = PendingApproval(action: action, reason: "Approval required", expiresAt: Date().addingTimeInterval(300))
         try await autoReviewBroker.waitForApprovalToExecute(pending) { [weak self] in await self?.registerAutoReviewApproval($0) }
         try Task.checkCancellation()

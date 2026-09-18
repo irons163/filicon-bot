@@ -118,7 +118,7 @@ public final class AgentPublicationLifetime: @unchecked Sendable {
     private var active = true
     public init() {}
     public func close() { lock.withLock { active = false } }
-    fileprivate func commit(_ operation: () throws -> Void) throws {
+    func commit(_ operation: () throws -> Void) throws {
         try lock.withLock {
             guard active else { throw CancellationError() }
             try Task.checkCancellation()

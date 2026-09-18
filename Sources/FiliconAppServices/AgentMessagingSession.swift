@@ -113,6 +113,26 @@ public actor AgentMessagingSession {
         [tool(for: senderID, groupUserMessageID: groupUserMessageID)] + (management?.tools(for: senderID) ?? [])
     }
 
+    public func groupPublisher(for senderID: UUID, userMessageID: UUID,
+                               publish: @escaping @Sendable (GroupAgentPublication) async throws -> Void) async throws -> AgentUserMessageTool {
+        let images = try await availableImages(senderID: senderID, replyTo: nil, groupUserMessageID: userMessageID)
+        guard let sender = await agents.profile(id: senderID), sender.archivedAt == nil else { throw AgentMessagingError.invalidRecipient }
+        try checkOpen()
+        return AgentUserMessageTool(conversationID: originConversationID, availableImages: images, imageStore: imageStore,
+            authorizeImages: { [self] text, images, call, context in
+                try await checkOpen()
+                try await authorizePublication(sender, text, images, call, context)
+                try await checkOpen()
+            }) { [self, publicationLifetime] text, images in
+                try await checkOpen()
+                if !images.isEmpty {
+                    let current = try await availableImages(senderID: senderID, replyTo: nil, groupUserMessageID: userMessageID)
+                    guard images.allSatisfy(current.contains) else { throw AgentImageError.unavailable }
+                }
+                try await publish(.init(text: text, images: images, sourceUserMessageID: userMessageID, lifetime: publicationLifetime))
+            }
+    }
+
     fileprivate func availableImages(senderID: UUID, replyTo: AgentMessage?, groupUserMessageID: UUID?) async throws -> [AttachmentMetadata] {
         try checkOpen()
         if let groupUserMessageID {

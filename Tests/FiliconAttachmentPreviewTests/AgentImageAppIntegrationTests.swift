@@ -53,6 +53,117 @@ private actor AppImageProbe {
         try #require(predicate())
     }
 
+    @Test(arguments: ["approve", "deny", "stop", "account", "members", "corrupt", "failure", "stop-after-publication"])
+    func groupImagePublicationIsApprovedDurableAndDoesNotWakePeers(mode: String) async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "filicon-group-publication-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+        let sender = try #require(await model.createAgent(name: "Designer", summary: "", instructions: "", providerID: "app-image", modelID: "vision"))
+        let other = try #require(await model.createAgent(name: "Engineer", summary: "", instructions: "", providerID: "app-image", modelID: "vision"))
+        #expect(await model.createGroup(name: "Design review", summary: "", memberIDs: [sender.id, other.id]))
+        let group = try #require(model.groups.first)
+        let file = root.appending(path: "review.png"), bytes = try imageData()
+        try bytes.write(to: file)
+        let images = try await model.importAgentMessageImages([file]), image = try #require(images.first)
+        let probe = AppImageProbe()
+        let shouldPublish = ["approve", "failure", "stop-after-publication"].contains(mode)
+        await model.setAutoReviewEnabled(true)
+        await model.setAutoReviewRules(allow: ["SendMessage"], ask: [])
+        await model.registry.register(AppImageProvider { request, execute in
+            _ = await probe.record(request)
+            expectNoDifference(request.attachmentsByMessageID.values.flatMap { $0 }.map(\.data), [bytes])
+            struct Publication: Encodable { let text = "Reviewed group layout"; let images: [String] }
+            let result = try await execute(.init(id: "group-publish", name: "SendMessage",
+                argumentsJSON: JSONEncoder().encode(Publication(images: [image.id]))))
+            if shouldPublish { #expect(!result.isError) }
+            if mode == "deny" || mode == "corrupt" { #expect(result.isError) }
+            if mode == "failure" { throw ProviderError.invalidResponse }
+            if mode == "stop-after-publication" { try await Task.sleep(for: .seconds(30)) }
+            return shouldPublish ? "Reviewed group layout" : "PASS"
+        })
+        let send = Task { await model.sendGroupMessage(groupID: group.id, text: "@Designer review the image", images: images) }
+        try await waitUntil { !model.pendingAutoReviewApprovals.isEmpty }
+        let approval = try #require(model.pendingAutoReviewApprovals.first)
+        expectNoDifference(approval.action.context.metadata["tool"], "SendMessage")
+        expectNoDifference(approval.action.context.metadata["agentImagePublication"], "true")
+        expectNoDifference(approval.action.context.metadata["agentGroupName"], group.name)
+        let audience = try #require(approval.action.context.metadata["agentGroupMembers"])
+        #expect(audience.contains(sender.id.uuidString) && audience.contains(other.id.uuidString))
+        #expect(approval.action.summary.contains("Designer → Design review"))
+        expectNoDifference(approval.action.context.metadata["agentMessage"], "Reviewed group layout")
+        let encoded = try #require(approval.action.context.metadata["agentImages"])
+        let proposed = try JSONDecoder().decode([AttachmentMetadata].self, from: Data(encoded.utf8))
+        expectNoDifference(proposed.map(\.id), [image.id])
+        #expect(model.groupMessages[group.id, default: []].allSatisfy { $0.senderID == nil || $0.images?.isEmpty != false })
+        switch mode {
+        case "stop": await model.stopGroup(id: group.id)
+        case "account": await model.cancelAutoReviewApprovals(nextAccountID: "different-account")
+        case "members": await model.updateGroupMembers(groupID: group.id, memberIDs: [other.id])
+        default:
+            if mode == "corrupt" {
+                try Data(repeating: 0, count: Int(image.byteCount)).write(to: root.appending(path: "agent-message-images/\(image.id.prefix(2))/\(image.id)"))
+            }
+            await model.resolveGroupApproval(approval, groupID: group.id, approve: mode != "deny")
+            if mode == "stop-after-publication" {
+                try await waitUntil { model.groupMessages[group.id, default: []].contains { $0.senderID == sender.id && $0.images?.isEmpty == false } }
+                await model.stopGroup(id: group.id)
+            }
+        }
+        await model.resolveGroupApproval(approval, groupID: group.id, approve: true)
+        await send.value
+        let requests = await probe.requests
+        expectNoDifference(requests.count, 1) // No mailbox wake or extra group member was added.
+        #expect(model.agentMessages.isEmpty)
+        #expect(model.runningGroups.isEmpty && model.pendingAutoReviewApprovals.isEmpty)
+        let replies = model.groupMessages[group.id, default: []].filter { $0.senderID != nil && $0.images?.isEmpty == false }
+        expectNoDifference(replies.count, shouldPublish ? 1 : 0)
+        if shouldPublish {
+            expectNoDifference(replies.first?.text, "Reviewed group layout")
+            expectNoDifference(replies.first?.senderID, sender.id)
+            expectNoDifference(replies.first?.groupID, group.id)
+            expectNoDifference(replies.first?.images?.map(\.id), [image.id])
+            expectNoDifference(model.groupMessages[group.id, default: []].filter { $0.text == "Reviewed group layout" }.count, 1)
+            let restarted = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+            await restarted.reloadWorkspaceData()
+            let restored = restarted.groupMessages[group.id, default: []].filter { $0.senderID != nil && $0.images?.isEmpty == false }
+            expectNoDifference(restored.map(\.id), replies.map(\.id))
+            expectNoDifference(restored.first?.images?.map(\.id), [image.id])
+            let restoredBytes = try await restarted.agentMessageImageData(image)
+            expectNoDifference(restoredBytes, bytes)
+        }
+    }
+
+    @Test func groupPublicationAudienceRendersInSevenLanguages() throws {
+        let bytes = try imageData(), preview = try #require(NSImage(data: bytes))
+        let image = AttachmentMetadata(id: String(repeating: "abcd", count: 16), filename: "review-layout.png", mimeType: "image/png", byteCount: Int64(bytes.count), kind: .image)
+        let notice = "This saves the reply and images in this group. It does not add responders or automatically resend images to other models."
+        let output = ProcessInfo.processInfo.environment["FILICON_UI_REVIEW_OUTPUT"].map { URL(fileURLWithPath: $0) }
+        for language in ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"] {
+            try FiliconLocalization.$languageOverride.withValue(language) {
+                if language != "en" { #expect(FiliconLocalization.string(notice) != notice) }
+                let host = NSHostingView(rootView: VStack(alignment: .leading, spacing: 12) {
+                    Text(FiliconLocalization.string("Publish these images in this conversation?")).font(.headline)
+                    Text("Designer → Design review").font(.callout)
+                    AgentGroupApprovalDetails(members: "Designer\nEngineer", isImagePublication: true)
+                    AgentMessageImagePreviewContent(image: image, preview: preview)
+                    Text("Reviewed group layout").font(.callout)
+                }.padding(20).frame(width: 380).background(FiliconTheme.canvas)
+                    .environment(\.locale, Locale(identifier: language)).environment(\.colorScheme, .light))
+                host.appearance = NSAppearance(named: .aqua)
+                host.frame = .init(x: 0, y: 0, width: 380, height: 500)
+                host.layoutSubtreeIfNeeded()
+                #expect(host.fittingSize.height <= 500)
+                let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                host.cacheDisplay(in: host.bounds, to: bitmap)
+                let data = try #require(bitmap.representation(using: .png, properties: [:]))
+                if let output {
+                    try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+                    try data.write(to: output.appending(path: "group-publication-\(language).png"))
+                }
+            }
+        }
+    }
+
     @Test(arguments: ["approve", "outside-group", "deny", "stop", "account", "corrupt", "members"])
     func groupImageForwardingRequiresFreshApprovalAndCurrentScope(mode: String) async throws {
         let shouldSend = mode == "approve" || mode == "outside-group"

@@ -59,7 +59,8 @@ public struct GroupConversationResponder: GroupAgentResponder {
     }
 
     private func respond(agent: AgentProfile, history: [RoomMessage], roomContext: GroupTurnContext?, onTools: @escaping @Sendable ([RoomToolActivity]) async throws -> Void,
-                         onMessage: (@Sendable (String) async throws -> Void)? = nil) async throws -> [String] {
+                         onMessage: (@Sendable (String) async throws -> Void)? = nil,
+                         onPublication: (@Sendable (GroupAgentPublication) async throws -> Void)? = nil) async throws -> [String] {
         guard let provider = await registry.provider(id: agent.providerID) else { throw ProviderError.invalidResponse }
         let supportsTools = provider.descriptor.supportsToolCalling
         // Exclude host-only PASS/error notices from the model's conversation.
@@ -120,7 +121,12 @@ public struct GroupConversationResponder: GroupAgentResponder {
         // A delegated room wake must never inherit the source room's images.
         let forwardingMessageID = attachments.isEmpty ? nil : latestUser?.id
         var additionalTools = messaging?.tools(for: agent.id, groupUserMessageID: forwardingMessageID) ?? []
-        let publisher = onMessage.map { AgentUserMessageTool(conversationID: toolScopeID, publish: $0) }
+        let publisher: AgentUserMessageTool?
+        if let onPublication, let messaging, let forwardingMessageID {
+            publisher = try await messaging.groupPublisher(for: agent.id, userMessageID: forwardingMessageID, publish: onPublication)
+        } else if let onPublication {
+            publisher = AgentUserMessageTool(conversationID: toolScopeID) { try await onPublication(.init(text: $0)) }
+        } else { publisher = onMessage.map { AgentUserMessageTool(conversationID: toolScopeID, publish: $0) } }
         if let publisher { additionalTools.append(publisher) }
         do {
             try await coordinator.send(request: request, providerID: agent.providerID, additionalTools: additionalTools,
@@ -143,6 +149,14 @@ public struct GroupConversationResponder: GroupAgentResponder {
         // is internal in that case; never publish it a second time.
         if !published.isEmpty { return [] }
         return await [output.text]
+    }
+
+    public func respond(agent: AgentProfile, history: [RoomMessage], context: GroupTurnContext,
+                        onTools: @escaping @Sendable ([RoomToolActivity]) async throws -> Void,
+                        onPublication: @escaping @Sendable (GroupAgentPublication) async throws -> Void) async throws -> [String] {
+        guard context.group.id == groupID, context.members.contains(where: { $0.id == agent.id }),
+              context.respondingMemberIDs.contains(agent.id) else { throw ProviderError.invalidResponse }
+        return try await respond(agent: agent, history: history, roomContext: context, onTools: onTools, onPublication: onPublication)
     }
 
     private struct ContextMessage: Encodable {
