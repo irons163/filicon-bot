@@ -1455,3 +1455,12 @@
 "Custom or default avatar" = "Custom or default avatar";
 "Only this agent's avatar changes. Names, private instructions, models and permissions stay unchanged. Reset restores Codex; no image files are deleted." = "Only this agent's avatar changes. Names, private instructions, models and permissions stay unchanged. Reset restores Codex; no image files are deleted.";
 "For avatar changes, use target avatar with action set and a listed pet_id, or action clear without pet_id. Paths, URLs and other fields are not supported." = "For avatar changes, use target avatar with action set and a listed pet_id, or action clear without pet_id. Paths, URLs and other fields are not supported.";
+"Pause own routine" = "Pause own routine";
+"Resume own routine" = "Resume own routine";
+"Task and trigger" = "Task and trigger";
+"Pause disables future triggers. Already started or queued runs are not cancelled. Task, trigger and history stay unchanged." = "Pause disables future triggers. Already started or queued runs are not cancelled. Task, trigger and history stay unchanged.";
+"Resume enables future triggers and may incur model costs. It does not run immediately or replay missed runs. Task, trigger and history stay unchanged." = "Resume enables future triggers and may incur model costs. It does not run immediately or replay missed runs. Task, trigger and history stay unchanged.";
+"Use target routine with action pause or resume and the id of your own existing automation. Other fields and routine actions are not supported." = "Use target routine with action pause or resume and the id of your own existing automation. Other fields and routine actions are not supported.";
+"The automation is unavailable, belongs to another agent, or already has the requested state." = "The automation is unavailable, belongs to another agent, or already has the requested state.";
+"The automation changed while awaiting approval. Inspect it and request approval again." = "The automation changed while awaiting approval. Inspect it and request approval again.";
+"This automation cannot be resumed by the agent. Review its spend protection and trigger in Automations." = "This automation cannot be resumed by the agent. Review its spend protection and trigger in Automations.";

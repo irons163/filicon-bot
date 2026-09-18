@@ -1455,3 +1455,12 @@
 "Custom or default avatar" = "Avatar personnalisé ou par défaut";
 "Only this agent's avatar changes. Names, private instructions, models and permissions stay unchanged. Reset restores Codex; no image files are deleted." = "Seul l’avatar de cet agent change. Le nom, les instructions privées, les modèles et les autorisations restent inchangés. La réinitialisation rétablit Codex sans supprimer de fichier image.";
 "For avatar changes, use target avatar with action set and a listed pet_id, or action clear without pet_id. Paths, URLs and other fields are not supported." = "Pour changer d’avatar, utilisez target avatar, action set et un pet_id de la liste, ou action clear sans pet_id. Les chemins, URL et autres champs ne sont pas pris en charge.";
+"Pause own routine" = "Suspendre sa routine";
+"Resume own routine" = "Reprendre sa routine";
+"Task and trigger" = "Tâche et déclencheur";
+"Pause disables future triggers. Already started or queued runs are not cancelled. Task, trigger and history stay unchanged." = "La suspension désactive les futurs déclenchements, sans annuler les exécutions déjà lancées ou en file. La tâche, le déclencheur et l’historique restent inchangés.";
+"Resume enables future triggers and may incur model costs. It does not run immediately or replay missed runs. Task, trigger and history stay unchanged." = "La reprise active les futurs déclenchements et peut entraîner des frais de modèle. Aucun lancement immédiat ni rattrapage. La tâche, le déclencheur et l’historique restent inchangés.";
+"Use target routine with action pause or resume and the id of your own existing automation. Other fields and routine actions are not supported." = "Utilisez target routine, action pause ou resume et l’id de votre propre automatisation existante. Les autres champs et actions ne sont pas pris en charge.";
+"The automation is unavailable, belongs to another agent, or already has the requested state." = "Cette automatisation est indisponible, appartient à un autre agent ou est déjà dans l’état demandé.";
+"The automation changed while awaiting approval. Inspect it and request approval again." = "L’automatisation a changé pendant l’attente de l’approbation. Vérifiez-la et redemandez une approbation.";
+"This automation cannot be resumed by the agent. Review its spend protection and trigger in Automations." = "L’agent ne peut pas reprendre cette automatisation. Vérifiez sa protection des dépenses et son déclencheur dans Automatisations.";

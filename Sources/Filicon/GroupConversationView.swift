@@ -519,6 +519,8 @@ struct GroupToolApprovalPanel: View {
                     AgentMemoryApprovalDetails(metadata: approval.action.context.metadata)
                 } else if approval.action.context.metadata["agentStateTarget"] == "avatar" {
                     AgentAvatarApprovalDetails(metadata: approval.action.context.metadata)
+                } else if approval.action.context.metadata["agentStateTarget"] == "routine" {
+                    AgentRoutineApprovalDetails(metadata: approval.action.context.metadata)
                 } else if ["CreateAgent", "UpdateAgent", "update_state"].contains(approval.action.context.metadata["tool"] ?? "") {
                     AgentProfileApprovalDetails(metadata: approval.action.context.metadata)
                 }
@@ -607,6 +609,24 @@ extension AgentMemory.Scope {
         self == .user
             ? "Shared facts are sent to every current and future agent's configured model in this account during group and mailbox turns, including agents outside this group. Sharing does not grant tool permissions."
             : "Saved facts are sent to this agent's configured model in future group and mailbox turns in this account. They are not shared with other agents or used as tool permissions."
+    }
+}
+
+struct AgentRoutineApprovalDetails: View {
+    let metadata: [String: String]
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(l10n(metadata["agentRoutineAction"] == "resume" ? "Resume own routine" : "Pause own routine")).font(.headline)
+            Text(verbatim: metadata["agentName"] ?? "").font(.callout.weight(.semibold))
+            Text(verbatim: metadata["agentRoutineName"] ?? "").font(.callout.weight(.semibold))
+            Text(l10n("Task and trigger")).font(.caption.weight(.semibold))
+            Text(verbatim: metadata["agentRoutinePrompt"] ?? "")
+            Text(verbatim: metadata["agentRoutineTrigger"] ?? "").font(.caption.monospaced())
+            Text(l10n(metadata["agentRoutineAction"] == "resume"
+                      ? "Resume enables future triggers and may incur model costs. It does not run immediately or replay missed runs. Task, trigger and history stay unchanged."
+                      : "Pause disables future triggers. Already started or queued runs are not cancelled. Task, trigger and history stay unchanged."))
+                .font(.caption).foregroundStyle(FiliconTheme.textSecondary)
+        }.fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
     }
 }
 

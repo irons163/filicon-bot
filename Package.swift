@@ -42,7 +42,7 @@ let package = Package(
         .target(name: "FiliconAgents", dependencies: ["FiliconDomain"]),
         .target(name: "FiliconChannels"),
         .target(name: "FiliconAutomations"),
-        .target(name: "FiliconAppServices", dependencies: ["FiliconDomain", "FiliconProviderKit", "FiliconPersistence", "FiliconAgents"]),
+        .target(name: "FiliconAppServices", dependencies: ["FiliconDomain", "FiliconProviderKit", "FiliconPersistence", "FiliconAgents", "FiliconAutomations"]),
         .target(name: "FiliconLocalTools", dependencies: ["FiliconDomain"], exclude: ["XPC_INTEGRATION.md"]),
         .target(name: "FiliconUpdater"),
         .target(name: "FiliconVoice"),

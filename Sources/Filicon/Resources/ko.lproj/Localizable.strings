@@ -1455,3 +1455,12 @@
 "Custom or default avatar" = "사용자 지정 또는 기본 아바타";
 "Only this agent's avatar changes. Names, private instructions, models and permissions stay unchanged. Reset restores Codex; no image files are deleted." = "이 에이전트의 아바타만 변경됩니다. 이름, 비공개 지침, 모델 및 권한은 유지됩니다. 초기화하면 Codex로 돌아가며 이미지 파일은 삭제되지 않습니다.";
 "For avatar changes, use target avatar with action set and a listed pet_id, or action clear without pet_id. Paths, URLs and other fields are not supported." = "아바타를 변경하려면 target avatar, action set과 목록의 pet_id를 사용하거나 pet_id 없이 action clear를 사용하세요. 경로, URL 및 다른 필드는 지원하지 않습니다.";
+"Pause own routine" = "자신의 루틴 일시 정지";
+"Resume own routine" = "자신의 루틴 재개";
+"Task and trigger" = "작업 및 트리거";
+"Pause disables future triggers. Already started or queued runs are not cancelled. Task, trigger and history stay unchanged." = "일시 정지하면 향후 트리거가 비활성화됩니다. 이미 시작했거나 실행 대기 중인 작업은 취소되지 않습니다. 작업, 트리거 및 기록은 변경되지 않습니다.";
+"Resume enables future triggers and may incur model costs. It does not run immediately or replay missed runs. Task, trigger and history stay unchanged." = "재개하면 향후 트리거가 활성화되며 모델 비용이 발생할 수 있습니다. 즉시 실행하거나 누락된 실행을 다시 수행하지 않습니다. 작업, 트리거 및 기록은 변경되지 않습니다.";
+"Use target routine with action pause or resume and the id of your own existing automation. Other fields and routine actions are not supported." = "target routine, action pause 또는 resume과 자신의 기존 자동화 id를 사용하세요. 다른 필드나 자동화 작업은 지원하지 않습니다.";
+"The automation is unavailable, belongs to another agent, or already has the requested state." = "이 자동화를 사용할 수 없거나, 다른 에이전트의 소유이거나, 이미 요청한 상태입니다.";
+"The automation changed while awaiting approval. Inspect it and request approval again." = "승인을 기다리는 동안 자동화가 변경되었습니다. 현재 설정을 확인하고 다시 승인을 요청하세요.";
+"This automation cannot be resumed by the agent. Review its spend protection and trigger in Automations." = "에이전트가 이 자동화를 재개할 수 없습니다. 자동화에서 지출 보호 및 트리거를 확인하세요.";

@@ -8,6 +8,7 @@ import FiliconAgents
 import FiliconDomain
 import FiliconProviderKit
 import FiliconAutoReview
+import FiliconAutomations
 
 private struct ManagingAgentProvider: InteractiveToolProvider {
     let descriptor = ProviderDescriptor(id: "management-fixture", displayName: "Profile fixture", requiresAPIKey: false)
@@ -62,6 +63,112 @@ private actor ManagementWakeProbe {
             try await Task.sleep(for: .milliseconds(5))
         }
         throw PendingApprovalError.stale("Mailbox execution did not finish")
+    }
+
+    @Test(arguments: ["approve", "deny", "stop", "account", "stale"], ["pause", "resume"])
+    func ownRoutineUsesExplicitApprovalAndLifecycleFences(mode: String, action: String) async throws {
+        let (root, model, groupID, owner, peer) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let prompt = String(repeating: "Review accessible layout; do not publish. ", count: 100) + "END_OF_FULL_TASK"
+        await model.createAutomation(agentID: owner.id, name: "Design check", prompt: prompt, schedule: "@every 1h")
+        await model.createAutomation(agentID: peer.id, name: "PRIVATE_PEER_ROUTINE", prompt: "PRIVATE_PEER_TASK", schedule: "@daily")
+        let id = try #require(model.automations.first { $0.agentID == owner.id }?.id)
+        if action == "resume" { await model.setAutomationEnabled(id: id, enabled: false) }
+        let before = try #require(model.automations.first { $0.id == id })
+        let other = try #require(model.automations.first { $0.agentID == peer.id })
+        await model.registry.register(ManagingAgentProvider { request, execute in
+            let system = request.messages.filter { $0.role == .system }.map(\.text).joined()
+            #expect(system.contains(id.uuidString) && !system.contains(other.id.uuidString) && !system.contains("PRIVATE_PEER_"))
+            let result = try await execute(.init(id: "routine", name: "update_state",
+                argumentsJSON: JSONEncoder().encode(["target": "routine", "action": action, "id": id.uuidString])))
+            expectNoDifference(result.isError, mode != "approve")
+            return "PASS"
+        })
+        let run = Task { await model.sendGroupMessage(groupID: groupID, text: "\(action) your routine") }
+        let approval = try await pending(model, tool: "update_state")
+        expectNoDifference(approval.action.target, .resource(kind: "automation", identifier: id.uuidString))
+        expectNoDifference(approval.action.context.metadata["agentStateTarget"], "routine")
+        expectNoDifference(approval.action.context.metadata["agentRoutineAction"], action)
+        expectNoDifference(approval.action.context.metadata["agentRoutinePrompt"], prompt)
+        expectNoDifference(approval.action.context.metadata["agentRoutineTrigger"], try AutomationStateChange(operation: .pause, automation: before).triggerJSON)
+        expectNoDifference(approval.action.context.metadata["agentName"], owner.name)
+        #expect(!approval.action.context.metadata.values.joined().contains("PRIVATE_"))
+        expectNoDifference(model.automations.first { $0.id == id }, before)
+        if mode == "stop" { await model.stopGroup(id: groupID) }
+        if mode == "account" { await model.cancelAutoReviewApprovals(nextAccountID: "other") }
+        if mode == "stale" { await model.setAutomationEnabled(id: id, enabled: before.enabled) }
+        await model.resolveGroupApproval(approval, groupID: groupID, approve: mode != "deny")
+        await run.value
+        await model.resolveGroupApproval(approval, groupID: groupID, approve: true)
+        let saved = try #require(model.automations.first { $0.id == id })
+        expectNoDifference(saved.enabled, mode == "approve" ? !before.enabled : before.enabled)
+        expectNoDifference(saved.name, before.name); expectNoDifference(saved.prompt, before.prompt)
+        expectNoDifference(saved.trigger, before.trigger)
+        expectNoDifference(saved.revision, before.revision + ((mode == "approve" || mode == "stale") ? 1 : 0))
+        expectNoDifference(model.automations.first { $0.id == other.id }, other)
+        #expect(model.pendingAutoReviewApprovals.isEmpty && model.runningGroups.isEmpty && model.agentMessages.isEmpty)
+        let restored = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+        await restored.reloadWorkspaceData()
+        expectNoDifference(restored.automations.first { $0.id == id }?.enabled, saved.enabled)
+        expectNoDifference(restored.automations.first { $0.id == id }?.prompt, prompt)
+        expectNoDifference(restored.automationHistory[id] ?? [], [])
+    }
+
+    @Test func mailboxRoutineBelongsToRecipientOnly() async throws {
+        let (root, model, _, sender, recipient) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        for owner in [sender, recipient] {
+            await model.createAutomation(agentID: owner.id, name: owner.name + " task", prompt: "Review", schedule: "@daily")
+        }
+        let own = try #require(model.automations.first { $0.agentID == recipient.id })
+        let other = try #require(model.automations.first { $0.agentID == sender.id })
+        await model.registry.register(ManagingAgentProvider { _, execute in
+            await #expect(throws: AutomationStateChangeError.unavailable) {
+                _ = try await execute(.init(id: "other", name: "update_state",
+                    argumentsJSON: JSONEncoder().encode(["target": "routine", "action": "pause", "id": other.id.uuidString])))
+            }
+            let result = try await execute(.init(id: "own", name: "update_state",
+                argumentsJSON: JSONEncoder().encode(["target": "routine", "action": "pause", "id": own.id.uuidString])))
+            #expect(!result.isError)
+            return "PASS"
+        })
+        #expect(await model.sendAgentMessage(senderID: sender.id, recipientID: recipient.id, text: "Pause your own routine"))
+        let approval = try await pending(model, tool: "update_state")
+        expectNoDifference(approval.action.target, .resource(kind: "automation", identifier: own.id.uuidString))
+        expectNoDifference(approval.action.context.metadata["agentName"], recipient.name)
+        await model.resolveGroupApproval(approval, groupID: approval.action.context.conversationID, approve: true)
+        try await waitForMailbox(model)
+        expectNoDifference(model.automations.first { $0.id == own.id }?.enabled, false)
+        expectNoDifference(model.automations.first { $0.id == other.id }, other)
+        expectNoDifference(model.agentMessages.first?.delivery?.state, .completed)
+    }
+
+    @Test func routinePreviewRendersInSevenLanguages() throws {
+        let output = ProcessInfo.processInfo.environment["FILICON_UI_REVIEW_OUTPUT"].map { URL(fileURLWithPath: $0) }
+        for language in ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"] {
+            for action in ["pause", "resume"] {
+                try FiliconLocalization.$languageOverride.withValue(language) {
+                    let title = action == "pause" ? "Pause own routine" : "Resume own routine"
+                    if language != "en" { #expect(FiliconLocalization.string(title) != title) }
+                    let metadata = ["agentName": "Designer", "agentRoutineAction": action, "agentRoutineName": "Daily design review",
+                                    "agentRoutinePrompt": "Review accessible contrast. Do not publish.",
+                                    "agentRoutineTrigger": "{\n  cron: {\n    expression: 0 9 * * *,\n    timeZoneIdentifier: Asia/Taipei\n  }\n}"]
+                    let host = NSHostingView(rootView: AgentRoutineApprovalDetails(metadata: metadata)
+                        .padding(20).frame(width: 380).background(FiliconTheme.canvas)
+                        .environment(\.locale, Locale(identifier: language)).environment(\.colorScheme, .light))
+                    host.appearance = NSAppearance(named: .aqua)
+                    host.frame = .init(x: 0, y: 0, width: 380, height: 430)
+                    host.layoutSubtreeIfNeeded()
+                    #expect(host.fittingSize.height <= 430)
+                    let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                    host.cacheDisplay(in: host.bounds, to: bitmap)
+                    if let output {
+                        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+                        try #require(bitmap.representation(using: .png, properties: [:])).write(to: output.appending(path: "routine-\(action)-\(language).png"))
+                    }
+                }
+            }
+        }
     }
 
     @Test(arguments: ["approve", "deny", "stop", "account", "stale"], ["set", "clear"])

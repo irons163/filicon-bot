@@ -2573,6 +2573,12 @@ final class AppModel: ObservableObject {
             }, commitAvatar: { [weak self] change, lifetime in
                 guard let self else { throw CancellationError() }
                 return try await self.commitAgentAvatarChange(change, lifetime: lifetime, originID: originID, generation: generation)
+            }, automations: automationService, authorizeRoutine: { [weak self] sender, change, call, context in
+                guard let self else { throw CancellationError() }
+                try await self.authorizeAgentRoutineChange(sender: sender, change: change, call: call, context: context)
+            }, commitRoutine: { [weak self] change, lifetime in
+                guard let self else { throw CancellationError() }
+                return try await self.commitAgentRoutineChange(change, lifetime: lifetime, originID: originID, generation: generation)
             })
         return AgentMessagingSession(
             originConversationID: originID, agents: agentService, messenger: agentMessenger,
@@ -2784,6 +2790,38 @@ final class AppModel: ObservableObject {
         guard generation == autoReviewAccountGeneration else { return profile }
         agents = current
         return profile
+    }
+
+    private func commitAgentRoutineChange(_ change: AutomationStateChange, lifetime: AutomationStateChangeLifetime,
+                                          originID: UUID, generation: UInt64) async throws -> Automation {
+        guard generation == autoReviewAccountGeneration, isAgentMessagingScopeActive(originID),
+              let automationService, let agentService,
+              let owner = await agentService.profile(id: change.automation.agentID), owner.archivedAt == nil else { throw CancellationError() }
+        let result = try await automationService.applyStateChange(change, lifetime: lifetime)
+        // Do not rebind UI to an old account after awaiting storage. The model's
+        // existing scheduler observes the same service; no runNow is invoked.
+        let definitions = await automationService.list()
+        if generation == autoReviewAccountGeneration { automations = definitions }
+        return result
+    }
+
+    private func authorizeAgentRoutineChange(sender: AgentProfile, change: AutomationStateChange,
+                                             call: NormalizedToolCall, context: ToolContext) async throws {
+        guard isAgentMessagingScopeActive(context.conversationID) else { throw CancellationError() }
+        let generation = autoReviewAccountGeneration
+        let fence = ApprovalFence(accountID: settings.accountScope ?? "local", agentID: context.conversationID.uuidString.lowercased(),
+                                  runID: context.runID, generation: generation)
+        await autoReviewBroker.activate(fence)
+        let metadata = ["tool": "update_state", "agentStateTarget": "routine", "agentRoutineAction": change.operation.rawValue,
+                        "agentName": sender.name, "agentRoutineName": change.automation.name,
+                        "agentRoutinePrompt": change.automation.prompt, "agentRoutineTrigger": try change.triggerJSON]
+        let action = AutoReviewAction(summary: "\(sender.name) → \(change.operation.rawValue): \(change.automation.name)",
+            target: .resource(kind: "automation", identifier: change.automation.id.uuidString), risks: [.sensitive],
+            context: .init(fence: fence, conversationID: context.conversationID, toolCallID: call.id.rawValue, metadata: metadata))
+        let pending = PendingApproval(action: action, reason: "Approval required", expiresAt: Date().addingTimeInterval(300))
+        try await autoReviewBroker.waitForApprovalToExecute(pending) { [weak self] in await self?.registerAutoReviewApproval($0) }
+        try Task.checkCancellation()
+        guard generation == autoReviewAccountGeneration, isAgentMessagingScopeActive(context.conversationID) else { throw CancellationError() }
     }
 
     private func authorizeAgentAvatarChange(sender: AgentProfile, change: AgentAvatarChange,

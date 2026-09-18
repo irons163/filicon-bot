@@ -81,6 +81,47 @@ public actor AutomationService {
         try persist()
     }
 
+    @discardableResult
+    public func applyStateChange(_ change: AutomationStateChange, lifetime: AutomationStateChangeLifetime,
+                                 now: Date = Date()) throws -> Automation {
+        try lifetime.commit(change) {
+            try validateStateChange(change)
+            guard let index = state.automations.firstIndex(where: { $0.id == change.automation.id }) else {
+                throw AutomationStateChangeError.unavailable
+            }
+            var value = state.automations[index]
+            value.enabled = change.enabled
+            value.revision += 1
+            value.nextRunAt = try computeNextRun(for: value, after: now)
+            // Save a candidate first: a failed disk write must not arm a task
+            // in memory, nor lose its previous next-run date or history.
+            var candidate = state
+            candidate.automations[index] = value
+            try Self.save(candidate, to: storeURL)
+            state = candidate
+            return value
+        }
+    }
+
+    public func validateStateChange(_ change: AutomationStateChange) throws {
+        guard let value = state.automations.first(where: { $0.id == change.automation.id }) else { throw AutomationStateChangeError.unavailable }
+        guard change.matchesDefinition(value) else { throw AutomationStateChangeError.stale }
+        guard value.enabled != change.enabled else { throw AutomationStateChangeError.unavailable }
+        if change.enabled {
+            guard !value.guardPaused, !state.spendGuard.guardPausedAutomationIDs.contains(value.id),
+                  !containsUnknownTrigger(value.trigger) else { throw AutomationStateChangeError.protected }
+            try validate(trigger: value.trigger)
+        }
+    }
+
+    private func containsUnknownTrigger(_ trigger: AutomationTrigger) -> Bool {
+        switch trigger {
+        case .unknown: true
+        case .anyOf(let children): children.contains(where: containsUnknownTrigger)
+        case .cron, .event, .platform: false
+        }
+    }
+
     public func runNow(id: UUID, executor: any AutomationExecutor, now: Date = Date()) async throws -> AutomationRun {
         guard let automation = state.automations.first(where: { $0.id == id }) else { throw AutomationServiceError.unknownAutomation(id) }
         return try await fire(automation: automation, origin: .manual, events: [], claim: "manual:\(UUID())", executor: executor, now: now)
@@ -193,6 +234,12 @@ public actor AutomationService {
         automation: Automation, origin: AutomationRunOrigin, events: [AutomationEvent],
         claim: String, executor: any AutomationExecutor, now: Date
     ) async throws -> AutomationRun {
+        // fireDue/fire(events:) can suspend between tasks. A pause or edit
+        // during that suspension must invalidate the old batch's snapshot.
+        if origin != .manual {
+            guard let current = state.automations.first(where: { $0.id == automation.id }),
+                  current.enabled, current.revision == automation.revision else { throw AutomationServiceError.duplicateClaim }
+        }
         guard !state.claims.contains(claim) else { throw AutomationServiceError.duplicateClaim }
         guard !activeAgents.contains(automation.agentID) else { throw AutomationServiceError.agentBusy(automation.agentID) }
         state.claims.insert(claim); activeAgents.insert(automation.agentID)
