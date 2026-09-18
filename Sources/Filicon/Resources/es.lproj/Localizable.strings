@@ -1417,3 +1417,19 @@
 "User in this conversation" = "Usuario de esta conversación";
 "Publish these images in this conversation?" = "¿Publicar estas imágenes en esta conversación?";
 "Published response" = "Respuesta publicada";
+/* Approved own-agent memory */
+"Use memory write/forget with one fact of at most 1,000 characters, scope agent, and tier profile or log. Forget requires exact recorded text and no tier." = "Usa memory write/forget con un hecho de hasta 1.000 caracteres, scope agent y tier profile o log. Para olvidar, indica el texto exacto guardado sin tier.";
+"This memory changed or no longer exists. Refresh the memories and request approval again." = "Este recuerdo ha cambiado o ya no existe. Actualiza los recuerdos y vuelve a solicitar aprobación.";
+"This fact is already saved for this agent." = "Este hecho ya está guardado para este agente.";
+"Agent memory is limited to 48 facts, including 8 profile facts, and 12,000 characters per account and agent." = "La memoria se limita a 48 hechos, incluidos 8 fundamentales, y 12.000 caracteres por cuenta y agente.";
+"The memory owner is unavailable." = "El agente al que pertenece este recuerdo no está disponible.";
+"Save agent memory" = "Guardar recuerdo del agente";
+"Forget agent memory" = "Olvidar recuerdo del agente";
+"Agent memory" = "Memoria del agente";
+"Foundational fact" = "Hecho fundamental";
+"Dated fact" = "Hecho fechado";
+"No saved facts." = "No hay hechos guardados.";
+"Forget" = "Olvidar";
+"Forget this fact?" = "¿Olvidar este hecho?";
+"Saved facts are sent to this agent's configured model in future group and mailbox turns in this account. They are not shared with other agents or used as tool permissions." = "Los hechos guardados se envían al modelo configurado para este agente en sus futuras interacciones de grupo y mensajería de esta cuenta. No se comparten con otros agentes ni se usan como permisos para herramientas.";
+"Forgetting stops future memory injection. Existing messages and running requests are not erased." = "Olvidar impide incluir este recuerdo en futuras solicitudes. No se borran los mensajes existentes ni las solicitudes en curso.";

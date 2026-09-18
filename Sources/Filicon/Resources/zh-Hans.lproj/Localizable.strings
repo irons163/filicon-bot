@@ -1417,3 +1417,19 @@
 "User in this conversation" = "此对话的用户";
 "Publish these images in this conversation?" = "要在此对话中发布这些图片吗？";
 "Published response" = "已发布的回复";
+/* Approved own-agent memory */
+"Use memory write/forget with one fact of at most 1,000 characters, scope agent, and tier profile or log. Forget requires exact recorded text and no tier." = "请使用 memory write／forget，单个事实最多 1,000 字符、scope 为 agent、tier 为 profile 或 log。删除须提供完整记录原文，且不得指定 tier。";
+"This memory changed or no longer exists. Refresh the memories and request approval again." = "这条记忆已更改或不存在。请刷新记忆后重新请求批准。";
+"This fact is already saved for this agent." = "此代理已保存这个事实。";
+"Agent memory is limited to 48 facts, including 8 profile facts, and 12,000 characters per account and agent." = "每个账号中的每位代理最多可保存 48 个事实，其中基础事实最多 8 个，总计不得超过 12,000 字符。";
+"The memory owner is unavailable." = "此记忆所属的代理不可用。";
+"Save agent memory" = "保存代理记忆";
+"Forget agent memory" = "忘记代理记忆";
+"Agent memory" = "代理记忆";
+"Foundational fact" = "基础事实";
+"Dated fact" = "记录事实";
+"No saved facts." = "尚无已保存的事实。";
+"Forget" = "忘记";
+"Forget this fact?" = "要忘记这项事实吗？";
+"Saved facts are sent to this agent's configured model in future group and mailbox turns in this account. They are not shared with other agents or used as tool permissions." = "此账号中，这位代理之后的群组与消息任务会将已保存事实发送给其配置的模型。事实不会与其他代理共享，也不会作为工具授权。";
+"Forgetting stops future memory injection. Existing messages and running requests are not erased." = "忘记后不再向后续请求加载此记忆。已有消息与正在执行的请求不会被清除。";

@@ -1417,3 +1417,19 @@
 "User in this conversation" = "此對話的使用者";
 "Publish these images in this conversation?" = "要在此對話中發布這些圖片嗎？";
 "Published response" = "已發布的回覆";
+/* Approved own-agent memory */
+"Use memory write/forget with one fact of at most 1,000 characters, scope agent, and tier profile or log. Forget requires exact recorded text and no tier." = "請使用 memory write／forget，單一事實最多 1,000 字元、scope 為 agent、tier 為 profile 或 log。刪除須提供完整記錄原文，且不得指定 tier。";
+"This memory changed or no longer exists. Refresh the memories and request approval again." = "這筆記憶已變更或不存在。請重新整理記憶後再次要求核准。";
+"This fact is already saved for this agent." = "此代理人已儲存這項事實。";
+"Agent memory is limited to 48 facts, including 8 profile facts, and 12,000 characters per account and agent." = "每個帳號中的每位代理人最多可儲存 48 項事實，其中基礎事實最多 8 項，合計不得超過 12,000 字元。";
+"The memory owner is unavailable." = "此記憶所屬的代理人無法使用。";
+"Save agent memory" = "保存代理人記憶";
+"Forget agent memory" = "忘記代理人記憶";
+"Agent memory" = "代理人記憶";
+"Foundational fact" = "基礎事實";
+"Dated fact" = "紀錄事實";
+"No saved facts." = "尚無已保存的事實。";
+"Forget" = "忘記";
+"Forget this fact?" = "要忘記這項事實嗎？";
+"Saved facts are sent to this agent's configured model in future group and mailbox turns in this account. They are not shared with other agents or used as tool permissions." = "此帳號中，這位代理人之後的群組與訊息工作會將已保存事實傳送給其設定的模型。事實不會與其他代理人共用，也不會作為工具授權。";
+"Forgetting stops future memory injection. Existing messages and running requests are not erased." = "忘記後不再向後續請求載入此記憶。既有訊息與執行中的請求不會被清除。";

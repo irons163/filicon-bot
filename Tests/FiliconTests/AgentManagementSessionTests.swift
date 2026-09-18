@@ -290,7 +290,7 @@ struct AgentManagementSessionTests {
             ["action": "set", "name": "New name"], ["target": "profile", "name": "New name"],
             ["target": "profile", "action": "set", "name": "  "],
             ["target": "profile", "action": "set", "description": String(repeating: "x", count: 2_001)]]
-        for target in ["memory", "routine", "workflow", "settings", "channel", "project", "avatar", "PROFILE"] {
+        for target in ["routine", "workflow", "settings", "channel", "project", "avatar", "PROFILE"] {
             var fields = base; fields["target"] = target; invalid.append(fields)
         }
         for action in ["write", "delete", "archive", "create", "SET"] {

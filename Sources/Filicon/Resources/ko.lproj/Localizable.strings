@@ -1417,3 +1417,19 @@
 "User in this conversation" = "이 대화의 사용자";
 "Publish these images in this conversation?" = "이 대화에 이 이미지들을 게시할까요?";
 "Published response" = "게시된 응답";
+/* Approved own-agent memory */
+"Use memory write/forget with one fact of at most 1,000 characters, scope agent, and tier profile or log. Forget requires exact recorded text and no tier." = "memory write/forget에는 최대 1,000자의 사실, scope agent, tier profile 또는 log를 지정하세요. 삭제하려면 저장된 정확한 문구를 지정하고 tier는 생략하세요.";
+"This memory changed or no longer exists. Refresh the memories and request approval again." = "이 기억이 변경되었거나 더 이상 존재하지 않습니다. 기억을 새로 고친 후 다시 승인을 요청하세요.";
+"This fact is already saved for this agent." = "이 사실은 이미 이 에이전트에 저장되어 있습니다.";
+"Agent memory is limited to 48 facts, including 8 profile facts, and 12,000 characters per account and agent." = "계정 및 에이전트별로 기억은 기본 사실 8개를 포함한 사실 48개, 총 12,000자로 제한됩니다.";
+"The memory owner is unavailable." = "이 기억을 소유한 에이전트를 사용할 수 없습니다.";
+"Save agent memory" = "에이전트 기억 저장";
+"Forget agent memory" = "에이전트 기억 삭제";
+"Agent memory" = "에이전트 기억";
+"Foundational fact" = "기본 사실";
+"Dated fact" = "날짜가 있는 사실";
+"No saved facts." = "저장된 사실이 없습니다.";
+"Forget" = "잊기";
+"Forget this fact?" = "이 사실을 잊을까요?";
+"Saved facts are sent to this agent's configured model in future group and mailbox turns in this account. They are not shared with other agents or used as tool permissions." = "저장된 사실은 이 계정에서 이후 그룹 대화 및 메시지 작업 시 이 에이전트에 설정된 모델로 전송됩니다. 다른 에이전트와 공유되거나 도구 권한으로 사용되지 않습니다.";
+"Forgetting stops future memory injection. Existing messages and running requests are not erased." = "잊은 기억은 이후 요청에 포함되지 않습니다. 기존 메시지와 실행 중인 요청은 지워지지 않습니다.";

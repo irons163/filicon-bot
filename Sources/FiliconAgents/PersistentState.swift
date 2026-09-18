@@ -9,9 +9,10 @@ struct AgentPersistentState: Codable, Sendable {
     var groups: [AgentGroup] = []
     var roomMessages: [RoomMessage] = []
     var reactions: [MessageReaction] = []
+    var memories: [AgentMemory] = []
 
     private enum CodingKeys: String, CodingKey {
-        case schemaVersion, agents, subagents, wakes, messages, groups, roomMessages, reactions
+        case schemaVersion, agents, subagents, wakes, messages, groups, roomMessages, reactions, memories
     }
 
     init() {}
@@ -26,6 +27,7 @@ struct AgentPersistentState: Codable, Sendable {
         groups = try values.decodeIfPresent([AgentGroup].self, forKey: .groups) ?? []
         roomMessages = try values.decodeIfPresent([RoomMessage].self, forKey: .roomMessages) ?? []
         reactions = try values.decodeIfPresent([MessageReaction].self, forKey: .reactions) ?? []
+        memories = try values.decodeIfPresent([AgentMemory].self, forKey: .memories) ?? []
         schemaVersion = 2
     }
 }

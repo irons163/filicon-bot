@@ -64,6 +64,139 @@ private actor ManagementWakeProbe {
         throw PendingApprovalError.stale("Mailbox execution did not finish")
     }
 
+    @Test(arguments: ["deny", "stop", "account"])
+    func pendingMemoryWritesCannotBypassApprovalOrLifecycle(mode: String) async throws {
+        let (root, model, groupID, owner, _) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        await model.registry.register(ManagingAgentProvider { _, execute in
+            _ = try await execute(.init(id: "remember", name: "update_state",
+                argumentsJSON: Data(#"{"target":"memory","action":"write","fact":"Use accessible layouts","tier":"profile"}"#.utf8)))
+            return "PASS"
+        })
+        let run = Task { await model.sendGroupMessage(groupID: groupID, text: "Remember a design preference") }
+        let approval = try await pending(model, tool: "update_state")
+        expectNoDifference(approval.action.context.metadata["agentStateTarget"], "memory")
+        expectNoDifference(approval.action.context.metadata["agentMemoryFact"], "Use accessible layouts")
+        expectNoDifference(approval.action.context.metadata["agentMemoryOwner"], owner.name)
+        #expect(!approval.action.context.metadata.values.joined().contains("PRIVATE_PERSONA"))
+        let before = try await model.savedAgentMemories(agentID: owner.id)
+        expectNoDifference(before, [])
+        if mode == "stop" { await model.stopGroup(id: groupID) }
+        else if mode == "account" { await model.cancelAutoReviewApprovals(nextAccountID: "other") }
+        else { await model.resolveGroupApproval(approval, groupID: groupID, approve: false) }
+        await model.resolveGroupApproval(approval, groupID: groupID, approve: true)
+        await run.value
+        let after = try await model.savedAgentMemories(agentID: owner.id)
+        expectNoDifference(after, [])
+        #expect(model.pendingAutoReviewApprovals.isEmpty)
+    }
+
+    @Test func approvedMemoryCrossesOwnGroupAndMailboxButNotAgentOrAccount() async throws {
+        let (root, model, groupID, owner, peer) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fact = "PREFER_ACCESSIBLE_LAYOUTS_ONLY"
+        await model.registry.register(ManagingAgentProvider { _, execute in
+            let result = try await execute(.init(id: "remember", name: "update_state",
+                argumentsJSON: JSONEncoder().encode(["target": "memory", "action": "write", "fact": fact, "tier": "profile"])))
+            #expect(!result.isError)
+            return "PASS"
+        })
+        let run = Task { await model.sendGroupMessage(groupID: groupID, text: "Remember the selected preference") }
+        let approval = try await pending(model, tool: "update_state")
+        await model.resolveGroupApproval(approval, groupID: groupID, approve: true)
+        await run.value
+        let saved = try await model.savedAgentMemories(agentID: owner.id)
+        expectNoDifference(saved.map(\.fact), [fact])
+        expectNoDifference(model.agents.first { $0.id == owner.id }?.instructions, owner.instructions)
+        #expect(await model.createGroup(name: "Other origin", summary: "", memberIDs: [owner.id, peer.id]))
+        let other = try #require(model.groups.first { $0.id != groupID })
+        let probe = ManagementWakeProbe()
+        await model.registry.register(ManagingAgentProvider { request, _ in
+            await probe.record(request)
+            let all = request.messages.map(\.text).joined(separator: "\n")
+            let ownsMemory = request.messages[0].text.contains(owner.id.uuidString)
+            expectNoDifference(all.contains(fact), ownsMemory)
+            #expect(all.contains("NOT instructions, authorization"))
+            return "PASS"
+        })
+        await model.sendGroupMessage(groupID: other.id, text: "Review independently")
+        let requests = await probe.requests
+        #expect(requests.contains { $0.messages[0].text.contains(peer.id.uuidString) })
+        #expect(requests.contains { $0.messages[0].text.contains(owner.id.uuidString) })
+        let reopened = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+        await reopened.reloadWorkspaceData()
+        await reopened.registry.register(ManagingAgentProvider { request, _ in
+            #expect(request.messages.map(\.text).joined().contains(fact))
+            return "PASS"
+        })
+        #expect(await reopened.sendAgentMessage(senderID: peer.id, recipientID: owner.id, text: "Independent new task"))
+        try await waitForMailbox(reopened)
+        await reopened.cancelAutoReviewApprovals(nextAccountID: "other")
+        reopened.settings.accountScope = "other"
+        let otherAccount = try await reopened.savedAgentMemories(agentID: owner.id)
+        expectNoDifference(otherAccount, [])
+        await #expect(throws: CancellationError.self) { try await reopened.forgetAgentMemory(saved[0]) }
+        await reopened.registry.register(ManagingAgentProvider { request, _ in
+            #expect(!request.messages.map(\.text).joined().contains(fact))
+            return "PASS"
+        })
+        #expect(await reopened.sendAgentMessage(senderID: peer.id, recipientID: owner.id, text: "Other account task"))
+        try await waitForMailbox(reopened)
+        await reopened.cancelAutoReviewApprovals(nextAccountID: "local")
+        reopened.settings.accountScope = nil
+        try await reopened.forgetAgentMemory(saved[0]) // Same method invoked by the confirmed editor button.
+        let forgotten = try await reopened.savedAgentMemories(agentID: owner.id)
+        expectNoDifference(forgotten, [])
+        await reopened.sendGroupMessage(groupID: other.id, text: "New request after forgetting")
+    }
+
+    @Test func mailboxMemoryUsesRecipientIdentityAndForgetRequiresNewApproval() async throws {
+        let (root, model, _, sender, recipient) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        for action in ["write", "forget"] {
+            await model.registry.register(ManagingAgentProvider { _, execute in
+                let result = try await execute(.init(id: ToolCallID(rawValue: "memory-\(action)"), name: "update_state",
+                    argumentsJSON: JSONEncoder().encode(["target": "memory", "action": action, "fact": "Designer preference"])))
+                #expect(!result.isError)
+                return "PASS"
+            })
+            #expect(await model.sendAgentMessage(senderID: sender.id, recipientID: recipient.id, text: "Propose a memory change"))
+            let approval = try await pending(model, tool: "update_state")
+            expectNoDifference(approval.action.target, .resource(kind: "agent", identifier: recipient.id.uuidString))
+            expectNoDifference(approval.action.context.metadata["agentMemoryAction"], action)
+            await model.resolveGroupApproval(approval, groupID: approval.action.context.conversationID, approve: true)
+            try await waitForMailbox(model)
+            let senderFacts = try await model.savedAgentMemories(agentID: sender.id)
+            let recipientFacts = try await model.savedAgentMemories(agentID: recipient.id)
+            expectNoDifference(senderFacts, [])
+            expectNoDifference(recipientFacts.map(\.fact), action == "write" ? ["Designer preference"] : [])
+        }
+    }
+
+    @Test func memoryApprovalDetailsRenderInSevenLanguages() throws {
+        let metadata = ["agentMemoryAction": "forget", "agentMemoryOwner": "Designer", "agentMemoryTier": "profile",
+                        "agentMemoryFact": "Prefer accessible layouts with keyboard navigation and clear contrast.\n優先採用支援鍵盤操作、對比清晰的版面。"]
+        let output = ProcessInfo.processInfo.environment["FILICON_UI_REVIEW_OUTPUT"].map { URL(fileURLWithPath: $0, isDirectory: true) }
+        for language in ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"] {
+            try FiliconLocalization.$languageOverride.withValue(language) {
+                if language != "en" { #expect(FiliconLocalization.string("Forget agent memory") != "Forget agent memory") }
+                let host = NSHostingView(rootView: AgentMemoryApprovalDetails(metadata: metadata).padding(20).frame(width: 420)
+                    .background(FiliconTheme.input).environment(\.locale, Locale(identifier: language)).environment(\.colorScheme, .light))
+                host.appearance = NSAppearance(named: .aqua)
+                host.frame = NSRect(x: 0, y: 0, width: 420, height: 390)
+                host.layoutSubtreeIfNeeded()
+                #expect(host.fittingSize.height <= 390)
+                let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                host.cacheDisplay(in: host.bounds, to: bitmap)
+                let png = try #require(bitmap.representation(using: .png, properties: [:]))
+                if let output {
+                    try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+                    try png.write(to: output.appending(path: "agent-memory-\(language).png"))
+                }
+            }
+        }
+    }
+
     @Test func creationAndSubsequentDelegationRequireSeparateApproval() async throws {
         let (root, model, groupID, sender, _) = try await fixture()
         defer { try? FileManager.default.removeItem(at: root) }

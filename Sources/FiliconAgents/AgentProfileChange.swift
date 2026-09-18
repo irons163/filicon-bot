@@ -28,7 +28,7 @@ public enum AgentProfileChangeError: LocalizedError, Sendable {
     case invalidFields, unavailable, stale, duplicate, limitReached
     public var errorDescription: String? {
         switch self {
-        case .invalidFields: "Provide a nonempty name (up to 120 characters) and a description of at most 2,000 characters. UpdateAgent cannot clear fields. update_state supports only target profile, action set, with name and/or description."
+        case .invalidFields: "Provide a nonempty name (up to 120 characters) and a description of at most 2,000 characters. UpdateAgent cannot clear fields. For profile changes, update_state requires target profile, action set, with name and/or description."
         case .unavailable: "The requesting or target agent is unavailable, or the selected tool cannot modify that identity. UpdateAgent edits another agent; update_state edits only your own profile."
         case .stale: "The agent changed while awaiting approval. Inspect the current profile and request approval again."
         case .duplicate: "This profile change was already requested. Do not repeat it with a different tool call."

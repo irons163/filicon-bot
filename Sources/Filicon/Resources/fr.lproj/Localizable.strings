@@ -1417,3 +1417,19 @@
 "User in this conversation" = "Utilisateur de cette conversation";
 "Publish these images in this conversation?" = "Publier ces images dans cette conversation ?";
 "Published response" = "Réponse publiée";
+/* Approved own-agent memory */
+"Use memory write/forget with one fact of at most 1,000 characters, scope agent, and tier profile or log. Forget requires exact recorded text and no tier." = "Utilisez memory write/forget avec un fait de 1 000 caractères maximum, scope agent et tier profile ou log. Pour oublier, fournissez le texte exact enregistré sans tier.";
+"This memory changed or no longer exists. Refresh the memories and request approval again." = "Ce souvenir a changé ou n’existe plus. Actualisez les souvenirs et demandez à nouveau l’approbation.";
+"This fact is already saved for this agent." = "Ce fait est déjà enregistré pour cet agent.";
+"Agent memory is limited to 48 facts, including 8 profile facts, and 12,000 characters per account and agent." = "La mémoire est limitée à 48 faits, dont 8 fondamentaux, et 12 000 caractères par compte et par agent.";
+"The memory owner is unavailable." = "L’agent propriétaire de ce souvenir n’est pas disponible.";
+"Save agent memory" = "Enregistrer un souvenir de l’agent";
+"Forget agent memory" = "Oublier un souvenir de l’agent";
+"Agent memory" = "Mémoire de l’agent";
+"Foundational fact" = "Fait fondamental";
+"Dated fact" = "Fait daté";
+"No saved facts." = "Aucun fait enregistré.";
+"Forget" = "Oublier";
+"Forget this fact?" = "Oublier ce fait ?";
+"Saved facts are sent to this agent's configured model in future group and mailbox turns in this account. They are not shared with other agents or used as tool permissions." = "Les faits enregistrés sont envoyés au modèle configuré pour cet agent lors de ses futurs échanges de groupe et de messagerie dans ce compte. Ils ne sont ni partagés avec d’autres agents ni utilisés comme autorisations d’outils.";
+"Forgetting stops future memory injection. Existing messages and running requests are not erased." = "Oublier empêche l’ajout de ce souvenir aux futures requêtes. Les messages existants et les requêtes en cours ne sont pas effacés.";

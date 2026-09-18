@@ -1417,3 +1417,19 @@
 "User in this conversation" = "この会話のユーザー";
 "Publish these images in this conversation?" = "これらの画像をこの会話に投稿しますか？";
 "Published response" = "投稿済みの返信";
+/* Approved own-agent memory */
+"Use memory write/forget with one fact of at most 1,000 characters, scope agent, and tier profile or log. Forget requires exact recorded text and no tier." = "memory write／forget には最大1,000文字の事実、scope agent、tier profile または log を指定してください。削除には記録された正確な文章を指定し、tier は省略してください。";
+"This memory changed or no longer exists. Refresh the memories and request approval again." = "この記憶は変更されたか、存在しません。記憶を更新して、承認を再度リクエストしてください。";
+"This fact is already saved for this agent." = "この事実はこのエージェントに保存済みです。";
+"Agent memory is limited to 48 facts, including 8 profile facts, and 12,000 characters per account and agent." = "アカウントごと・エージェントごとの記憶は、基本情報8件を含む事実48件、合計12,000文字までです。";
+"The memory owner is unavailable." = "この記憶の所有者であるエージェントは利用できません。";
+"Save agent memory" = "エージェントの記憶を保存";
+"Forget agent memory" = "エージェントの記憶を削除";
+"Agent memory" = "エージェントの記憶";
+"Foundational fact" = "基本的な事実";
+"Dated fact" = "日付付きの事実";
+"No saved facts." = "保存された事実はありません。";
+"Forget" = "忘れる";
+"Forget this fact?" = "この事実を忘れますか？";
+"Saved facts are sent to this agent's configured model in future group and mailbox turns in this account. They are not shared with other agents or used as tool permissions." = "保存された事実は、このアカウントでの今後のグループ会話やメッセージ処理時に、このエージェントに設定されたモデルへ送信されます。他のエージェントとは共有されず、ツールの使用許可にもなりません。";
+"Forgetting stops future memory injection. Existing messages and running requests are not erased." = "忘れた記憶は今後のリクエストに含まれなくなります。既存のメッセージや実行中のリクエストは削除されません。";

@@ -451,7 +451,9 @@ struct GroupToolApprovalPanel: View {
                     // outgoing payload must be visible in full before approval.
                     Text(verbatim: text).font(.callout).textSelection(.enabled)
                 }
-                if ["CreateAgent", "UpdateAgent", "update_state"].contains(approval.action.context.metadata["tool"] ?? "") {
+                if approval.action.context.metadata["agentStateTarget"] == "memory" {
+                    AgentMemoryApprovalDetails(metadata: approval.action.context.metadata)
+                } else if ["CreateAgent", "UpdateAgent", "update_state"].contains(approval.action.context.metadata["tool"] ?? "") {
                     AgentProfileApprovalDetails(metadata: approval.action.context.metadata)
                 }
                 Text(FiliconLocalization.string(approval.reason)).font(.caption).foregroundStyle(FiliconTheme.textSecondary)
@@ -491,6 +493,24 @@ struct AgentGroupApprovalDetails: View {
                 .font(.caption).foregroundStyle(FiliconTheme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
+    }
+}
+
+struct AgentMemoryApprovalDetails: View {
+    let metadata: [String: String]
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(l10n(metadata["agentMemoryAction"] == "forget" ? "Forget agent memory" : "Save agent memory")).font(.headline)
+            Text(verbatim: metadata["agentMemoryOwner"] ?? "").font(.callout.weight(.semibold))
+            Text(l10n(metadata["agentMemoryTier"] == "profile" ? "Foundational fact" : "Dated fact")).font(.caption)
+            Text(verbatim: metadata["agentMemoryFact"] ?? "").fixedSize(horizontal: false, vertical: true)
+            Text(l10n("Saved facts are sent to this agent's configured model in future group and mailbox turns in this account. They are not shared with other agents or used as tool permissions."))
+                .font(.caption).foregroundStyle(FiliconTheme.textSecondary)
+            if metadata["agentMemoryAction"] == "forget" {
+                Text(l10n("Forgetting stops future memory injection. Existing messages and running requests are not erased."))
+                    .font(.caption).foregroundStyle(FiliconTheme.textSecondary)
+            }
+        }.textSelection(.enabled)
     }
 }
 

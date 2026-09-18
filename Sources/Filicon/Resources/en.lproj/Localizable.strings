@@ -1417,3 +1417,19 @@
 "User in this conversation" = "User in this conversation";
 "Publish these images in this conversation?" = "Publish these images in this conversation?";
 "Published response" = "Published response";
+/* Approved own-agent memory */
+"Use memory write/forget with one fact of at most 1,000 characters, scope agent, and tier profile or log. Forget requires exact recorded text and no tier." = "Use memory write/forget with one fact of at most 1,000 characters, scope agent, and tier profile or log. Forget requires exact recorded text and no tier.";
+"This memory changed or no longer exists. Refresh the memories and request approval again." = "This memory changed or no longer exists. Refresh the memories and request approval again.";
+"This fact is already saved for this agent." = "This fact is already saved for this agent.";
+"Agent memory is limited to 48 facts, including 8 profile facts, and 12,000 characters per account and agent." = "Agent memory is limited to 48 facts, including 8 profile facts, and 12,000 characters per account and agent.";
+"The memory owner is unavailable." = "The memory owner is unavailable.";
+"Save agent memory" = "Save agent memory";
+"Forget agent memory" = "Forget agent memory";
+"Agent memory" = "Agent memory";
+"Foundational fact" = "Foundational fact";
+"Dated fact" = "Dated fact";
+"No saved facts." = "No saved facts.";
+"Forget" = "Forget";
+"Forget this fact?" = "Forget this fact?";
+"Saved facts are sent to this agent's configured model in future group and mailbox turns in this account. They are not shared with other agents or used as tool permissions." = "Saved facts are sent to this agent's configured model in future group and mailbox turns in this account. They are not shared with other agents or used as tool permissions.";
+"Forgetting stops future memory injection. Existing messages and running requests are not erased." = "Forgetting stops future memory injection. Existing messages and running requests are not erased.";

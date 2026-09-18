@@ -35,6 +35,16 @@ Stop, failure, or restart; this does not message another agent. Ordinary group
 image input, arbitrary paths/URLs, and generated images are not supported;
 unsupported inputs fail explicitly.
 
+In group and mailbox turns, agents can propose remembering or forgetting a short
+fact using `update_state(target:"memory", action:"write"|"forget", fact:...)`.
+Each change needs explicit approval. Saved facts belong to one account and one
+agent and are included in that agent's future group/mailbox requests, even in a
+different conversation or after restart. **Agents → Edit → Agent memory** lets
+you refresh, inspect, and forget them. Forgetting stops future injection, not
+already-sent messages or in-flight requests. This is bounded own-agent memory
+(`profile`/`log` facts), not shared user/project memory, automatic transcript
+capture, or full parity with the reference runtime.
+
 ## Requirements
 
 - macOS 14 or newer

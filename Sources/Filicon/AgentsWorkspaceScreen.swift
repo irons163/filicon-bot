@@ -332,6 +332,7 @@ struct AgentEditorView: View {
                 Text(saveError).font(.callout).foregroundStyle(.red)
                     .accessibilityIdentifier("agent-editor-error")
             }
+            if !isNew { AgentMemorySection(agentID: profile.id) }
             HStack {
                 Button(agentString("Cancel")) { dismiss() }.keyboardShortcut(.cancelAction)
                 Spacer()
@@ -397,6 +398,67 @@ struct AgentEditorView: View {
         guard let saved else { saveError = model.errorMessage; return }
         onSaved?(saved)
         dismiss()
+    }
+}
+
+private struct AgentMemorySection: View {
+    @EnvironmentObject private var model: AppModel
+    let agentID: UUID
+    @State private var memories: [AgentMemory] = []
+    @State private var pendingRemoval: AgentMemory?
+    @State private var confirmsRemoval = false
+    @State private var busy = false
+    @State private var failure: String?
+    var body: some View {
+        Section(l10n("Agent memory")) {
+            Text(l10n("Saved facts are sent to this agent's configured model in future group and mailbox turns in this account. They are not shared with other agents or used as tool permissions."))
+                .font(.caption).foregroundStyle(.secondary)
+            if memories.isEmpty { Text(l10n("No saved facts.")).foregroundStyle(.secondary) }
+            ForEach(memories) { memory in
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(l10n(memory.tier == .profile ? "Foundational fact" : "Dated fact")).font(.caption).foregroundStyle(.secondary)
+                        Text(verbatim: memory.fact).textSelection(.enabled)
+                        Text(memory.createdAt, format: .dateTime.year().month().day()).font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button(l10n("Forget"), role: .destructive) { forgetButtonTapped(memory) }
+                }
+            }
+            Button(l10n("Refresh")) { Task { await refreshButtonTapped() } }
+            if let failure { Text(failure).foregroundStyle(.red) }
+        }
+        .disabled(busy)
+        .task(id: model.settings.accountScope ?? "local") { await accountChanged() }
+        .confirmationDialog(l10n("Forget this fact?"), isPresented: $confirmsRemoval, titleVisibility: .visible) {
+            Button(l10n("Forget"), role: .destructive) { Task { await confirmForgetButtonTapped() } }
+            Button(l10n("Cancel"), role: .cancel) { pendingRemoval = nil }
+        } message: {
+            Text((pendingRemoval?.fact ?? "") + "\n\n" + l10n("Forgetting stops future memory injection. Existing messages and running requests are not erased."))
+        }
+    }
+    private func accountChanged() async {
+        memories = []; pendingRemoval = nil; confirmsRemoval = false; failure = nil
+        await refreshButtonTapped()
+    }
+    private func refreshButtonTapped() async {
+        let scope = model.settings.accountScope ?? "local"
+        do {
+            let values = try await model.savedAgentMemories(agentID: agentID)
+            try Task.checkCancellation()
+            guard scope == model.settings.accountScope ?? "local" else { return }
+            memories = values; failure = nil
+        } catch is CancellationError {} catch { failure = FiliconLocalization.string(error.localizedDescription) }
+    }
+    private func forgetButtonTapped(_ memory: AgentMemory) {
+        pendingRemoval = memory; confirmsRemoval = true
+    }
+    private func confirmForgetButtonTapped() async {
+        guard let memory = pendingRemoval else { return }
+        pendingRemoval = nil; busy = true
+        defer { busy = false }
+        do { try await model.forgetAgentMemory(memory); await refreshButtonTapped() }
+        catch is CancellationError {} catch { failure = FiliconLocalization.string(error.localizedDescription) }
     }
 }
 

@@ -130,6 +130,47 @@ public actor AgentService {
 
     public func profile(id: UUID) -> AgentProfile? { state.agents.first { $0.id == id } }
 
+    public func memories(accountID: String, agentID: UUID) -> [AgentMemory] {
+        state.memories.filter { $0.accountID == accountID && $0.agentID == agentID }
+            .sorted {
+                if $0.tier != $1.tier { return $0.tier == .profile }
+                if $0.createdAt != $1.createdAt { return $0.createdAt < $1.createdAt }
+                return $0.id.uuidString < $1.id.uuidString
+            }
+    }
+
+    public func applyMemoryChange(_ change: AgentMemoryChange, lifetime: AgentMemoryChangeLifetime) throws {
+        try lifetime.commit(change) {
+            let memory = change.memory
+            guard !memory.accountID.isEmpty, memory.accountID.count <= 512,
+                  !memory.fact.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  memory.fact.count <= 1_000 else { throw AgentMemoryError.invalid }
+            guard let owner = state.agents.first(where: { $0.id == memory.agentID }),
+                  change.operation == .forget || owner.archivedAt == nil else {
+                throw AgentMemoryError.unavailable
+            }
+            switch change.operation {
+            case .write:
+                let current = memories(accountID: memory.accountID, agentID: memory.agentID)
+                guard !current.contains(where: { $0.fact == memory.fact }), !state.memories.contains(where: { $0.id == memory.id }) else {
+                    throw AgentMemoryError.duplicate
+                }
+                guard current.count < 48, current.reduce(0, { $0 + $1.fact.count }) + memory.fact.count <= 12_000,
+                      memory.tier != .profile || current.filter({ $0.tier == .profile }).count < 8 else { throw AgentMemoryError.limit }
+                state.memories.append(memory)
+            case .forget:
+                // Record identity and content fence deletion; Date's sub-millisecond
+                // floating-point round trip is not an edit or a new record.
+                guard let index = state.memories.firstIndex(where: {
+                    $0.id == memory.id && $0.accountID == memory.accountID && $0.agentID == memory.agentID
+                        && $0.fact == memory.fact && $0.tier == memory.tier
+                }) else { throw AgentMemoryError.stale }
+                state.memories.remove(at: index)
+            }
+            try persist()
+        }
+    }
+
     /// Only the approved public fields are merged. Persist and publish in the
     /// same actor turn so failed writes cannot leave a phantom agent in memory.
     public func applyProfileChange(_ change: AgentProfileChange, lifetime: AgentProfileChangeLifetime,

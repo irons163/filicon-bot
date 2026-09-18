@@ -268,6 +268,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var runningAgentMessageScopes: Set<UUID> = []
     private var agentMessageTasks: [UUID: Task<Void, Never>] = [:]
     private var agentMessagingAccountTransition = false
+    private var agentMemoryUILifetime = AgentMemoryChangeLifetime()
     private let subagentService: SubagentService?
     private let agentAvatarStore: AgentAvatarStore
     private let groupService: GroupService?
@@ -2559,6 +2560,13 @@ final class AppModel: ObservableObject {
             }, commit: { [weak self] change, lifetime in
                 guard let self else { throw CancellationError() }
                 return try await self.commitAgentProfileChange(change, lifetime: lifetime, originID: originID, generation: generation)
+            }, accountID: settings.accountScope ?? "local",
+            authorizeMemory: { [weak self] sender, change, call, context in
+                guard let self else { throw CancellationError() }
+                try await self.authorizeAgentMemoryChange(sender: sender, change: change, call: call, context: context)
+            }, commitMemory: { [weak self] change, lifetime in
+                guard let self else { throw CancellationError() }
+                try await self.commitAgentMemoryChange(change, lifetime: lifetime, originID: originID, generation: generation)
             })
         return AgentMessagingSession(
             originConversationID: originID, agents: agentService, messenger: agentMessenger,
@@ -2690,6 +2698,57 @@ final class AppModel: ObservableObject {
         }
         agents = await agentService.list(includeArchived: true)
         return profile
+    }
+
+    func savedAgentMemories(agentID: UUID) async throws -> [AgentMemory] {
+        let generation = autoReviewAccountGeneration
+        guard let agentService, !agentMessagingAccountTransition else { throw CancellationError() }
+        let values = await agentService.memories(accountID: settings.accountScope ?? "local", agentID: agentID)
+        guard generation == autoReviewAccountGeneration else { throw CancellationError() }
+        return values
+    }
+
+    func forgetAgentMemory(_ memory: AgentMemory) async throws {
+        guard memory.accountID == settings.accountScope ?? "local", !agentMessagingAccountTransition else { throw CancellationError() }
+        try await commitAgentMemoryChange(.init(operation: .forget, memory: memory), lifetime: agentMemoryUILifetime)
+    }
+
+    private func commitAgentMemoryChange(_ change: AgentMemoryChange, lifetime: AgentMemoryChangeLifetime,
+                                          originID: UUID, generation: UInt64) async throws {
+        guard isAgentMessagingScopeActive(originID), generation == autoReviewAccountGeneration else { throw CancellationError() }
+        try await commitAgentMemoryChange(change, lifetime: lifetime)
+    }
+
+    private func commitAgentMemoryChange(_ change: AgentMemoryChange, lifetime: AgentMemoryChangeLifetime) async throws {
+        guard let agentService, change.memory.accountID == settings.accountScope ?? "local", !agentMessagingAccountTransition else { throw CancellationError() }
+        let payload = change.operation == .write ? try JSONEncoder().encode(change.memory) : Data()
+        do {
+            try await quotaWrite(scope: "workflow", key: "agent-memory-\(change.memory.id)", data: payload) {
+                try await agentService.applyMemoryChange(change, lifetime: lifetime)
+            }
+        } catch {
+            guard lifetime.committed(change) else { throw error }
+            errorMessage = Self.quotaMessage(error)
+        }
+    }
+
+    private func authorizeAgentMemoryChange(sender: AgentProfile, change: AgentMemoryChange,
+                                            call: NormalizedToolCall, context: ToolContext) async throws {
+        guard isAgentMessagingScopeActive(context.conversationID), change.memory.accountID == settings.accountScope ?? "local" else { throw CancellationError() }
+        let generation = autoReviewAccountGeneration
+        let fence = ApprovalFence(accountID: change.memory.accountID, agentID: context.conversationID.uuidString.lowercased(),
+                                  runID: context.runID, generation: generation)
+        await autoReviewBroker.activate(fence)
+        let action = AutoReviewAction(summary: "\(sender.name) → \(l10n(change.operation == .write ? "Save agent memory" : "Forget agent memory"))",
+            target: .resource(kind: "agent", identifier: sender.id.uuidString), risks: [.sensitive],
+            context: .init(fence: fence, conversationID: context.conversationID, toolCallID: call.id.rawValue,
+                metadata: ["tool": "update_state", "agentStateTarget": "memory", "agentMemoryAction": change.operation.rawValue,
+                           "agentMemoryFact": change.memory.fact, "agentMemoryTier": change.memory.tier.rawValue,
+                           "agentMemoryOwner": sender.name]))
+        let pending = PendingApproval(action: action, reason: "Approval required", expiresAt: Date().addingTimeInterval(300))
+        try await autoReviewBroker.waitForApprovalToExecute(pending) { [weak self] in await self?.registerAutoReviewApproval($0) }
+        try Task.checkCancellation()
+        guard generation == autoReviewAccountGeneration, isAgentMessagingScopeActive(context.conversationID) else { throw CancellationError() }
     }
 
     private func authorizeAgentProfileChange(sender: AgentProfile, change: AgentProfileChange,
@@ -4304,6 +4363,8 @@ final class AppModel: ObservableObject {
     func cancelAutoReviewApprovals(nextAccountID: String) async {
         // Queued peer work is scoped to the account that approved the exchange.
         agentMessagingAccountTransition = true
+        agentMemoryUILifetime.close()
+        agentMemoryUILifetime = AgentMemoryChangeLifetime()
         for session in agentMessagingSessions.values { session.revokeProfileChanges() }
         autoReviewAccountGeneration &+= 1
         defer { agentMessagingAccountTransition = false }
