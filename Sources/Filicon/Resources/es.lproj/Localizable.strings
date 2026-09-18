@@ -1397,3 +1397,6 @@
 "Only the name and public description change. Private instructions, model and permissions are unchanged." = "Solo cambian el nombre y la descripción pública. Las instrucciones privadas, el modelo y los permisos no cambian.";
 "Update own profile" = "Actualizar el perfil propio";
 "Empty" = "Vacío";
+"Group audience" = "Destinatarios del grupo";
+"This posts to the shared room and wakes its other active members. Replies appear there. Tool actions still need approval." = "El mensaje se publica en la sala compartida y activa a los demás miembros activos. Sus respuestas aparecen allí. Las acciones de las herramientas siguen necesitando aprobación.";
+"Group reply stopped or failed. The posted message was kept." = "La respuesta del grupo se detuvo o falló. El mensaje publicado se conservó.";

@@ -121,4 +121,11 @@ revocation path, a host-fixed identity and the shared four-change cap. An explic
 empty description clears only the public summary. Subsequent group turns reload
 the profile without expanding the original participants. Other update_state
 targets and full private persona/memory parity remain incomplete.
+SendToAgent now supports reviewed text posts into other local groups the sender
+belongs to, followed by bounded member turns in that shared room. This is not a
+set of private DMs. Audience changes invalidate approval; busy rooms reject sends;
+the current room uses SendMessage. Each request permits two distinct group posts
+within the six-delegation cap. Stop retains durable posts but cancels unfinished
+work without replaying it at restart. Target-room tools keep source-scope approval
+gates, and source-private history is not forwarded.
 See the collaboration audit for current validation limits.

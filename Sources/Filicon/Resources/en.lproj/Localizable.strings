@@ -1397,3 +1397,6 @@
 "Only the name and public description change. Private instructions, model and permissions are unchanged." = "Only the name and public description change. Private instructions, model and permissions are unchanged.";
 "Update own profile" = "Update own profile";
 "Empty" = "Empty";
+"Group audience" = "Group audience";
+"This posts to the shared room and wakes its other active members. Replies appear there. Tool actions still need approval." = "This posts to the shared room and wakes its other active members. Replies appear there. Tool actions still need approval.";
+"Group reply stopped or failed. The posted message was kept." = "Group reply stopped or failed. The posted message was kept.";

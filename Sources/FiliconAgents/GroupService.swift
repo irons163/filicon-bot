@@ -89,6 +89,33 @@ public actor GroupService {
 
     public func list() -> [AgentGroup] { state.groups }
 
+    public func audience(groupID: UUID, senderID: UUID) async throws -> AgentGroupAudience {
+        guard let group = state.groups.first(where: { $0.id == groupID }), group.memberIDs.contains(senderID) else {
+            throw AgentGroupPostError.unavailable
+        }
+        let members = await resolveMembers(group.memberIDs)
+        guard members.contains(where: { $0.id == senderID }), members.count > 1,
+              members.count == group.memberIDs.count else { throw AgentGroupPostError.unavailable }
+        guard state.groups.first(where: { $0.id == groupID }) == group else { throw AgentGroupPostError.changed }
+        return .init(group: group, members: members.map(GroupMemberIdentity.init))
+    }
+
+    public func postAgentMessage(_ message: RoomMessage, audience expected: AgentGroupAudience,
+                                 lifetime: AgentGroupPostLifetime) async throws {
+        guard let senderID = message.senderID, message.groupID == expected.id,
+              !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, message.text.count <= 8_000,
+              message.toolActivities.isEmpty, message.memberOutcome == nil else { throw AgentGroupPostError.unavailable }
+        let current = try await audience(groupID: expected.id, senderID: senderID)
+        guard current == expected else { throw AgentGroupPostError.changed }
+        try lifetime.commit {
+            guard let group = state.groups.first(where: { $0.id == expected.id }),
+                  group.name == expected.name, group.memberIDs == expected.memberIDs else { throw AgentGroupPostError.changed }
+            guard !state.roomMessages.contains(where: { $0.id == message.id }) else { throw AgentServiceError.duplicateMessage(message.id) }
+            state.roomMessages.append(message)
+            do { try persist() } catch { state.roomMessages.removeLast(); throw error }
+        }
+    }
+
     /// Host-only reports from approved cross-agent wakes. The app fences these
     /// to the originating request; they are not new user messages or @mentions.
     public func recordDelegatedMessage(_ message: RoomMessage) throws {
@@ -148,11 +175,16 @@ public actor GroupService {
     public func run(
         groupID: UUID,
         responder: any GroupAgentResponder,
+        delegatedAudience: AgentGroupAudience? = nil,
+        delegatedSenderID: UUID? = nil,
         onAgentChange: @escaping @Sendable (UUID?) async -> Void = { _ in },
         onMessage: @escaping @Sendable (RoomMessage) async -> Void = { _ in }
     ) async throws -> [RoomMessage] {
         guard let groupIndex = state.groups.firstIndex(where: { $0.id == groupID }) else { throw AgentServiceError.unknownGroup(groupID) }
         let group = state.groups[groupIndex]
+        if let delegatedAudience {
+            guard group.id == delegatedAudience.id, group.memberIDs == delegatedAudience.memberIDs else { throw AgentGroupPostError.changed }
+        }
         guard !group.memberIDs.isEmpty else { return [] }
         activeResponses[groupID]?.cancel()
         epochs[groupID, default: 0] &+= 1
@@ -168,7 +200,9 @@ public actor GroupService {
         var publishedTexts: [UUID: Set<String>] = [:]
         var firstFailure: (any Error)?
         let initialHistory = state.roomMessages.filter { $0.groupID == groupID }
-        let responderIDs = Self.resolveResponderIDs(members: members, history: initialHistory)
+        let responderIDs = delegatedAudience.map { audience in
+            members.filter { agent in audience.members.contains(where: { $0.id == agent.id }) && agent.id != delegatedSenderID }.map(\.id)
+        } ?? Self.resolveResponderIDs(members: members, history: initialHistory)
         guard !responderIDs.isEmpty else { return [] }
         // Rotate the starting member between requests as well as between rounds.
         state.groups[groupIndex].nextSpeakerOffset = (group.nextSpeakerOffset + 1) % responderIDs.count

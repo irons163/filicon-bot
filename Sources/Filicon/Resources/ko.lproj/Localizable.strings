@@ -1397,3 +1397,6 @@
 "Only the name and public description change. Private instructions, model and permissions are unchanged." = "이름과 공개 설명만 변경합니다. 비공개 지침, 모델 및 권한은 변경되지 않습니다.";
 "Update own profile" = "자신의 프로필 수정";
 "Empty" = "비어 있음";
+"Group audience" = "그룹 수신 멤버";
+"This posts to the shared room and wakes its other active members. Replies appear there. Tool actions still need approval." = "공유 채팅방에 메시지를 게시하고 다른 활성 멤버를 실행합니다. 답변은 해당 그룹에 표시됩니다. 도구 작업에는 여전히 승인이 필요합니다.";
+"Group reply stopped or failed. The posted message was kept." = "그룹 답변이 중지되었거나 실패했습니다. 게시된 메시지는 유지됩니다.";

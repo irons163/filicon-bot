@@ -63,8 +63,9 @@ struct GroupConversationView: View {
 
     private var messages: [RoomMessage] { model.groupMessages[group.id] ?? [] }
     private var isRunning: Bool { model.runningGroups.contains(group.id) }
+    private var approvalScopeID: UUID { model.groupApprovalScope(group.id) }
     private var folderRequests: [WorkspaceFolderRequest] {
-        model.pendingWorkspaceFolders.filter { $0.conversationID == group.id }
+        model.pendingWorkspaceFolders.filter { $0.conversationID == approvalScopeID }
     }
     private var mentionMemberNames: [String] {
         model.agents.filter { group.memberIDs.contains($0.id) && $0.archivedAt == nil }.map(\.name)
@@ -93,7 +94,7 @@ struct GroupConversationView: View {
                         // mounted and reachable even while history is scrolled.
                         ScrollView {
                             VStack(spacing: 8) {
-                                WorkspaceFolderAccessPanel(conversationID: group.id)
+                                WorkspaceFolderAccessPanel(conversationID: approvalScopeID)
                             }
                             .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { folderPromptHeight = $0 }
                         }
@@ -168,8 +169,8 @@ struct GroupConversationView: View {
                             GroupThinkingIndicator(agentName: group.name)
                         }
                     }
-                    GroupToolApprovalPanel(groupID: group.id)
-                    MCPApprovalPanel(conversationID: group.id)
+                    GroupToolApprovalPanel(groupID: approvalScopeID)
+                    MCPApprovalPanel(conversationID: approvalScopeID)
                     Color.clear.frame(height: 1).id("group-bottom")
                 }
                 .padding(.horizontal, 24).padding(.top, 8).padding(.bottom, 16)
@@ -429,6 +430,9 @@ struct GroupToolApprovalPanel: View {
                 Label(l10n("Approval required"), systemImage: "checkmark.shield")
                     .font(.headline)
                 Text(approval.action.summary).font(.callout).textSelection(.enabled)
+                if let members = approval.action.context.metadata["agentGroupMembers"] {
+                    AgentGroupApprovalDetails(members: members)
+                }
                 if approval.action.context.metadata["tool"] == "SendToAgent",
                    let text = approval.action.context.metadata["agentMessage"] {
                     // The summary is bounded to 2,000 characters; the actual
@@ -453,6 +457,20 @@ struct GroupToolApprovalPanel: View {
 
     private func resolve(_ approval: PendingApproval, approve: Bool) async {
         await model.resolveGroupApproval(approval, groupID: groupID, approve: approve)
+    }
+}
+
+struct AgentGroupApprovalDetails: View {
+    let members: String
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(l10n("Group audience")).font(.callout.weight(.semibold))
+            Text(verbatim: members).font(.caption).textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(l10n("This posts to the shared room and wakes its other active members. Replies appear there. Tool actions still need approval."))
+                .font(.caption).foregroundStyle(FiliconTheme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 }
 

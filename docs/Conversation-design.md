@@ -75,14 +75,32 @@ Final wake reports and real tool activity are visible in the originating group.
 The Agents > Messages view also shows queued/running/completed/failed/cancelled
 delivery state separately from read/unread state.
 
-Each user request has at most six queued messages/wakes in addition to the bounded
-group rounds, with duplicate suppression, exact-call idempotency and a 180-second
-deadline per wake. PASS never creates an automatic courtesy reply. Stop and
+Each user request has at most six total delegations, including at most two distinct
+group posts, in addition to the original bounded group rounds. A peer delegation
+wakes one agent; a group post uses up to three rounds/ten messages in its target
+room. Duplicate suppression, exact-call idempotency and a 180-second deadline per
+delegated member turn apply. PASS never creates an automatic courtesy reply. Stop and
 account changes fence queued work and cancel the active wake. Restart preserves
 the mailbox but cancels unfinished deliveries instead of replaying old approvals.
 Recipient tools use a fresh run ID and retain the originating conversation's
 existing folder, local-tool, MCP and auto-review approval gates; delegation does
 not grant file-write or external-action permission.
+
+`SendToAgent` also accepts another local group UUID from its public directory,
+provided the sender belongs to it and all members are active. Every group post
+requires explicit approval of the exact audience and text, even when a generic
+auto-review allow rule matches. Posting revalidates the reviewed audience and
+atomically persists a shared-room message with a synchronous Stop fence. Replies
+run in the target room after foreground work ends and do not copy source-private
+history. Incoming group tasks have assistant role; old room user messages remain
+background, not a fresh request. Folder/MCP/profile approval panels in the target
+room point to the originating scope, and target Stop cancels the source chain.
+Posted messages survive cancellation/restart; unfinished work is not replayed.
+The target is reserved until its execution/cleanup finishes, so it cannot collide
+with a foreground user send. A busy target rejects a post instead of queueing into
+its existing run. The current room uses `SendMessage`, not another broadcast, and
+the posting member is not automatically woken by its own message. These are bounded
+differences from the reconstructed reference, not full background-runtime parity.
 
 Manual Agents > Messages sends now enqueue and wake the recipient, even when the
 view is not selected. Replies wake the sender; progress/delivery status appears in
@@ -105,8 +123,9 @@ active subagent runtimes without releasing their lane before they unwind.
 This remains narrower than the reference's full background session runtime:
 contexts are origin-isolated, not a unified personal DM/group memory service.
 Generic direct chats are not bound to agent profiles and retain conversation-only
-serialization. There is no cross-process coordination, group target broadcast,
-image payload or priority interruption. An uncooperative operation keeps its lane
+serialization. There is no cross-process coordination, image payload or priority
+interruption. Group targets follow the narrower shared-room rules above.
+An uncooperative operation keeps its lane
 until it unwinds; this is not a promise of immediate remote backend cancellation.
 Unfinished work is cancelled at restart, not replayed with stale approval.
 See [the itemized audit](Agent-collaboration-parity.md).

@@ -1397,3 +1397,6 @@
 "Only the name and public description change. Private instructions, model and permissions are unchanged." = "仅修改名称与公开说明。私人指令、模型与权限不会更改。";
 "Update own profile" = "修改自己的个人资料";
 "Empty" = "空白";
+"Group audience" = "群组收件成员";
+"This posts to the shared room and wakes its other active members. Replies appear there. Tool actions still need approval." = "消息会发送到共享聊天室，并唤醒其他启用中的成员。回复将显示在该群组；工具操作仍须批准。";
+"Group reply stopped or failed. The posted message was kept." = "群组回复已停止或失败。已发送的消息会保留。";

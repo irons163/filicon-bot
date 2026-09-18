@@ -1397,3 +1397,6 @@
 "Only the name and public description change. Private instructions, model and permissions are unchanged." = "名前と公開説明のみを変更します。非公開の指示、モデル、権限は変更されません。";
 "Update own profile" = "自分のプロフィールを変更";
 "Empty" = "空欄";
+"Group audience" = "グループの宛先メンバー";
+"This posts to the shared room and wakes its other active members. Replies appear there. Tool actions still need approval." = "共有チャットに投稿し、他の有効なメンバーを起動します。返信はそのグループに表示されます。ツールの操作には引き続き承認が必要です。";
+"Group reply stopped or failed. The posted message was kept." = "グループの返信が停止したか、失敗しました。投稿済みのメッセージは保持されています。";

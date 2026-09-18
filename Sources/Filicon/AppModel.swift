@@ -262,6 +262,8 @@ final class AppModel: ObservableObject {
     private let agentMessenger: AgentMessenger?
     private let agentConversations: AgentConversationStore?
     private var agentMessagingSessions: [UUID: AgentMessagingSession] = [:]
+    private var delegatedGroupOrigins: [UUID: UUID] = [:]
+    private var delegatedGroupPosts: [UUID: AgentGroupDispatch] = [:]
     @Published private(set) var runningAgentMessageScopes: Set<UUID> = []
     private var agentMessageTasks: [UUID: Task<Void, Never>] = [:]
     private var agentMessagingAccountTransition = false
@@ -2538,11 +2540,99 @@ final class AppModel: ObservableObject {
             originConversationID: originID, agents: agentService, messenger: agentMessenger,
             registry: registry, coordinator: coordinator, conversations: agentConversations,
             accountID: settings.accountScope ?? "local", management: management,
+            groups: groupService,
+            authorizeGroup: { [weak self] sender, audience, text, call, context in
+                guard let self else { throw CancellationError() }
+                try await self.authorizeGroupDelegation(sender: sender, audience: audience, text: text, call: call, context: context)
+            }, postGroup: { [weak self] dispatch, lifetime in
+                guard let self else { throw CancellationError() }
+                try await self.postGroupDelegation(dispatch, lifetime: lifetime, originID: originID, generation: generation)
+            }, runGroup: { [weak self] dispatch, session in
+                guard let self else { throw CancellationError() }
+                try await self.runGroupDelegation(dispatch, session: session, originID: originID, generation: generation)
+            }, finishGroup: { [weak self] groupID, failed in
+                await self?.finishGroupDelegation(groupID: groupID, originID: originID, failed: failed)
+            },
             authorize: { [weak self] sender, recipient, text, call, context in
                 guard let self else { throw CancellationError() }
                 try await self.authorizeAgentDelegation(sender: sender, recipient: recipient, text: text, call: call, context: context)
             }, onChange: { [weak self] in await self?.reloadAgentMessages() }
         )
+    }
+
+    func groupApprovalScope(_ groupID: UUID) -> UUID { delegatedGroupOrigins[groupID] ?? groupID }
+
+    private func authorizeGroupDelegation(sender: AgentProfile, audience: AgentGroupAudience, text: String,
+                                          call: NormalizedToolCall, context: ToolContext) async throws {
+        guard isAgentMessagingScopeActive(context.conversationID) else { throw CancellationError() }
+        guard !runningGroups.contains(audience.id) else { throw AgentGroupPostError.busy }
+        let generation = autoReviewAccountGeneration
+        let fence = ApprovalFence(accountID: settings.accountScope ?? "local", agentID: context.conversationID.uuidString.lowercased(),
+                                  runID: context.runID, generation: generation)
+        await autoReviewBroker.activate(fence)
+        let names = audience.members.map { "\($0.name) (\($0.id.uuidString))" }.joined(separator: "\n")
+        let action = AutoReviewAction(summary: "\(sender.name) → \(audience.name)",
+            target: .resource(kind: "group", identifier: audience.id.uuidString), risks: [.sensitive],
+            context: .init(fence: fence, conversationID: context.conversationID, toolCallID: call.id.rawValue,
+                metadata: ["tool": "SendToAgent", "agentMessage": text, "agentGroupName": audience.name, "agentGroupMembers": names]))
+        let pending = PendingApproval(action: action, reason: "Approval required", expiresAt: Date().addingTimeInterval(300))
+        try await autoReviewBroker.waitForApprovalToExecute(pending) { [weak self] in await self?.registerAutoReviewApproval($0) }
+        try Task.checkCancellation()
+        guard generation == autoReviewAccountGeneration, isAgentMessagingScopeActive(context.conversationID) else { throw CancellationError() }
+    }
+
+    private func postGroupDelegation(_ dispatch: AgentGroupDispatch, lifetime: AgentGroupPostLifetime,
+                                     originID: UUID, generation: UInt64) async throws {
+        let groupID = dispatch.audience.id
+        guard let groupService, generation == autoReviewAccountGeneration, isAgentMessagingScopeActive(originID) else { throw CancellationError() }
+        guard !runningGroups.contains(groupID), !stoppingGroups.contains(groupID) else { throw AgentGroupPostError.busy }
+        // Reserve before hopping to persistence; foreground sends cannot race
+        // an approved shared-room wake or replace its conversation scope.
+        runningGroups.insert(groupID); delegatedGroupOrigins[groupID] = originID
+        delegatedGroupPosts[groupID] = dispatch
+        do { try await groupService.postAgentMessage(dispatch.message, audience: dispatch.audience, lifetime: lifetime) }
+        catch {
+            runningGroups.remove(groupID); delegatedGroupOrigins[groupID] = nil; delegatedGroupPosts[groupID] = nil
+            throw error
+        }
+        groupMessages[groupID] = await groupService.messages(groupID: groupID)
+    }
+
+    private func runGroupDelegation(_ dispatch: AgentGroupDispatch, session: AgentMessagingSession,
+                                    originID: UUID, generation: UInt64) async throws {
+        let groupID = dispatch.audience.id
+        guard let groupService, delegatedGroupOrigins[groupID] == originID,
+              generation == autoReviewAccountGeneration, isAgentMessagingScopeActive(originID) else { throw CancellationError() }
+        _ = try await groupService.run(groupID: groupID,
+            responder: GroupConversationResponder(groupID: groupID, registry: registry, coordinator: coordinator,
+                messaging: session, delegatedMessage: dispatch.message, toolScopeID: originID),
+            delegatedAudience: dispatch.audience, delegatedSenderID: dispatch.message.senderID,
+            onAgentChange: { [weak self] agentID in
+                await MainActor.run { self?.thinkingGroupMembers[groupID] = agentID }
+            }, onMessage: { [weak self] message in
+                await MainActor.run {
+                    guard let self, self.delegatedGroupOrigins[groupID] == originID,
+                          self.autoReviewAccountGeneration == generation else { return }
+                    if let index = self.groupMessages[groupID, default: []].firstIndex(where: { $0.id == message.id }) {
+                        self.groupMessages[groupID]?[index] = message
+                    } else { self.groupMessages[groupID, default: []].append(message) }
+                }
+            })
+        try Task.checkCancellation()
+        guard generation == autoReviewAccountGeneration, isAgentMessagingScopeActive(originID) else { throw CancellationError() }
+    }
+
+    private func finishGroupDelegation(groupID: UUID, originID: UUID, failed: Bool) async {
+        guard delegatedGroupOrigins[groupID] == originID else { return }
+        if failed, let dispatch = delegatedGroupPosts[groupID], let groupService {
+            let notice = RoomMessage(groupID: groupID, senderID: dispatch.message.senderID,
+                text: l10n("Group reply stopped or failed. The posted message was kept."), memberOutcome: .failed)
+            do { try await groupService.recordDelegatedMessage(notice) }
+            catch { errorMessage = error.localizedDescription }
+        }
+        if let groupService { groupMessages[groupID] = await groupService.messages(groupID: groupID) }
+        delegatedGroupOrigins[groupID] = nil; delegatedGroupPosts[groupID] = nil
+        runningGroups.remove(groupID); thinkingGroupMembers[groupID] = nil
     }
 
     private func commitAgentProfileChange(_ change: AgentProfileChange, lifetime: AgentProfileChangeLifetime,
@@ -2924,6 +3014,11 @@ final class AppModel: ObservableObject {
     }
 
     func stopGroup(id: UUID) async {
+        if let originID = delegatedGroupOrigins[id] {
+            if runningAgentMessageScopes.contains(originID) { await stopAgentMessages(scopeID: originID) }
+            else { await stopGroup(id: originID) }
+            return
+        }
         guard runningGroups.contains(id), stoppingGroups.insert(id).inserted else { return }
         agentMessagingSessions[id]?.revokeProfileChanges()
         cancelledGroupRuns.insert(id)
