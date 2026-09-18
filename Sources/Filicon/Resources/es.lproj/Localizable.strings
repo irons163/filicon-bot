@@ -1413,3 +1413,7 @@
 "Group reply stopped or failed. The posted message was kept." = "La respuesta del grupo se detuvo o falló. El mensaje publicado se conservó.";
 "Priority messages may stop background work after the current response ends. User turns are protected; interrupted work is not automatically resumed." = "Los mensajes prioritarios pueden detener tareas en segundo plano tras la respuesta actual. Los turnos del usuario están protegidos; las tareas interrumpidas no se reanudan automáticamente.";
 "Interrupted by an approved priority agent message. Work was not resumed automatically." = "Interrumpido por un mensaje prioritario aprobado de un agente. La tarea no se reanudó automáticamente.";
+/* Approved image publication */
+"User in this conversation" = "Usuario de esta conversación";
+"Publish these images in this conversation?" = "¿Publicar estas imágenes en esta conversación?";
+"Published response" = "Respuesta publicada";

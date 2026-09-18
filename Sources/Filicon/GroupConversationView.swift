@@ -366,6 +366,7 @@ struct GroupMessageBubble: View {
                         if !isUser { Button("👍", action: onReaction) }
                     }
                 }
+                if let images = message.images, !images.isEmpty { AgentMessageImagePreviews(images: images) }
                 ForEach(message.toolActivities) { tool in
                     let waitingForFolder = tool.status == .pending && waitingForFolderCallIDs.contains(tool.id)
                     HStack(spacing: 7) {
@@ -439,10 +440,12 @@ struct GroupToolApprovalPanel: View {
                 }
                 if let encoded = approval.action.context.metadata["agentImages"],
                    let images = try? JSONDecoder().decode([AttachmentMetadata].self, from: Data(encoded.utf8)) {
-                    Text(l10n("Forward these images to the recipient model?")).font(.callout.weight(.semibold))
+                    Text(l10n(approval.action.context.metadata["agentImagePublication"] == "true"
+                              ? "Publish these images in this conversation?"
+                              : "Forward these images to the recipient model?")).font(.callout.weight(.semibold))
                     AgentMessageImagePreviews(images: images)
                 }
-                if approval.action.context.metadata["tool"] == "SendToAgent",
+                if ["SendToAgent", "SendMessage"].contains(approval.action.context.metadata["tool"] ?? ""),
                    let text = approval.action.context.metadata["agentMessage"] {
                     // The summary is bounded to 2,000 characters; the actual
                     // outgoing payload must be visible in full before approval.

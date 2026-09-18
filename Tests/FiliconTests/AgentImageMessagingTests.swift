@@ -49,6 +49,16 @@ private actor ImagePeerProbe {
     func approve(_ images: [AttachmentMetadata]) { approvals.append(images) }
 }
 
+private actor ImagePublicationProbe {
+    var values: [RoomMessage] = []
+    func append(_ value: RoomMessage) { values.append(value) }
+}
+
+private func publishImage(_ ids: [String], text: String = "Reviewed layout", id: ToolCallID = "publish") throws -> NormalizedToolCall {
+    struct Payload: Encodable { let text: String; let images: [String] }
+    return try .init(id: id, name: "SendMessage", argumentsJSON: JSONEncoder().encode(Payload(text: text, images: ids)))
+}
+
 private func forwardImage(_ target: UUID, ids: [String], id: ToolCallID = "forward", priority: Bool = false) throws -> NormalizedToolCall {
     struct Payload: Encodable { let recipientID: UUID; let message = "Review these images"; let images: [String]; let priority: Bool }
     return try .init(id: id, name: "SendToAgent", argumentsJSON: JSONEncoder().encode(Payload(recipientID: target, images: ids, priority: priority)))
@@ -83,6 +93,147 @@ struct AgentImageMessagingTests {
         return try .init(root: root, agents: agents, sender: sender, recipient: recipient,
             messenger: AgentMessenger(service: agents, storeURL: root.appending(path: "messages.json")),
             store: AgentImageStore(rootURL: root.appending(path: "images")))
+    }
+
+    @Test func imagePublicationIsBoundedScopedAndIdempotent() async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let images = try await [f.store.importImage(data: peerImageBytes(), filename: "first.png"),
+                               f.store.importImage(data: peerImageBytes(shade: 0.75), filename: "second.png")]
+        let output = ImagePublicationProbe(), context = ToolContext(conversationID: f.origin)
+        let tool = AgentUserMessageTool(conversationID: f.origin, availableImages: images, imageStore: f.store,
+            authorizeImages: { _, values, _, _ in await f.probe.approve(values) }) { text, values in
+                await output.append(.init(groupID: f.origin, senderID: f.recipient.id, text: text, images: values))
+            }
+        let schema = try #require(JSONSerialization.jsonObject(with: tool.descriptor.inputSchema) as? [String: Any])
+        #expect((schema["properties"] as? [String: Any])?["images"] != nil)
+        let runtime = try await tool.runtimeContext(for: context)
+        #expect(runtime.contains(images[0].id) && !runtime.contains(f.root.path))
+        for id in ["file:///private.png", "https://example.invalid/private.png", "old-image"] {
+            #expect(try await tool.execute(publishImage([id]), context: context).isError)
+        }
+        #expect(try await tool.execute(publishImage([images[0].id, images[0].id]), context: context).isError)
+        let call = try publishImage(images.map(\.id))
+        let first = try await tool.execute(call, context: context)
+        #expect(!first.isError)
+        let replay = try await tool.execute(call, context: context)
+        expectNoDifference(replay, first)
+        #expect(try await tool.execute(publishImage(images.reversed().map(\.id)), context: context).isError)
+        #expect(try await tool.execute(publishImage(images.reversed().map(\.id), id: "duplicate"), context: context).isError)
+        let textOnly = try NormalizedToolCall(id: "text", name: "SendMessage", argumentsJSON: Data(#"{"text":"Final report"}"#.utf8))
+        #expect(!(try await tool.execute(textOnly, context: context).isError))
+        #expect(try await tool.execute(publishImage([images[0].id], text: "Third", id: "third"), context: context).isError)
+        let approvals = await f.probe.approvals, values = await output.values
+        expectNoDifference(approvals, [images])
+        expectNoDifference(values.map(\.text), ["Reviewed layout", "Final report"])
+        expectNoDifference(values.map { $0.images?.map(\.id) ?? [] }, [images.map(\.id), []])
+    }
+
+    @Test func missingPublicationAuthorizerDeniesImages() async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let image = try await f.store.importImage(data: peerImageBytes(), filename: "review.png")
+        let output = ImagePublicationProbe()
+        let tool = AgentUserMessageTool(conversationID: f.origin, availableImages: [image], imageStore: f.store) { text, images in
+            await output.append(.init(groupID: f.origin, senderID: nil, text: text, images: images))
+        }
+        #expect(try await tool.execute(publishImage([image.id]), context: .init(conversationID: f.origin)).isError)
+        let values = await output.values; expectNoDifference(values, [])
+    }
+
+    @Test(arguments: ["completed", "failure", "projection"])
+    func publicationPersistsAcrossSessionFailureAndRestart(mode: String) async throws {
+        struct ProjectionFailure: Error {}
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let image = try await f.store.importImage(data: peerImageBytes(), filename: "review.png")
+        let projected = ImagePublicationProbe()
+        let session = AgentMessagingSession(originConversationID: f.origin, agents: f.agents, messenger: f.messenger,
+            registry: f.registry, coordinator: TurnCoordinator(registry: f.registry, toolCatalog: ToolCatalog()),
+            imageStore: f.store, authorizePublication: { _, text, images, _, _ in
+                expectNoDifference(text, "Reviewed layout"); await f.probe.approve(images)
+            })
+        await f.registry.register(ImagePeerProvider { request, execute in
+            _ = await f.probe.request(request)
+            let result = try await execute(publishImage([image.id]))
+            #expect(!result.isError) // A failed mirror must not invite a duplicate of the committed publication.
+            if mode == "failure" { throw ProviderError.invalidResponse }
+            return "Reviewed layout" // Must not be repeated in the final projection.
+        })
+        try await session.enqueueUserMessage(senderID: f.sender.id, recipientID: f.recipient.id, text: "Review", images: [image])
+        try await session.drain(onUpdate: { message in
+            if message.images?.isEmpty == false && mode == "projection" { throw ProjectionFailure() }
+            await projected.append(message)
+        })
+        let messages = await f.messenger.allMessages(), approvals = await f.probe.approvals
+        expectNoDifference(messages.count, 1) // SendMessage never wakes a peer.
+        expectNoDifference(approvals, [[image]])
+        let delivery = try #require(messages.first?.delivery)
+        expectNoDifference(delivery.state, mode == "completed" ? .completed : .failed)
+        expectNoDifference(delivery.response, "Reviewed layout")
+        expectNoDifference(delivery.publications?.map { $0.images?.map(\.id) }, [[image.id]])
+        let visible = await projected.values.filter { !$0.text.isEmpty }
+        expectNoDifference(visible.count, mode == "projection" ? 0 : 1)
+        let reopened = try AgentMessenger(service: f.agents, storeURL: f.root.appending(path: "messages.json"))
+        let restored = await reopened.allMessages()
+        expectNoDifference(restored.first?.delivery?.publications?.map(\.id), delivery.publications?.map(\.id))
+        let loaded = try await f.store.load(restored.first?.delivery?.publications?.first?.images ?? [])
+        expectNoDifference(loaded.count, 1)
+        try await session.close()
+    }
+
+    @Test func canonicalPublicationChecksIdentityRevocationAtomicSaveAndRecovery() async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let image = try await f.store.importImage(data: peerImageBytes(), filename: "review.png")
+        let inbound = AgentMessage(senderID: f.sender.id, recipientID: f.recipient.id, text: "Review",
+            delivery: .init(chainID: UUID(), originConversationID: f.origin), images: [image])
+        try await f.messenger.send(inbound)
+        try await f.messenger.updateDelivery(id: inbound.id, state: .running)
+        let lifetime = AgentPublicationLifetime()
+        let publication = RoomMessage(groupID: f.origin, senderID: f.recipient.id, text: "Reviewed", images: [image])
+        let invalid = [RoomMessage(groupID: UUID(), senderID: f.recipient.id, text: "Wrong room"),
+                       RoomMessage(groupID: f.origin, senderID: f.sender.id, text: "Spoofed author"),
+                       RoomMessage(groupID: f.origin, senderID: f.recipient.id, text: "Unknown image", images: [.init(id: "unknown", filename: "x.png", mimeType: "image/png", byteCount: 10, kind: .image)])]
+        for value in invalid {
+            await #expect(throws: AgentPublicationError.invalid) { try await f.messenger.publish(value, replyingTo: inbound.id, lifetime: lifetime) }
+        }
+        // Make only this fixture's mailbox destination unwritable as a file.
+        let file = f.root.appending(path: "messages.json"), backup = f.root.appending(path: "messages.backup")
+        try FileManager.default.moveItem(at: file, to: backup)
+        try FileManager.default.createDirectory(at: file, withIntermediateDirectories: false)
+        await #expect(throws: (any Error).self) { try await f.messenger.publish(publication, replyingTo: inbound.id, lifetime: lifetime) }
+        let unsaved = await f.messenger.allMessages()
+        expectNoDifference(unsaved.first?.delivery?.publications, nil)
+        try FileManager.default.removeItem(at: file)
+        try FileManager.default.moveItem(at: backup, to: file)
+        try await f.messenger.publish(publication, replyingTo: inbound.id, lifetime: lifetime)
+        try await f.messenger.publish(publication, replyingTo: inbound.id, lifetime: lifetime)
+        var changed = publication; changed.text = "Changed"
+        await #expect(throws: AgentPublicationError.invalid) { try await f.messenger.publish(changed, replyingTo: inbound.id, lifetime: lifetime) }
+        let second = RoomMessage(groupID: f.origin, senderID: f.recipient.id, text: "Follow-up")
+        try await f.messenger.publish(second, replyingTo: inbound.id, lifetime: lifetime)
+        let third = RoomMessage(groupID: f.origin, senderID: f.recipient.id, text: "Over limit")
+        await #expect(throws: AgentPublicationError.limit) { try await f.messenger.publish(third, replyingTo: inbound.id, lifetime: lifetime) }
+        lifetime.close()
+        await #expect(throws: CancellationError.self) { try await f.messenger.publish(publication, replyingTo: inbound.id, lifetime: lifetime) }
+        let reopened = try AgentMessenger(service: f.agents, storeURL: file)
+        let restored = await reopened.allMessages()
+        expectNoDifference(restored.first?.delivery?.state, .cancelled)
+        expectNoDifference(restored.first?.delivery?.publications?.map(\.id), [publication.id, second.id])
+        expectNoDifference(restored.first?.delivery?.response, "Reviewed\n\nFollow-up")
+        await #expect(throws: AgentPublicationError.invalid) {
+            try await reopened.publish(third, replyingTo: inbound.id, lifetime: AgentPublicationLifetime())
+        }
+    }
+
+    @Test func oldTextPublicationsAndRoomMessagesDecodeWithoutImages() throws {
+        let delivery = AgentMessageDelivery(chainID: UUID(), originConversationID: UUID(), state: .completed, response: "Old reply")
+        let encoded = try JSONEncoder().encode(delivery)
+        #expect(!String(decoding: encoded, as: UTF8.self).contains("publications"))
+        let decoded = try JSONDecoder().decode(AgentMessageDelivery.self, from: encoded)
+        expectNoDifference(decoded, delivery)
+        let room = RoomMessage(groupID: UUID(), senderID: nil, text: "Old room message")
+        let roomData = try JSONEncoder().encode(room)
+        #expect(!String(decoding: roomData, as: UTF8.self).contains("images"))
+        let restored = try JSONDecoder().decode(RoomMessage.self, from: roomData)
+        expectNoDifference(restored, room)
     }
 
     @Test(arguments: ["public.png", "public.jpeg"])

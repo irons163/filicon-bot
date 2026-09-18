@@ -50,6 +50,37 @@ public actor AgentMessenger {
 
     public func allMessages() -> [AgentMessage] { state.messages }
 
+    /// The mailbox is the canonical publication receipt. Its identity, author,
+    /// image capability and atomic persistence are checked in the same actor turn.
+    public func publish(_ publication: RoomMessage, replyingTo id: UUID, lifetime: AgentPublicationLifetime) throws {
+        try lifetime.commit {
+            guard let index = state.messages.firstIndex(where: { $0.id == id }),
+                  let delivery = state.messages[index].delivery,
+                  delivery.state == .running,
+                  publication.groupID == delivery.originConversationID,
+                  publication.senderID == state.messages[index].recipientID,
+                  !publication.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  publication.text.count <= 8_000, publication.toolActivities.isEmpty,
+                  publication.memberOutcome == nil else { throw AgentPublicationError.invalid }
+            let images = publication.images ?? []
+            guard images.count <= 4, Set(images.map(\.id)).count == images.count,
+                  images.allSatisfy({ state.messages[index].images?.contains($0) == true }) else {
+                throw AgentPublicationError.invalid
+            }
+            let prior = delivery.publications ?? []
+            if let existing = prior.first(where: { $0.id == publication.id }) {
+                guard existing == publication else { throw AgentPublicationError.invalid }
+                return
+            }
+            guard prior.count < 2 else { throw AgentPublicationError.limit }
+            var next = state
+            next.messages[index].delivery?.publications = prior + [publication]
+            next.messages[index].delivery?.response = String((prior + [publication]).map(\.text).joined(separator: "\n\n").prefix(8_000))
+            try Self.save(next, to: storeURL)
+            state = next
+        }
+    }
+
     public func updateDelivery(id: UUID, state deliveryState: AgentMessageDelivery.State, response: String? = nil) throws {
         guard let index = state.messages.firstIndex(where: { $0.id == id }), state.messages[index].delivery != nil else { return }
         let previous = state.messages[index]
@@ -58,7 +89,9 @@ public actor AgentMessenger {
         state.messages[index].delivery?.state = deliveryState
         // A state-only transition (especially Stop) must not erase a report
         // already published through SendMessage.
-        if let response { state.messages[index].delivery?.response = String(response.prefix(8_000)) }
+        if let publications = previous.delivery?.publications, !publications.isEmpty {
+            state.messages[index].delivery?.response = String(publications.map(\.text).joined(separator: "\n\n").prefix(8_000))
+        } else if let response { state.messages[index].delivery?.response = String(response.prefix(8_000)) }
         do { try persist() } catch { state.messages[index] = previous; throw error }
     }
 
@@ -70,5 +103,26 @@ public actor AgentMessenger {
         try FileManager.default.createDirectory(at: storeURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .millisecondsSince1970; encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         try encoder.encode(state).write(to: storeURL, options: .atomic)
+    }
+}
+
+public enum AgentPublicationError: String, LocalizedError, Sendable {
+    case invalid = "This publication is not valid for the active incoming agent message."
+    case limit = "At most two messages may be published per agent turn."
+    public var errorDescription: String? { rawValue }
+}
+
+/// Revoked synchronously by Stop/account change, before any actor hop.
+public final class AgentPublicationLifetime: @unchecked Sendable {
+    private let lock = NSLock()
+    private var active = true
+    public init() {}
+    public func close() { lock.withLock { active = false } }
+    fileprivate func commit(_ operation: () throws -> Void) throws {
+        try lock.withLock {
+            guard active else { throw CancellationError() }
+            try Task.checkCancellation()
+            try operation()
+        }
     }
 }

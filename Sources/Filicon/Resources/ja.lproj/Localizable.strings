@@ -1413,3 +1413,7 @@
 "Group reply stopped or failed. The posted message was kept." = "グループの返信が停止したか、失敗しました。投稿済みのメッセージは保持されています。";
 "Priority messages may stop background work after the current response ends. User turns are protected; interrupted work is not automatically resumed." = "優先メッセージは現在の応答後にバックグラウンド作業を停止する場合があります。ユーザーのターンは中断されません。中断した作業は自動再開されません。";
 "Interrupted by an approved priority agent message. Work was not resumed automatically." = "承認済みの優先エージェントメッセージにより中断されました。作業は自動再開されていません。";
+/* Approved image publication */
+"User in this conversation" = "この会話のユーザー";
+"Publish these images in this conversation?" = "これらの画像をこの会話に投稿しますか？";
+"Published response" = "投稿済みの返信";

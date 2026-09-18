@@ -2582,6 +2582,10 @@ final class AppModel: ObservableObject {
                 guard let self else { throw CancellationError() }
                 try await self.authorizeAgentDelegation(sender: sender, recipient: recipient, text: text, call: call, context: context, images: images)
             },
+            authorizePublication: { [weak self] sender, text, images, call, context in
+                guard let self else { throw CancellationError() }
+                try await self.authorizeAgentImagePublication(sender: sender, text: text, images: images, call: call, context: context)
+            },
             authorize: { [weak self] sender, recipient, text, call, context in
                 guard let self else { throw CancellationError() }
                 try await self.authorizeAgentDelegation(sender: sender, recipient: recipient, text: text, call: call, context: context)
@@ -3100,6 +3104,24 @@ final class AppModel: ObservableObject {
         guard isAgentMessagingScopeActive(context.conversationID) else {
             throw CancellationError()
         }
+    }
+
+    private func authorizeAgentImagePublication(sender: AgentProfile, text: String, images: [AttachmentMetadata],
+                                                 call: NormalizedToolCall, context: ToolContext) async throws {
+        guard isAgentMessagingScopeActive(context.conversationID) else { throw CancellationError() }
+        let generation = autoReviewAccountGeneration
+        let fence = ApprovalFence(accountID: settings.accountScope ?? "local", agentID: context.conversationID.uuidString.lowercased(),
+                                  runID: context.runID, generation: generation)
+        await autoReviewBroker.activate(fence)
+        let action = AutoReviewAction(summary: "\(sender.name) → \(l10n("User in this conversation"))",
+            target: .resource(kind: "conversation", identifier: context.conversationID.uuidString), risks: [.sensitive],
+            context: .init(fence: fence, conversationID: context.conversationID, toolCallID: call.id.rawValue,
+                metadata: ["tool": "SendMessage", "agentMessage": text, "agentImagePublication": "true",
+                           "agentImages": String(decoding: try JSONEncoder().encode(images), as: UTF8.self)]))
+        let pending = PendingApproval(action: action, reason: "Approval required", expiresAt: Date().addingTimeInterval(300))
+        try await autoReviewBroker.waitForApprovalToExecute(pending) { [weak self] in await self?.registerAutoReviewApproval($0) }
+        try Task.checkCancellation()
+        guard generation == autoReviewAccountGeneration, isAgentMessagingScopeActive(context.conversationID) else { throw CancellationError() }
     }
 
     func toggleGroupReaction(groupID: UUID, messageID: UUID, emoji: String) async {

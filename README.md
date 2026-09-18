@@ -28,8 +28,12 @@ Agent collaboration is still partial parity with the unofficial reconstruction;
 see [the itemized audit](docs/Agent-collaboration-parity.md). **Agents → Messages →
 Attach images…** sends user-selected PNG/JPEG images to a single agent whose
 configured model supports image input. Agents may forward only images from the
-current incoming peer message, after a new preview approval. Group images and
-`SendMessage` images are not supported; unsupported inputs fail explicitly.
+current incoming peer message, after a new preview approval. `SendMessage` can
+publish those same incoming image IDs and a text report to the user after a
+separate preview approval. Published images remain visible in the mailbox after
+Stop, failure, or restart; this does not message another agent. Ordinary group
+image input, arbitrary paths/URLs, and generated images are not supported;
+unsupported inputs fail explicitly.
 
 ## Requirements
 

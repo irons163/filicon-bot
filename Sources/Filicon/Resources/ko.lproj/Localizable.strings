@@ -1413,3 +1413,7 @@
 "Group reply stopped or failed. The posted message was kept." = "그룹 답변이 중지되었거나 실패했습니다. 게시된 메시지는 유지됩니다.";
 "Priority messages may stop background work after the current response ends. User turns are protected; interrupted work is not automatically resumed." = "우선 메시지는 현재 응답 후 백그라운드 작업을 중단할 수 있습니다. 사용자 대화 차례는 보호되며, 중단된 작업은 자동으로 재개되지 않습니다.";
 "Interrupted by an approved priority agent message. Work was not resumed automatically." = "승인된 에이전트 우선 메시지로 중단되었습니다. 작업은 자동으로 재개되지 않았습니다.";
+/* Approved image publication */
+"User in this conversation" = "이 대화의 사용자";
+"Publish these images in this conversation?" = "이 대화에 이 이미지들을 게시할까요?";
+"Published response" = "게시된 응답";

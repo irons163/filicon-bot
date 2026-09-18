@@ -175,7 +175,9 @@ struct AgentMessagingView: View {
                 if let images = message.images { AgentMessageImagePreviews(images: images) }
                 if let delivery = message.delivery {
                     Text(deliveryTitle(delivery.state)).font(.caption).foregroundStyle(.secondary)
-                    if let response = delivery.response, !response.isEmpty, response.uppercased() != "PASS" {
+                    if let publications = delivery.publications, !publications.isEmpty {
+                        AgentPublishedResponses(publications: publications)
+                    } else if let response = delivery.response, !response.isEmpty, response.uppercased() != "PASS" {
                         Text((delivery.state == .cancelled && response == AgentExecutionSuperseded().localizedDescription)
                              || AgentImageError(rawValue: response) != nil
                              ? FiliconLocalization.string(response) : response).font(.callout).textSelection(.enabled)
@@ -266,6 +268,21 @@ struct AgentMessagingView: View {
         do { images = try await model.importAgentMessageImages(panel.urls); feedback = nil }
         catch is CancellationError {}
         catch { feedback = FiliconLocalization.string(error.localizedDescription) }
+    }
+}
+
+struct AgentPublishedResponses: View {
+    let publications: [RoomMessage]
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label(l10n("Published response"), systemImage: "bubble.left.and.text.bubble.right").font(.caption).foregroundStyle(.secondary)
+            ForEach(publications) { publication in
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(verbatim: publication.text).font(.callout).textSelection(.enabled)
+                    if let images = publication.images, !images.isEmpty { AgentMessageImagePreviews(images: images) }
+                }
+            }
+        }
     }
 }
 

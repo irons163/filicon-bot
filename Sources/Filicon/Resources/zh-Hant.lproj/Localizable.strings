@@ -1413,3 +1413,7 @@
 "Group reply stopped or failed. The posted message was kept." = "群組回覆已停止或失敗。已發送的訊息會保留。";
 "Priority messages may stop background work after the current response ends. User turns are protected; interrupted work is not automatically resumed." = "優先訊息可能在目前回覆結束後停止背景工作。使用者回合不受影響；被中斷的工作不會自動繼續。";
 "Interrupted by an approved priority agent message. Work was not resumed automatically." = "已被核准的優先代理人訊息中斷。工作未自動繼續。";
+/* Approved image publication */
+"User in this conversation" = "此對話的使用者";
+"Publish these images in this conversation?" = "要在此對話中發布這些圖片嗎？";
+"Published response" = "已發布的回覆";

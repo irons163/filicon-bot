@@ -308,6 +308,8 @@ public struct AgentMessageDelivery: Codable, Hashable, Sendable {
     public let originConversationID: UUID
     public var state: State
     public var response: String?
+    /// Explicit SendMessage output; nil in older text-only mailboxes.
+    public var publications: [RoomMessage]?
 
     public init(chainID: UUID, originConversationID: UUID, state: State = .queued, response: String? = nil) {
         self.chainID = chainID; self.originConversationID = originConversationID
@@ -373,13 +375,15 @@ public struct RoomMessage: Identifiable, Codable, Hashable, Sendable {
     public let createdAt: Date
     public var toolActivities: [RoomToolActivity]
     public var memberOutcome: RoomMemberOutcome?
-    public init(id: UUID = UUID(), groupID: UUID, senderID: UUID?, text: String, createdAt: Date = Date(), toolActivities: [RoomToolActivity] = [], memberOutcome: RoomMemberOutcome? = nil) {
+    public var images: [AttachmentMetadata]?
+    public init(id: UUID = UUID(), groupID: UUID, senderID: UUID?, text: String, createdAt: Date = Date(), toolActivities: [RoomToolActivity] = [], memberOutcome: RoomMemberOutcome? = nil, images: [AttachmentMetadata] = []) {
         self.id = id; self.groupID = groupID; self.senderID = senderID; self.text = text; self.createdAt = createdAt
         self.toolActivities = toolActivities
         self.memberOutcome = memberOutcome
+        self.images = images.isEmpty ? nil : images
     }
 
-    private enum CodingKeys: String, CodingKey { case id, groupID, senderID, text, createdAt, toolActivities, memberOutcome }
+    private enum CodingKeys: String, CodingKey { case id, groupID, senderID, text, createdAt, toolActivities, memberOutcome, images }
     public init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         id = try values.decode(UUID.self, forKey: .id)
@@ -389,6 +393,7 @@ public struct RoomMessage: Identifiable, Codable, Hashable, Sendable {
         createdAt = try values.decode(Date.self, forKey: .createdAt)
         toolActivities = try values.decodeIfPresent([RoomToolActivity].self, forKey: .toolActivities) ?? []
         memberOutcome = try values.decodeIfPresent(RoomMemberOutcome.self, forKey: .memberOutcome)
+        images = try values.decodeIfPresent([AttachmentMetadata].self, forKey: .images)
     }
 }
 
