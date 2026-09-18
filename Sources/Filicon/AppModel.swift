@@ -2700,10 +2700,13 @@ final class AppModel: ObservableObject {
         return profile
     }
 
-    func savedAgentMemories(agentID: UUID) async throws -> [AgentMemory] {
+    /// User-facing editor: shared scope includes every writer, unlike model-side forget.
+    func savedAgentMemories(agentID: UUID, scope: AgentMemory.Scope = .agent) async throws -> [AgentMemory] {
         let generation = autoReviewAccountGeneration
         guard let agentService, !agentMessagingAccountTransition else { throw CancellationError() }
-        let values = await agentService.memories(accountID: settings.accountScope ?? "local", agentID: agentID)
+        let values: [AgentMemory]
+        if scope == .user { values = await agentService.sharedUserMemories(accountID: settings.accountScope ?? "local") }
+        else { values = await agentService.memories(accountID: settings.accountScope ?? "local", agentID: agentID) }
         guard generation == autoReviewAccountGeneration else { throw CancellationError() }
         return values
     }
@@ -2739,12 +2742,16 @@ final class AppModel: ObservableObject {
         let fence = ApprovalFence(accountID: change.memory.accountID, agentID: context.conversationID.uuidString.lowercased(),
                                   runID: context.runID, generation: generation)
         await autoReviewBroker.activate(fence)
-        let action = AutoReviewAction(summary: "\(sender.name) → \(l10n(change.operation == .write ? "Save agent memory" : "Forget agent memory"))",
-            target: .resource(kind: "agent", identifier: sender.id.uuidString), risks: [.sensitive],
+        let shared = change.memory.scope == .user
+        let title: LocalizedText = shared ? (change.operation == .write ? "Save shared user memory" : "Forget shared user memory")
+            : (change.operation == .write ? "Save agent memory" : "Forget agent memory")
+        let action = AutoReviewAction(summary: "\(sender.name) → \(l10n(title))",
+            target: shared ? .resource(kind: "shared-user-memory", identifier: change.memory.accountID)
+                : .resource(kind: "agent", identifier: sender.id.uuidString), risks: [.sensitive],
             context: .init(fence: fence, conversationID: context.conversationID, toolCallID: call.id.rawValue,
                 metadata: ["tool": "update_state", "agentStateTarget": "memory", "agentMemoryAction": change.operation.rawValue,
                            "agentMemoryFact": change.memory.fact, "agentMemoryTier": change.memory.tier.rawValue,
-                           "agentMemoryOwner": sender.name]))
+                           "agentMemoryOwner": sender.name, "agentMemoryScope": change.memory.scope.rawValue]))
         let pending = PendingApproval(action: action, reason: "Approval required", expiresAt: Date().addingTimeInterval(300))
         try await autoReviewBroker.waitForApprovalToExecute(pending) { [weak self] in await self?.registerAutoReviewApproval($0) }
         try Task.checkCancellation()

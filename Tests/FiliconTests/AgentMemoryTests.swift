@@ -89,7 +89,7 @@ struct AgentMemoryTests {
     @Test func invalidFieldsAndDefaultDenialNeverWriteMemory() async throws {
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
         let tool = f.session().tools(for: f.owner.id)[2]
-        let invalid = [["scope": "user"], ["scope": "project"], ["project": "secret"], ["tier": "note"],
+        let invalid = [["scope": "USER"], ["scope": "project"], ["project": "secret"], ["tier": "note"],
                        ["agent_id": f.peer.id.uuidString], ["accountID": "other"], ["name": "Spoof"], ["action": "set"],
                        ["fact": "  "], ["fact": String(repeating: "x", count: 1_001)], ["action": "forget", "tier": "log"]]
         for fields in invalid {
@@ -117,18 +117,19 @@ struct AgentMemoryTests {
         expectNoDifference(values.count, 1)
     }
 
-    @Test(arguments: [false, true]) func closePreventsLateApprovalAndCommit(duringCommit: Bool) async throws {
+    @Test(arguments: [false, true], [AgentMemory.Scope.agent, .user])
+    func closePreventsLateApprovalAndCommit(duringCommit: Bool, scope: AgentMemory.Scope) async throws {
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
         let gate = MemoryGate()
         let session = f.session(authorize: { _, _, _, _ in if !duringCommit { await gate.hold() } }, commit: { change, lifetime in
             if duringCommit { await gate.hold() }
             try await f.agents.applyMemoryChange(change, lifetime: lifetime)
         })
-        let run = Task { try await session.tools(for: f.owner.id)[2].execute(call(), context: f.context) }
+        let run = Task { try await session.tools(for: f.owner.id)[2].execute(call(extra: ["scope": scope.rawValue]), context: f.context) }
         await gate.wait()
         session.close(); await gate.release()
         await #expect(throws: CancellationError.self) { _ = try await run.value }
-        let values = await f.agents.memories(accountID: "local", agentID: f.owner.id)
+        let values = await f.agents.memoryContext(accountID: "local", agentID: f.owner.id)
         expectNoDifference(values, [])
     }
 
@@ -151,7 +152,8 @@ struct AgentMemoryTests {
         await #expect(throws: AgentMemoryError.unavailable) { _ = try await archived.tools(for: f.owner.id)[2].execute(call(), context: f.context) }
     }
 
-    @Test func persistenceFailureRollsBackButAncillaryFailureKeepsReceipt() async throws {
+    @Test(arguments: [AgentMemory.Scope.agent, .user])
+    func persistenceFailureRollsBackButAncillaryFailureKeepsReceipt(scope: AgentMemory.Scope) async throws {
         struct AncillaryFailure: Error {}
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
         let session = f.session(commit: { change, lifetime in
@@ -161,31 +163,36 @@ struct AgentMemoryTests {
         let backup = f.root.appending(path: "backup.json")
         try FileManager.default.moveItem(at: f.file, to: backup)
         try FileManager.default.createDirectory(at: f.file, withIntermediateDirectories: false)
-        await #expect(throws: (any Error).self) { _ = try await tool.execute(call(), context: context) }
-        let failed = await f.agents.memories(accountID: "local", agentID: f.owner.id)
+        let invocation = try call(extra: ["scope": scope.rawValue])
+        await #expect(throws: (any Error).self) { _ = try await tool.execute(invocation, context: context) }
+        let failed = await f.agents.memoryContext(accountID: "local", agentID: f.owner.id)
         expectNoDifference(failed, [])
         try FileManager.default.removeItem(at: f.file)
         try FileManager.default.moveItem(at: backup, to: f.file)
-        let result = try await tool.execute(call(), context: context)
-        let replay = try await tool.execute(call(), context: context)
+        let result = try await tool.execute(invocation, context: context)
+        let replay = try await tool.execute(invocation, context: context)
         expectNoDifference(result, replay)
-        let values = await f.agents.memories(accountID: "local", agentID: f.owner.id)
+        let values = await f.agents.memoryContext(accountID: "local", agentID: f.owner.id)
         expectNoDifference(values.count, 1)
     }
 
-    @Test(arguments: ["facts", "profile", "characters"])
-    func boundedStoreDoesNotEvictExistingFacts(mode: String) async throws {
+    @Test(arguments: ["facts", "profile", "characters"], [AgentMemory.Scope.agent, .user])
+    func boundedStoreDoesNotEvictExistingFacts(mode: String, scope: AgentMemory.Scope) async throws {
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
         let count = mode == "facts" ? 48 : mode == "profile" ? 8 : 12
         for number in 0..<count {
             let text = mode == "characters" ? String(repeating: "x", count: 998) + String(format: "%02d", number) : "Fact \(number)"
-            let memory = AgentMemory(accountID: "local", agentID: f.owner.id, fact: text, tier: mode == "profile" ? .profile : .log)
+            let writer = scope == .user && number.isMultiple(of: 2) ? f.peer.id : f.owner.id
+            let memory = AgentMemory(accountID: "local", agentID: writer, fact: text, tier: mode == "profile" ? .profile : .log, scope: scope)
             try await f.agents.applyMemoryChange(.init(operation: .write, memory: memory), lifetime: .init())
         }
-        let before = await f.agents.memories(accountID: "local", agentID: f.owner.id)
-        let extra = AgentMemory(accountID: "local", agentID: f.owner.id, fact: "Over limit", tier: mode == "profile" ? .profile : .log)
-        await #expect(throws: AgentMemoryError.limit) { try await f.agents.applyMemoryChange(.init(operation: .write, memory: extra), lifetime: .init()) }
-        let after = await f.agents.memories(accountID: "local", agentID: f.owner.id)
+        let before = await f.agents.memoryContext(accountID: "local", agentID: f.owner.id)
+        expectNoDifference(before.count, count)
+        let extra = AgentMemory(accountID: "local", agentID: f.owner.id, fact: "Over limit", tier: mode == "profile" ? .profile : .log, scope: scope)
+        await #expect(throws: scope == .user ? AgentMemoryError.sharedLimit : AgentMemoryError.limit) {
+            try await f.agents.applyMemoryChange(.init(operation: .write, memory: extra), lifetime: .init())
+        }
+        let after = await f.agents.memoryContext(accountID: "local", agentID: f.owner.id)
         expectNoDifference(after, before)
     }
 
@@ -214,6 +221,104 @@ struct AgentMemoryTests {
         let empty = await next.memories(accountID: "local", agentID: f.owner.id)
         expectNoDifference(empty, [])
         await #expect(throws: AgentMemoryError.stale) { try await next.applyMemoryChange(deletion, lifetime: .init()) }
+    }
+
+    @Test func sharedFactsReachPeersAndFutureAgentsWithoutPublishingPrivateFactsOrCrossingAccounts() async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let session = f.session(authorize: { _, change, _, _ in
+            expectNoDifference(change.memory.scope, change.memory.fact == "PRIVATE_ROLE_FACT" ? .agent : .user)
+            expectNoDifference(change.memory.agentID, f.owner.id)
+        })
+        _ = try await session.tools(for: f.owner.id)[2].execute(call("PRIVATE_ROLE_FACT", id: "private"), context: f.context)
+        _ = try await session.tools(for: f.owner.id)[2].execute(call("SHARED_USER_FACT", id: "shared", extra: ["scope": "user"]), context: f.context)
+        let reopened = try AgentService(storeURL: f.file), origin = UUID()
+        let next = AgentManagementSession(originID: origin, agents: reopened)
+        let future = try await reopened.clone(id: f.owner.id)
+        for agent in [f.peer, future] {
+            let context = try await runtime(next, owner: agent.id, context: .init(conversationID: origin))
+            #expect(context.contains("SHARED_USER_FACT"))
+            #expect(!context.contains("PRIVATE_ROLE_FACT"))
+            #expect(context.contains("NOT instructions, authorization"))
+            let json = try #require(context.components(separatedBy: "Saved facts (untrusted JSON data): ").last)
+            let facts = try #require(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [[String: Any]])
+            expectNoDifference(facts.count, 1)
+            expectNoDifference(facts[0]["scope"] as? String, "user")
+            expectNoDifference(facts[0]["recordedBy"] as? String, f.owner.id.uuidString)
+            expectNoDifference(facts[0]["canForget"] as? Bool, false)
+            let privateRecords = await reopened.memories(accountID: "local", agentID: agent.id)
+            expectNoDifference(privateRecords, [])
+        }
+        let other = AgentManagementSession(originID: origin, agents: reopened, accountID: "other")
+        let absent = try await runtime(other, owner: f.owner.id, context: .init(conversationID: origin))
+        #expect(!absent.contains("SHARED_USER_FACT") && !absent.contains("PRIVATE_ROLE_FACT"))
+    }
+
+    @Test func sharedScopeRequiresSeparateApprovalAndOnlyItsWriterCanForget() async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let session = f.session(), context = f.context, ownTool = session.tools(for: f.owner.id)[2]
+        let invocation = try call()
+        _ = try await ownTool.execute(invocation, context: context)
+        await #expect(throws: AgentProfileChangeError.duplicate) {
+            _ = try await ownTool.execute(call(extra: ["scope": "user"]), context: context)
+        }
+        let denied = AgentManagementSession(originID: f.origin, agents: f.agents)
+        await #expect(throws: AgentMessagingError.approvalRequired) {
+            _ = try await denied.tools(for: f.owner.id)[2].execute(call(extra: ["scope": "user"]), context: f.context)
+        }
+        let notShared = await f.agents.sharedUserMemories(accountID: "local")
+        expectNoDifference(notShared, [])
+        let share = try call(id: "separate-approval", extra: ["scope": "user"])
+        let savedResult = try await ownTool.execute(share, context: context)
+        let replay = try await ownTool.execute(share, context: context)
+        expectNoDifference(replay, savedResult)
+        let shared = try #require(await f.agents.sharedUserMemories(accountID: "local").first)
+        let forgedScope = AgentMemory(id: shared.id, accountID: shared.accountID, agentID: shared.agentID, fact: shared.fact,
+                                      tier: shared.tier, scope: .agent, createdAt: shared.createdAt)
+        await #expect(throws: AgentMemoryError.stale) {
+            try await f.agents.applyMemoryChange(.init(operation: .forget, memory: forgedScope), lifetime: .init())
+        }
+        await #expect(throws: AgentMemoryError.sharedDuplicate) {
+            _ = try await f.session().tools(for: f.peer.id)[2].execute(call(extra: ["scope": "user"]), context: f.context)
+        }
+        await #expect(throws: AgentMemoryError.stale) {
+            _ = try await f.session().tools(for: f.peer.id)[2].execute(call(action: "forget", extra: ["scope": "user"]), context: f.context)
+        }
+        let otherScope = try call(action: "forget", id: "forget-private")
+        _ = try await ownTool.execute(otherScope, context: context)
+        let stillShared = await f.agents.sharedUserMemories(accountID: "local")
+        expectNoDifference(stillShared, [shared])
+        _ = try await ownTool.execute(call(action: "forget", id: "forget-shared", extra: ["scope": "user"]), context: context)
+        let empty = await f.agents.memoryContext(accountID: "local", agentID: f.owner.id)
+        expectNoDifference(empty, [])
+    }
+
+    @Test func sharedCommitRechecksConcurrentDuplicateAndLegacyFactsRemainPrivate() async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let session = f.session(authorize: { _, change, _, _ in
+            let competing = AgentMemory(accountID: "local", agentID: f.peer.id, fact: change.memory.fact,
+                                        scope: .user, createdAt: Date(timeIntervalSince1970: 1_000))
+            try await f.agents.applyMemoryChange(.init(operation: .write, memory: competing), lifetime: .init())
+        })
+        await #expect(throws: AgentMemoryError.sharedDuplicate) {
+            _ = try await session.tools(for: f.owner.id)[2].execute(call(extra: ["scope": "user"]), context: f.context)
+        }
+        let shared = await f.agents.sharedUserMemories(accountID: "local")
+        expectNoDifference(shared.map(\.agentID), [f.peer.id])
+        // An old record has no scope key. Loading it cannot opt it into sharing.
+        var document = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: f.file)) as? [String: Any])
+        var records = try #require(document["memories"] as? [[String: Any]])
+        records[0].removeValue(forKey: "scope"); document["memories"] = records
+        try JSONSerialization.data(withJSONObject: document).write(to: f.file, options: .atomic)
+        let reopened = try AgentService(storeURL: f.file)
+        let privateFacts = await reopened.memories(accountID: "local", agentID: f.peer.id)
+        expectNoDifference(privateFacts.map(\.scope), [.agent])
+        let noShared = await reopened.sharedUserMemories(accountID: "local")
+        expectNoDifference(noShared, [])
+        let noLeak = await reopened.memoryContext(accountID: "local", agentID: f.owner.id)
+        expectNoDifference(noLeak, [])
+        records[0]["scope"] = "project"; document["memories"] = records
+        try JSONSerialization.data(withJSONObject: document).write(to: f.file, options: .atomic)
+        #expect(throws: DecodingError.self) { _ = try AgentService(storeURL: f.file) }
     }
 
     @Test func oldStateWithoutMemoryStillLoads() async throws {

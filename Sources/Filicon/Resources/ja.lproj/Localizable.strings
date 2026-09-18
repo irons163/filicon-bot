@@ -1418,6 +1418,15 @@
 "Publish these images in this conversation?" = "これらの画像をこの会話に投稿しますか？";
 "Published response" = "投稿済みの返信";
 /* Approved own-agent memory */
+"Shared user memory" = "共有ユーザー記憶";
+"Save shared user memory" = "共有ユーザー記憶を保存";
+"Forget shared user memory" = "共有ユーザー記憶を削除";
+"Forget this shared fact for all agents?" = "すべてのエージェントからこの共有情報を削除しますか？";
+"Recorded by %@" = "記録者：%@";
+"Shared facts are sent to every current and future agent's configured model in this account during group and mailbox turns, including agents outside this group. Sharing does not grant tool permissions." = "共有情報は、グループとメッセージのやり取りで、このアカウントの現在および将来のすべてのエージェントに設定されたモデルへ送信されます。このグループ外のエージェントも含まれます。共有によってツール権限が付与されることはありません。";
+"This fact is already saved in shared user memory." = "この事実は共有ユーザー記憶に保存済みです。";
+"Shared user memory is limited to 48 facts, including 8 profile facts, and 12,000 characters per account across all agents." = "共有ユーザー記憶は、アカウント内の全エージェントで基本情報8件を含む事実48件、合計12,000文字までです。";
+"Use memory write/forget with one fact of at most 1,000 characters, scope agent or user, and tier profile or log. Forget requires exact recorded text, the same scope, and no tier." = "memory write／forget には最大1,000文字の事実、scope agent または user、tier profile または log を指定してください。削除には正確な原文と同じ scope を指定し、tier は省略してください。";
 "Use memory write/forget with one fact of at most 1,000 characters, scope agent, and tier profile or log. Forget requires exact recorded text and no tier." = "memory write／forget には最大1,000文字の事実、scope agent、tier profile または log を指定してください。削除には記録された正確な文章を指定し、tier は省略してください。";
 "This memory changed or no longer exists. Refresh the memories and request approval again." = "この記憶は変更されたか、存在しません。記憶を更新して、承認を再度リクエストしてください。";
 "This fact is already saved for this agent." = "この事実はこのエージェントに保存済みです。";

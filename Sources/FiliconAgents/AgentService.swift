@@ -130,13 +130,26 @@ public actor AgentService {
 
     public func profile(id: UUID) -> AgentProfile? { state.agents.first { $0.id == id } }
 
-    public func memories(accountID: String, agentID: UUID) -> [AgentMemory] {
-        state.memories.filter { $0.accountID == accountID && $0.agentID == agentID }
-            .sorted {
-                if $0.tier != $1.tier { return $0.tier == .profile }
-                if $0.createdAt != $1.createdAt { return $0.createdAt < $1.createdAt }
-                return $0.id.uuidString < $1.id.uuidString
-            }
+    /// Only the specified writer's records; models cannot forget another writer's shard.
+    public func memories(accountID: String, agentID: UUID, scope: AgentMemory.Scope = .agent) -> [AgentMemory] {
+        sortedMemories(state.memories.filter { $0.accountID == accountID && $0.agentID == agentID && $0.scope == scope })
+    }
+
+    public func sharedUserMemories(accountID: String) -> [AgentMemory] {
+        sortedMemories(state.memories.filter { $0.accountID == accountID && $0.scope == .user })
+    }
+
+    /// One actor snapshot: own private facts plus explicitly shared facts in this account.
+    public func memoryContext(accountID: String, agentID: UUID) -> [AgentMemory] {
+        sortedMemories(state.memories.filter { $0.accountID == accountID && ($0.scope == .user || $0.agentID == agentID) })
+    }
+
+    private func sortedMemories(_ memories: [AgentMemory]) -> [AgentMemory] {
+        memories.sorted {
+            if $0.tier != $1.tier { return $0.tier == .profile }
+            if $0.createdAt != $1.createdAt { return $0.createdAt < $1.createdAt }
+            return $0.id.uuidString < $1.id.uuidString
+        }
     }
 
     public func applyMemoryChange(_ change: AgentMemoryChange, lifetime: AgentMemoryChangeLifetime) throws {
@@ -151,19 +164,22 @@ public actor AgentService {
             }
             switch change.operation {
             case .write:
-                let current = memories(accountID: memory.accountID, agentID: memory.agentID)
+                let current = memory.scope == .user ? sharedUserMemories(accountID: memory.accountID)
+                    : memories(accountID: memory.accountID, agentID: memory.agentID)
                 guard !current.contains(where: { $0.fact == memory.fact }), !state.memories.contains(where: { $0.id == memory.id }) else {
-                    throw AgentMemoryError.duplicate
+                    throw memory.scope == .user ? AgentMemoryError.sharedDuplicate : AgentMemoryError.duplicate
                 }
                 guard current.count < 48, current.reduce(0, { $0 + $1.fact.count }) + memory.fact.count <= 12_000,
-                      memory.tier != .profile || current.filter({ $0.tier == .profile }).count < 8 else { throw AgentMemoryError.limit }
+                      memory.tier != .profile || current.filter({ $0.tier == .profile }).count < 8 else {
+                    throw memory.scope == .user ? AgentMemoryError.sharedLimit : AgentMemoryError.limit
+                }
                 state.memories.append(memory)
             case .forget:
                 // Record identity and content fence deletion; Date's sub-millisecond
                 // floating-point round trip is not an edit or a new record.
                 guard let index = state.memories.firstIndex(where: {
                     $0.id == memory.id && $0.accountID == memory.accountID && $0.agentID == memory.agentID
-                        && $0.fact == memory.fact && $0.tier == memory.tier
+                        && $0.fact == memory.fact && $0.tier == memory.tier && $0.scope == memory.scope
                 }) else { throw AgentMemoryError.stale }
                 state.memories.remove(at: index)
             }

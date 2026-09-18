@@ -37,13 +37,19 @@ unsupported inputs fail explicitly.
 
 In group and mailbox turns, agents can propose remembering or forgetting a short
 fact using `update_state(target:"memory", action:"write"|"forget", fact:...)`.
-Each change needs explicit approval. Saved facts belong to one account and one
-agent and are included in that agent's future group/mailbox requests, even in a
-different conversation or after restart. **Agents → Edit → Agent memory** lets
-you refresh, inspect, and forget them. Forgetting stops future injection, not
-already-sent messages or in-flight requests. This is bounded own-agent memory
-(`profile`/`log` facts), not shared user/project memory, automatic transcript
-capture, or full parity with the reference runtime.
+Each change needs explicit approval. Omitted scope (or `scope:"agent"`) remains
+private to the recording agent in this account. Explicit `scope:"user"` proposes
+sharing with **all current and future agents in this account**, including agents
+outside the current group, through their configured models during group/mailbox
+turns. The approval shows this wider audience; existing facts are not migrated
+to shared memory. Models can forget only facts they recorded, using the exact
+text and original scope. **Agents → Edit → Agent memory / Shared user memory**
+lets the user inspect and forget records, including shared facts from another
+agent. Forgetting stops future injection, not already-sent messages or in-flight
+requests. Each private agent store and the entire shared account store have
+separate limits of 48 facts / 8 foundational facts / 12,000 characters. This is
+bounded `profile`/`log` memory, not project memory, automatic transcript capture,
+memory in other execution entry points, or full parity with the reference runtime.
 
 ## Requirements
 

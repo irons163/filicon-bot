@@ -1418,6 +1418,15 @@
 "Publish these images in this conversation?" = "Publish these images in this conversation?";
 "Published response" = "Published response";
 /* Approved own-agent memory */
+"Shared user memory" = "Shared user memory";
+"Save shared user memory" = "Save shared user memory";
+"Forget shared user memory" = "Forget shared user memory";
+"Forget this shared fact for all agents?" = "Forget this shared fact for all agents?";
+"Recorded by %@" = "Recorded by %@";
+"Shared facts are sent to every current and future agent's configured model in this account during group and mailbox turns, including agents outside this group. Sharing does not grant tool permissions." = "Shared facts are sent to every current and future agent's configured model in this account during group and mailbox turns, including agents outside this group. Sharing does not grant tool permissions.";
+"This fact is already saved in shared user memory." = "This fact is already saved in shared user memory.";
+"Shared user memory is limited to 48 facts, including 8 profile facts, and 12,000 characters per account across all agents." = "Shared user memory is limited to 48 facts, including 8 profile facts, and 12,000 characters per account across all agents.";
+"Use memory write/forget with one fact of at most 1,000 characters, scope agent or user, and tier profile or log. Forget requires exact recorded text, the same scope, and no tier." = "Use memory write/forget with one fact of at most 1,000 characters, scope agent or user, and tier profile or log. Forget requires exact recorded text, the same scope, and no tier.";
 "Use memory write/forget with one fact of at most 1,000 characters, scope agent, and tier profile or log. Forget requires exact recorded text and no tier." = "Use memory write/forget with one fact of at most 1,000 characters, scope agent, and tier profile or log. Forget requires exact recorded text and no tier.";
 "This memory changed or no longer exists. Refresh the memories and request approval again." = "This memory changed or no longer exists. Refresh the memories and request approval again.";
 "This fact is already saved for this agent." = "This fact is already saved for this agent.";

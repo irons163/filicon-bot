@@ -1418,6 +1418,15 @@
 "Publish these images in this conversation?" = "Publier ces images dans cette conversation ?";
 "Published response" = "Réponse publiée";
 /* Approved own-agent memory */
+"Shared user memory" = "Mémoire utilisateur partagée";
+"Save shared user memory" = "Enregistrer un souvenir utilisateur partagé";
+"Forget shared user memory" = "Oublier un souvenir utilisateur partagé";
+"Forget this shared fact for all agents?" = "Oublier ce fait partagé pour tous les agents ?";
+"Recorded by %@" = "Enregistré par %@";
+"Shared facts are sent to every current and future agent's configured model in this account during group and mailbox turns, including agents outside this group. Sharing does not grant tool permissions." = "Les faits partagés sont envoyés aux modèles configurés de tous les agents actuels et futurs de ce compte lors des échanges de groupe et de messagerie, y compris ceux hors de ce groupe. Le partage n’accorde aucune autorisation d’outil.";
+"This fact is already saved in shared user memory." = "Ce fait est déjà enregistré dans la mémoire utilisateur partagée.";
+"Shared user memory is limited to 48 facts, including 8 profile facts, and 12,000 characters per account across all agents." = "La mémoire utilisateur partagée est limitée à 48 faits, dont 8 fondamentaux, et 12 000 caractères par compte, tous agents confondus.";
+"Use memory write/forget with one fact of at most 1,000 characters, scope agent or user, and tier profile or log. Forget requires exact recorded text, the same scope, and no tier." = "Utilisez memory write/forget avec un fait de 1 000 caractères maximum, scope agent ou user et tier profile ou log. Pour oublier, fournissez le texte exact et le même scope, sans tier.";
 "Use memory write/forget with one fact of at most 1,000 characters, scope agent, and tier profile or log. Forget requires exact recorded text and no tier." = "Utilisez memory write/forget avec un fait de 1 000 caractères maximum, scope agent et tier profile ou log. Pour oublier, fournissez le texte exact enregistré sans tier.";
 "This memory changed or no longer exists. Refresh the memories and request approval again." = "Ce souvenir a changé ou n’existe plus. Actualisez les souvenirs et demandez à nouveau l’approbation.";
 "This fact is already saved for this agent." = "Ce fait est déjà enregistré pour cet agent.";

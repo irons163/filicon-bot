@@ -498,19 +498,34 @@ struct AgentGroupApprovalDetails: View {
 
 struct AgentMemoryApprovalDetails: View {
     let metadata: [String: String]
+    private var scope: AgentMemory.Scope { AgentMemory.Scope(rawValue: metadata["agentMemoryScope"] ?? "agent") ?? .agent }
+    private var title: LocalizedText {
+        if scope == .user { return metadata["agentMemoryAction"] == "forget" ? "Forget shared user memory" : "Save shared user memory" }
+        return metadata["agentMemoryAction"] == "forget" ? "Forget agent memory" : "Save agent memory"
+    }
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(l10n(metadata["agentMemoryAction"] == "forget" ? "Forget agent memory" : "Save agent memory")).font(.headline)
+            Text(l10n(title)).font(.headline)
             Text(verbatim: metadata["agentMemoryOwner"] ?? "").font(.callout.weight(.semibold))
+            Text(l10n(scope.memoryTitleKey)).font(.callout.weight(.semibold))
             Text(l10n(metadata["agentMemoryTier"] == "profile" ? "Foundational fact" : "Dated fact")).font(.caption)
             Text(verbatim: metadata["agentMemoryFact"] ?? "").fixedSize(horizontal: false, vertical: true)
-            Text(l10n("Saved facts are sent to this agent's configured model in future group and mailbox turns in this account. They are not shared with other agents or used as tool permissions."))
+            Text(l10n(scope.memoryDisclosureKey))
                 .font(.caption).foregroundStyle(FiliconTheme.textSecondary)
             if metadata["agentMemoryAction"] == "forget" {
                 Text(l10n("Forgetting stops future memory injection. Existing messages and running requests are not erased."))
                     .font(.caption).foregroundStyle(FiliconTheme.textSecondary)
             }
         }.textSelection(.enabled)
+    }
+}
+
+extension AgentMemory.Scope {
+    var memoryTitleKey: LocalizedText { self == .user ? "Shared user memory" : "Agent memory" }
+    var memoryDisclosureKey: LocalizedText {
+        self == .user
+            ? "Shared facts are sent to every current and future agent's configured model in this account during group and mailbox turns, including agents outside this group. Sharing does not grant tool permissions."
+            : "Saved facts are sent to this agent's configured model in future group and mailbox turns in this account. They are not shared with other agents or used as tool permissions."
     }
 }
 

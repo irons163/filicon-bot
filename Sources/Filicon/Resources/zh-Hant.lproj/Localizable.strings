@@ -1418,6 +1418,15 @@
 "Publish these images in this conversation?" = "要在此對話中發布這些圖片嗎？";
 "Published response" = "已發布的回覆";
 /* Approved own-agent memory */
+"Shared user memory" = "共享使用者記憶";
+"Save shared user memory" = "儲存共享使用者記憶";
+"Forget shared user memory" = "忘記共享使用者記憶";
+"Forget this shared fact for all agents?" = "要為所有代理人忘記這項共享事實嗎？";
+"Recorded by %@" = "記錄者：%@";
+"Shared facts are sent to every current and future agent's configured model in this account during group and mailbox turns, including agents outside this group. Sharing does not grant tool permissions." = "共享事實會在群組聊天及訊息工作階段中，傳送給此帳號內所有現有及未來代理人所設定的模型，包含不在此群組的代理人。共享不會授予工具權限。";
+"This fact is already saved in shared user memory." = "共享使用者記憶已儲存這項事實。";
+"Shared user memory is limited to 48 facts, including 8 profile facts, and 12,000 characters per account across all agents." = "所有代理人共用的使用者記憶，每個帳號最多可儲存 48 項事實，其中基礎事實最多 8 項，合計不得超過 12,000 字元。";
+"Use memory write/forget with one fact of at most 1,000 characters, scope agent or user, and tier profile or log. Forget requires exact recorded text, the same scope, and no tier." = "請使用 memory write／forget，單一事實最多 1,000 字元、scope 為 agent 或 user、tier 為 profile 或 log。刪除須提供記錄原文及相同 scope，且不得指定 tier。";
 "Use memory write/forget with one fact of at most 1,000 characters, scope agent, and tier profile or log. Forget requires exact recorded text and no tier." = "請使用 memory write／forget，單一事實最多 1,000 字元、scope 為 agent、tier 為 profile 或 log。刪除須提供完整記錄原文，且不得指定 tier。";
 "This memory changed or no longer exists. Refresh the memories and request approval again." = "這筆記憶已變更或不存在。請重新整理記憶後再次要求核准。";
 "This fact is already saved for this agent." = "此代理人已儲存這項事實。";

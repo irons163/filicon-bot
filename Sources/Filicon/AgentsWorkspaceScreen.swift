@@ -332,7 +332,10 @@ struct AgentEditorView: View {
                 Text(saveError).font(.callout).foregroundStyle(.red)
                     .accessibilityIdentifier("agent-editor-error")
             }
-            if !isNew { AgentMemorySection(agentID: profile.id) }
+            if !isNew {
+                AgentMemorySection(agentID: profile.id, scope: .agent)
+                AgentMemorySection(agentID: profile.id, scope: .user)
+            }
             HStack {
                 Button(agentString("Cancel")) { dismiss() }.keyboardShortcut(.cancelAction)
                 Spacer()
@@ -404,20 +407,25 @@ struct AgentEditorView: View {
 private struct AgentMemorySection: View {
     @EnvironmentObject private var model: AppModel
     let agentID: UUID
+    let scope: AgentMemory.Scope
     @State private var memories: [AgentMemory] = []
     @State private var pendingRemoval: AgentMemory?
     @State private var confirmsRemoval = false
     @State private var busy = false
     @State private var failure: String?
     var body: some View {
-        Section(l10n("Agent memory")) {
-            Text(l10n("Saved facts are sent to this agent's configured model in future group and mailbox turns in this account. They are not shared with other agents or used as tool permissions."))
+        Section(l10n(scope.memoryTitleKey)) {
+            Text(l10n(scope.memoryDisclosureKey))
                 .font(.caption).foregroundStyle(.secondary)
             if memories.isEmpty { Text(l10n("No saved facts.")).foregroundStyle(.secondary) }
             ForEach(memories) { memory in
                 HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(l10n(memory.tier == .profile ? "Foundational fact" : "Dated fact")).font(.caption).foregroundStyle(.secondary)
+                        if scope == .user {
+                            Text(String(format: l10n("Recorded by %@"), model.agents.first { $0.id == memory.agentID }?.name ?? memory.agentID.uuidString))
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
                         Text(verbatim: memory.fact).textSelection(.enabled)
                         Text(memory.createdAt, format: .dateTime.year().month().day()).font(.caption).foregroundStyle(.secondary)
                     }
@@ -430,7 +438,7 @@ private struct AgentMemorySection: View {
         }
         .disabled(busy)
         .task(id: model.settings.accountScope ?? "local") { await accountChanged() }
-        .confirmationDialog(l10n("Forget this fact?"), isPresented: $confirmsRemoval, titleVisibility: .visible) {
+        .confirmationDialog(l10n(scope == .user ? "Forget this shared fact for all agents?" : "Forget this fact?"), isPresented: $confirmsRemoval, titleVisibility: .visible) {
             Button(l10n("Forget"), role: .destructive) { Task { await confirmForgetButtonTapped() } }
             Button(l10n("Cancel"), role: .cancel) { pendingRemoval = nil }
         } message: {
@@ -442,11 +450,11 @@ private struct AgentMemorySection: View {
         await refreshButtonTapped()
     }
     private func refreshButtonTapped() async {
-        let scope = model.settings.accountScope ?? "local"
+        let account = model.settings.accountScope ?? "local"
         do {
-            let values = try await model.savedAgentMemories(agentID: agentID)
+            let values = try await model.savedAgentMemories(agentID: agentID, scope: scope)
             try Task.checkCancellation()
-            guard scope == model.settings.accountScope ?? "local" else { return }
+            guard account == model.settings.accountScope ?? "local" else { return }
             memories = values; failure = nil
         } catch is CancellationError {} catch { failure = FiliconLocalization.string(error.localizedDescription) }
     }
