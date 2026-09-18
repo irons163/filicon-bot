@@ -1395,3 +1395,5 @@
 "No new contribution this turn." = "このターンでは新しい補足はありません。";
 "New agents use this description as their initial instructions. Group membership and permissions are unchanged." = "新しいエージェントはこの説明を初期指示として使用します。グループのメンバーと権限は変更されません。";
 "Only the name and public description change. Private instructions, model and permissions are unchanged." = "名前と公開説明のみを変更します。非公開の指示、モデル、権限は変更されません。";
+"Update own profile" = "自分のプロフィールを変更";
+"Empty" = "空欄";

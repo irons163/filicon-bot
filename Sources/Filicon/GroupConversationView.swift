@@ -435,7 +435,7 @@ struct GroupToolApprovalPanel: View {
                     // outgoing payload must be visible in full before approval.
                     Text(verbatim: text).font(.callout).textSelection(.enabled)
                 }
-                if ["CreateAgent", "UpdateAgent"].contains(approval.action.context.metadata["tool"] ?? "") {
+                if ["CreateAgent", "UpdateAgent", "update_state"].contains(approval.action.context.metadata["tool"] ?? "") {
                     AgentProfileApprovalDetails(metadata: approval.action.context.metadata)
                 }
                 Text(FiliconLocalization.string(approval.reason)).font(.caption).foregroundStyle(FiliconTheme.textSecondary)
@@ -460,6 +460,9 @@ struct AgentProfileApprovalDetails: View {
     let metadata: [String: String]
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
+            if metadata["tool"] == "update_state" {
+                Text(l10n("Update own profile")).font(.callout.weight(.semibold))
+            }
             field("Name", before: metadata["previousAgentName"], after: metadata["agentName"])
             field("Description", before: metadata["previousAgentDescription"], after: metadata["agentDescription"])
             if metadata["tool"] == "CreateAgent" {
@@ -481,7 +484,11 @@ struct AgentProfileApprovalDetails: View {
                 Text(verbatim: before).font(.callout)
                 Image(systemName: "arrow.down").font(.caption)
             }
-            Text(verbatim: after ?? "").font(.callout).fixedSize(horizontal: false, vertical: true)
+            if let after, !after.isEmpty {
+                Text(verbatim: after).font(.callout).fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text(l10n("Empty")).font(.callout).foregroundStyle(FiliconTheme.textSecondary)
+            }
         }
     }
 }

@@ -1395,3 +1395,5 @@
 "No new contribution this turn." = "Aucune nouvelle contribution pour ce tour.";
 "New agents use this description as their initial instructions. Group membership and permissions are unchanged." = "Cette description sert d’instructions initiales aux nouveaux agents. La composition des groupes et les autorisations restent inchangées.";
 "Only the name and public description change. Private instructions, model and permissions are unchanged." = "Seuls le nom et la description publique changent. Les instructions privées, le modèle et les autorisations restent inchangés.";
+"Update own profile" = "Modifier son propre profil";
+"Empty" = "Vide";

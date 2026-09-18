@@ -115,5 +115,10 @@ messaging variants remain incomplete. Scoped CreateAgent/UpdateAgent now run in
 group and mailbox turns with mandatory exact-field approval, a four-change cap,
 stop/account revocation and replay protection. Creation inherits the requester's
 model but no private context, membership or permissions. Updates change only
-name/public summary, not private persona; own-profile update_state remains
-unimplemented. See the collaboration audit for current validation limits.
+name/public summary, not private persona. Own-profile
+`update_state(target:"profile", action:"set")` now uses the same approval and
+revocation path, a host-fixed identity and the shared four-change cap. An explicit
+empty description clears only the public summary. Subsequent group turns reload
+the profile without expanding the original participants. Other update_state
+targets and full private persona/memory parity remain incomplete.
+See the collaboration audit for current validation limits.

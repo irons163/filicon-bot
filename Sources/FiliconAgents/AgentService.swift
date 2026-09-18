@@ -152,13 +152,13 @@ public actor AgentService {
                                       instructions: change.description, providerID: change.providerID, modelID: change.modelID,
                                       createdAt: at)
                 state.agents.append(result)
-            case .update:
-                guard change.requesterID != change.targetID,
+            case .update, .setOwnProfile:
+                guard (change.operation == .setOwnProfile ? change.requesterID == change.targetID : change.requesterID != change.targetID),
                       let index = state.agents.firstIndex(where: { $0.id == change.targetID }),
                       state.agents[index].archivedAt == nil else { throw AgentProfileChangeError.unavailable }
                 guard state.agents[index].name == change.previousName,
                       state.agents[index].summary == change.previousDescription else { throw AgentProfileChangeError.stale }
-                guard !change.description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || change.description == change.previousDescription else {
+                guard change.operation == .setOwnProfile || !change.description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || change.description == change.previousDescription else {
                     throw AgentProfileChangeError.invalidFields
                 }
                 state.agents[index].name = change.name

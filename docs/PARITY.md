@@ -2,7 +2,7 @@
 
 本矩陣保留固定的 48 個 parity ID，對照目前 macOS Swift 實作。`complete` 表示該列所述能力有歷史實作證據，不代表原版所有細項均已重新核驗；`partial` 表示仍有功能、接線或驗證缺口；`NA` 表示該列是來源 runtime 的實作細節，不是 macOS 產品行為。這不是「原版功能全部都有」的保證。
 
-2026-09-18 核對 reconstructed 原始碼後，修正為 44 筆 `complete`、3 筆 `partial`、1 筆 `NA`（`UPD-04`）。`AGENT-01` 已補受審批的模型 `CreateAgent`／`UpdateAgent`；仍限制在有 agent 身分的群組／mailbox，Update 不改私人 persona，own-profile `update_state` 尚缺，因此維持 partial。其他列的驗證欄保留歷史紀錄，不表示本次重新驗證。細項見 [協作核對紀錄](Agent-collaboration-parity.md)。
+2026-09-18 核對 reconstructed 原始碼後，修正為 44 筆 `complete`、3 筆 `partial`、1 筆 `NA`（`UPD-04`）。`AGENT-01` 已補受審批的模型 `CreateAgent`／`UpdateAgent` 及 own-profile `update_state(profile.set)`；仍限制在有 agent 身分的群組／mailbox，不改私人 persona，也未涵蓋其他 update_state 路由，因此維持 partial。其他列的驗證欄保留歷史紀錄，不表示本次重新驗證。細項見 [協作核對紀錄](Agent-collaboration-parity.md)。
 
 ## Matrix
 
@@ -55,7 +55,7 @@
 
 | ID | 現行實作（authoritative evidence） | 狀態 | 驗證 |
 |---|---|---|---|
-| AGENT-01 | `AgentService`、`Models`、`AgentsWorkspaceScreen`、`AgentAvatarStore` 提供 UI profile CRUD。`AgentManagementSession` 在群組／mailbox 接上 `CreateAgent`／`UpdateAgent`，完整欄位審批、停止撤銷、四次上限、重播防護與原子儲存。只改名稱／公開摘要；新增沿用發起者模型，不複製私人上下文或自動加入群組。own-profile `update_state` 與完整原版 persona/runtime 行為仍缺。 | partial | `AgentManagementSessionTests`、`AgentManagementAppIntegrationTests`；本輪驗證狀態見協作核對紀錄 |
+| AGENT-01 | `AgentService`、`Models`、`AgentsWorkspaceScreen`、`AgentAvatarStore` 提供 UI profile CRUD。`AgentManagementSession` 在群組／mailbox 接上 `CreateAgent`／`UpdateAgent`／own-profile `update_state(profile.set)`，完整欄位審批、停止撤銷、共用四次上限、重播防護與原子儲存。只改名稱／公開摘要；新增沿用發起者模型，不複製私人上下文或自動加入群組。其他 update_state 路由與完整原版 persona/runtime 行為仍缺。 | partial | `AgentManagementSessionTests`、`AgentManagementAppIntegrationTests`；本輪驗證狀態見協作核對紀錄 |
 | AGENT-02 | `GroupService.swift`、`GroupConversationResponder.swift` 提供三輪接續、角色/增量上下文、去重、PASS/失敗、stop/cancel。`AgentUserMessageTool` 已接線文字版 `SendMessage`，即時持久化並顯示，每 turn 至多兩則，不重複 final text；仍未還原原版完整訊息 payload/runtime。 | partial | `GroupCollaborationTests`、`GroupToolExecutionTests`、`AgentBackgroundExecutionTests`、`AgentUserMessageToolTests` |
 | AGENT-03 | `FiliconSharedRooms` 的 file/HTTPS transports、`SharedRoomsWorkspaceView.swift`、`FiliconChannels/ChannelService.swift` 與 REST connectors 提供 room invite/approval/member lifecycle、channel inbound/outbound、attachments、reactions、OAuth 與 delivery retry。 | complete | final gates passed |
 | AGENT-04 | `AgentMessagingSession` 提供固定寄件身分、完整 payload approval、durable queue、recipient/reply wake、權限/停止/逾時/上限。手動訊息已接上背景推論與審批 UI。`AgentConversationStore` 持久化 account/origin/agent 隔離上下文。App 共用 `AgentExecutionScheduler` 將群組、mailbox、子任務、自動化、workflow、channel reply 依 agent FIFO 串行，取消等待不影響其他 owner，host 工具清理後才放行。仍非跨全部 DM/群組統一私人記憶或完整原版 runtime；group targets/images/priority interruption、跨程序與重啟排程尚缺。 | partial | `AgentMessagingSessionTests`、`SendToAgentAppIntegrationTests`、`AgentBackgroundExecutionTests`、`AgentConversationStoreTests`、`AgentExecutionSchedulerTests` |

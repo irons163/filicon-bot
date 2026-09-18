@@ -250,4 +250,139 @@ struct AgentManagementSessionTests {
         let profiles = await f.agents.list()
         expectNoDifference(profiles.count, 3)
     }
+
+    @Test(arguments: ["name", "description", "clear"]) func ownProfileUsesFixedIdentityAndPreservesPrivateFields(field: String) async throws {
+        let f = try await fixture()
+        defer { try? FileManager.default.removeItem(at: f.root) }
+        let session = f.session(), context = f.context
+        let tool = session.tools(for: f.target.id)[2]
+        var fields = ["target": "profile", "action": "set"]
+        fields[field == "name" ? "name" : "description"] = field == "name" ? " Art director " : field == "clear" ? "" : " Public review role "
+        let invocation = try call(fields, operation: "update_state")
+        let result = try await tool.execute(invocation, context: context)
+        let replay = try await tool.execute(invocation, context: context)
+        expectNoDifference(replay, result)
+        var expected = f.target
+        if field == "name" { expected.name = "Art director" }
+        else { expected.summary = field == "clear" ? "" : "Public review role" }
+        expected.updatedAt = Date(timeIntervalSince1970: 2_000)
+        let actual = await f.agents.profile(id: f.target.id)
+        expectNoDifference(actual, expected)
+        let sender = await f.agents.profile(id: f.sender.id)
+        expectNoDifference(sender, f.sender)
+        #expect(!result.wireText.contains("PRIVATE_DESIGN_CONTEXT"))
+        await #expect(throws: AgentProfileChangeError.duplicate) {
+            _ = try await tool.execute(call(fields, operation: "update_state", id: "duplicate"), context: context)
+        }
+        let restored = try AgentService(storeURL: f.store)
+        let durable = await restored.profile(id: f.target.id)
+        expectNoDifference(durable, expected)
+    }
+
+    @Test func ownProfileRejectsOtherStateRoutesFieldsAndIdentitySpoofing() async throws {
+        let f = try await fixture()
+        defer { try? FileManager.default.removeItem(at: f.root) }
+        let session = AgentManagementSession(originID: f.origin, agents: f.agents)
+        let tool = session.tools(for: f.sender.id)[2]
+        let before = await f.agents.list()
+        let base = ["target": "profile", "action": "set", "name": "New name"]
+        var invalid: [[String: String]] = [[:], ["target": "profile", "action": "set"],
+            ["action": "set", "name": "New name"], ["target": "profile", "name": "New name"],
+            ["target": "profile", "action": "set", "name": "  "],
+            ["target": "profile", "action": "set", "description": String(repeating: "x", count: 2_001)]]
+        for target in ["memory", "routine", "workflow", "settings", "channel", "project", "avatar", "PROFILE"] {
+            var fields = base; fields["target"] = target; invalid.append(fields)
+        }
+        for action in ["write", "delete", "archive", "create", "SET"] {
+            var fields = base; fields["action"] = action; invalid.append(fields)
+        }
+        for field in ["agent_id", "id", "senderID", "instructions", "permissions", "providerID", "modelID"] {
+            var fields = base; fields[field] = f.target.id.uuidString; invalid.append(fields)
+        }
+        for fields in invalid {
+            await #expect(throws: AgentProfileChangeError.invalidFields) {
+                _ = try await tool.execute(call(fields, operation: "update_state"), context: f.context)
+            }
+        }
+        await #expect(throws: AgentMessagingError.approvalRequired) {
+            _ = try await tool.execute(call(base, operation: "update_state"), context: f.context)
+        }
+        await #expect(throws: AgentMessagingError.scopeMismatch) {
+            _ = try await tool.execute(call(base, operation: "update_state"), context: .init(conversationID: UUID()))
+        }
+        let spoofed = AgentProfileChange(operation: .setOwnProfile, requesterID: f.sender.id, targetID: f.target.id,
+            name: "Wrong target", description: "", providerID: f.target.providerID, modelID: f.target.modelID,
+            previousName: f.target.name, previousDescription: f.target.summary)
+        await #expect(throws: AgentProfileChangeError.unavailable) {
+            _ = try await f.agents.applyProfileChange(spoofed, lifetime: .init())
+        }
+        let after = await f.agents.list()
+        expectNoDifference(after, before)
+    }
+
+    @Test(arguments: ["stale", "archive", "private"]) func ownProfileRechecksTheLatestProfileBeforeSaving(mutation: String) async throws {
+        let f = try await fixture()
+        defer { try? FileManager.default.removeItem(at: f.root) }
+        let session = f.session(authorize: { _, _, _, _ in
+            var current = f.target
+            switch mutation {
+            case "stale": current.summary = "Changed by user"
+            case "archive": current.archivedAt = Date(timeIntervalSince1970: 1_500)
+            default:
+                current.instructions = "NEW_PRIVATE_CONTEXT"
+                current.modelID = "updated-model"
+            }
+            try await f.agents.update(current)
+        })
+        let tool = session.tools(for: f.target.id)[2]
+        let invocation = try call(["target": "profile", "action": "set", "name": "New name"], operation: "update_state")
+        if mutation == "private" {
+            _ = try await tool.execute(invocation, context: f.context)
+        } else {
+            await #expect(throws: mutation == "stale" ? AgentProfileChangeError.stale : .unavailable) {
+                _ = try await tool.execute(invocation, context: f.context)
+            }
+        }
+        let actual = try #require(await f.agents.profile(id: f.target.id))
+        expectNoDifference(actual.name, mutation == "private" ? "New name" : f.target.name)
+        expectNoDifference(actual.summary, mutation == "stale" ? "Changed by user" : f.target.summary)
+        expectNoDifference(actual.instructions, mutation == "private" ? "NEW_PRIVATE_CONTEXT" : f.target.instructions)
+        expectNoDifference(actual.modelID, mutation == "private" ? "updated-model" : f.target.modelID)
+    }
+
+    @Test(arguments: [false, true]) func ownProfileCannotCommitAfterScopeCloses(duringCommit: Bool) async throws {
+        let f = try await fixture()
+        defer { try? FileManager.default.removeItem(at: f.root) }
+        let gate = ProfileChangeGate()
+        let session = f.session(authorize: { _, _, _, _ in if !duringCommit { await gate.hold() } }, commit: { change, lifetime in
+            if duringCommit { await gate.hold() }
+            return try await f.agents.applyProfileChange(change, lifetime: lifetime)
+        })
+        let tool = session.tools(for: f.target.id)[2]
+        let run = Task { try await tool.execute(call(["target": "profile", "action": "set", "name": "Late name"], operation: "update_state"), context: f.context) }
+        await gate.waitForEntry()
+        session.close(); await gate.release()
+        await #expect(throws: CancellationError.self) { _ = try await run.value }
+        let actual = await f.agents.profile(id: f.target.id)
+        expectNoDifference(actual, f.target)
+    }
+
+    @Test func profileChangeBudgetIsSharedByAllThreeTools() async throws {
+        let f = try await fixture()
+        defer { try? FileManager.default.removeItem(at: f.root) }
+        let session = f.session(), context = f.context
+        let tools = session.tools(for: f.sender.id)
+        _ = try await tools[0].execute(call(["name": "Writer"], id: "create"), context: context)
+        _ = try await tools[1].execute(call(["agent_id": f.target.id.uuidString, "name": "Artist"], operation: "UpdateAgent", id: "update"), context: context)
+        for index in 0..<2 {
+            _ = try await tools[2].execute(call(["target": "profile", "action": "set", "name": "Engineer \(index)"],
+                                                 operation: "update_state", id: .init(rawValue: "self-\(index)")), context: context)
+        }
+        await #expect(throws: AgentProfileChangeError.limitReached) {
+            _ = try await tools[2].execute(call(["target": "profile", "action": "set", "name": "Fifth change"],
+                                                 operation: "update_state", id: "fifth"), context: context)
+        }
+        let actual = await f.agents.profile(id: f.sender.id)
+        expectNoDifference(actual?.name, "Engineer 1")
+    }
 }

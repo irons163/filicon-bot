@@ -181,8 +181,12 @@ public actor GroupService {
             for memberID in rotation {
                 guard total < Self.maximumMemberMessages,
                       epochs[groupID] == epoch,
-                      !Task.isCancelled,
-                      let agent = members.first(where: { $0.id == memberID }) else { return produced }
+                      !Task.isCancelled else { return produced }
+                // Keep this request's participant IDs fixed, but refresh public
+                // profiles/personas between turns after approved profile edits.
+                let currentMembers = await resolveMembers(group.memberIDs)
+                guard epochs[groupID] == epoch, !Task.isCancelled else { return produced }
+                guard let agent = currentMembers.first(where: { $0.id == memberID }) else { continue }
                 let history = state.roomMessages.filter { $0.groupID == groupID }
                 let previousSpeech = history.lastIndex { $0.senderID == memberID && !$0.text.isEmpty }
                 let unread = history.dropFirst(seenMessageCounts[memberID] ?? previousSpeech.map { $0 + 1 } ?? 0)
@@ -191,7 +195,7 @@ public actor GroupService {
                     continue
                 }
                 let context = GroupTurnContext(
-                    group: group, members: members.map(GroupMemberIdentity.init),
+                    group: group, members: currentMembers.map(GroupMemberIdentity.init),
                     respondingMemberIDs: responderIDs, round: round,
                     newMessageIDs: Set(unread.map(\.id))
                 )

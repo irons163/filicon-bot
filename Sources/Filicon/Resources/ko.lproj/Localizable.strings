@@ -1395,3 +1395,5 @@
 "No new contribution this turn." = "이번 차례에는 새로운 의견이 없습니다.";
 "New agents use this description as their initial instructions. Group membership and permissions are unchanged." = "새 에이전트는 이 설명을 초기 지침으로 사용합니다. 그룹 구성원과 권한은 변경되지 않습니다.";
 "Only the name and public description change. Private instructions, model and permissions are unchanged." = "이름과 공개 설명만 변경합니다. 비공개 지침, 모델 및 권한은 변경되지 않습니다.";
+"Update own profile" = "자신의 프로필 수정";
+"Empty" = "비어 있음";

@@ -46,7 +46,7 @@ private actor ManagementWakeProbe {
         #expect(await model.createGroup(name: "Implementation", summary: "", memberIDs: [sender.id]))
         await model.reloadWorkspaceData()
         await model.setAutoReviewEnabled(true)
-        await model.setAutoReviewRules(allow: ["CreateAgent", "UpdateAgent", "SendToAgent"], ask: [])
+        await model.setAutoReviewRules(allow: ["CreateAgent", "UpdateAgent", "update_state", "SendToAgent"], ask: [])
         return (root, model, try #require(model.groups.first?.id), sender, target)
     }
     private func pending(_ model: AppModel, tool: String) async throws -> PendingApproval {
@@ -116,21 +116,25 @@ private actor ManagementWakeProbe {
         #expect(!model.runningGroups.contains(groupID))
     }
 
-    @Test(arguments: ["deny", "stop", "account"]) func rejectedOrInvalidatedCreationNeverWrites(mode: String) async throws {
+    @Test(arguments: ["deny", "stop", "account"], ["CreateAgent", "update_state"])
+    func rejectedOrInvalidatedProfileChangesNeverWrite(mode: String, tool: String) async throws {
         let (root, model, groupID, _, _) = try await fixture()
         defer { try? FileManager.default.removeItem(at: root) }
         await model.registry.register(ManagingAgentProvider { _, execute in
-            let result = try await execute(.init(id: "create", name: "CreateAgent", argumentsJSON: Data(#"{"name":"Writer"}"#.utf8)))
+            let args = tool == "CreateAgent" ? ["name": "Writer"] : ["target": "profile", "action": "set", "name": "New own name"]
+            let result = try await execute(.init(id: "change", name: .init(rawValue: tool), argumentsJSON: JSONEncoder().encode(args)))
             #expect(result.isError)
             return "No change was made"
         })
         let run = Task { await model.sendGroupMessage(groupID: groupID, text: "Create a writer") }
-        let approval = try await pending(model, tool: "CreateAgent")
+        let approval = try await pending(model, tool: tool)
+        let names = model.agents.map(\.name)
         if mode == "stop" { await model.stopGroup(id: groupID) }
         if mode == "account" { await model.cancelAutoReviewApprovals(nextAccountID: "different-account") }
         await model.resolveGroupApproval(approval, groupID: groupID, approve: mode != "deny")
         await run.value
         expectNoDifference(model.agents.count, 2)
+        expectNoDifference(model.agents.map(\.name), names)
         expectNoDifference(model.agentMessages, [])
         #expect(model.pendingAutoReviewApprovals.isEmpty)
         #expect(!model.runningGroups.contains(groupID))
@@ -192,6 +196,100 @@ private actor ManagementWakeProbe {
                 let png = try #require(bitmap.representation(using: .png, properties: [:]))
                 #expect(!png.isEmpty)
                 if let output { try png.write(to: output.appending(path: "agent-profile-\(language).png")) }
+            }
+        }
+    }
+
+    @Test func ownProfileChangeRefreshesTheNextGroupTurnWithoutChangingMembership() async throws {
+        let (root, model, groupID, sender, target) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        #expect(await model.saveGroupSettings(groupID: groupID, name: "Implementation", summary: "", memberIDs: [sender.id, target.id]))
+        let probe = ManagementWakeProbe()
+        await model.registry.register(ManagingAgentProvider { request, execute in
+            await probe.record(request)
+            let persona = request.messages[0].text
+            if persona.contains(sender.id.uuidString) {
+                if persona.contains("Your name is Engineer,") {
+                    let result = try await execute(.init(id: "self-update", name: "update_state",
+                        argumentsJSON: Data(#"{"target":"profile","action":"set","name":"Project engineer","description":"Implementation and accessibility"}"#.utf8)))
+                    #expect(!result.isError)
+                    return "Profile updated after user approval"
+                }
+                #expect(persona.contains("Your name is Project engineer,"))
+                #expect(persona.contains("Implementation and accessibility"))
+                #expect(persona.contains("ENGINEER_PRIVATE_PERSONA"))
+                return "PASS"
+            }
+            #expect(persona.contains("DESIGNER_PRIVATE_PERSONA"))
+            #expect(!request.messages.map(\.text).joined().contains("ENGINEER_PRIVATE_PERSONA"))
+            let metadata = request.messages.first { $0.text.hasPrefix("Room metadata") }?.text ?? ""
+            #expect(metadata.contains("Project engineer"))
+            return "The design review is complete"
+        })
+        let run = Task { await model.sendGroupMessage(groupID: groupID, text: "Rename the engineer and then review the design together") }
+        let approval = try await pending(model, tool: "update_state")
+        expectNoDifference(approval.action.target, .resource(kind: "agent", identifier: sender.id.uuidString))
+        expectNoDifference(approval.action.context.metadata["previousAgentName"], "Engineer")
+        expectNoDifference(approval.action.context.metadata["agentName"], "Project engineer")
+        #expect(!approval.action.context.metadata.values.joined().contains("ENGINEER_PRIVATE_PERSONA"))
+        await model.resolveGroupApproval(approval, groupID: groupID, approve: true)
+        await run.value
+        let requests = await probe.requests
+        let engineerTurns = requests.filter { $0.messages[0].text.contains(sender.id.uuidString) }
+        expectNoDifference(engineerTurns.count, 2)
+        expectNoDifference(model.groups.first?.memberIDs, [sender.id, target.id])
+        expectNoDifference(model.agents.first { $0.id == sender.id }?.name, "Project engineer")
+        expectNoDifference(model.agents.first { $0.id == sender.id }?.instructions, sender.instructions)
+        #expect(model.pendingAutoReviewApprovals.isEmpty)
+    }
+
+    @Test func mailboxSelfUpdateUsesTheRecipientIdentityAndCanClearPublicSummary() async throws {
+        let (root, model, _, sender, target) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        await model.registry.register(ManagingAgentProvider { request, execute in
+            #expect(request.messages[0].text.contains(target.id.uuidString))
+            let result = try await execute(.init(id: "clear-summary", name: "update_state",
+                argumentsJSON: Data(#"{"target":"profile","action":"set","description":""}"#.utf8)))
+            #expect(!result.isError)
+            return "Public summary cleared"
+        })
+        #expect(await model.sendAgentMessage(senderID: sender.id, recipientID: target.id, text: "Clear your public summary"))
+        let approval = try await pending(model, tool: "update_state")
+        expectNoDifference(approval.action.target, .resource(kind: "agent", identifier: target.id.uuidString))
+        expectNoDifference(approval.action.context.metadata["previousAgentDescription"], "Visual review")
+        expectNoDifference(approval.action.context.metadata["agentDescription"], "")
+        expectNoDifference(model.agents.first { $0.id == target.id }?.summary, target.summary)
+        await model.resolveGroupApproval(approval, groupID: approval.action.context.conversationID, approve: true)
+        try await waitForMailbox(model)
+        let actual = try #require(model.agents.first { $0.id == target.id })
+        expectNoDifference(actual.summary, "")
+        expectNoDifference(actual.instructions, target.instructions)
+        expectNoDifference(actual.name, target.name)
+        expectNoDifference(model.agents.first { $0.id == sender.id }?.name, sender.name)
+        expectNoDifference(model.agentMessages.map { $0.delivery?.state }, [.completed])
+    }
+
+    @Test func ownProfileApprovalRendersExplicitEmptyValueInSevenLanguages() throws {
+        let metadata = ["tool": "update_state", "previousAgentName": "設計師", "agentName": "設計師",
+                        "previousAgentDescription": "Visual review", "agentDescription": ""]
+        let output = ProcessInfo.processInfo.environment["FILICON_UI_REVIEW_OUTPUT"].map { URL(fileURLWithPath: $0, isDirectory: true) }
+        if let output { try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true) }
+        for language in ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"] {
+            try FiliconLocalization.$languageOverride.withValue(language) {
+                for key in ["Update own profile", "Empty"] where language != "en" {
+                    #expect(FiliconLocalization.string(key) != key)
+                }
+                let host = NSHostingView(rootView: AgentProfileApprovalDetails(metadata: metadata)
+                    .padding(20).frame(width: 480, alignment: .leading).background(FiliconTheme.input)
+                    .environment(\.locale, Locale(identifier: language)).environment(\.colorScheme, .light))
+                host.appearance = NSAppearance(named: .aqua)
+                host.frame = NSRect(x: 0, y: 0, width: 480, height: 300)
+                host.layoutSubtreeIfNeeded()
+                let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                host.cacheDisplay(in: host.bounds, to: bitmap)
+                let png = try #require(bitmap.representation(using: .png, properties: [:]))
+                #expect(!png.isEmpty)
+                if let output { try png.write(to: output.appending(path: "own-profile-\(language).png")) }
             }
         }
     }

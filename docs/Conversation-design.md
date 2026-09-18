@@ -111,20 +111,28 @@ until it unwinds; this is not a promise of immediate remote backend cancellation
 Unfinished work is cancelled at restart, not replayed with stale approval.
 See [the itemized audit](Agent-collaboration-parity.md).
 
-Group turns and manual/peer mailbox wakes now also receive scoped `CreateAgent`
-and `UpdateAgent` tools. Every change requires explicit approval of the complete
+Group turns and manual/peer mailbox wakes now also receive scoped `CreateAgent`,
+`UpdateAgent` and `update_state` profile tools. Every change requires explicit approval of the complete
 public fields, independently of auto-review allow rules. Creation inherits the
 requester's provider/model and uses the supplied description as the new public
 summary and initial instructions; it copies no private context and does not add
 group membership, execute the agent, or grant permissions. A subsequent
 `SendToAgent` is separately approved. Update accepts `agent_id` plus a name and/or
 public description; omitted fields stay unchanged and existing private
-instructions, model, avatar and status survive. The reference's own-profile
-`update_state` is not implemented. Stop/account transitions synchronously revoke
+instructions, model, avatar and status survive. `update_state` accepts only
+`target:"profile", action:"set"` and a name and/or public description. The host
+fixes the target to the executing agent (the recipient in a mailbox wake), never
+a model-supplied identity. An explicit empty description clears the public summary;
+omitted fields remain unchanged. Unlike the reference's combined description/persona,
+this does not change private instructions. Other update_state targets, including
+memory, routines and workflows, remain unsupported. Group turns reload profiles
+before each member response while keeping the original participant IDs fixed;
+an approved edit affects future inference requests, not the current system prompt.
+Stop/account transitions synchronously revoke
 profile write authority before awaiting cleanup. The service checks that fence
 and the reviewed public values at commit, rolls back memory on save failure,
 and retains an in-session receipt after a durable commit. A session permits at
-most four profile changes and rejects duplicate/replayed changes with different
+most four profile changes shared across all three tools and rejects duplicate/replayed changes with different
 payloads. Normal direct chats without an agent identity do not get these tools.
 
 `AgentExecutionSchedulerTests` covers FIFO/parallel lanes, owner-specific Stop,
