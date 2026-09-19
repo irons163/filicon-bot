@@ -50,7 +50,7 @@ struct AutomationIngressSettingsView: View {
             }
             TextField(l10n("Route name"), text: $routeName)
             SecureField(l10n("Signing secret"), text: $secret)
-            Text(provider.authenticationSemantics)
+            Text(FiliconLocalization.string(provider.authenticationSemantics))
                 .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
             Button(l10n("Add signed route")) {
                 let values = (routeName, provider, secret)

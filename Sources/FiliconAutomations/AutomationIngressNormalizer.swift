@@ -83,11 +83,33 @@ public enum AutomationIngressEventNormalizer {
             }
         case .sentry:
             let data = object["data"] as? [String: Any]
-            let project = data?["project"] as? [String: Any]
+            let legacyProject = data?["project"] as? [String: Any]
+            let issue = data?["issue"] as? [String: Any]
+            let project = issue?["project"] as? [String: Any]
+            let issueID = sentryID(issue?["id"])
+            let eventCase = request.headers["sentry-hook-resource"] == "issue" && issueID != nil
+                ? SentryIssueEvent(action: object["action"] as? String)?.rawValue : nil
+            // Request-ID is documented by Sentry; accept the old Filicon header
+            // only as a diagnostic alias. Neither is covered by the signature.
+            for name in ["request-id", "sentry-hook-request-id"] {
+                if let value = request.headers[name] {
+                    guard !value.isEmpty, value.count <= 200,
+                          value.rangeOfCharacter(from: .whitespacesAndNewlines.union(.controlCharacters)) == nil else {
+                        throw AutomationIngressError.invalidRequest
+                    }
+                }
+            }
             normalized = ["event": object["action"] ?? request.headers["sentry-hook-resource"] ?? "unknown",
-                          "primaryId": project?["slug"] ?? project?["id"] as Any,
+                          "eventCase": eventCase as Any,
+                          "projectId": sentryID(project?["id"]) as Any,
+                          "issueId": issueID as Any,
+                          "deliveryId": (request.headers["request-id"] ?? request.headers["sentry-hook-request-id"]) as Any,
+                          "primaryId": legacyProject?["slug"] ?? legacyProject?["id"] as Any,
                           "secondaryId": object["installation"] as Any, "raw": object].compactMapValues { Self.nonNil($0) }
-            externalID = request.headers["sentry-hook-request-id"] ?? nonce
+            // Sentry has no signed delivery ID/timestamp. Keep the body digest
+            // as event identity too, so retained run history cannot be bypassed
+            // by relabeling a request after the ingress replay window expires.
+            externalID = nonce
         case .pagerDuty:
             let event = object["event"] as? [String: Any] ?? object
             let data = event["data"] as? [String: Any]
@@ -122,6 +144,14 @@ public enum AutomationIngressEventNormalizer {
     private static func linearID(_ value: Any?) -> String? {
         guard let value = value as? String, !value.isEmpty, value.count <= 200,
               value.rangeOfCharacter(from: .whitespacesAndNewlines.union(.controlCharacters)) == nil else { return nil }
+        return value
+    }
+
+    private static func sentryID(_ value: Any?) -> String? {
+        // The issue webhook serializes IDs as decimal strings. Never coerce a
+        // Boolean/number (or fall back to a name/slug) into a project filter.
+        guard let value = value as? String, !value.isEmpty, value.utf8.count <= 200,
+              value.utf8.allSatisfy({ (48...57).contains($0) }) else { return nil }
         return value
     }
 

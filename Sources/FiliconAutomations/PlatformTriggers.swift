@@ -140,6 +140,27 @@ public struct CaseAutomationTrigger: Codable, Hashable, Sendable {
     }
 }
 
+/// Cases backed by the documented Sentry issue webhook, not every resource
+/// that happens to share an action such as "created".
+enum SentryIssueEvent: String {
+    case created = "issueCreated"
+    case resolved = "issueResolved"
+    case assigned = "issueAssigned"
+    case archived = "issueArchived"
+    case unresolved = "issueUnresolved"
+
+    init?(action: String?) {
+        switch action {
+        case "created": self = .created
+        case "resolved": self = .resolved
+        case "assigned": self = .assigned
+        case "archived": self = .archived
+        case "unresolved": self = .unresolved
+        default: return nil
+        }
+    }
+}
+
 /// Keeps the legacy Linear storage keys while isolating Linear-only filters
 /// from Sentry/PagerDuty. Missing statusIDs in older definitions means any status.
 public struct LinearAutomationTrigger: Codable, Hashable, Sendable {
@@ -254,7 +275,19 @@ public enum PlatformAutomationTrigger: Codable, Hashable, Sendable {
             return trigger.messageContainsIsRegex ? text.range(of: needle, options: .regularExpression) != nil : text.localizedCaseInsensitiveContains(needle)
         case .linear(let trigger):
             return trigger.matches(event, payload: payload)
-        case .sentry(let trigger): return Self.matchesCase(trigger, event: event, payload: payload, kind: "sentry")
+        case .sentry(let trigger):
+            if trigger.event == "issueAny" || SentryIssueEvent(rawValue: trigger.event) != nil {
+                guard event.kind == "sentry", let eventCase = payload["eventCase"] as? String,
+                      SentryIssueEvent(rawValue: eventCase) != nil,
+                      trigger.event == "issueAny" || eventCase == trigger.event,
+                      trigger.secondaryIDs.isEmpty else { return false }
+                guard !trigger.primaryIDs.isEmpty else { return true }
+                guard let projectID = payload["projectId"] as? String else { return false }
+                return trigger.primaryIDs.contains(projectID)
+            }
+            // Existing raw-action definitions keep their old storage and payload
+            // keys. Do not silently reinterpret a legacy slug filter as an ID.
+            return Self.matchesCase(trigger, event: event, payload: payload, kind: "sentry")
         case .pagerDuty(let trigger): return Self.matchesCase(trigger, event: event, payload: payload, kind: "pagerduty")
         }
     }

@@ -334,4 +334,21 @@ IORegistry 仍回報 `CGSSessionScreenIsLocked=Yes`。完整回歸的受保護�
 
 這次系統不再回報先前的鎖定旗標，完整套件沒有重現受保護檔案重新讀取失敗。預設執行完整套件時，134 XCTest 通過，但 Swift Testing 有 5 項既有測試／6 個斷言失敗：conversation 取消／跨 conversation 並行、subagent steer、程序 stdout 及群組核准重複觀測（`/tmp/filicon-linear-proposals-full.log`）。這 5 項隔離重跑皆通過（`/tmp/filicon-linear-proposals-failure-recheck.log`）；明確 `swift test --no-parallel` 的完整重跑為 **134 XCTest、774 Swift Testing／91 suites，全數通過**（`/tmp/filicon-linear-proposals-full-serial.log`）。兩項需 opt-in 的 live Codex 測試未執行。保留並行不穩定問題，不宣稱本輪已根治，也未放寬檔案保護或調整那些測試的門檻。
 
-本輪模型提案及核准修改尚未提交。未 push、未重啟使用者 App、未改真實聊天／群組／排程／連線，未連線 Linear 或付費模型。完整原版 parity 仍未完成；後續仍有 Linear 週期結束、其他平台模型提案、Slack 名稱／人類身分、GitHub checks 彙整及記憶／runtime 差異。
+本批 Linear 模型提案與核准修改已在下一輪提交為 `866b368`；提交前再次通過 101 項聚焦測試（`/tmp/filicon-linear-proposals-precommit.log`）。未 push、未重啟使用者 App、未改真實聊天／群組／排程／連線，未連線 Linear 或付費模型。完整原版 parity 仍未完成；後續仍有 Linear 週期結束、其他平台模型提案、Slack 名稱／人類身分、GitHub checks 彙整及記憶／runtime 差異。
+
+## 本輪增量：Sentry 事件分類、專案篩選與防重播基礎（2026-09-19）
+
+上一批已提交為 `866b368`。核對 reconstructed `source/host/automations/automation-trigger.ts` 的 Sentry cases／projectIds 與 `sand-state-tool.ts` schema，以及 [Sentry webhook 說明](https://docs.sentry.io/integrations/integration-platform/webhooks/)和 [issue payload](https://docs.sentry.io/integrations/integration-platform/webhooks/issues/)（2026-09-19 查閱），確認既有 normalizer 讀錯專案位置，也未把 action 轉成原版 cases。這輪只補事件基礎，不開放 Sentry 模型 create/update、不新增專用編輯器或外部連線。
+
+- `Sentry-Hook-Resource: issue` 加上有效十進位字串 issue ID，才將 created／resolved／assigned／archived／unresolved 對應成五種 canonical issue case。issueAny 只接受這五類，不接受 comment／installation／error／alerts、未知 action 或無效 issue；不把 action 相同的其他 resource 當 issue。舊式 ignored action 未擅自當成目前文件的 archived；舊 raw-action 排程仍可依原有規則處理。
+- canonical `primaryIDs` 精確比對 `data.issue.project.id`，不使用 slug、名稱、issue ID、installation 或頂層 data.project 代替。指定篩選但缺少或無效 ID 即不匹配，空清單才代表不限；不支援的 secondaryIDs 非空即拒絕匹配。保留 CaseAutomationTrigger Codable 與舊 raw-action 的 event／primaryId／secondaryId 比對，不改寫或啟用使用者定義。
+- HMAC 只涵蓋 body，因此 nonce 和 externalEventID 都使用 body SHA-256；Sentry 文件的 Request-ID 與既有 sentry-hook-request-id alias 僅作診斷，前者優先，兩者都需非空／無空白控制字元／最長 200 字元。相同 body 即使更換標頭仍視為同一事件；同一 issue 不同 action/body 不會因共用 installation 或 Request-ID 而遺漏。相同 body 的不同合法送達亦會合併，這是明確的保守去重行為。
+- ingress nonce 快取仍受既有時限限制（預設 300 秒），重開可讀回；時限後已有且仍保留的 run history 仍依 body digest 去重。Sentry 未提供簽章涵蓋的時間戳，本輪不宣稱能驗證新鮮度或永久防重播；兩層紀錄過期後，舊的有效簽章仍可能被接收。保留原有可選 x-filicon-timestamp 檢查，但該值不是 Sentry 簽章證據。未遷移舊收據，也未新增重試佇列。
+
+依 Swift 測試技能採固定時間、隔離暫存目錄、受控 executor／secret 與 CustomDump，先重現 60 個失敗斷言（`/tmp/filicon-sentry-events-red.log`），再使新增 8 項 Sentry 測試通過。包含五種事件、issueAny、錯誤 resource／action／ID、legacy Codable、body／secret 變造、標頭重命名、Request-ID alias、過長 ID、簽章前綴、先過濾再進 prompt、ingress 重開及超過快取時限後的 history 去重。無實際模型、帳號或公網呼叫；完整簽章至 executor/history 路徑在隔離 fixture 內驗證。
+
+依 SwiftUI 技能，安全與事件邏輯仍留在非 UI 模組，設定 caption 只透過既有語言目錄呈現。本輪更新的 Sentry 驗證說明已補七語言，新增測試確認翻譯與協定欄位名稱；七語言各 1,483 keys、零缺漏。未新增畫面配置，不宣稱全產品視覺驗收。
+
+驗證：117 項 Swift Testing／11 suites 聚焦回歸通過（`/tmp/filicon-sentry-events-regression.log`）；明確 `swift test --no-parallel` 完整回歸為 134 XCTest、783 Swift Testing／92 suites 通過（`/tmp/filicon-sentry-events-full-serial.log`），兩項 opt-in live Codex 測試未執行。既有通用 ingress fixture 亦改用 Sentry 文件的 Request-ID 與 data.issue.project 格式；舊格式由專門的 legacy 測試保護。上一批發現的並行測試時序不穩定未宣稱已修復。原生 `Filicon App` Debug build（`/tmp/filicon-sentry-events-native.log`）、產物 `codesign --verify --deep --strict` 及 `git diff --check` 通過；只有既有 AppIntents metadata／ad-hoc runtime 提示，未啟動產物。
+
+本輪 Sentry 修改尚未提交。未 push、未重啟使用者 App、未動實際聊天／群組／排程／連線。下一個可接續項目是 Sentry 自身排程提案與完整核准；原版全部能力仍未完成，不能將這批底層測試當成 Sentry 帳號端到端或產品全量驗收。

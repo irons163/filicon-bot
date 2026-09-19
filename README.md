@@ -193,6 +193,34 @@ Existing receipts are not migrated or replayed; delivery deduplication remains
 bounded by the existing ingress window and automation history. A public endpoint
 or Linear connection is not created by these changes.
 
+Sentry ingress now distinguishes the documented issue actions (`created`,
+`resolved`, `assigned`, `archived`, `unresolved`) as `issueCreated`,
+`issueResolved`, `issueAssigned`, `issueArchived`, and `issueUnresolved`.
+`issueAny` matches only those recognized issue events, not comments, alerts,
+installation events, or unknown actions. Classification requires the `issue`
+resource header and a valid decimal-string issue ID. Canonical `primaryIDs`
+filters use `data.issue.project.id`, never a slug, issue ID, or installation;
+missing/malformed project IDs do not satisfy a specified filter. An empty
+project filter means any valid issue. Secondary filters are unsupported for
+these canonical cases and fail closed. Old raw-action definitions retain
+their legacy `event`/`primaryId`/`secondaryId` matching and storage format.
+No definition is rewritten or automatically enabled.
+
+Sentry signs only the raw body. Its digest is now both the ingress nonce and
+event identity; unsigned `Request-ID` (or the old `sentry-hook-request-id`
+alias) is diagnostic metadata, not a way to create a new execution. Identical
+bodies therefore coalesce even if request headers differ. The bounded ingress
+cache survives restart; retained automation history also deduplicates the
+same digest. This is **not permanent replay protection** or authenticated
+freshness: after both records expire, an old correctly signed payload can be
+accepted again. Existing receipts are not migrated. A supplied Filicon
+timestamp still undergoes its existing optional check, but is not signed by
+Sentry. Behavior follows the [Sentry webhook envelope](https://docs.sentry.io/integrations/integration-platform/webhooks/)
+and [issue payload](https://docs.sentry.io/integrations/integration-platform/webhooks/issues/).
+This increment fixes the event-processing foundation only; Sentry model-written
+routine proposals, a specialized editor, and live-account validation remain
+unsupported/unverified. It does not install/start connections or expose an endpoint.
+
 In group and mailbox turns, agents can propose remembering or forgetting a short
 fact using `update_state(target:"memory", action:"write"|"forget", fact:...)`.
 Each change needs explicit approval. Omitted scope (or `scope:"agent"`) remains

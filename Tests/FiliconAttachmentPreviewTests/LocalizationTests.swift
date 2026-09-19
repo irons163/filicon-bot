@@ -1,9 +1,22 @@
 import Foundation
+import CustomDump
+import FiliconAutomations
 import Testing
 @testable import Filicon
 
 @Suite("UI localization")
 struct LocalizationTests {
+    @Test func sentryAuthenticationDisclosureIsLocalizedWithoutChangingProtocolNames() {
+        let key = AutomationIngressProvider.sentry.authenticationSemantics
+        for language in ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"] {
+            let text = FiliconLocalization.string(key, language: language)
+            expectNoDifference(text == key, language == "en")
+            for token in ["sentry-hook-signature", "HMAC(rawBody)", "sha256=", "Request-ID"] {
+                #expect(text.contains(token))
+            }
+        }
+    }
+
     @Test(arguments: [
         ("en-US", "en"), ("zh-TW", "zh-Hant"), ("zh-HK", "zh-Hant"),
         ("zh-MO", "zh-Hant"), ("zh_Hant_US", "zh-Hant"),

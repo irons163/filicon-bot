@@ -81,7 +81,9 @@ public enum AutomationIngressSignatureVerifier {
         case .sentry:
             let supplied = try required("sentry-hook-signature", request)
             guard constantTimeEqual(supplied.removingPrefix("sha256="), hmacHex(secret: secret, data: request.body)) else { throw AutomationIngressError.unauthorized }
-            return .init(nonce: boundedNonce(request.headers["sentry-hook-request-id"] ?? bodyDigest(request.body)),
+            // Only the body is signed. Unsigned request IDs/timestamps cannot
+            // provide freshness or a replay-cache key that callers may change.
+            return .init(nonce: bodyDigest(request.body),
                          timestamp: try optionalCheckedTimestamp(request, now: now, window: replayWindow))
         case .pagerDuty:
             let supplied = try required("x-pagerduty-signature", request)
