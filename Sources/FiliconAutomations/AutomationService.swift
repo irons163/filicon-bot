@@ -224,7 +224,7 @@ public actor AutomationService {
             }
             for member in members {
                 switch member {
-                case .platform(.github), .platform(.slack): try validateAgentTrigger(member, now: now)
+                case .cron, .platform(.github), .platform(.slack): try validateAgentTrigger(member, now: now)
                 default: throw AutomationStateChangeError.invalidEventGroup
                 }
             }

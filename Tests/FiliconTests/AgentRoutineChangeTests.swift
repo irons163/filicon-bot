@@ -95,6 +95,171 @@ struct AgentRoutineChangeTests {
         ])
     }
 
+    private var mixedFields: [String: Any] {
+        ["type": "group", "listeners": [["type": "cron", "schedule": "@every 1h"], githubFields, slackFields]]
+    }
+    private func mixedTrigger() throws -> AutomationTrigger {
+        .anyOf([.cron(expression: "@every 1h", timeZoneIdentifier: "Asia/Taipei"),
+            .platform(.github(try .init(repo: "example/project", events: ["review-approved", "ci-failed"],
+                ciBranch: "main", userAllowlist: ["alice", "review-bot[bot]"]))),
+            .platform(.slack(try .init(channel: "C123", match: .reaction(emoji: ["eyes"], bySelf: false))))])
+    }
+
+    @Test(arguments: [true, false]) func mixedCreatePinsEveryZoneAndStartsOnlyAfterApproval(enabled: Bool) async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let id = UUID(uuidString: "00000000-0000-0000-0000-000000000099")!
+        let members: [[String: Any]] = [["type": "cron", "schedule": " @every   1h "],
+            ["type": "cron", "schedule": "TZ=UTC 0 9 * * *"], githubFields, slackFields]
+        let expected: AutomationTrigger = .anyOf([
+            .cron(expression: "@every 1h", timeZoneIdentifier: "Asia/Taipei"),
+            .cron(expression: "TZ=UTC 0 9 * * *", timeZoneIdentifier: "GMT"),
+            .platform(.github(try .init(repo: "example/project", events: ["review-approved", "ci-failed"],
+                ciBranch: "main", userAllowlist: ["alice", "review-bot[bot]"]))),
+            .platform(.slack(try .init(channel: "C123", match: .reaction(emoji: ["eyes"], bySelf: false))))])
+        let session = f.session(authorize: { sender, change, _, _ in
+            expectNoDifference(sender, f.owner); expectNoDifference(change.automation.trigger, expected)
+            expectNoDifference(change.automation.nextRunAt, nil)
+            let preview = try change.triggerJSON
+            expectNoDifference(try JSONDecoder().decode(AutomationTrigger.self, from: Data(preview.utf8)), expected)
+            let before = await f.automations.list()
+            expectNoDifference(before, [f.routine, f.peerRoutine])
+        }, commit: { change, lifetime in
+            try await f.automations.applyStateChange(change, lifetime: lifetime, now: Date(timeIntervalSince1970: 10_000))
+        }, makeID: { id })
+        defer { session.close() }
+        let tool = session.tools(for: f.owner.id)[2]
+        var fields: [String: Any] = ["target": "routine", "action": "create", "name": "Mixed", "prompt": "Review only",
+            "trigger": ["type": "group", "listeners": members], "enabled": enabled]
+        let result = try await tool.execute(writeCall(fields), context: f.context)
+        fields["trigger"] = Array(members.reversed()) + [members[0]]
+        let replay = try await tool.execute(writeCall(fields), context: f.context)
+        expectNoDifference(replay, result)
+        #expect(result.content.contains { if case .text(let text) = $0 { text.contains("reset @every intervals") && text.contains("OR, not AND") } else { false } })
+        let saved = await f.automations.list().first { $0.id == id }
+        expectNoDifference(saved, .init(id: id, agentID: f.owner.id, name: "Mixed", prompt: "Review only", trigger: expected,
+            enabled: enabled, createdAt: Date(timeIntervalSince1970: 3_000), nextRunAt: enabled ? Date(timeIntervalSince1970: 13_600) : nil))
+        let restored = try AutomationService(storeURL: f.file)
+        let durable = await restored.list().first { $0.id == id }, history = await restored.history(automationID: id)
+        expectNoDifference(durable, saved); expectNoDifference(history, [])
+    }
+
+    @Test(arguments: [1, 8]) func timeOnlyGroupsNormalizeBoundsAndSelectEarliest(count: Int) async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let session = f.session(); defer { session.close() }
+        let members = (1...count).map { ["type": "cron", "schedule": "@every \($0)h"] }
+        _ = try await session.tools(for: f.owner.id)[2].execute(writeCall([
+            "target": "routine", "action": "create", "name": "Timers", "prompt": "Inspect", "trigger": members]), context: f.context)
+        let saved = try #require(await f.automations.list(agentID: f.owner.id).first { $0.name == "Timers" })
+        let expected = (1...count).map { AutomationTrigger.cron(expression: "@every \($0)h", timeZoneIdentifier: "Asia/Taipei") }
+        expectNoDifference(saved.trigger, count == 1 ? expected[0] : .anyOf(expected))
+        expectNoDifference(saved.nextRunAt, Date(timeIntervalSince1970: 6_600))
+    }
+
+    @Test(arguments: ["single", "array", "group"]) func singleCronAndDuplicateFormsCollapse(form: String) async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let session = f.session(); defer { session.close() }
+        let member = ["type": "cron", "schedule": " @every   1m "]
+        let trigger: Any = form == "single" ? member : form == "array" ? [member, member] : ["type": "group", "listeners": [member]]
+        var fields: [String: Any] = ["target": "routine", "action": "create", "name": "Timer", "prompt": "Inspect", "trigger": trigger]
+        let tool = session.tools(for: f.owner.id)[2]
+        let result = try await tool.execute(writeCall(fields), context: f.context)
+        fields["trigger"] = ["type": "cron", "schedule": "@every 1m"]
+        let replay = try await tool.execute(writeCall(fields), context: f.context)
+        expectNoDifference(replay, result)
+        let saved = await f.automations.list(agentID: f.owner.id).first { $0.name == "Timer" }
+        expectNoDifference(saved?.trigger, .cron(expression: "@every 1m", timeZoneIdentifier: "Asia/Taipei"))
+        expectNoDifference(saved?.nextRunAt, Date(timeIntervalSince1970: 3_060))
+    }
+
+    @Test func mixedUpdatesKeepOmittedTriggerAndHistoryThenAllowExplicitConversion() async throws {
+        let f = try await fixture(trigger: mixedTrigger()); defer { try? FileManager.default.removeItem(at: f.root) }
+        _ = try await f.automations.runNow(id: f.routine.id, executor: RoutineExecutor(), now: Date(timeIntervalSince1970: 2_000))
+        let history = await f.automations.history(automationID: f.routine.id)
+        var snapshot = try #require(await f.automations.list(agentID: f.owner.id).first)
+        let session = f.session(authorize: { _, change, _, _ in #expect(change.previous != nil) })
+        defer { session.close() }
+        let tool = session.tools(for: f.owner.id)[2]
+        await expectDifference(snapshot) {
+            _ = try await tool.execute(writeCall(["target": "routine", "action": "update", "id": f.routine.id.uuidString,
+                "name": "Renamed"], id: "rename"), context: f.context)
+            snapshot = try #require(await f.automations.list(agentID: f.owner.id).first)
+        } changes: { $0.name = "Renamed"; $0.revision = 2 }
+        for kind in ["event", "mixed", "time"] {
+            var fields: [String: Any] = ["target": "routine", "action": "update", "id": f.routine.id.uuidString]
+            if kind == "time" { fields["schedule"] = "@every 2h" }
+            else { fields["trigger"] = kind == "event" ? groupFields : mixedFields }
+            _ = try await tool.execute(writeCall(fields, id: ToolCallID(rawValue: kind)), context: f.context)
+            let value = try #require(await f.automations.list(agentID: f.owner.id).first)
+            let expected = kind == "event" ? try groupTrigger() : kind == "mixed" ? try mixedTrigger() : .cron(expression: "@every 2h", timeZoneIdentifier: "Asia/Taipei")
+            expectNoDifference(value.trigger, expected)
+            expectNoDifference(value.nextRunAt, kind == "event" ? nil : Date(timeIntervalSince1970: kind == "mixed" ? 6_600 : 10_200))
+            expectNoDifference(value.lastRunAt, Date(timeIntervalSince1970: 2_000))
+        }
+        let finalHistory = await f.automations.history(automationID: f.routine.id)
+        expectNoDifference(finalHistory, history)
+    }
+
+    @Test(arguments: ["@every 1m", "@every 366d", "CRON_TZ=UTC 0 9 * * *"])
+    func mixedTimeMembersAcceptExactIntervalBoundsAndCronTZ(schedule: String) async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let session = f.session(); defer { session.close() }
+        _ = try await session.tools(for: f.owner.id)[2].execute(writeCall([
+            "target": "routine", "action": "create", "name": "Boundary", "prompt": "Inspect",
+            "trigger": [slackFields, ["type": "cron", "schedule": schedule]]]), context: f.context)
+        let saved = try #require(await f.automations.list(agentID: f.owner.id).first { $0.name == "Boundary" })
+        let zone = schedule.hasPrefix("CRON_TZ") ? "GMT" : "Asia/Taipei"
+        guard case .anyOf(let members) = saved.trigger else { Issue.record("Expected mixed definition"); return }
+        expectNoDifference(members.first, .cron(expression: schedule, timeZoneIdentifier: zone))
+        expectNoDifference(saved.nextRunAt, try AutomationSchedule.nextRun(for: schedule,
+            after: Date(timeIntervalSince1970: 3_000), defaultTimeZone: TimeZone(identifier: zone)))
+    }
+
+    @Test func mixedUpdatePreservesEventExecutionDuringApproval() async throws {
+        let f = try await fixture(trigger: mixedTrigger()); defer { try? FileManager.default.removeItem(at: f.root) }
+        let session = f.session(authorize: { _, change, _, _ in
+            expectNoDifference(change.previous, f.routine)
+            let event = AutomationEvent(connectorID: UUID(), kind: "slack", externalEventID: "approval-event",
+                payloadJSON: Data(#"{"channel":"C123","reaction":"eyes"}"#.utf8), occurredAt: Date(timeIntervalSince1970: 3_250))
+            let runs = await f.automations.fire(events: [event], executor: RoutineExecutor(), now: Date(timeIntervalSince1970: 3_250))
+            expectNoDifference(runs.count, 1)
+        }, commit: { change, lifetime in
+            try await f.automations.applyStateChange(change, lifetime: lifetime, now: Date(timeIntervalSince1970: 5_000))
+        })
+        defer { session.close() }
+        _ = try await session.tools(for: f.owner.id)[2].execute(writeCall([
+            "target": "routine", "action": "update", "id": f.routine.id.uuidString, "prompt": "New task"]), context: f.context)
+        let saved = try #require(await f.automations.list(agentID: f.owner.id).first)
+        expectNoDifference(saved.trigger, f.routine.trigger)
+        expectNoDifference(saved.lastRunAt, Date(timeIntervalSince1970: 3_250))
+        expectNoDifference(saved.nextRunAt, Date(timeIntervalSince1970: 6_850))
+        expectNoDifference(saved.prompt, "New task")
+        let restored = try AutomationService(storeURL: f.file)
+        let history = await restored.history(automationID: f.routine.id), durable = await restored.list(agentID: f.owner.id).first
+        expectNoDifference(history.count, 1); expectNoDifference(history.first?.trigger, .event)
+        expectNoDifference(durable, saved)
+    }
+
+    @Test func malformedTimeMembersRejectTheWholeProposal() async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let session = f.session(authorize: { _, _, _, _ in Issue.record("Invalid time condition reached approval") })
+        defer { session.close() }
+        var invalid: [[String: Any]] = [[:], ["type": "cron"], ["type": "cron", "schedule": NSNull()],
+            ["type": "cron", "schedule": 123], ["type": "cron", "schedule": "@daily", "timeZoneIdentifier": "UTC"],
+            ["type": "cron", "schedule": "@daily", "enabled": false], ["type": "cron", "schedule": "@daily", "prompt": "Hidden task"]]
+        for schedule in ["", "  ", "bad cron", "@every 1s", "@every 367d", "TZ=Not/AZone 0 9 * * *", String(repeating: "x", count: 257)] {
+            invalid.append(["type": "cron", "schedule": schedule])
+        }
+        for member in invalid {
+            await #expect(throws: (any Error).self) {
+                _ = try await session.tools(for: f.owner.id)[2].execute(writeCall([
+                    "target": "routine", "action": "create", "name": "No", "prompt": "Inspect",
+                    "trigger": [slackFields, member], "enabled": false]), context: f.context)
+            }
+        }
+        let before = await f.automations.list()
+        expectNoDifference(before, [f.routine, f.peerRoutine])
+    }
+
     @Test(arguments: [true, false]) func eventGroupNormalizesFormsWithoutLosingApprovalOrReplay(enabled: Bool) async throws {
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
         let expected = try groupTrigger()
@@ -124,19 +289,19 @@ struct AgentRoutineChangeTests {
         fields["trigger"] = [githubFields]
         await #expect(throws: AgentProfileChangeError.duplicate) { _ = try await tool.execute(writeCall(fields), context: f.context) }
         let runtime = try await #require(tool as? any ToolRuntimeContextProviding).runtimeContext(for: f.context)
-        #expect(runtime.contains("event-only OR group") && runtime.contains("No nested groups, cron/time members"))
+        #expect(runtime.contains("flat OR group") && runtime.contains("event and manual runs also reset @every intervals"))
         let schema = try #require(JSONSerialization.jsonObject(with: tool.descriptor.inputSchema) as? [String: Any])
         let properties = try #require(schema["properties"] as? [String: Any])
         let specification = try #require(properties["trigger"] as? [String: Any])
         let variants = try #require(specification["anyOf"] as? [[String: Any]])
-        expectNoDifference(variants.count, 4)
-        expectNoDifference(variants[2]["additionalProperties"] as? Bool, false)
-        let group = try #require(variants[2]["properties"] as? [String: Any])
+        expectNoDifference(variants.count, 5)
+        expectNoDifference(variants[3]["additionalProperties"] as? Bool, false)
+        let group = try #require(variants[3]["properties"] as? [String: Any])
         let listeners = try #require(group["listeners"] as? [String: Any])
         expectNoDifference(listeners["maxItems"] as? Int, AutomationService.maximumListeners)
         expectNoDifference(listeners["minItems"] as? Int, 1)
         let items = try #require(listeners["items"] as? [String: Any])
-        expectNoDifference((items["anyOf"] as? [Any])?.count, 2) // No recursive/time/other platform variants.
+        expectNoDifference((items["anyOf"] as? [Any])?.count, 3) // Cron/GitHub/Slack only; no recursive or other platforms.
     }
 
     @Test(arguments: [1, 8]) func eventGroupsAcceptExactBounds(count: Int) async throws {
@@ -156,7 +321,7 @@ struct AgentRoutineChangeTests {
         let session = f.session(authorize: { _, _, _, _ in Issue.record("Invalid event group reached approval") })
         defer { session.close() }
         let invalidMembers: [Any] = [NSNull(), "slack", 1, [slackFields], groupFields,
-            ["type": "cron", "schedule": "@daily"], ["type": "linear", "event": ["case": "issueCreated"]],
+            ["type": "cron", "schedule": "@every 1s"], ["type": "linear", "event": ["case": "issueCreated"]],
             ["type": "slack", "channel": "#name", "match": ["kind": "message"]],
             ["type": "slack", "channel": "*", "match": ["kind": "reaction", "bySelf": true]],
             ["type": "github", "repo": "example/project", "events": ["pr-opened", "unknown"]]]
@@ -216,7 +381,7 @@ struct AgentRoutineChangeTests {
         let valid = AutomationTrigger.platform(.slack(try .init(channel: "C123", match: .message)))
         let invalid: [AutomationTrigger] = [
             .anyOf([]), .anyOf([valid]), .anyOf([valid, valid]), .anyOf(Array(repeating: valid, count: 9)),
-            .anyOf([valid, .anyOf([valid, valid])]), .anyOf([valid, f.routine.trigger]),
+            .anyOf([valid, .anyOf([valid, valid])]), .anyOf([valid, .cron(expression: "@daily", timeZoneIdentifier: nil)]),
             .anyOf([valid, .event(.init(connectorID: UUID(), kind: "slack"))]),
             .anyOf([valid, .unknown(kind: "future", payloadJSON: Data("{}".utf8))]),
             .anyOf([valid, .platform(.slack(try .init(channel: "#name", match: .message)))])]
@@ -271,7 +436,7 @@ struct AgentRoutineChangeTests {
         let properties = try #require(schema["properties"] as? [String: Any])
         let specification = try #require(properties["trigger"] as? [String: Any])
         let variants = try #require(specification["anyOf"] as? [[String: Any]])
-        let slack = variants[1]
+        let slack = try #require(variants.first { ($0["required"] as? [String])?.contains("channel") == true })
         expectNoDifference(slack["additionalProperties"] as? Bool, false)
         expectNoDifference(slack["required"] as? [String], ["type", "channel", "match"])
     }
@@ -426,8 +591,8 @@ struct AgentRoutineChangeTests {
         let properties = try #require(schema["properties"] as? [String: Any])
         let combined = try #require(properties["trigger"] as? [String: Any])
         let variants = try #require(combined["anyOf"] as? [[String: Any]])
-        expectNoDifference(variants.count, 4)
-        let specification = variants[0]
+        expectNoDifference(variants.count, 5)
+        let specification = try #require(variants.first { ($0["required"] as? [String])?.contains("repo") == true })
         expectNoDifference(specification["additionalProperties"] as? Bool, false)
         let fields = try #require(specification["properties"] as? [String: Any])
         let events = try #require(fields["events"] as? [String: Any])
@@ -506,10 +671,10 @@ struct AgentRoutineChangeTests {
         expectNoDifference(unchanged, [f.routine, f.peerRoutine])
     }
 
-    @Test(arguments: ["create-github", "update-github", "create-slack", "update-slack", "create-group", "update-group"], [false, true])
+    @Test(arguments: ["create-github", "update-github", "create-slack", "update-slack", "create-group", "update-group", "create-mixed", "update-mixed"], [false, true])
     func eventWritesRecheckSpendGuardAfterApproval(scenario: String, initiallyPaused: Bool) async throws {
         let action = scenario.hasPrefix("create") ? "create" : "update"
-        let eventFields = scenario.hasSuffix("github") ? githubFields : scenario.hasSuffix("group") ? groupFields : slackFields
+        let eventFields = scenario.hasSuffix("github") ? githubFields : scenario.hasSuffix("group") ? groupFields : scenario.hasSuffix("mixed") ? mixedFields : slackFields
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
         if initiallyPaused { try await f.automations.answerSpendGuard(.pause, at: Date(timeIntervalSince1970: 2_000)) }
         let session = f.session(authorize: { _, _, _, _ in
@@ -630,10 +795,10 @@ struct AgentRoutineChangeTests {
         session.close()
     }
 
-    @Test(arguments: ["create", "update", "create-github", "update-github", "create-slack", "update-slack", "create-group", "update-group"], ["deny", "archive", "save-failure", "stale"])
+    @Test(arguments: ["create", "update", "create-github", "update-github", "create-slack", "update-slack", "create-group", "update-group", "create-mixed", "update-mixed"], ["deny", "archive", "save-failure", "stale"])
     func routineWritesFailClosed(scenario: String, mode: String) async throws {
         let action = scenario.hasPrefix("create") ? "create" : "update"
-        let eventFields = scenario.hasSuffix("github") ? githubFields : scenario.hasSuffix("slack") ? slackFields : scenario.hasSuffix("group") ? groupFields : nil
+        let eventFields = scenario.hasSuffix("github") ? githubFields : scenario.hasSuffix("slack") ? slackFields : scenario.hasSuffix("group") ? groupFields : scenario.hasSuffix("mixed") ? mixedFields : nil
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
         let session = f.session(authorize: { _, change, _, _ in
             switch mode {
@@ -666,10 +831,10 @@ struct AgentRoutineChangeTests {
         session.close()
     }
 
-    @Test(arguments: ["create", "update", "create-github", "update-github", "create-slack", "update-slack", "create-group", "update-group"], [false, true])
+    @Test(arguments: ["create", "update", "create-github", "update-github", "create-slack", "update-slack", "create-group", "update-group", "create-mixed", "update-mixed"], [false, true])
     func routineWritesStopAcrossApprovalAndCommit(scenario: String, duringCommit: Bool) async throws {
         let action = scenario.hasPrefix("create") ? "create" : "update"
-        let eventFields = scenario.hasSuffix("github") ? githubFields : scenario.hasSuffix("slack") ? slackFields : scenario.hasSuffix("group") ? groupFields : nil
+        let eventFields = scenario.hasSuffix("github") ? githubFields : scenario.hasSuffix("slack") ? slackFields : scenario.hasSuffix("group") ? groupFields : scenario.hasSuffix("mixed") ? mixedFields : nil
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
         let gate = RoutineGate()
         let session = f.session(authorize: { _, _, _, _ in if !duringCommit { await gate.hold() } }, commit: { change, lifetime in
@@ -687,8 +852,8 @@ struct AgentRoutineChangeTests {
         expectNoDifference(values, [f.routine, f.peerRoutine])
     }
 
-    @Test(arguments: ["time", "github", "slack", "group"]) func routineCreationBudgetReceiptAndCapacityAreBounded(kind: String) async throws {
-        let eventFields = kind == "github" ? githubFields : kind == "slack" ? slackFields : kind == "group" ? groupFields : nil
+    @Test(arguments: ["time", "github", "slack", "group", "mixed"]) func routineCreationBudgetReceiptAndCapacityAreBounded(kind: String) async throws {
+        let eventFields = kind == "github" ? githubFields : kind == "slack" ? slackFields : kind == "group" ? groupFields : kind == "mixed" ? mixedFields : nil
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
         let session = f.session(commit: { change, lifetime in
             _ = try await f.automations.applyStateChange(change, lifetime: lifetime)
@@ -717,9 +882,9 @@ struct AgentRoutineChangeTests {
         full.close()
     }
 
-    @Test(arguments: ["create", "update", "create-github", "update-github", "create-slack", "update-slack", "create-group", "update-group"]) func routineWritesRequireAnAuthorizerAndMatchingScope(scenario: String) async throws {
+    @Test(arguments: ["create", "update", "create-github", "update-github", "create-slack", "update-slack", "create-group", "update-group", "create-mixed", "update-mixed"]) func routineWritesRequireAnAuthorizerAndMatchingScope(scenario: String) async throws {
         let action = scenario.hasPrefix("create") ? "create" : "update"
-        let eventFields = scenario.hasSuffix("github") ? githubFields : scenario.hasSuffix("slack") ? slackFields : scenario.hasSuffix("group") ? groupFields : nil
+        let eventFields = scenario.hasSuffix("github") ? githubFields : scenario.hasSuffix("slack") ? slackFields : scenario.hasSuffix("group") ? groupFields : scenario.hasSuffix("mixed") ? mixedFields : nil
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
         let session = AgentManagementSession(originID: f.context.conversationID, agents: f.agents,
             automations: f.automations, routineTimeZoneIdentifier: "Asia/Taipei")

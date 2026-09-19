@@ -2837,6 +2837,9 @@ final class AppModel: ObservableObject {
         }
         if [.create, .update, .resume].contains(change.operation), case .anyOf = change.automation.trigger {
             metadata["agentRoutineAnyOfTrigger"] = "true"
+            if change.automation.trigger.containsTimeTrigger {
+                metadata["agentRoutineTimeGroupTrigger"] = "true"
+            }
         }
         if let previous = change.previous {
             metadata["previousAgentRoutineName"] = previous.name

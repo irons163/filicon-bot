@@ -125,30 +125,39 @@ signed-in human to a Slack identity. No filter is silently discarded.
 Emoji qualifiers such as `::skin-tone-2` are also rejected rather than being
 silently reduced to a broader base-emoji filter.
 
-Combine 1–8 GitHub/Slack conditions with `{"type":"group","listeners":[...]}`
+Combine 1–8 cron/GitHub/Slack conditions with `{"type":"group","listeners":[...]}`
 or a bare `trigger:[...]` array. This is **OR, not AND**: any one condition can
 fire the same prompt, with each condition retaining its own filters. A delivery
 matching multiple conditions is included once; distinct deliveries can cause
 additional runs/costs. Delivery IDs are scoped to their connector, including
-after reload. Every member must be valid; empty, oversized, nested, time-based,
+after reload. Every member must be valid; empty, oversized, nested,
 generic-event or other-platform groups are rejected as a whole. Exact normalized
 duplicates collapse, order is canonicalized, and one remaining member becomes
-a single trigger. The complete normalized group and both relevant platform
+a single trigger. The complete normalized group and relevant time/platform
 disclosures are shown for approval. No connection is implicitly added.
+
+Time members use `{"type":"cron","schedule":"@every 1h"}` (also valid alone).
+Groups can mix time and event conditions or contain only time conditions. Each
+time member pins the app time zone before approval, unless a valid `TZ`/`CRON_TZ`
+prefix overrides it. Each model-proposed time condition must have a next run
+within 366 days; intervals range from one minute to 366 days. Unknown fields or
+any invalid condition reject the entire proposal, including disabled proposals.
 
 This requires an **existing authenticated connection**; creating a definition
 does not install/start webhooks, log in to an external service or grant new tools. Already queued
-events can match after approval. Updates may switch between time, GitHub, Slack and event-OR
+events can match after approval. Updates may switch between time, GitHub, Slack and mixed OR
 triggers, while an omitted trigger is preserved. Unknown events, malformed filters,
-other platforms, generic events and mixed time/event group writes are rejected. The
+other platforms and generic events are rejected. A top-level `schedule` cannot
+accompany `trigger`. The
 existing Automations UI is unchanged. This is not full reference parity.
 
-Scheduler foundation: internal flat `anyOf` definitions can now select the
+Flat `anyOf` definitions select the
 earliest cron/interval member alongside event members. Coincident time members
 produce one run; all members share the last-run anchor, so an event or manual run
 also resets interval timing. Pause/resume does not backfill. Loading a legacy
-definition with no next-run date does not silently arm it. This **does not yet
-enable mixed time/event proposals** in the model tool or add a mixed-trigger UI.
+definition with no next-run date does not silently arm it. Mixed proposals show
+the full before/after definitions and time-zone, interval-reset and model-cost
+disclosures for explicit approval; they do not add a manual mixed-trigger editor.
 
 In group and mailbox turns, agents can propose remembering or forgetting a short
 fact using `update_state(target:"memory", action:"write"|"forget", fact:...)`.

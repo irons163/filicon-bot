@@ -26,6 +26,14 @@ public enum AutomationTrigger: Codable, Hashable, Sendable {
         case .cron, .event, .unknown: []
         }
     }
+
+    public var containsTimeTrigger: Bool {
+        switch self {
+        case .cron: true
+        case .anyOf(let members): members.contains(where: \.containsTimeTrigger)
+        case .event, .platform, .unknown: false
+        }
+    }
 }
 
 public struct Automation: Identifiable, Codable, Hashable, Sendable {

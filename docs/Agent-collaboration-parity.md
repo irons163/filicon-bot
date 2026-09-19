@@ -26,11 +26,11 @@
 
 同一入口另支援有限 `action:"create"`／`"update"`：create 需 name／prompt，以及 schedule 或 trigger（不可同時指定），enabled 可省略且預設 true，ID 及 owner 由 host 產生；update 需自己的 id 及至少一個變更欄位，省略欄位保留。name 最多 80 字元、prompt 32,000、schedule 256，每 owner 最多 50 項。時間排程支援 cron／alias／`@every`（1 分鐘至 366 天）；新 schedule 固定當次 App 時區，可由有效 TZ/CRON_TZ 前綴覆蓋；舊時間定義缺少時區時，須提供 schedule 才能明確固定時區。
 
-單個 GitHub 事件條件：`{type:"github",repo:"owner/repo",events:[...],userAllowlist?:[...],ciBranch?:...}`。repository 須具體、events 須為既有 14 種已知名稱、使用者最多 50 位；未知欄位／事件／錯誤類型／空篩選項／不合法分支會被拒絕，不默默丟掉限制。空 userAllowlist 代表不限對象；PR opened/pushed/merged/comment/inline-comment 篩選 PR 作者，review requested/approved/changes-requested/commented/thread-resolved/thread-unresolved 要求作者與操作人都在清單內，issue-assigned 篩選操作人。CI 不受使用者清單限制，必須指定一個有效分支；目前僅為該 repository 的個別 push workflow_run 完成（success／failure／timed_out），**不是原版所有 checks settled 的彙整或 PR CI**。時間、GitHub、Slack 與下述事件 OR 組合可經完整核准互換；其他平台、generic event、混合時間／事件與任意 trigger JSON 仍拒絕。既有已驗證事件連線必須另行設定，此工具不安裝／啟動 webhook、不登入外部服務；核准後待處理事件可能符合新定義。
+單個 GitHub 事件條件：`{type:"github",repo:"owner/repo",events:[...],userAllowlist?:[...],ciBranch?:...}`。repository 須具體、events 須為既有 14 種已知名稱、使用者最多 50 位；未知欄位／事件／錯誤類型／空篩選項／不合法分支會被拒絕，不默默丟掉限制。空 userAllowlist 代表不限對象；PR opened/pushed/merged/comment/inline-comment 篩選 PR 作者，review requested/approved/changes-requested/commented/thread-resolved/thread-unresolved 要求作者與操作人都在清單內，issue-assigned 篩選操作人。CI 不受使用者清單限制，必須指定一個有效分支；目前僅為該 repository 的個別 push workflow_run 完成（success／failure／timed_out），**不是原版所有 checks settled 的彙整或 PR CI**。時間、GitHub、Slack 與下述混合 OR 組合可經完整核准互換；其他平台、generic event 與任意 trigger JSON 仍拒絕。既有已驗證事件連線必須另行設定，此工具不安裝／啟動 webhook、不登入外部服務；核准後待處理事件可能符合新定義。
 
 Slack 事件寫入支援單一 `{type:"slack",channel:"C/G/D 對話 ID 或 *",match:{kind:...}}`，kind 為 message／mention／keyword／reaction；keyword 最多 120 字元，reaction 最多 8 個表情短名稱，清單省略或留空代表所有表情。channel 最多 80 字元且只接受具體 ID 或 `*`；`*` 涵蓋所有已設定連線實際送達的對話，不授予額外 Slack 存取權。mention 是 App／bot 被提及，mention/reaction 需既有已驗證的事件入口；既有 channel 訊息路徑仍支援 message/keyword，沿用 connector 的過濾方式，未保留 event subtype，因此不宣稱與 webhook 分類等同。已驗證 webhook 僅普通使用者訊息及對訊息新增的表情觸發；bot／subtype／編輯／刪除訊息、撤回表情與檔案表情不觸發。不支援原版的 `#channel`／`@人名` 解析與 `bySelf:true`：目前無可靠的使用者身分對應，因此明確拒絕，不把機器人身分當成使用者。未知／混用／null 欄位及無效篩選會在核准前拒絕；預覽顯示完整正規化條件與範圍限制。
 
-另支援純事件 OR 組合：`trigger:{type:"group",listeners:[...]}` 或裸 `trigger:[...]`，原始輸入限 1–8 個 GitHub／Slack 條件且不得巢狀。所有條件先驗證，任一無效就拒絕整份提案，不丟棄限制；正規化後排序、去除完全相同條件，只剩一項則儲存為單一 trigger。任一條件命中同一任務即能觸發，不要求全部成立；同筆事件命中多條只納入一次，不同事件仍可能造成後續執行及費用。每條各自的頻道／repo／作者／操作人／CI 分支篩選維持不變，未命中內容不送入 prompt。去重包含 connector ID 及事件 ID、批次 key 使用長度分隔，防止跨平台 ID 碰撞和分隔符別名；已處理的送達紀錄在重新載入後仍去重。預覽顯示完整 OR 定義以及所有涉及平台的限制，不增加外部連線或權限。模型入口仍拒絕時間條件混合、generic event、其他平台及巢狀組合；後續已補 `.anyOf` 最早時間與事件共用執行基準的引擎基礎，但模型 schema、核准說明與完整混合條件寫入尚未開放。
+另支援時間／事件 OR 組合：`trigger:{type:"group",listeners:[...]}` 或裸 `trigger:[...]`，原始輸入限 1–8 個 cron／GitHub／Slack 條件且不得巢狀。時間條件使用 `{type:"cron",schedule:"..."}`，也可單獨使用或組成純時間群組。每個時間條件在核准前固定 App 時區或有效 TZ/CRON_TZ 覆蓋；模型提案的每項時間條件皆須在 366 天內有下一次執行，間隔限 1 分鐘至 366 天。所有條件先驗證，任一無效就拒絕整份提案，不丟棄限制；正規化後排序、去除完全相同條件，只剩一項則儲存為單一 trigger。任一條件命中同一任務即能觸發，不要求全部成立；同筆事件命中多條只納入一次，不同事件仍可能造成後續執行及費用。每條各自的頻道／repo／作者／操作人／CI 分支篩選維持不變，未命中內容不送入 prompt。去重包含 connector ID 及事件 ID、批次 key 使用長度分隔，防止跨平台 ID 碰撞和分隔符別名；已處理的送達紀錄在重新載入後仍去重。預覽顯示完整 OR 定義以及所有涉及平台的限制，不增加外部連線或權限。模型入口仍拒絕 generic event、其他平台及巢狀組合，不可同時指定 top-level schedule 與 trigger。時間條件取最早下次執行，同時命中只執行一次、不補跑；所有條件共用最近執行基準，因此事件與手動執行也會重設 interval 計時。完整新舊核准畫面以七語言揭露時區固定、間隔重設及額外執行費用；不是手動混合條件編輯器。
 
 建立／修改完整核准卡顯示新定義與 enabled；修改另展示舊 name／完整 prompt／trigger／enabled。新增／改排時間從核准提交後算，不補跑等待期間錯過的次數、不立即 Run Now；只改 name/prompt 保留現有 nextRun。提交時重新驗證容量、時程、費用防護及定義，沿用儲存額度與同步 lifetime fence；原子候選儲存成功才發布，durable receipt 區分寫入成功與後續 bookkeeping 失敗。修改只合併核准定義並保留最新 lastRun／history，已開始或排隊的 executor 保留舊任務。費用防護生效時拒絕啟用的新定義，受防護排程不得修改；可建立停用草稿，不因此解除任何防護。
 
@@ -38,7 +38,7 @@ Slack 事件寫入支援單一 `{type:"slack",channel:"C/G/D 對話 ID 或 *",ma
 
 刪除先展示無法復原的警告，核准 action 標為 destructive。原子移除定義及其費用防護 ID，不改其他排程、防護政策、執行歷史、wake 或 claims；寫檔失敗時記憶體不變。已開始／已交給 executor 排隊的執行不取消，完成後仍寫入歷史，不會把定義加回；尚未 dispatch 的 cron／事件批次重查定義後跳過已刪項目。執行歷史留在儲存空間，但現有 UI 不提供已刪排程的歷史入口，也沒有還原命令。不刪產出檔案、不斷開外部服務。可刪除停用／費用防護／未知 trigger 的定義，但不能藉此解除其他任務的防護。
 
-這是 **部分還原**：除上述有限 GitHub／Slack 外，參考的其他 event/platform、時間與事件混合組合 create/update、Slack 名稱解析／自身身分篩選、GitHub checks 彙整及連動工作流程審查仍未接線（UI 既有操作不受影響）；Filicon 對每種 routine 變更都要求明確核准，也沒有因本項替自動化推論加上 host 工具。不是完整原版 automation runtime。
+這是 **部分還原**：除上述有限 GitHub／Slack 外，參考的其他 event/platform、Slack 名稱解析／自身身分篩選、GitHub checks 彙整及連動工作流程審查仍未接線（UI 既有操作不受影響）；Filicon 對每種 routine 變更都要求明確核准，也沒有因本項替自動化推論加上 host 工具。不是完整原版 automation runtime。
 
 ### 記憶召回規則
 
@@ -279,4 +279,25 @@ Slack 事件寫入支援單一 `{type:"slack",channel:"C/G/D 對話 ID 或 *",ma
 
 IORegistry 仍回報 `CGSSessionScreenIsLocked=Yes`，上一批完整回歸受 `.completeFileProtectionUnlessOpen` 檔案重新讀取限制仍未解除；本輪不重複把已知受鎖定影響的全套測試當作成功，未削弱檔案保護。解鎖後仍須重跑完整套件。這不是 live 模型、外部事件服務或 release 公證驗收。
 
-本輪引擎修改尚未提交；未 push、未重啟 App，未更動實際群組、聊天或排程。
+本批引擎修改已在下一輪提交為 `6882ba4`；提交前再次通過 78 項聚焦測試（`/tmp/filicon-mixed-schedule-precommit.log`）。未 push、未重啟 App，未更動實際群組、聊天或排程。
+
+## 本輪增量：模型混合時間／事件提案與完整核准（2026-09-19，完整回歸待解鎖）
+
+上一批已提交為 `6882ba4`。再次核對 reconstructed `source/host/automations/automation-trigger.ts` 與 `source/host/runner/tools/sand-state-tool.ts` 的 cron member、flat group／array 與 schedule／trigger 互斥格式，接上群組／mailbox 的混合條件建立、修改及核准。沒有增加其他平台或外部連線。
+
+- `trigger:{type:"cron",schedule:"..."}` 可單獨使用，或與 GitHub／Slack 放入 1–8 項 group／裸陣列，也支援純時間組合。時間字串正規化空白，所有成員驗證後排序、精確去重，單項折疊；相同 call 的重排／重複成員不造成第二次寫入。未知欄位、null、錯誤型別、巢狀、超量、其他平台及同時傳入 top-level schedule／trigger 仍整份拒絕，不忽略無效條件。
+- 每個時間條件在核准前固定當次 App 時區，可由有效 TZ/CRON_TZ 前綴覆蓋；模型不能另外夾帶 timeZoneIdentifier 或 member-level enabled/prompt。模型提案每項時間條件皆須在 366 天內可執行，間隔限 1 分鐘至 366 天；停用提案同樣驗證。這比內部引擎容許 dormant calendar 分支更嚴格，不宣稱兩層限制相同。
+- 核准顯示完整新舊任務、trigger JSON、enabled 與每個時區；七語言新增最早時間、同時命中一次、不補跑、事件／手動執行重設間隔及可能增加模型費用的說明。不是每個條件獨立計時，也不是新增手動混合條件編輯器。
+- 新增／重新排程從核准提交時安排，不立即 Run Now。只改名稱／prompt 保留最新 nextRun、lastRun 及歷史；核准等待中發生事件執行，也不被舊 snapshot 覆蓋。可與純時間、單一事件及事件組合互換。owner、四次共用額度、50 項容量、費用防護、fresh approval、Stop／帳號切換、stale 及原子儲存／durable receipt 邊界保留。
+
+依測試技能使用隔離暫存資料、固定時間、受控 provider／executor 及 CustomDump；依 SwiftUI 技能將條件判斷保留在既有資料與核准層，呈現可換行的完整說明。驗證包括 interval 兩端邊界、TZ／CRON_TZ、1／8 項、重排與去重、最早 nextRun、開／關建立、事件執行與修改競合、history/reload，以及群組／mailbox 拒絕、Stop、帳號切換、owner、費用防護、容量、寫檔失敗與持久 receipt。測試曾因 fixture 使用錯誤 Slack payload key `reactionEmoji` 失敗，已改成 normalizer/matcher 實際使用的 `reaction`，未放寬產品過濾器。
+
+最終驗證：
+
+- 85 項 Swift Testing／8 suites 通過（包含參數化 cases），紀錄 `/tmp/filicon-mixed-routine-verified.log`。
+- 七語言各 1,480 keys、零缺漏。核准元件 create/update mixed 均產出七語言 PNG；繁中 update 及法文 create 已目視確認完整條件與所有警告沒有裁切。預覽位置 `/tmp/filicon-mixed-routine-review/`；這是核准元件檢查，不是全產品逐頁驗收。
+- 原生 `Filicon App` Debug build 成功（`/tmp/filicon-mixed-routine-native.log`），產物 `codesign --verify --deep --strict` 通過；未啟動產物。`git diff --check` 通過。沒有使用付費模型、正式 Slack/GitHub 帳號或外部 webhook；不是 release 公證驗收。
+
+IORegistry 仍回報 `CGSSessionScreenIsLocked=Yes`。完整回歸的受保護檔案重新讀取限制仍在，未為過關而削弱保護；解鎖後仍須重跑，不能將聚焦通過說成全套通過。完整 reconstructed parity 仍缺其他平台模型寫入、Slack 名稱／人類身分解析、GitHub checks 彙整，以及前述 memory／runtime／state 差異。
+
+本輪提案與核准修改尚未提交；未 push、未重啟 App，未更動使用者實際群組、聊天或排程。

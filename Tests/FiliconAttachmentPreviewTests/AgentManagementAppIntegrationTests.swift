@@ -162,11 +162,12 @@ private actor ManagementWakeProbe {
         expectNoDifference(model.agentMessages.first?.delivery?.state, .completed)
     }
 
-    @Test(arguments: ["approve", "deny", "stop", "account"], ["create", "update", "create-github", "update-github", "create-slack", "update-slack", "create-group", "update-group"])
+    @Test(arguments: ["approve", "deny", "stop", "account"], ["create", "update", "create-github", "update-github", "create-slack", "update-slack", "create-group", "update-group", "create-mixed", "update-mixed"])
     func routineWritesShowCompleteReviewAndRespectLifecycle(mode: String, scenario: String) async throws {
         let action = scenario.hasPrefix("create") ? "create" : "update"
         let github = scenario.hasSuffix("github"), slack = scenario.hasSuffix("slack")
-        let group = scenario.hasSuffix("group")
+        let mixed = scenario.hasSuffix("mixed")
+        let group = scenario.hasSuffix("group") || mixed
         let (root, model, groupID, owner, peer) = try await fixture()
         defer { try? FileManager.default.removeItem(at: root) }
         await model.setTimeZone("Asia/Taipei")
@@ -189,7 +190,7 @@ private actor ManagementWakeProbe {
             fields.removeValue(forKey: "schedule")
             fields["trigger"] = ["type": "slack", "channel": "*", "match": ["kind": "reaction", "emoji": ["eyes"]]]
         }
-        if group { fields.removeValue(forKey: "schedule"); fields["trigger"] = eventGroupFields }
+        if group { fields.removeValue(forKey: "schedule"); fields["trigger"] = mixed ? mixedGroupFields : eventGroupFields }
         let arguments = try JSONSerialization.data(withJSONObject: fields)
         await model.registry.register(ManagingAgentProvider { _, execute in
             let result = try await execute(.init(id: "routine-write", name: "update_state", argumentsJSON: arguments))
@@ -209,7 +210,8 @@ private actor ManagementWakeProbe {
         expectNoDifference(metadata["agentRoutineGitHubTrigger"], github || group ? "true" : nil)
         expectNoDifference(metadata["agentRoutineSlackTrigger"], slack || group ? "true" : nil)
         expectNoDifference(metadata["agentRoutineAnyOfTrigger"], group ? "true" : nil)
-        let trigger: AutomationTrigger = group ? try eventGroupTrigger() : github ? .platform(.github(try .init(repo: "example/project", events: ["review-approved", "ci-failed"],
+        expectNoDifference(metadata["agentRoutineTimeGroupTrigger"], mixed ? "true" : nil)
+        let trigger: AutomationTrigger = group ? try (mixed ? mixedGroupTrigger() : eventGroupTrigger()) : github ? .platform(.github(try .init(repo: "example/project", events: ["review-approved", "ci-failed"],
             ciBranch: "main", userAllowlist: ["author", "reviewer"]))) : slack ? .platform(.slack(try .init(channel: "*", match: .reaction(emoji: ["eyes"], bySelf: false)))) : .cron(expression: "@every 2h", timeZoneIdentifier: "Asia/Taipei")
         let proposed = Automation(id: id, agentID: owner.id, name: "Approved review", prompt: proposedPrompt, trigger: trigger)
         expectNoDifference(metadata["agentRoutineTrigger"], try AutomationStateChange(operation: .create, automation: proposed).triggerJSON)
@@ -237,7 +239,7 @@ private actor ManagementWakeProbe {
             expectNoDifference(saved.trigger, trigger); expectNoDifference(saved.enabled, action == "create")
             expectNoDifference(saved.revision, action == "create" ? 1 : own.revision + 1)
             expectNoDifference(saved.lastRunAt, nil)
-            if action == "create" && !github && !slack && !group { #expect(try #require(saved.nextRunAt) > saved.createdAt) }
+            if action == "create" && ((!github && !slack && !group) || mixed) { #expect(try #require(saved.nextRunAt) > saved.createdAt) }
             else { expectNoDifference(saved.nextRunAt, nil) }
             if action == "update" { expectNoDifference(saved.createdAt, own.createdAt) }
             expectNoDifference(model.automations.count, before.count + (action == "create" ? 1 : 0))
@@ -250,10 +252,11 @@ private actor ManagementWakeProbe {
         expectNoDifference(restored.automationHistory[id] ?? [], [])
     }
 
-    @Test(arguments: ["create", "update", "create-github", "update-github", "create-slack", "update-slack", "create-group", "update-group"]) func mailboxRoutineWritesAreBoundToRecipient(scenario: String) async throws {
+    @Test(arguments: ["create", "update", "create-github", "update-github", "create-slack", "update-slack", "create-group", "update-group", "create-mixed", "update-mixed"]) func mailboxRoutineWritesAreBoundToRecipient(scenario: String) async throws {
         let action = scenario.hasPrefix("create") ? "create" : "update"
         let github = scenario.hasSuffix("github"), slack = scenario.hasSuffix("slack")
-        let group = scenario.hasSuffix("group"), groupJSON = try JSONSerialization.data(withJSONObject: eventGroupFields)
+        let mixed = scenario.hasSuffix("mixed")
+        let group = scenario.hasSuffix("group") || mixed, groupJSON = try JSONSerialization.data(withJSONObject: mixed ? mixedGroupFields : eventGroupFields)
         let (root, model, _, sender, recipient) = try await fixture()
         defer { try? FileManager.default.removeItem(at: root) }
         await model.setTimeZone("Asia/Taipei")
@@ -290,7 +293,7 @@ private actor ManagementWakeProbe {
         try await waitForMailbox(model)
         let saved = try #require(model.automations.first { $0.id == id })
         expectNoDifference(saved.agentID, recipient.id); expectNoDifference(saved.prompt, "Recipient's new task")
-        if group { expectNoDifference(saved.trigger, try eventGroupTrigger()) }
+        if group { expectNoDifference(saved.trigger, try (mixed ? mixedGroupTrigger() : eventGroupTrigger())) }
         expectNoDifference(model.automations.first { $0.id == other.id }, other)
         expectNoDifference(model.agentMessages.first?.delivery?.state, .completed)
     }
@@ -298,10 +301,11 @@ private actor ManagementWakeProbe {
     @Test func routinePreviewRendersInSevenLanguages() throws {
         let output = ProcessInfo.processInfo.environment["FILICON_UI_REVIEW_OUTPUT"].map { URL(fileURLWithPath: $0) }
         for language in ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"] {
-            for scenario in ["pause", "resume", "delete", "create", "update", "create-github", "update-github", "create-slack", "update-slack", "create-group", "update-group"] {
+            for scenario in ["pause", "resume", "delete", "create", "update", "create-github", "update-github", "create-slack", "update-slack", "create-group", "update-group", "create-mixed", "update-mixed"] {
                 let github = scenario.hasSuffix("github"), slack = scenario.hasSuffix("slack")
-                let group = scenario.hasSuffix("group")
-                let action = scenario.replacingOccurrences(of: "-github", with: "").replacingOccurrences(of: "-slack", with: "").replacingOccurrences(of: "-group", with: "")
+                let mixed = scenario.hasSuffix("mixed")
+                let group = scenario.hasSuffix("group") || mixed
+                let action = scenario.replacingOccurrences(of: "-github", with: "").replacingOccurrences(of: "-slack", with: "").replacingOccurrences(of: "-group", with: "").replacingOccurrences(of: "-mixed", with: "")
                 try FiliconLocalization.$languageOverride.withValue(language) {
                     let titles = ["pause": "Pause own routine", "resume": "Resume own routine", "delete": "Delete own routine",
                                   "create": "Create own routine", "update": "Update own routine"]
@@ -335,8 +339,13 @@ private actor ManagementWakeProbe {
                         metadata["agentRoutineGitHubTrigger"] = "true"
                         metadata["agentRoutineSlackTrigger"] = "true"
                         metadata["agentRoutineAnyOfTrigger"] = "true"
+                        if mixed {
+                            metadata["agentRoutineTimeGroupTrigger"] = "true"
+                            let disclosure = "Time conditions use the earliest next run; simultaneous time matches run once without catch-up. Event and manual runs also reset interval timers. Each approved time zone stays fixed. More conditions may cause more runs and model costs."
+                            if language != "en" { #expect(FiliconLocalization.string(disclosure) != disclosure) }
+                        }
                         metadata["agentRoutineTrigger"] = try AutomationStateChange(operation: .create, automation: .init(agentID: UUID(),
-                            name: "Review", prompt: "Review contrast", trigger: eventGroupTrigger())).triggerJSON
+                            name: "Review", prompt: "Review contrast", trigger: mixed ? mixedGroupTrigger() : eventGroupTrigger())).triggerJSON
                         let disclosure = "Any one condition can trigger this same task (OR, not AND). A delivery matching several conditions is included once. Different deliveries may cause additional runs and model costs. Each condition keeps its own filters; no new connections or permissions are granted."
                         if language != "en" { #expect(FiliconLocalization.string(disclosure) != disclosure) }
                     }
@@ -344,7 +353,7 @@ private actor ManagementWakeProbe {
                         .padding(20).frame(width: 380).background(FiliconTheme.canvas)
                         .environment(\.locale, Locale(identifier: language)).environment(\.colorScheme, .light))
                     host.appearance = NSAppearance(named: .aqua)
-                    let height: CGFloat = (action == "update" ? 830 : 570) + (group ? 1_600 : github || slack ? 600 : 0)
+                    let height: CGFloat = (action == "update" ? 830 : 570) + (mixed ? 2_200 : group ? 1_600 : github || slack ? 600 : 0)
                     host.frame = .init(x: 0, y: 0, width: 380, height: height)
                     host.layoutSubtreeIfNeeded()
                     #expect(host.fittingSize.height <= height)
@@ -357,6 +366,16 @@ private actor ManagementWakeProbe {
                 }
             }
         }
+    }
+
+    private var mixedGroupFields: [String: Any] {
+        var value = eventGroupFields
+        value["listeners"] = [["type": "cron", "schedule": "@every 2h"]] + (value["listeners"] as? [[String: Any]] ?? [])
+        return value
+    }
+    private func mixedGroupTrigger() throws -> AutomationTrigger {
+        guard case .anyOf(let members) = try eventGroupTrigger() else { throw AutomationStateChangeError.invalidDefinition }
+        return .anyOf([.cron(expression: "@every 2h", timeZoneIdentifier: "Asia/Taipei")] + members)
     }
 
     private var eventGroupFields: [String: Any] {
