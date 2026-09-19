@@ -80,7 +80,7 @@ must be reviewed by the user in Automations before resuming; deleting them canno
 resume other protected tasks. This tool cannot operate on another agent's tasks
 or add tools to automation runs.
 
-The same tool also supports **creating and updating own time-based, GitHub or Slack routines**:
+The same tool also supports **creating and updating own time-based, GitHub/Slack event or event-OR routines**:
 `action:"create"` requires `name`, `prompt` and either `schedule` or `trigger` (never both), with an optional boolean
 `enabled` (defaults to true); the host assigns the owner and ID. `action:"update"`
 requires an own routine `id` and at least one changed field. Omitted fields stay
@@ -98,7 +98,7 @@ their original task. Spend protection cannot be bypassed with a new ID or enable
 flag; disabled drafts remain possible. These writes share the four-change budget,
 storage quota checks, cancellation fences and atomic persistence.
 
-GitHub uses a single trigger such as
+An individual GitHub condition looks like
 `{"type":"github","repo":"owner/repo","events":["pr-opened"],"userAllowlist":["author"]}`.
 The complete repository, event set, user filter and optional `ciBranch` appear in
 the approval preview. Empty/omitted `userAllowlist` allows everyone; PR events
@@ -108,7 +108,7 @@ It currently covers **individual completed push workflows** (`workflow_run` succ
 failure or timed_out), **not** the reference's aggregate settled checks or PR CI.
 Matching occurs before batching so unrelated deliveries are not passed to the model.
 
-Slack uses a single trigger such as
+An individual Slack condition looks like
 `{"type":"slack","channel":"C123","match":{"kind":"reaction","emoji":["eyes"]}}`.
 Use a concrete conversation ID (C/G/D...) or `*`, not a channel/user name.
 `*` covers all delivered conversations across configured connections, not every
@@ -125,11 +125,22 @@ signed-in human to a Slack identity. No filter is silently discarded.
 Emoji qualifiers such as `::skin-tone-2` are also rejected rather than being
 silently reduced to a broader base-emoji filter.
 
+Combine 1–8 GitHub/Slack conditions with `{"type":"group","listeners":[...]}`
+or a bare `trigger:[...]` array. This is **OR, not AND**: any one condition can
+fire the same prompt, with each condition retaining its own filters. A delivery
+matching multiple conditions is included once; distinct deliveries can cause
+additional runs/costs. Delivery IDs are scoped to their connector, including
+after reload. Every member must be valid; empty, oversized, nested, time-based,
+generic-event or other-platform groups are rejected as a whole. Exact normalized
+duplicates collapse, order is canonicalized, and one remaining member becomes
+a single trigger. The complete normalized group and both relevant platform
+disclosures are shown for approval. No connection is implicitly added.
+
 This requires an **existing authenticated connection**; creating a definition
 does not install/start webhooks, log in to an external service or grant new tools. Already queued
-events can match after approval. Updates may switch between time, GitHub and Slack
+events can match after approval. Updates may switch between time, GitHub, Slack and event-OR
 triggers, while an omitted trigger is preserved. Unknown events, malformed filters,
-other platforms, generic events and combined-trigger writes are rejected. The
+other platforms, generic events and mixed time/event group writes are rejected. The
 existing Automations UI is unchanged. This is not full reference parity.
 
 In group and mailbox turns, agents can propose remembering or forgetting a short

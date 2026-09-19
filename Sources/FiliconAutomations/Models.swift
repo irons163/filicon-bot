@@ -17,6 +17,15 @@ public enum AutomationTrigger: Codable, Hashable, Sendable {
     case platform(PlatformAutomationTrigger)
     case anyOf([AutomationTrigger])
     case unknown(kind: String, payloadJSON: Data)
+
+    /// Every platform involved, including OR members, for complete disclosure.
+    public var platformSources: Set<String> {
+        switch self {
+        case .platform(let value): [value.platform]
+        case .anyOf(let values): values.reduce(into: []) { $0.formUnion($1.platformSources) }
+        case .cron, .event, .unknown: []
+        }
+    }
 }
 
 public struct Automation: Identifiable, Codable, Hashable, Sendable {

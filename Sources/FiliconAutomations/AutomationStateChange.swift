@@ -34,9 +34,10 @@ public enum AutomationStateChangeError: String, LocalizedError, Sendable {
     case stale = "The automation changed while awaiting approval. Inspect it and request approval again."
     case protected = "This automation cannot be resumed by the agent. Review its spend protection and trigger in Automations."
     case invalidDefinition = "Routine create needs name, prompt and either schedule or a GitHub/Slack trigger, never both. Update needs your own id and at least one changed field. Only name, prompt, schedule, trigger and boolean enabled are supported."
-    case invalidGitHubTrigger = "Use one GitHub trigger with a concrete owner/repo, known events, optional userAllowlist (up to 50 logins) and ciBranch. CI events require one valid branch. Other event types and combined triggers are not supported."
+    case invalidGitHubTrigger = "Each GitHub condition needs a concrete owner/repo, known events, optional userAllowlist (up to 50 logins) and ciBranch. CI events require one valid branch. Unknown fields, events and invalid filters are rejected."
     case invalidSlackTrigger = "Use one Slack trigger with a conversation ID (C/G/D...) or *, and match kind mention, message, keyword (up to 120 characters), or reaction (up to 8 emoji names). Channel/user names and bySelf true are unsupported. Unknown fields and invalid filters are rejected."
-    case unsupportedSchedule = "Routine writes support time schedules or one GitHub/Slack trigger. Time schedules need a valid explicit time zone, with intervals between one minute and 366 days. Review other triggers in Automations."
+    case invalidEventGroup = "Use 1 to 8 flat GitHub or Slack event conditions. Any one can trigger the same task. Nested groups, time schedules and other platforms are not supported in event groups. No invalid condition is ignored."
+    case unsupportedSchedule = "Routine writes support time schedules, single GitHub/Slack events, or flat event-only groups of up to eight conditions. Time schedules need a valid explicit time zone, with intervals between one minute and 366 days. Time and event conditions cannot be combined."
     case protectedDefinition = "The agent cannot create enabled routines or edit protected routines while spend protection applies. Review Automations first."
     public var errorDescription: String? { rawValue }
 }

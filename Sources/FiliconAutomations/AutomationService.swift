@@ -180,6 +180,7 @@ public actor AutomationService {
             }
             switch current.trigger {
             case .cron, .platform(.github), .platform(.slack): break
+            case .anyOf: try validateAgentTrigger(current.trigger, now: now)
             default: throw AutomationStateChangeError.unsupportedSchedule
             }
             guard !current.guardPaused, !state.spendGuard.guardPausedAutomationIDs.contains(current.id) else {
@@ -212,6 +213,16 @@ public actor AutomationService {
             _ = try AutomationSchedule.nextRun(for: expression, after: now, defaultTimeZone: zone)
         case .platform(.github(let github)): try github.validateForAgentWrite()
         case .platform(.slack(let slack)): try slack.validateForAgentWrite()
+        case .anyOf(let members):
+            guard (2...Self.maximumListeners).contains(members.count), Set(members).count == members.count else {
+                throw AutomationStateChangeError.invalidEventGroup
+            }
+            for member in members {
+                switch member {
+                case .platform(.github), .platform(.slack): try validateAgentTrigger(member, now: now)
+                default: throw AutomationStateChangeError.invalidEventGroup
+                }
+            }
         default: throw AutomationStateChangeError.unsupportedSchedule
         }
     }
@@ -259,7 +270,11 @@ public actor AutomationService {
             while start < values.count {
                 let end = min(start + Self.maximumCoalescedEvents, values.count)
                 let batch = Array(values[start..<end])
-                let claim = "event:\(automation.id):" + batch.map(\.externalEventID).sorted().joined(separator: ",")
+                // Delivery IDs belong to a connector, not a global namespace.
+                // Length framing also prevents delimiter-containing IDs from
+                // making different batches share one execution claim.
+                let identities = batch.map { "\($0.connectorID):\($0.externalEventID)" }.sorted()
+                let claim = "event:v2:\(automation.id):" + identities.map { "\($0.utf8.count):\($0)" }.joined()
                 if let run = try? await fire(automation: automation, origin: .event, events: batch, claim: claim, executor: executor, now: now) {
                     results.append(run)
                 }

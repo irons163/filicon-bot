@@ -2829,11 +2829,14 @@ final class AppModel: ObservableObject {
                         "agentRoutineID": change.automation.id.uuidString,
                         "agentRoutineEnabled": String(change.enabled),
                         "agentRoutinePrompt": change.automation.prompt, "agentRoutineTrigger": try change.triggerJSON]
-        if [.create, .update, .resume].contains(change.operation), case .platform(.github) = change.automation.trigger {
+        if [.create, .update, .resume].contains(change.operation), change.automation.trigger.platformSources.contains("github") {
             metadata["agentRoutineGitHubTrigger"] = "true"
         }
-        if [.create, .update, .resume].contains(change.operation), case .platform(.slack) = change.automation.trigger {
+        if [.create, .update, .resume].contains(change.operation), change.automation.trigger.platformSources.contains("slack") {
             metadata["agentRoutineSlackTrigger"] = "true"
+        }
+        if [.create, .update, .resume].contains(change.operation), case .anyOf = change.automation.trigger {
+            metadata["agentRoutineAnyOfTrigger"] = "true"
         }
         if let previous = change.previous {
             metadata["previousAgentRoutineName"] = previous.name

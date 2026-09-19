@@ -648,6 +648,10 @@ struct AgentRoutineApprovalDetails: View {
             routineDetails(prefix: "agentRoutine")
             Text(l10n(disclosure))
                 .font(.caption).foregroundStyle(FiliconTheme.textSecondary)
+            if metadata["agentRoutineAnyOfTrigger"] == "true" {
+                Text(l10n("Any one condition can trigger this same task (OR, not AND). A delivery matching several conditions is included once. Different deliveries may cause additional runs and model costs. Each condition keeps its own filters; no new connections or permissions are granted."))
+                    .font(.caption).foregroundStyle(FiliconTheme.textSecondary)
+            }
             if metadata["agentRoutineGitHubTrigger"] == "true" {
                 Text(l10n("GitHub events require an existing authenticated connection. This does not install or start a webhook. Queued events may trigger after approval. An empty user list allows everyone; PR events filter authors, review events require both author and actor. CI ignores the user list and watches one branch: each push workflow completion, not aggregate checks. Future runs may incur model costs."))
                     .font(.caption).foregroundStyle(FiliconTheme.textSecondary)

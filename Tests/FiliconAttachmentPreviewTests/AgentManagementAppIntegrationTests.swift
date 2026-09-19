@@ -162,10 +162,11 @@ private actor ManagementWakeProbe {
         expectNoDifference(model.agentMessages.first?.delivery?.state, .completed)
     }
 
-    @Test(arguments: ["approve", "deny", "stop", "account"], ["create", "update", "create-github", "update-github", "create-slack", "update-slack"])
+    @Test(arguments: ["approve", "deny", "stop", "account"], ["create", "update", "create-github", "update-github", "create-slack", "update-slack", "create-group", "update-group"])
     func routineWritesShowCompleteReviewAndRespectLifecycle(mode: String, scenario: String) async throws {
         let action = scenario.hasPrefix("create") ? "create" : "update"
         let github = scenario.hasSuffix("github"), slack = scenario.hasSuffix("slack")
+        let group = scenario.hasSuffix("group")
         let (root, model, groupID, owner, peer) = try await fixture()
         defer { try? FileManager.default.removeItem(at: root) }
         await model.setTimeZone("Asia/Taipei")
@@ -188,6 +189,7 @@ private actor ManagementWakeProbe {
             fields.removeValue(forKey: "schedule")
             fields["trigger"] = ["type": "slack", "channel": "*", "match": ["kind": "reaction", "emoji": ["eyes"]]]
         }
+        if group { fields.removeValue(forKey: "schedule"); fields["trigger"] = eventGroupFields }
         let arguments = try JSONSerialization.data(withJSONObject: fields)
         await model.registry.register(ManagingAgentProvider { _, execute in
             let result = try await execute(.init(id: "routine-write", name: "update_state", argumentsJSON: arguments))
@@ -204,9 +206,10 @@ private actor ManagementWakeProbe {
         expectNoDifference(metadata["agentRoutineName"], "Approved review")
         expectNoDifference(metadata["agentRoutinePrompt"], proposedPrompt)
         expectNoDifference(metadata["agentRoutineEnabled"], action == "create" ? "true" : "false")
-        expectNoDifference(metadata["agentRoutineGitHubTrigger"], github ? "true" : nil)
-        expectNoDifference(metadata["agentRoutineSlackTrigger"], slack ? "true" : nil)
-        let trigger: AutomationTrigger = github ? .platform(.github(try .init(repo: "example/project", events: ["review-approved", "ci-failed"],
+        expectNoDifference(metadata["agentRoutineGitHubTrigger"], github || group ? "true" : nil)
+        expectNoDifference(metadata["agentRoutineSlackTrigger"], slack || group ? "true" : nil)
+        expectNoDifference(metadata["agentRoutineAnyOfTrigger"], group ? "true" : nil)
+        let trigger: AutomationTrigger = group ? try eventGroupTrigger() : github ? .platform(.github(try .init(repo: "example/project", events: ["review-approved", "ci-failed"],
             ciBranch: "main", userAllowlist: ["author", "reviewer"]))) : slack ? .platform(.slack(try .init(channel: "*", match: .reaction(emoji: ["eyes"], bySelf: false)))) : .cron(expression: "@every 2h", timeZoneIdentifier: "Asia/Taipei")
         let proposed = Automation(id: id, agentID: owner.id, name: "Approved review", prompt: proposedPrompt, trigger: trigger)
         expectNoDifference(metadata["agentRoutineTrigger"], try AutomationStateChange(operation: .create, automation: proposed).triggerJSON)
@@ -234,7 +237,7 @@ private actor ManagementWakeProbe {
             expectNoDifference(saved.trigger, trigger); expectNoDifference(saved.enabled, action == "create")
             expectNoDifference(saved.revision, action == "create" ? 1 : own.revision + 1)
             expectNoDifference(saved.lastRunAt, nil)
-            if action == "create" && !github && !slack { #expect(try #require(saved.nextRunAt) > saved.createdAt) }
+            if action == "create" && !github && !slack && !group { #expect(try #require(saved.nextRunAt) > saved.createdAt) }
             else { expectNoDifference(saved.nextRunAt, nil) }
             if action == "update" { expectNoDifference(saved.createdAt, own.createdAt) }
             expectNoDifference(model.automations.count, before.count + (action == "create" ? 1 : 0))
@@ -247,9 +250,10 @@ private actor ManagementWakeProbe {
         expectNoDifference(restored.automationHistory[id] ?? [], [])
     }
 
-    @Test(arguments: ["create", "update", "create-github", "update-github", "create-slack", "update-slack"]) func mailboxRoutineWritesAreBoundToRecipient(scenario: String) async throws {
+    @Test(arguments: ["create", "update", "create-github", "update-github", "create-slack", "update-slack", "create-group", "update-group"]) func mailboxRoutineWritesAreBoundToRecipient(scenario: String) async throws {
         let action = scenario.hasPrefix("create") ? "create" : "update"
         let github = scenario.hasSuffix("github"), slack = scenario.hasSuffix("slack")
+        let group = scenario.hasSuffix("group"), groupJSON = try JSONSerialization.data(withJSONObject: eventGroupFields)
         let (root, model, _, sender, recipient) = try await fixture()
         defer { try? FileManager.default.removeItem(at: root) }
         await model.setTimeZone("Asia/Taipei")
@@ -274,6 +278,7 @@ private actor ManagementWakeProbe {
                 fields.removeValue(forKey: "schedule")
                 fields["trigger"] = ["type": "slack", "channel": "C123", "match": ["kind": "keyword", "keyword": "design"]]
             }
+            if group { fields.removeValue(forKey: "schedule"); fields["trigger"] = try JSONSerialization.jsonObject(with: groupJSON) }
             _ = try await execute(.init(id: "own", name: "update_state", argumentsJSON: JSONSerialization.data(withJSONObject: fields)))
             return "PASS"
         })
@@ -285,6 +290,7 @@ private actor ManagementWakeProbe {
         try await waitForMailbox(model)
         let saved = try #require(model.automations.first { $0.id == id })
         expectNoDifference(saved.agentID, recipient.id); expectNoDifference(saved.prompt, "Recipient's new task")
+        if group { expectNoDifference(saved.trigger, try eventGroupTrigger()) }
         expectNoDifference(model.automations.first { $0.id == other.id }, other)
         expectNoDifference(model.agentMessages.first?.delivery?.state, .completed)
     }
@@ -292,9 +298,10 @@ private actor ManagementWakeProbe {
     @Test func routinePreviewRendersInSevenLanguages() throws {
         let output = ProcessInfo.processInfo.environment["FILICON_UI_REVIEW_OUTPUT"].map { URL(fileURLWithPath: $0) }
         for language in ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"] {
-            for scenario in ["pause", "resume", "delete", "create", "update", "create-github", "update-github", "create-slack", "update-slack"] {
+            for scenario in ["pause", "resume", "delete", "create", "update", "create-github", "update-github", "create-slack", "update-slack", "create-group", "update-group"] {
                 let github = scenario.hasSuffix("github"), slack = scenario.hasSuffix("slack")
-                let action = scenario.replacingOccurrences(of: "-github", with: "").replacingOccurrences(of: "-slack", with: "")
+                let group = scenario.hasSuffix("group")
+                let action = scenario.replacingOccurrences(of: "-github", with: "").replacingOccurrences(of: "-slack", with: "").replacingOccurrences(of: "-group", with: "")
                 try FiliconLocalization.$languageOverride.withValue(language) {
                     let titles = ["pause": "Pause own routine", "resume": "Resume own routine", "delete": "Delete own routine",
                                   "create": "Create own routine", "update": "Update own routine"]
@@ -324,11 +331,20 @@ private actor ManagementWakeProbe {
                         metadata["agentRoutineTrigger"] = try AutomationStateChange(operation: .create, automation: .init(agentID: UUID(),
                             name: "Review", prompt: "Review contrast", trigger: trigger)).triggerJSON
                     }
+                    if group {
+                        metadata["agentRoutineGitHubTrigger"] = "true"
+                        metadata["agentRoutineSlackTrigger"] = "true"
+                        metadata["agentRoutineAnyOfTrigger"] = "true"
+                        metadata["agentRoutineTrigger"] = try AutomationStateChange(operation: .create, automation: .init(agentID: UUID(),
+                            name: "Review", prompt: "Review contrast", trigger: eventGroupTrigger())).triggerJSON
+                        let disclosure = "Any one condition can trigger this same task (OR, not AND). A delivery matching several conditions is included once. Different deliveries may cause additional runs and model costs. Each condition keeps its own filters; no new connections or permissions are granted."
+                        if language != "en" { #expect(FiliconLocalization.string(disclosure) != disclosure) }
+                    }
                     let host = NSHostingView(rootView: AgentRoutineApprovalDetails(metadata: metadata)
                         .padding(20).frame(width: 380).background(FiliconTheme.canvas)
                         .environment(\.locale, Locale(identifier: language)).environment(\.colorScheme, .light))
                     host.appearance = NSAppearance(named: .aqua)
-                    let height: CGFloat = (action == "update" ? 830 : 570) + (github || slack ? 600 : 0)
+                    let height: CGFloat = (action == "update" ? 830 : 570) + (group ? 1_600 : github || slack ? 600 : 0)
                     host.frame = .init(x: 0, y: 0, width: 380, height: height)
                     host.layoutSubtreeIfNeeded()
                     #expect(host.fittingSize.height <= height)
@@ -341,6 +357,21 @@ private actor ManagementWakeProbe {
                 }
             }
         }
+    }
+
+    private var eventGroupFields: [String: Any] {
+        ["type": "group", "listeners": [
+            ["type": "github", "repo": "example/project", "events": ["review-approved", "ci-failed"],
+             "ciBranch": "main", "userAllowlist": ["author", "reviewer"]],
+            ["type": "slack", "channel": "*", "match": ["kind": "reaction", "emoji": ["eyes"]]]
+        ]]
+    }
+    private func eventGroupTrigger() throws -> AutomationTrigger {
+        .anyOf([
+            .platform(.github(try .init(repo: "example/project", events: ["review-approved", "ci-failed"],
+                ciBranch: "main", userAllowlist: ["author", "reviewer"]))),
+            .platform(.slack(try .init(channel: "*", match: .reaction(emoji: ["eyes"], bySelf: false))))
+        ])
     }
 
     @Test(arguments: ["approve", "deny", "stop", "account", "stale"], ["set", "clear"])
