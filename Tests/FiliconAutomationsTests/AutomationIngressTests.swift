@@ -102,7 +102,7 @@ struct AutomationIngressTests {
         let now = Date(timeIntervalSince1970: 1_800_000_000)
         let vectors: [(AutomationIngressProvider, String, [String: Any])] = [
             (.generic, #"{"kind":"deploy","externalEventID":"g-1","payload":{"environment":"prod"}}"#, ["environment": "prod"]),
-            (.slack, #"{"event_id":"s-1","event":{"type":"app_mention","channel":"C1","text":"hello"}}"#, ["channel": "C1"]),
+            (.slack, #"{"event_id":"s-1","event":{"type":"app_mention","channel":"C1","user":"U1","text":"hello"}}"#, ["channel": "C1"]),
             (.github, #"{"action":"opened","repository":{"full_name":"acme/app"},"sender":{"login":"octo"},"pull_request":{"merged":false}}"#, ["event": "pr-opened"]),
             (.linear, #"{"type":"Issue","webhookId":"l-1","webhookTimestamp":1800000000000,"data":{"id":"ISSUE","teamId":"TEAM"}}"#, ["event": "issue"]),
             (.sentry, #"{"action":"created","data":{"project":{"slug":"api"}}}"#, ["event": "created"]),
@@ -120,6 +120,10 @@ struct AutomationIngressTests {
                                                                     nonce: auth.nonce, now: now)
             #expect(event.kind == (provider == .generic ? "deploy" : provider.eventKind))
             let payload = try json(event)
+            if provider == .slack {
+                #expect(try #require(payload["isMention"] as? Bool))
+                #expect(try #require(payload["supportedEvent"] as? Bool))
+            }
             for (key, value) in expected {
                 #expect(payload[key].map(String.init(describing:)) == String(describing: value))
             }

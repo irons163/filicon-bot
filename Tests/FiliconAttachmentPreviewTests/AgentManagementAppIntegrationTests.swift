@@ -162,10 +162,10 @@ private actor ManagementWakeProbe {
         expectNoDifference(model.agentMessages.first?.delivery?.state, .completed)
     }
 
-    @Test(arguments: ["approve", "deny", "stop", "account"], ["create", "update", "create-github", "update-github"])
+    @Test(arguments: ["approve", "deny", "stop", "account"], ["create", "update", "create-github", "update-github", "create-slack", "update-slack"])
     func routineWritesShowCompleteReviewAndRespectLifecycle(mode: String, scenario: String) async throws {
         let action = scenario.hasPrefix("create") ? "create" : "update"
-        let github = scenario.hasSuffix("github")
+        let github = scenario.hasSuffix("github"), slack = scenario.hasSuffix("slack")
         let (root, model, groupID, owner, peer) = try await fixture()
         defer { try? FileManager.default.removeItem(at: root) }
         await model.setTimeZone("Asia/Taipei")
@@ -184,6 +184,10 @@ private actor ManagementWakeProbe {
             fields["trigger"] = ["type": "github", "repo": "example/project", "events": ["review-approved", "ci-failed"],
                 "ciBranch": "main", "userAllowlist": ["author", "reviewer"]]
         }
+        if slack {
+            fields.removeValue(forKey: "schedule")
+            fields["trigger"] = ["type": "slack", "channel": "*", "match": ["kind": "reaction", "emoji": ["eyes"]]]
+        }
         let arguments = try JSONSerialization.data(withJSONObject: fields)
         await model.registry.register(ManagingAgentProvider { _, execute in
             let result = try await execute(.init(id: "routine-write", name: "update_state", argumentsJSON: arguments))
@@ -201,8 +205,9 @@ private actor ManagementWakeProbe {
         expectNoDifference(metadata["agentRoutinePrompt"], proposedPrompt)
         expectNoDifference(metadata["agentRoutineEnabled"], action == "create" ? "true" : "false")
         expectNoDifference(metadata["agentRoutineGitHubTrigger"], github ? "true" : nil)
+        expectNoDifference(metadata["agentRoutineSlackTrigger"], slack ? "true" : nil)
         let trigger: AutomationTrigger = github ? .platform(.github(try .init(repo: "example/project", events: ["review-approved", "ci-failed"],
-            ciBranch: "main", userAllowlist: ["author", "reviewer"]))) : .cron(expression: "@every 2h", timeZoneIdentifier: "Asia/Taipei")
+            ciBranch: "main", userAllowlist: ["author", "reviewer"]))) : slack ? .platform(.slack(try .init(channel: "*", match: .reaction(emoji: ["eyes"], bySelf: false)))) : .cron(expression: "@every 2h", timeZoneIdentifier: "Asia/Taipei")
         let proposed = Automation(id: id, agentID: owner.id, name: "Approved review", prompt: proposedPrompt, trigger: trigger)
         expectNoDifference(metadata["agentRoutineTrigger"], try AutomationStateChange(operation: .create, automation: proposed).triggerJSON)
         if action == "update" {
@@ -229,7 +234,7 @@ private actor ManagementWakeProbe {
             expectNoDifference(saved.trigger, trigger); expectNoDifference(saved.enabled, action == "create")
             expectNoDifference(saved.revision, action == "create" ? 1 : own.revision + 1)
             expectNoDifference(saved.lastRunAt, nil)
-            if action == "create" && !github { #expect(try #require(saved.nextRunAt) > saved.createdAt) }
+            if action == "create" && !github && !slack { #expect(try #require(saved.nextRunAt) > saved.createdAt) }
             else { expectNoDifference(saved.nextRunAt, nil) }
             if action == "update" { expectNoDifference(saved.createdAt, own.createdAt) }
             expectNoDifference(model.automations.count, before.count + (action == "create" ? 1 : 0))
@@ -242,9 +247,9 @@ private actor ManagementWakeProbe {
         expectNoDifference(restored.automationHistory[id] ?? [], [])
     }
 
-    @Test(arguments: ["create", "update", "create-github", "update-github"]) func mailboxRoutineWritesAreBoundToRecipient(scenario: String) async throws {
+    @Test(arguments: ["create", "update", "create-github", "update-github", "create-slack", "update-slack"]) func mailboxRoutineWritesAreBoundToRecipient(scenario: String) async throws {
         let action = scenario.hasPrefix("create") ? "create" : "update"
-        let github = scenario.hasSuffix("github")
+        let github = scenario.hasSuffix("github"), slack = scenario.hasSuffix("slack")
         let (root, model, _, sender, recipient) = try await fixture()
         defer { try? FileManager.default.removeItem(at: root) }
         await model.setTimeZone("Asia/Taipei")
@@ -265,6 +270,10 @@ private actor ManagementWakeProbe {
                 fields.removeValue(forKey: "schedule")
                 fields["trigger"] = ["type": "github", "repo": "example/project", "events": ["pr-opened"]]
             }
+            if slack {
+                fields.removeValue(forKey: "schedule")
+                fields["trigger"] = ["type": "slack", "channel": "C123", "match": ["kind": "keyword", "keyword": "design"]]
+            }
             _ = try await execute(.init(id: "own", name: "update_state", argumentsJSON: JSONSerialization.data(withJSONObject: fields)))
             return "PASS"
         })
@@ -283,9 +292,9 @@ private actor ManagementWakeProbe {
     @Test func routinePreviewRendersInSevenLanguages() throws {
         let output = ProcessInfo.processInfo.environment["FILICON_UI_REVIEW_OUTPUT"].map { URL(fileURLWithPath: $0) }
         for language in ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"] {
-            for scenario in ["pause", "resume", "delete", "create", "update", "create-github", "update-github"] {
-                let github = scenario.hasSuffix("github")
-                let action = scenario.replacingOccurrences(of: "-github", with: "")
+            for scenario in ["pause", "resume", "delete", "create", "update", "create-github", "update-github", "create-slack", "update-slack"] {
+                let github = scenario.hasSuffix("github"), slack = scenario.hasSuffix("slack")
+                let action = scenario.replacingOccurrences(of: "-github", with: "").replacingOccurrences(of: "-slack", with: "")
                 try FiliconLocalization.$languageOverride.withValue(language) {
                     let titles = ["pause": "Pause own routine", "resume": "Resume own routine", "delete": "Delete own routine",
                                   "create": "Create own routine", "update": "Update own routine"]
@@ -309,11 +318,17 @@ private actor ManagementWakeProbe {
                         metadata["agentRoutineTrigger"] = try AutomationStateChange(operation: .create, automation: .init(agentID: UUID(),
                             name: "Review", prompt: "Review contrast", trigger: trigger)).triggerJSON
                     }
+                    if slack {
+                        metadata["agentRoutineSlackTrigger"] = "true"
+                        let trigger = AutomationTrigger.platform(.slack(try .init(channel: "*", match: .reaction(emoji: ["eyes", "thumbsup"], bySelf: false))))
+                        metadata["agentRoutineTrigger"] = try AutomationStateChange(operation: .create, automation: .init(agentID: UUID(),
+                            name: "Review", prompt: "Review contrast", trigger: trigger)).triggerJSON
+                    }
                     let host = NSHostingView(rootView: AgentRoutineApprovalDetails(metadata: metadata)
                         .padding(20).frame(width: 380).background(FiliconTheme.canvas)
                         .environment(\.locale, Locale(identifier: language)).environment(\.colorScheme, .light))
                     host.appearance = NSAppearance(named: .aqua)
-                    let height: CGFloat = (action == "update" ? 830 : 570) + (github ? 550 : 0)
+                    let height: CGFloat = (action == "update" ? 830 : 570) + (github || slack ? 600 : 0)
                     host.frame = .init(x: 0, y: 0, width: 380, height: height)
                     host.layoutSubtreeIfNeeded()
                     #expect(host.fittingSize.height <= height)

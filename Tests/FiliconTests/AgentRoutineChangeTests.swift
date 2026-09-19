@@ -80,6 +80,171 @@ struct AgentRoutineChangeTests {
          "userAllowlist": ["@Alice", "review-bot[bot]"], "ciBranch": "main"]
     }
 
+    private var slackFields: [String: Any] {
+        ["type": "slack", "channel": "C123", "match": ["kind": "reaction", "emoji": ["eyes"], "bySelf": false]]
+    }
+
+    @Test(arguments: ["message", "mention", "keyword", "reaction"], [true, false])
+    func slackCreateRequiresFullApprovalAndDurableReceipt(kind: String, enabled: Bool) async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let id = UUID(uuidString: "00000000-0000-0000-0000-000000000099")!
+        let match: SlackMatch = switch kind {
+        case "mention": .mention
+        case "keyword": .keyword("needs design")
+        case "reaction": .reaction(emoji: ["eyes", "thumbsup"], bySelf: false)
+        default: .message
+        }
+        let trigger = AutomationTrigger.platform(.slack(try .init(channel: "C123", match: match)))
+        let session = f.session(authorize: { sender, change, _, _ in
+            expectNoDifference(sender, f.owner); expectNoDifference(change.previous, nil)
+            expectNoDifference(change.automation.id, id); expectNoDifference(change.automation.trigger, trigger)
+            expectNoDifference(change.automation.enabled, enabled)
+            let before = await f.automations.list()
+            expectNoDifference(before, [f.routine, f.peerRoutine])
+        }, makeID: { id })
+        defer { session.close() }
+        var rawMatch: [String: Any] = ["kind": kind]
+        if kind == "keyword" { rawMatch["keyword"] = " needs design " }
+        if kind == "reaction" { rawMatch["emoji"] = [" :EYES: ", "thumbsup", "eyes"] }
+        var fields: [String: Any] = ["target": "routine", "action": "create", "name": "Slack review", "prompt": "Review only. Do not publish.",
+            "trigger": ["type": "slack", "channel": " C123 ", "match": rawMatch]]
+        if !enabled { fields["enabled"] = false } // Omission defaults to enabled.
+        let request = try writeCall(fields), tool = session.tools(for: f.owner.id)[2]
+        let result = try await tool.execute(request, context: f.context)
+        let replay = try await tool.execute(request, context: f.context)
+        expectNoDifference(replay, result)
+        let saved = try #require(await f.automations.list().first { $0.id == id })
+        expectNoDifference(saved, .init(id: id, agentID: f.owner.id, name: "Slack review", prompt: "Review only. Do not publish.",
+            trigger: trigger, enabled: enabled, createdAt: Date(timeIntervalSince1970: 3_000)))
+        let restored = try AutomationService(storeURL: f.file)
+        let durable = await restored.list().first { $0.id == id }, history = await restored.history(automationID: id)
+        expectNoDifference(durable, saved); expectNoDifference(history, [])
+        let runtime = try await #require(tool as? any ToolRuntimeContextProviding).runtimeContext(for: f.context)
+        #expect(runtime.contains("bySelf true is unsupported") && runtime.contains("verified event ingress"))
+        let schema = try #require(JSONSerialization.jsonObject(with: tool.descriptor.inputSchema) as? [String: Any])
+        let properties = try #require(schema["properties"] as? [String: Any])
+        let specification = try #require(properties["trigger"] as? [String: Any])
+        let variants = try #require(specification["anyOf"] as? [[String: Any]])
+        let slack = variants[1]
+        expectNoDifference(slack["additionalProperties"] as? Bool, false)
+        expectNoDifference(slack["required"] as? [String], ["type", "channel", "match"])
+    }
+
+    @Test(arguments: ["keyword-boundary", "emoji-boundary", "any-empty", "any-omitted"])
+    func slackAcceptsExactBoundsAndExplicitAnyReaction(kind: String) async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let channel: String, match: SlackMatch, raw: [String: Any]
+        switch kind {
+        case "keyword-boundary":
+            channel = "C" + String(repeating: "1", count: 79)
+            let keyword = String(repeating: "設", count: 120)
+            match = .keyword(keyword); raw = ["kind": "keyword", "keyword": keyword]
+        case "emoji-boundary":
+            channel = "G123"
+            let emoji = (0..<8).map { String(repeating: "x", count: 79) + String($0) }
+            match = .reaction(emoji: emoji, bySelf: false); raw = ["kind": "reaction", "emoji": emoji, "bySelf": false]
+        case "any-empty":
+            channel = "D123"; match = .reaction(emoji: [], bySelf: false); raw = ["kind": "reaction", "emoji": []]
+        default:
+            channel = "*"; match = .reaction(emoji: [], bySelf: false); raw = ["kind": "reaction"]
+        }
+        let expected = AutomationTrigger.platform(.slack(try .init(channel: channel, match: match)))
+        let session = f.session(authorize: { _, change, _, _ in expectNoDifference(change.automation.trigger, expected) })
+        defer { session.close() }
+        _ = try await session.tools(for: f.owner.id)[2].execute(writeCall([
+            "target": "routine", "action": "create", "name": "Bounds", "prompt": "Review",
+            "trigger": ["type": "slack", "channel": channel, "match": raw]]), context: f.context)
+        let saved = await f.automations.list(agentID: f.owner.id).first { $0.name == "Bounds" }
+        expectNoDifference(saved?.trigger, expected)
+    }
+
+    @Test func slackUpdatePreservesTaskHistoryAndSupportsApprovedConversions() async throws {
+        let trigger = AutomationTrigger.platform(.slack(try .init(channel: "C123", match: .message)))
+        let f = try await fixture(trigger: trigger); defer { try? FileManager.default.removeItem(at: f.root) }
+        let session = f.session(authorize: { _, change, _, _ in
+            #expect(change.previous != nil)
+            if change.automation.name == "Renamed" { expectNoDifference(change.automation.trigger, trigger) }
+        })
+        defer { session.close() }
+        let tool = session.tools(for: f.owner.id)[2]
+        _ = try await f.automations.runNow(id: f.routine.id, executor: RoutineExecutor(), now: Date(timeIntervalSince1970: 2_000))
+        let history = await f.automations.history(automationID: f.routine.id)
+        _ = try await tool.execute(writeCall(["target": "routine", "action": "update", "id": f.routine.id.uuidString, "name": "Renamed"]), context: f.context)
+        var expected = f.routine; expected.name = "Renamed"; expected.lastRunAt = Date(timeIntervalSince1970: 2_000); expected.revision += 1
+        let renamed = await f.automations.list(agentID: f.owner.id).first
+        expectNoDifference(renamed, expected)
+        for kind in ["github", "time", "slack"] {
+            var fields: [String: Any] = ["target": "routine", "action": "update", "id": f.routine.id.uuidString, "name": kind]
+            if kind == "time" {
+                fields["schedule"] = "@every 1h"
+                expected.trigger = .cron(expression: "@every 1h", timeZoneIdentifier: "Asia/Taipei")
+                expected.nextRunAt = Date(timeIntervalSince1970: 6_600)
+            } else {
+                fields["trigger"] = kind == "github" ? githubFields : slackFields
+                expected.trigger = kind == "github" ? .platform(.github(try .init(repo: "example/project",
+                    events: ["review-approved", "ci-failed"], ciBranch: "main", userAllowlist: ["alice", "review-bot[bot]"])))
+                    : .platform(.slack(try .init(channel: "C123", match: .reaction(emoji: ["eyes"], bySelf: false))))
+                expected.nextRunAt = nil
+            }
+            expected.name = kind; expected.revision += 1
+            _ = try await tool.execute(writeCall(fields, id: ToolCallID(rawValue: kind)), context: f.context)
+            let actual = await f.automations.list(agentID: f.owner.id).first
+            expectNoDifference(actual, expected)
+        }
+        let finalHistory = await f.automations.history(automationID: f.routine.id)
+        expectNoDifference(finalHistory, history)
+    }
+
+    @Test func slackRejectsMalformedOrBroadenedFiltersBeforeApproval() async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let session = f.session(authorize: { _, _, _, _ in Issue.record("Invalid Slack trigger reached approval") })
+        defer { session.close() }
+        var invalid: [[String: Any]] = []
+        for (key, value): (String, Any) in [
+            ("type", "unknown"), ("channel", ""), ("channel", "#design"), ("channel", "@alice"),
+            ("channel", "design"), ("channel", "c123"), ("channel", "C123\nG456"), ("channel", "C" + String(repeating: "1", count: 80)),
+            ("channel", 123), ("channel", NSNull()), ("match", NSNull()), ("match", "message"), ("repo", "example/private")
+        ] {
+            var raw = slackFields; raw[key] = value; invalid.append(raw)
+        }
+        let invalidMatches: [[String: Any]] = [
+            [:], ["kind": "unknown"], ["kind": "message", "keyword": "ignored"], ["kind": "mention", "bySelf": true],
+            ["kind": "keyword"], ["kind": "keyword", "keyword": ""], ["kind": "keyword", "keyword": " "],
+            ["kind": "keyword", "keyword": "a\nb"], ["kind": "keyword", "keyword": String(repeating: "x", count: 121)],
+            ["kind": "reaction", "bySelf": true], ["kind": "reaction", "bySelf": "false"], ["kind": "reaction", "bySelf": 0],
+            ["kind": "reaction", "emoji": NSNull()], ["kind": "reaction", "emoji": "eyes"],
+            ["kind": "reaction", "emoji": ["eyes", "not valid"]], ["kind": "reaction", "emoji": [""]],
+            ["kind": "reaction", "emoji": ["eyes::unknown"]], ["kind": "reaction", "emoji": ["thumbsup::skin-tone-2"]],
+            ["kind": "reaction", "emoji": Array(repeating: "eyes", count: 9)],
+            ["kind": "reaction", "emoji": [String(repeating: "x", count: 81)]], ["kind": "reaction", "extra": false]
+        ]
+        for match in invalidMatches { var raw = slackFields; raw["match"] = match; invalid.append(raw) }
+        for key in ["type", "channel", "match"] { var raw = slackFields; raw.removeValue(forKey: key); invalid.append(raw) }
+        for raw in invalid {
+            await #expect(throws: AutomationStateChangeError.self) {
+                _ = try await session.tools(for: f.owner.id)[2].execute(writeCall([
+                    "target": "routine", "action": "create", "name": "Review", "prompt": "Review", "trigger": raw]), context: f.context)
+            }
+        }
+        var mixed: [String: Any] = ["target": "routine", "action": "create", "name": "Review", "prompt": "Review",
+            "trigger": slackFields, "schedule": "@daily"]
+        await #expect(throws: AutomationStateChangeError.invalidDefinition) {
+            _ = try await session.tools(for: f.owner.id)[2].execute(writeCall(mixed), context: f.context)
+        }
+        mixed.removeValue(forKey: "schedule"); mixed["trigger"] = [slackFields]
+        await #expect(throws: AutomationStateChangeError.invalidDefinition) {
+            _ = try await session.tools(for: f.owner.id)[2].execute(writeCall(mixed), context: f.context)
+        }
+        for id in [f.peerRoutine.id, UUID()] {
+            await #expect(throws: AutomationStateChangeError.unavailable) {
+                _ = try await session.tools(for: f.owner.id)[2].execute(writeCall([
+                    "target": "routine", "action": "update", "id": id.uuidString, "trigger": slackFields]), context: f.context)
+            }
+        }
+        let unchanged = await f.automations.list()
+        expectNoDifference(unchanged, [f.routine, f.peerRoutine])
+    }
+
     @Test(arguments: [true, false]) func githubCreateRequiresFullApprovalAndDoesNotRun(enabled: Bool) async throws {
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
         let id = UUID(uuidString: "00000000-0000-0000-0000-000000000099")!
@@ -113,7 +278,10 @@ struct AgentRoutineChangeTests {
         #expect(runtime.contains("not aggregate settled checks") && runtime.contains("existing authenticated ingress"))
         let schema = try #require(JSONSerialization.jsonObject(with: tool.descriptor.inputSchema) as? [String: Any])
         let properties = try #require(schema["properties"] as? [String: Any])
-        let specification = try #require(properties["trigger"] as? [String: Any])
+        let combined = try #require(properties["trigger"] as? [String: Any])
+        let variants = try #require(combined["anyOf"] as? [[String: Any]])
+        expectNoDifference(variants.count, 2)
+        let specification = variants[0]
         expectNoDifference(specification["additionalProperties"] as? Bool, false)
         let fields = try #require(specification["properties"] as? [String: Any])
         let events = try #require(fields["events"] as? [String: Any])
@@ -192,8 +360,10 @@ struct AgentRoutineChangeTests {
         expectNoDifference(unchanged, [f.routine, f.peerRoutine])
     }
 
-    @Test(arguments: ["create", "update"], [false, true])
-    func githubWritesRecheckSpendGuardAfterApproval(action: String, initiallyPaused: Bool) async throws {
+    @Test(arguments: ["create-github", "update-github", "create-slack", "update-slack"], [false, true])
+    func eventWritesRecheckSpendGuardAfterApproval(scenario: String, initiallyPaused: Bool) async throws {
+        let action = scenario.hasPrefix("create") ? "create" : "update"
+        let eventFields = scenario.hasSuffix("github") ? githubFields : slackFields
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
         if initiallyPaused { try await f.automations.answerSpendGuard(.pause, at: Date(timeIntervalSince1970: 2_000)) }
         let session = f.session(authorize: { _, _, _, _ in
@@ -201,7 +371,7 @@ struct AgentRoutineChangeTests {
             try await f.automations.answerSpendGuard(.pause, at: Date(timeIntervalSince1970: 2_000))
         })
         defer { session.close() }
-        var fields: [String: Any] = ["target": "routine", "action": action, "trigger": githubFields]
+        var fields: [String: Any] = ["target": "routine", "action": action, "trigger": eventFields]
         if action == "create" { fields["name"] = "Review"; fields["prompt"] = "Review" }
         else { fields["id"] = f.routine.id.uuidString; fields["enabled"] = true }
         await #expect(throws: (any Error).self) {
@@ -314,10 +484,10 @@ struct AgentRoutineChangeTests {
         session.close()
     }
 
-    @Test(arguments: ["create", "update", "create-github", "update-github"], ["deny", "archive", "save-failure", "stale"])
+    @Test(arguments: ["create", "update", "create-github", "update-github", "create-slack", "update-slack"], ["deny", "archive", "save-failure", "stale"])
     func routineWritesFailClosed(scenario: String, mode: String) async throws {
         let action = scenario.hasPrefix("create") ? "create" : "update"
-        let github = scenario.hasSuffix("github")
+        let eventFields = scenario.hasSuffix("github") ? githubFields : scenario.hasSuffix("slack") ? slackFields : nil
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
         let session = f.session(authorize: { _, change, _, _ in
             switch mode {
@@ -335,7 +505,7 @@ struct AgentRoutineChangeTests {
         var fields: [String: Any] = action == "create"
             ? ["target": "routine", "action": action, "name": "Review", "prompt": "Review", "schedule": "@daily"]
             : ["target": "routine", "action": action, "id": f.routine.id.uuidString, "prompt": "Revised"]
-        if github { fields.removeValue(forKey: "schedule"); fields["trigger"] = githubFields }
+        if let eventFields { fields.removeValue(forKey: "schedule"); fields["trigger"] = eventFields }
         await #expect(throws: (any Error).self) { _ = try await session.tools(for: f.owner.id)[2].execute(writeCall(fields), context: f.context) }
         let values = await f.automations.list()
         if mode == "stale" { #expect(values.contains { $0.prompt == "Intervening task" }) }
@@ -350,10 +520,10 @@ struct AgentRoutineChangeTests {
         session.close()
     }
 
-    @Test(arguments: ["create", "update", "create-github", "update-github"], [false, true])
+    @Test(arguments: ["create", "update", "create-github", "update-github", "create-slack", "update-slack"], [false, true])
     func routineWritesStopAcrossApprovalAndCommit(scenario: String, duringCommit: Bool) async throws {
         let action = scenario.hasPrefix("create") ? "create" : "update"
-        let github = scenario.hasSuffix("github")
+        let eventFields = scenario.hasSuffix("github") ? githubFields : scenario.hasSuffix("slack") ? slackFields : nil
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
         let gate = RoutineGate()
         let session = f.session(authorize: { _, _, _, _ in if !duringCommit { await gate.hold() } }, commit: { change, lifetime in
@@ -363,7 +533,7 @@ struct AgentRoutineChangeTests {
         var fields: [String: Any] = action == "create"
             ? ["target": "routine", "action": action, "name": "Review", "prompt": "Review", "schedule": "@daily"]
             : ["target": "routine", "action": action, "id": f.routine.id.uuidString, "prompt": "Revised"]
-        if github { fields.removeValue(forKey: "schedule"); fields["trigger"] = githubFields }
+        if let eventFields { fields.removeValue(forKey: "schedule"); fields["trigger"] = eventFields }
         let task = Task { try await session.tools(for: f.owner.id)[2].execute(writeCall(fields), context: f.context) }
         await gate.waitForEntry(); session.close(); await gate.release()
         await #expect(throws: CancellationError.self) { _ = try await task.value }
@@ -371,7 +541,8 @@ struct AgentRoutineChangeTests {
         expectNoDifference(values, [f.routine, f.peerRoutine])
     }
 
-    @Test(arguments: [false, true]) func routineCreationBudgetReceiptAndCapacityAreBounded(github: Bool) async throws {
+    @Test(arguments: ["time", "github", "slack"]) func routineCreationBudgetReceiptAndCapacityAreBounded(kind: String) async throws {
+        let eventFields = kind == "github" ? githubFields : kind == "slack" ? slackFields : nil
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
         let session = f.session(commit: { change, lifetime in
             _ = try await f.automations.applyStateChange(change, lifetime: lifetime)
@@ -379,7 +550,7 @@ struct AgentRoutineChangeTests {
         })
         let tool = session.tools(for: f.owner.id)[2]
         var fields: [String: Any] = ["target": "routine", "action": "create", "name": "Review", "prompt": "Review", "schedule": "@daily"]
-        if github { fields.removeValue(forKey: "schedule"); fields["trigger"] = githubFields }
+        if let eventFields { fields.removeValue(forKey: "schedule"); fields["trigger"] = eventFields }
         let request = try writeCall(fields), result = try await tool.execute(request, context: f.context)
         let replay = try await tool.execute(request, context: f.context)
         expectNoDifference(replay, result)
@@ -400,16 +571,16 @@ struct AgentRoutineChangeTests {
         full.close()
     }
 
-    @Test(arguments: ["create", "update", "create-github", "update-github"]) func routineWritesRequireAnAuthorizerAndMatchingScope(scenario: String) async throws {
+    @Test(arguments: ["create", "update", "create-github", "update-github", "create-slack", "update-slack"]) func routineWritesRequireAnAuthorizerAndMatchingScope(scenario: String) async throws {
         let action = scenario.hasPrefix("create") ? "create" : "update"
-        let github = scenario.hasSuffix("github")
+        let eventFields = scenario.hasSuffix("github") ? githubFields : scenario.hasSuffix("slack") ? slackFields : nil
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
         let session = AgentManagementSession(originID: f.context.conversationID, agents: f.agents,
             automations: f.automations, routineTimeZoneIdentifier: "Asia/Taipei")
         var fields: [String: Any] = action == "create"
             ? ["target": "routine", "action": action, "name": "Review", "prompt": "Review", "schedule": "@daily"]
             : ["target": "routine", "action": action, "id": f.routine.id.uuidString, "name": "Renamed"]
-        if github { fields.removeValue(forKey: "schedule"); fields["trigger"] = githubFields }
+        if let eventFields { fields.removeValue(forKey: "schedule"); fields["trigger"] = eventFields }
         let tool = session.tools(for: f.owner.id)[2]
         await #expect(throws: AgentMessagingError.approvalRequired) {
             _ = try await tool.execute(writeCall(fields), context: f.context)

@@ -2832,6 +2832,9 @@ final class AppModel: ObservableObject {
         if [.create, .update, .resume].contains(change.operation), case .platform(.github) = change.automation.trigger {
             metadata["agentRoutineGitHubTrigger"] = "true"
         }
+        if [.create, .update, .resume].contains(change.operation), case .platform(.slack) = change.automation.trigger {
+            metadata["agentRoutineSlackTrigger"] = "true"
+        }
         if let previous = change.previous {
             metadata["previousAgentRoutineName"] = previous.name
             metadata["previousAgentRoutinePrompt"] = previous.prompt

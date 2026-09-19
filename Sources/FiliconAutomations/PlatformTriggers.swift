@@ -31,6 +31,25 @@ public struct SlackAutomationTrigger: Codable, Hashable, Sendable {
         guard !value.isEmpty, value.range(of: "^[a-z0-9_+\\-]+$", options: .regularExpression) != nil else { return nil }
         return value
     }
+
+    /// No name lookup or authenticated human identity exists in the ingress yet.
+    /// Reject those proposals instead of silently broadening their scope.
+    public func validateForAgentWrite() throws {
+        guard channel.count <= 80, channel == "*" || channel.range(of: #"^[CGD][A-Z0-9]+$"#, options: .regularExpression) != nil else {
+            throw AutomationStateChangeError.invalidSlackTrigger
+        }
+        switch match {
+        case .mention, .message: break
+        case .keyword(let keyword):
+            guard !keyword.isEmpty, keyword.count <= 120, keyword == keyword.trimmingCharacters(in: .whitespacesAndNewlines),
+                  keyword.rangeOfCharacter(from: .controlCharacters) == nil else { throw AutomationStateChangeError.invalidSlackTrigger }
+        case .reaction(let emoji, let bySelf):
+            guard !bySelf, emoji.count <= 8, Set(emoji).count == emoji.count,
+                  emoji.allSatisfy({ !$0.isEmpty && $0.count <= 80 && Self.normalizeEmoji($0) == $0 }) else {
+                throw AutomationStateChangeError.invalidSlackTrigger
+            }
+        }
+    }
 }
 
 public struct GitHubAutomationTrigger: Codable, Hashable, Sendable {
@@ -137,7 +156,8 @@ public enum PlatformAutomationTrigger: Codable, Hashable, Sendable {
         guard let payload = try? JSONSerialization.jsonObject(with: event.payloadJSON) as? [String: Any] else { return false }
         switch self {
         case .slack(let trigger):
-            guard event.kind == "slack", let channel = payload["channel"] as? String,
+            guard event.kind == "slack", payload["supportedEvent"] as? Bool != false,
+                  let channel = payload["channel"] as? String, !channel.isEmpty,
                   trigger.channel == "*" || trigger.channel.caseInsensitiveCompare(channel) == .orderedSame else { return false }
             let reaction = payload["reaction"] as? String
             switch trigger.match {

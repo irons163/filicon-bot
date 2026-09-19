@@ -179,7 +179,7 @@ public actor AutomationService {
                 throw AutomationStateChangeError.stale
             }
             switch current.trigger {
-            case .cron, .platform(.github): break
+            case .cron, .platform(.github), .platform(.slack): break
             default: throw AutomationStateChangeError.unsupportedSchedule
             }
             guard !current.guardPaused, !state.spendGuard.guardPausedAutomationIDs.contains(current.id) else {
@@ -211,6 +211,7 @@ public actor AutomationService {
             }
             _ = try AutomationSchedule.nextRun(for: expression, after: now, defaultTimeZone: zone)
         case .platform(.github(let github)): try github.validateForAgentWrite()
+        case .platform(.slack(let slack)): try slack.validateForAgentWrite()
         default: throw AutomationStateChangeError.unsupportedSchedule
         }
     }

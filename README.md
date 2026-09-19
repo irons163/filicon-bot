@@ -80,7 +80,7 @@ must be reviewed by the user in Automations before resuming; deleting them canno
 resume other protected tasks. This tool cannot operate on another agent's tasks
 or add tools to automation runs.
 
-The same tool also supports **creating and updating own time-based or GitHub routines**:
+The same tool also supports **creating and updating own time-based, GitHub or Slack routines**:
 `action:"create"` requires `name`, `prompt` and either `schedule` or `trigger` (never both), with an optional boolean
 `enabled` (defaults to true); the host assigns the owner and ID. `action:"update"`
 requires an own routine `id` and at least one changed field. Omitted fields stay
@@ -108,10 +108,27 @@ It currently covers **individual completed push workflows** (`workflow_run` succ
 failure or timed_out), **not** the reference's aggregate settled checks or PR CI.
 Matching occurs before batching so unrelated deliveries are not passed to the model.
 
-This requires an **existing authenticated event connection**; creating a definition
-does not install/start webhooks, log in to GitHub or grant new tools. Already queued
-events can match after approval. Updates may replace a time trigger with GitHub or
-vice versa, while an omitted trigger is preserved. Unknown events, malformed filters,
+Slack uses a single trigger such as
+`{"type":"slack","channel":"C123","match":{"kind":"reaction","emoji":["eyes"]}}`.
+Use a concrete conversation ID (C/G/D...) or `*`, not a channel/user name.
+`*` covers all delivered conversations across configured connections, not every
+conversation in Slack. Match kinds are `message`, `mention` (app/bot mentions),
+`keyword` (required keyword, up to 120 characters) or `reaction` (up to 8 emoji
+short names; omitted/empty means any emoji). Verified webhook matching accepts only
+plain human messages and added reactions to messages; edits, deletions, bot/subtype messages,
+removed reactions and file reactions are excluded. Mentions/reactions require
+verified Slack event ingress; the existing channel-message path supports
+message/keyword matching with its existing connector filtering, not webhook event
+classification (it does not retain event subtypes). The full normalized condition appears in approval.
+Name lookup and `bySelf:true` are rejected: Filicon cannot reliably map the
+signed-in human to a Slack identity. No filter is silently discarded.
+Emoji qualifiers such as `::skin-tone-2` are also rejected rather than being
+silently reduced to a broader base-emoji filter.
+
+This requires an **existing authenticated connection**; creating a definition
+does not install/start webhooks, log in to an external service or grant new tools. Already queued
+events can match after approval. Updates may switch between time, GitHub and Slack
+triggers, while an omitted trigger is preserved. Unknown events, malformed filters,
 other platforms, generic events and combined-trigger writes are rejected. The
 existing Automations UI is unchanged. This is not full reference parity.
 

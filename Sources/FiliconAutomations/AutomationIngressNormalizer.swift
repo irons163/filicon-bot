@@ -17,12 +17,23 @@ public enum AutomationIngressEventNormalizer {
                                    payloadJSON: try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]), occurredAt: now)
         case .slack:
             let source = object["event"] as? [String: Any] ?? object
+            let kind = source["type"] as? String
+            let item = source["item"] as? [String: Any]
+            let isMessage = (kind == "message" || kind == "app_mention") && source["subtype"] == nil
+                && source["hidden"] as? Bool != true && source["bot_id"] == nil
+                && (source["user"] as? String)?.isEmpty == false && source["text"] is String
+            let reaction = kind == "reaction_added" && item?["type"] as? String == "message"
+                ? (source["reaction"] as? String).flatMap(SlackAutomationTrigger.normalizeEmoji) : nil
+            let supported = isMessage || (reaction != nil && (source["user"] as? String)?.isEmpty == false)
             normalized = [
-                "channel": source["channel"] ?? "",
-                "text": source["text"] ?? "",
-                "reaction": source["reaction"] as Any,
-                "isMention": (source["type"] as? String) == "app_mention",
-                "isSelf": source["is_self"] ?? false,
+                "channel": reaction != nil ? item?["channel"] ?? "" : source["channel"] ?? "",
+                "text": isMessage ? source["text"] ?? "" : "",
+                "sender": source["user"] ?? "",
+                "reaction": reaction as Any,
+                "supportedEvent": supported,
+                "isMention": isMessage && kind == "app_mention",
+                // Slack's signed envelope does not identify the Filicon user.
+                "isSelf": false,
                 "raw": object,
             ].compactMapValues { Self.nonNil($0) }
             externalID = object["event_id"] as? String ?? nonce
