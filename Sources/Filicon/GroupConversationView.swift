@@ -668,6 +668,10 @@ struct AgentRoutineApprovalDetails: View {
                 Text(l10n("Linear requires existing authenticated ingress; no webhook or connection is installed or started. Only issue creation and actual status changes are supported, not cycle end. Filters use team, project and new-status UUIDs, not names. Each empty list means any. Queued events may trigger after approval and incur model costs."))
                     .font(.caption).foregroundStyle(FiliconTheme.textSecondary)
             }
+            if metadata["agentRoutineSentryTrigger"] == "true" {
+                Text(l10n("Sentry requires existing authenticated ingress; no webhook or connection is installed or started. Supports issue creation, resolution, assignment, archiving and reopening; issueAny matches these five cases, not all events. Project filters use exact decimal IDs, not names; empty means any project. Replay protection is bounded and signatures do not prove freshness. Queued events may trigger after approval and incur model costs."))
+                    .font(.caption).foregroundStyle(FiliconTheme.textSecondary)
+            }
         }.fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
     }
     private func routineDetails(prefix: String) -> some View {

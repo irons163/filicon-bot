@@ -351,4 +351,21 @@ IORegistry 仍回報 `CGSSessionScreenIsLocked=Yes`。完整回歸的受保護�
 
 驗證：117 項 Swift Testing／11 suites 聚焦回歸通過（`/tmp/filicon-sentry-events-regression.log`）；明確 `swift test --no-parallel` 完整回歸為 134 XCTest、783 Swift Testing／92 suites 通過（`/tmp/filicon-sentry-events-full-serial.log`），兩項 opt-in live Codex 測試未執行。既有通用 ingress fixture 亦改用 Sentry 文件的 Request-ID 與 data.issue.project 格式；舊格式由專門的 legacy 測試保護。上一批發現的並行測試時序不穩定未宣稱已修復。原生 `Filicon App` Debug build（`/tmp/filicon-sentry-events-native.log`）、產物 `codesign --verify --deep --strict` 及 `git diff --check` 通過；只有既有 AppIntents metadata／ad-hoc runtime 提示，未啟動產物。
 
-本輪 Sentry 修改尚未提交。未 push、未重啟使用者 App、未動實際聊天／群組／排程／連線。下一個可接續項目是 Sentry 自身排程提案與完整核准；原版全部能力仍未完成，不能將這批底層測試當成 Sentry 帳號端到端或產品全量驗收。
+此 Sentry 基礎批次已在下一輪提交為 `ca8e570`；提交前再次通過 117 項聚焦回歸（`/tmp/filicon-sentry-events-precommit.log`）。未 push、未重啟使用者 App、未動實際聊天／群組／排程／連線。原版全部能力仍未完成，不能將這批底層測試當成 Sentry 帳號端到端或產品全量驗收。
+
+## 本輪增量：Sentry 自身排程提案與完整核准（2026-09-19）
+
+上一批已提交為 `ca8e570`。依 reconstructed `source/host/runner/tools/sand-state-tool.ts` 的 Sentry shape 與 `source/shared/automations.ts` 六種 cases，接上群組／mailbox 的自身 routine create/update。可單獨使用或與 cron、GitHub、Slack、Linear 組成最多八項平面 OR 條件；並未接上其他平台或暗中建立外部連線。
+
+- 支援 issueCreated／issueResolved／issueAssigned／issueArchived／issueUnresolved 及 issueAny；最後一項僅指前五種 issue cases，不包含所有 Sentry 事件。`projectIds` 空白／省略表示任意專案；最多 50 個精確十進位字串，各 1–200 位 ASCII 數字，先驗證原始清單再排序去重。保留前導零，不做數值轉換、名稱／slug 查找或修剪無效 ID。
+- schema、解析器與核心寫入均有驗證。拒絕 null、錯誤型別、未知欄位／事件、secondary/team/status filters、超限及巢狀群組；混合組合中任一項無效就整份拒絕，停用提案也不例外。既有 raw-action 定義保留原意，不允許透過模型 update 偷換為新 canonical case；既有 pause/resume/delete 語意未改。
+- 沿用固定 owner、完整 before/after、enabled、時區核准、四次共用變更預算、50 筆容量、費用防護、Stop／帳號與等待期間變更的取消邊界、原子儲存和 durable receipt。修改保留歷史，可在核准後切換 Sentry／時間／混合條件；未要求立即執行或補跑，不授予新工具權限。
+- `CaseAutomationTrigger` 的 ID 集合以排序陣列編碼，使持久化和核准 JSON 穩定；儲存鍵與解碼型別不變，也保留 PagerDuty／舊資料語意。七語言提示明示既有驗證連線、五種 issue 範圍、精確 ID、有限重播保護、無簽章新鮮度證明、佇列事件與費用。
+
+依 Swift 測試技能使用固定時間、隔離資料、受控模型與 CustomDump，先重現 4 個 create 參數案例的 invalidDefinition（`/tmp/filicon-sentry-proposals-red.log`），再補六種 case／ID 邊界、核心繞過、歷史保留、重複請求、完整核准與取消／拒絕／帳號切換／費用防護／容量／儲存失敗測試。群組與 mailbox fixtures 均包括 Sentry 單項及所有已支援平台的混合條件。沒有呼叫實際模型或外部帳號。
+
+依 SwiftUI 技能，安全邏輯仍留在 service/parser，核准 UI 只顯示 host 產生的完整定義與說明。七語言共 119 張核准 fixture 圖成功渲染（`/tmp/filicon-sentry-routine-review`）；實際檢視繁中 update 和法文 create 的 Sentry 預覽，未見截斷；不代表整個產品或所有語言已做人工視覺驗收。目錄各 1,485 keys、零缺漏。
+
+驗證：122 項 Swift Testing／11 suites 聚焦回歸通過（`/tmp/filicon-sentry-proposals-focused.log`）；明確 `swift test --no-parallel` 完整回歸為 134 XCTest、788 Swift Testing／92 suites 通過（`/tmp/filicon-sentry-proposals-full.log`），兩項 opt-in live Codex 測試未執行。原生 `Filicon App` Debug build（`/tmp/filicon-sentry-proposals-native.log`）、產物 `codesign --verify --deep --strict`、localization audit 與 `git diff --check` 通過；僅既有 AppIntents／ad-hoc runtime 提示。未宣稱已修復先前的並行測試時序問題。
+
+本輪提案增量尚未提交。未 push、未啟動或重啟 App、未更動真實聊天／群組／排程／連線。`AUTO-03` 仍為 partial：後續可核對 PagerDuty 事件與模型提案、Linear endOfCycle／cycleIds、GitHub checks 彙整與 Slack 名稱／身分映射；不能將本批視為原版全部能力或 Sentry live 帳號驗收完成。

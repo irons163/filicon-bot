@@ -80,7 +80,7 @@ must be reviewed by the user in Automations before resuming; deleting them canno
 resume other protected tasks. This tool cannot operate on another agent's tasks
 or add tools to automation runs.
 
-The same tool also supports **creating and updating own time-based, GitHub/Slack/Linear event or mixed time/event OR routines**:
+The same tool also supports **creating and updating own time-based, GitHub/Slack/Linear/Sentry event or mixed time/event OR routines**:
 `action:"create"` requires `name`, `prompt` and either `schedule` or `trigger` (never both), with an optional boolean
 `enabled` (defaults to true); the host assigns the owner and ID. `action:"update"`
 requires an own routine `id` and at least one changed field. Omitted fields stay
@@ -135,7 +135,19 @@ and repeated values normalize before the full approval preview. Unknown fields,
 nulls, wrong types, invalid IDs and cycle-end proposals are rejected, including
 inside groups. No invalid filter is silently removed.
 
-Combine 1–8 cron/GitHub/Slack/Linear conditions with `{"type":"group","listeners":[...]}`
+An individual Sentry condition looks like
+`{"type":"sentry","event":{"case":"issueAny"},"projectIds":["123"]}`.
+Supported cases are `issueCreated`, `issueResolved`, `issueAssigned`,
+`issueArchived`, `issueUnresolved`, and `issueAny` (only those five issue cases,
+not every Sentry event). Optional `projectIds` accepts at most 50 exact decimal
+ID strings of 1–200 ASCII digits each; omitted/empty means any project. Use real
+project IDs, not the illustrative ID above, names, slugs or guessed IDs. Values
+are sorted/deduplicated after validation; leading zeros are preserved for exact
+matching. No numeric coercion, trimming, unsupported filters or invalid members
+are silently accepted. Core validation also rejects malformed direct writes and
+conversions of legacy raw-action definitions. No existing definition is migrated.
+
+Combine 1–8 cron/GitHub/Slack/Linear/Sentry conditions with `{"type":"group","listeners":[...]}`
 or a bare `trigger:[...]` array. This is **OR, not AND**: any one condition can
 fire the same prompt, with each condition retaining its own filters. A delivery
 matching multiple conditions is included once; distinct deliveries can cause
@@ -155,7 +167,7 @@ any invalid condition reject the entire proposal, including disabled proposals.
 
 This requires an **existing authenticated connection**; creating a definition
 does not install/start webhooks, log in to an external service or grant new tools. Already queued
-events can match after approval. Updates may switch between time, GitHub, Slack, Linear and mixed OR
+events can match after approval. Updates may switch between time, GitHub, Slack, Linear, Sentry and mixed OR
 triggers, while an omitted trigger is preserved. Unknown events, malformed filters,
 other platforms and generic events are rejected. A top-level `schedule` cannot
 accompany `trigger`. The
@@ -217,9 +229,12 @@ accepted again. Existing receipts are not migrated. A supplied Filicon
 timestamp still undergoes its existing optional check, but is not signed by
 Sentry. Behavior follows the [Sentry webhook envelope](https://docs.sentry.io/integrations/integration-platform/webhooks/)
 and [issue payload](https://docs.sentry.io/integrations/integration-platform/webhooks/issues/).
-This increment fixes the event-processing foundation only; Sentry model-written
-routine proposals, a specialized editor, and live-account validation remain
-unsupported/unverified. It does not install/start connections or expose an endpoint.
+Sentry own-routine proposals now use the same full approval, ownership, spend,
+cancellation and persistence checks in group/mailbox turns, including mixed OR
+conditions. Seven-language approval previews disclose project scope, supported
+cases, bounded replay protection and future costs. A specialized manual editor
+and live-account validation remain unsupported/unverified. This does not
+install/start connections or expose an endpoint.
 
 In group and mailbox turns, agents can propose remembering or forgetting a short
 fact using `update_state(target:"memory", action:"write"|"forget", fact:...)`.

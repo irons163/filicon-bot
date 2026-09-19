@@ -131,12 +131,27 @@ public struct TeamsAutomationTrigger: Codable, Hashable, Sendable {
 }
 
 public struct CaseAutomationTrigger: Codable, Hashable, Sendable {
+    public static let sentryEvents: Set<String> = ["issueCreated", "issueResolved", "issueAssigned", "issueArchived", "issueUnresolved", "issueAny"]
     public let event: String
     public let primaryIDs: Set<String>
     public let secondaryIDs: Set<String>
     public init(event: String, allowedEvents: Set<String>, primaryIDs: Set<String> = [], secondaryIDs: Set<String> = []) throws {
         guard allowedEvents.contains(event) else { throw AutomationServiceError.invalidDefinition }
         self.event = event; self.primaryIDs = primaryIDs; self.secondaryIDs = secondaryIDs
+    }
+    private enum CodingKeys: String, CodingKey { case event, primaryIDs, secondaryIDs }
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(event, forKey: .event)
+        try container.encode(primaryIDs.sorted(), forKey: .primaryIDs)
+        try container.encode(secondaryIDs.sorted(), forKey: .secondaryIDs)
+    }
+    public static func isSentryProjectID(_ value: String) -> Bool {
+        (1...200).contains(value.utf8.count) && value.utf8.allSatisfy { (48...57).contains($0) }
+    }
+    public func validateForSentryAgentWrite() throws {
+        guard Self.sentryEvents.contains(event), secondaryIDs.isEmpty, primaryIDs.count <= 50,
+              primaryIDs.allSatisfy(Self.isSentryProjectID) else { throw AutomationStateChangeError.invalidSentryTrigger }
     }
 }
 
