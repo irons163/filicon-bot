@@ -1,4 +1,12 @@
 "" = "";
+"Create own routine" = "Create own routine";
+"Update own routine" = "Update own routine";
+"Current routine" = "Current routine";
+"Proposed routine" = "Proposed routine";
+"Enabled routines may incur future model costs. New or rescheduled tasks start after approval without catch-up. Already started or queued runs keep their original task. This does not grant tools or permissions." = "Enabled routines may incur future model costs. New or rescheduled tasks start after approval without catch-up. Already started or queued runs keep their original task. This does not grant tools or permissions.";
+"Routine create needs name, prompt and schedule; update needs your own id and at least one changed field. Only name, prompt, schedule and boolean enabled are supported." = "Routine create needs name, prompt and schedule; update needs your own id and at least one changed field. Only name, prompt, schedule and boolean enabled are supported.";
+"Agent routine writes support time schedules only, with an explicit valid time zone. Intervals must be between one minute and 366 days. Review other triggers in Automations." = "Agent routine writes support time schedules only, with an explicit valid time zone. Intervals must be between one minute and 366 days. Review other triggers in Automations.";
+"The agent cannot create enabled routines or edit protected routines while spend protection applies. Review Automations first." = "The agent cannot create enabled routines or edit protected routines while spend protection applies. Review Automations first.";
 "Images are saved in this group and sent to the responding members' configured models. @mentions limit this turn's recipients." = "Images are saved in this group and sent to the responding members' configured models. @mentions limit this turn's recipients.";
 "Forwarding images to a group with SendToAgent is not supported." = "Forwarding images to a group with SendToAgent is not supported.";
 "Attach images…" = "Attach images…";

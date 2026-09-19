@@ -162,24 +162,136 @@ private actor ManagementWakeProbe {
         expectNoDifference(model.agentMessages.first?.delivery?.state, .completed)
     }
 
+    @Test(arguments: ["approve", "deny", "stop", "account"], ["create", "update"])
+    func routineWritesShowCompleteReviewAndRespectLifecycle(mode: String, action: String) async throws {
+        let (root, model, groupID, owner, peer) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        await model.setTimeZone("Asia/Taipei")
+        let previousPrompt = String(repeating: "Review previous layout. ", count: 100) + "OLD_TASK_END"
+        let proposedPrompt = String(repeating: "Review contrast; do not publish. ", count: 100) + "NEW_TASK_END"
+        await model.createAutomation(agentID: owner.id, name: "Original", prompt: previousPrompt, schedule: "@every 1h")
+        await model.createAutomation(agentID: peer.id, name: "PRIVATE_PEER_ROUTINE", prompt: "PRIVATE_PEER_TASK", schedule: "@daily")
+        let before = model.automations
+        let own = try #require(before.first { $0.agentID == owner.id })
+        let other = try #require(before.first { $0.agentID == peer.id })
+        var fields: [String: Any] = ["target": "routine", "action": action, "name": "Approved review",
+                                    "prompt": proposedPrompt, "schedule": "@every 2h"]
+        if action == "update" { fields["id"] = own.id.uuidString; fields["enabled"] = false }
+        let arguments = try JSONSerialization.data(withJSONObject: fields)
+        await model.registry.register(ManagingAgentProvider { _, execute in
+            let result = try await execute(.init(id: "routine-write", name: "update_state", argumentsJSON: arguments))
+            #expect(!result.isError)
+            return "PASS"
+        })
+        let run = Task { await model.sendGroupMessage(groupID: groupID, text: "\(action) your own routine") }
+        let approval = try await pending(model, tool: "update_state")
+        let metadata = approval.action.context.metadata
+        let id = try #require(metadata["agentRoutineID"].flatMap(UUID.init(uuidString:)))
+        expectNoDifference(approval.action.target, .resource(kind: "automation", identifier: id.uuidString))
+        expectNoDifference(metadata["agentRoutineAction"], action)
+        expectNoDifference(metadata["agentName"], owner.name)
+        expectNoDifference(metadata["agentRoutineName"], "Approved review")
+        expectNoDifference(metadata["agentRoutinePrompt"], proposedPrompt)
+        expectNoDifference(metadata["agentRoutineEnabled"], action == "create" ? "true" : "false")
+        let trigger = AutomationTrigger.cron(expression: "@every 2h", timeZoneIdentifier: "Asia/Taipei")
+        let proposed = Automation(id: id, agentID: owner.id, name: "Approved review", prompt: proposedPrompt, trigger: trigger)
+        expectNoDifference(metadata["agentRoutineTrigger"], try AutomationStateChange(operation: .create, automation: proposed).triggerJSON)
+        if action == "update" {
+            expectNoDifference(id, own.id)
+            expectNoDifference(metadata["previousAgentRoutineName"], own.name)
+            expectNoDifference(metadata["previousAgentRoutinePrompt"], previousPrompt)
+            expectNoDifference(metadata["previousAgentRoutineEnabled"], "true")
+            expectNoDifference(metadata["previousAgentRoutineTrigger"], try AutomationStateChange(operation: .pause, automation: own).triggerJSON)
+        } else {
+            #expect(id != own.id && id != other.id)
+            #expect(metadata.keys.allSatisfy { !$0.hasPrefix("previousAgentRoutine") })
+        }
+        #expect(!metadata.values.joined().contains("PRIVATE_"))
+        expectNoDifference(model.automations, before)
+        if mode == "stop" { await model.stopGroup(id: groupID) }
+        if mode == "account" { await model.cancelAutoReviewApprovals(nextAccountID: "other") }
+        await model.resolveGroupApproval(approval, groupID: groupID, approve: mode != "deny")
+        await run.value
+        await model.resolveGroupApproval(approval, groupID: groupID, approve: true)
+        if mode == "approve" {
+            let saved = try #require(model.automations.first { $0.id == id })
+            expectNoDifference(saved.agentID, owner.id)
+            expectNoDifference(saved.name, "Approved review"); expectNoDifference(saved.prompt, proposedPrompt)
+            expectNoDifference(saved.trigger, trigger); expectNoDifference(saved.enabled, action == "create")
+            expectNoDifference(saved.revision, action == "create" ? 1 : own.revision + 1)
+            expectNoDifference(saved.lastRunAt, nil)
+            if action == "create" { #expect(try #require(saved.nextRunAt) > saved.createdAt) }
+            else { expectNoDifference(saved.nextRunAt, nil); expectNoDifference(saved.createdAt, own.createdAt) }
+            expectNoDifference(model.automations.count, before.count + (action == "create" ? 1 : 0))
+        } else { expectNoDifference(model.automations, before) }
+        expectNoDifference(model.automations.first { $0.id == other.id }, other)
+        #expect(model.pendingAutoReviewApprovals.isEmpty && model.runningGroups.isEmpty && model.agentMessages.isEmpty)
+        let restored = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+        await restored.reloadWorkspaceData()
+        expectNoDifference(restored.automations.first { $0.id == id }, try persistedRoutine(model.automations.first { $0.id == id }))
+        expectNoDifference(restored.automationHistory[id] ?? [], [])
+    }
+
+    @Test(arguments: ["create", "update"]) func mailboxRoutineWritesAreBoundToRecipient(action: String) async throws {
+        let (root, model, _, sender, recipient) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        await model.setTimeZone("Asia/Taipei")
+        for owner in [sender, recipient] {
+            await model.createAutomation(agentID: owner.id, name: owner.name, prompt: "Original", schedule: "@daily")
+        }
+        let own = try #require(model.automations.first { $0.agentID == recipient.id })
+        let other = try #require(model.automations.first { $0.agentID == sender.id })
+        await model.registry.register(ManagingAgentProvider { _, execute in
+            await #expect(throws: AutomationStateChangeError.unavailable) {
+                _ = try await execute(.init(id: "foreign", name: "update_state", argumentsJSON: JSONEncoder().encode([
+                    "target": "routine", "action": "update", "id": other.id.uuidString, "prompt": "Do not write"])))
+            }
+            var fields = ["target": "routine", "action": action, "prompt": "Recipient's new task"]
+            if action == "create" { fields["name"] = "Recipient review"; fields["schedule"] = "@daily" }
+            else { fields["id"] = own.id.uuidString }
+            _ = try await execute(.init(id: "own", name: "update_state", argumentsJSON: JSONEncoder().encode(fields)))
+            return "PASS"
+        })
+        #expect(await model.sendAgentMessage(senderID: sender.id, recipientID: recipient.id, text: "\(action) your routine"))
+        let approval = try await pending(model, tool: "update_state")
+        expectNoDifference(approval.action.context.metadata["agentName"], recipient.name)
+        let id = try #require(approval.action.context.metadata["agentRoutineID"].flatMap(UUID.init(uuidString:)))
+        await model.resolveGroupApproval(approval, groupID: approval.action.context.conversationID, approve: true)
+        try await waitForMailbox(model)
+        let saved = try #require(model.automations.first { $0.id == id })
+        expectNoDifference(saved.agentID, recipient.id); expectNoDifference(saved.prompt, "Recipient's new task")
+        expectNoDifference(model.automations.first { $0.id == other.id }, other)
+        expectNoDifference(model.agentMessages.first?.delivery?.state, .completed)
+    }
+
     @Test func routinePreviewRendersInSevenLanguages() throws {
         let output = ProcessInfo.processInfo.environment["FILICON_UI_REVIEW_OUTPUT"].map { URL(fileURLWithPath: $0) }
         for language in ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"] {
-            for action in ["pause", "resume", "delete"] {
+            for action in ["pause", "resume", "delete", "create", "update"] {
                 try FiliconLocalization.$languageOverride.withValue(language) {
-                    let title = action == "delete" ? "Delete own routine" : action == "pause" ? "Pause own routine" : "Resume own routine"
+                    let titles = ["pause": "Pause own routine", "resume": "Resume own routine", "delete": "Delete own routine",
+                                  "create": "Create own routine", "update": "Update own routine"]
+                    let title = try #require(titles[action])
                     if language != "en" { #expect(FiliconLocalization.string(title) != title) }
-                    let metadata = ["agentName": "Designer", "agentRoutineAction": action, "agentRoutineName": "Daily design review",
+                    var metadata = ["agentName": "Designer", "agentRoutineAction": action, "agentRoutineName": "Daily design review",
+                                    "agentRoutineEnabled": "true",
                                     "agentRoutineID": "00000000-0000-0000-0000-000000000010",
                                     "agentRoutinePrompt": "Review accessible contrast. Do not publish.",
                                     "agentRoutineTrigger": "{\n  cron: {\n    expression: 0 9 * * *,\n    timeZoneIdentifier: Asia/Taipei\n  }\n}"]
+                    if action == "update" {
+                        metadata["previousAgentRoutineName"] = "Weekly design review"
+                        metadata["previousAgentRoutineEnabled"] = "false"
+                        metadata["previousAgentRoutinePrompt"] = "Review previous layout. Do not publish."
+                        metadata["previousAgentRoutineTrigger"] = "{\n  cron: {\n    expression: @weekly,\n    timeZoneIdentifier: Asia/Taipei\n  }\n}"
+                    }
                     let host = NSHostingView(rootView: AgentRoutineApprovalDetails(metadata: metadata)
                         .padding(20).frame(width: 380).background(FiliconTheme.canvas)
                         .environment(\.locale, Locale(identifier: language)).environment(\.colorScheme, .light))
                     host.appearance = NSAppearance(named: .aqua)
-                    host.frame = .init(x: 0, y: 0, width: 380, height: 500)
+                    let height: CGFloat = action == "update" ? 830 : 570
+                    host.frame = .init(x: 0, y: 0, width: 380, height: height)
                     host.layoutSubtreeIfNeeded()
-                    #expect(host.fittingSize.height <= 500)
+                    #expect(host.fittingSize.height <= height)
                     let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
                     host.cacheDisplay(in: host.bounds, to: bitmap)
                     if let output {

@@ -3,15 +3,17 @@ import Foundation
 /// The host captures the complete definition presented for approval. Runtime
 /// history may advance meanwhile; definition edits invalidate this proposal.
 public struct AutomationStateChange: Equatable, Sendable {
-    public enum Operation: String, Sendable { case pause, resume, delete }
+    public enum Operation: String, Sendable { case pause, resume, delete, create, update }
     public let operation: Operation
     public let automation: Automation
-    public init(operation: Operation, automation: Automation) {
-        self.operation = operation; self.automation = automation
+    public let previous: Automation?
+    public init(operation: Operation, automation: Automation, previous: Automation? = nil) {
+        self.operation = operation; self.automation = automation; self.previous = previous
     }
-    public var enabled: Bool { operation == .resume }
+    public var isDefinitionWrite: Bool { operation == .create || operation == .update }
+    public var enabled: Bool { isDefinitionWrite ? automation.enabled : operation == .resume }
     public func matchesDefinition(_ current: Automation) -> Bool {
-        let expected = automation
+        let expected = previous ?? automation
         return current.id == expected.id && current.agentID == expected.agentID
             && current.createdAt == expected.createdAt
             && current.name == expected.name && current.prompt == expected.prompt
@@ -31,6 +33,9 @@ public enum AutomationStateChangeError: String, LocalizedError, Sendable {
     case unavailable = "The automation is unavailable, belongs to another agent, or already has the requested state."
     case stale = "The automation changed while awaiting approval. Inspect it and request approval again."
     case protected = "This automation cannot be resumed by the agent. Review its spend protection and trigger in Automations."
+    case invalidDefinition = "Routine create needs name, prompt and schedule; update needs your own id and at least one changed field. Only name, prompt, schedule and boolean enabled are supported."
+    case unsupportedSchedule = "Agent routine writes support time schedules only, with an explicit valid time zone. Intervals must be between one minute and 366 days. Review other triggers in Automations."
+    case protectedDefinition = "The agent cannot create enabled routines or edit protected routines while spend protection applies. Review Automations first."
     public var errorDescription: String? { rawValue }
 }
 

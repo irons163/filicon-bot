@@ -1,4 +1,12 @@
 "" = "";
+"Create own routine" = "自分の定期タスクを作成";
+"Update own routine" = "自分の定期タスクを変更";
+"Current routine" = "現在の定期タスク";
+"Proposed routine" = "提案された定期タスク";
+"Enabled routines may incur future model costs. New or rescheduled tasks start after approval without catch-up. Already started or queued runs keep their original task. This does not grant tools or permissions." = "有効な定期タスクは今後モデルの利用料金が発生する場合があります。新規・変更後のスケジュールは承認後に開始し、過去の未実行分は実行しません。開始済み・待機中の実行は元のタスクを保持します。ツールや権限は付与されません。";
+"Routine create needs name, prompt and schedule; update needs your own id and at least one changed field. Only name, prompt, schedule and boolean enabled are supported." = "作成には name、prompt、schedule が必要です。変更には自分のタスクの id と、少なくとも1つの変更フィールドが必要です。name、prompt、schedule、真偽値 enabled のみ対応しています。";
+"Agent routine writes support time schedules only, with an explicit valid time zone. Intervals must be between one minute and 366 days. Review other triggers in Automations." = "エージェントは有効なタイムゾーンを明示した時間指定のタスクのみ作成・変更できます。間隔は1分から366日までです。その他のトリガーは「自動化」で確認してください。";
+"The agent cannot create enabled routines or edit protected routines while spend protection applies. Review Automations first." = "支出保護が適用されている間、エージェントは有効なタスクの作成や保護されたタスクの変更ができません。先に「自動化」で確認してください。";
 "Images are saved in this group and sent to the responding members' configured models. @mentions limit this turn's recipients." = "画像はこのグループに保存され、このターンに応答するメンバーの設定済みモデルに送信されます。@メンションで今回の宛先を指定できます。";
 "Forwarding images to a group with SendToAgent is not supported." = "SendToAgent によるグループへの画像転送には対応していません。";
 "Attach images…" = "画像を添付…";

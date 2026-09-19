@@ -1,4 +1,12 @@
 "" = "";
+"Create own routine" = "Créer sa propre tâche planifiée";
+"Update own routine" = "Modifier sa propre tâche planifiée";
+"Current routine" = "Tâche actuelle";
+"Proposed routine" = "Tâche proposée";
+"Enabled routines may incur future model costs. New or rescheduled tasks start after approval without catch-up. Already started or queued runs keep their original task. This does not grant tools or permissions." = "Les tâches activées peuvent entraîner des frais de modèle futurs. Les nouvelles planifications prennent effet après approbation, sans rattrapage. Les exécutions déjà lancées ou en attente conservent leur tâche initiale. Aucun outil ni aucune autorisation ne sont accordés.";
+"Routine create needs name, prompt and schedule; update needs your own id and at least one changed field. Only name, prompt, schedule and boolean enabled are supported." = "La création nécessite name, prompt et schedule ; la modification nécessite l’id d’une tâche propre à l’agent et au moins un champ modifié. Seuls name, prompt, schedule et le booléen enabled sont acceptés.";
+"Agent routine writes support time schedules only, with an explicit valid time zone. Intervals must be between one minute and 366 days. Review other triggers in Automations." = "Les agents peuvent uniquement créer ou modifier des tâches horaires avec un fuseau horaire valide explicite. Les intervalles doivent être compris entre une minute et 366 jours. Consultez les autres déclencheurs dans Automatisations.";
+"The agent cannot create enabled routines or edit protected routines while spend protection applies. Review Automations first." = "Lorsque la protection des dépenses s’applique, l’agent ne peut pas créer de tâches activées ni modifier les tâches protégées. Vérifiez d’abord les Automatisations.";
 "Images are saved in this group and sent to the responding members' configured models. @mentions limit this turn's recipients." = "Les images sont enregistrées dans ce groupe et envoyées aux modèles configurés des membres répondant à ce tour. Les @mentions limitent les destinataires de ce tour.";
 "Forwarding images to a group with SendToAgent is not supported." = "Le transfert d’images à un groupe avec SendToAgent n’est pas pris en charge.";
 "Attach images…" = "Joindre des images…";

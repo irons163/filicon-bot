@@ -616,6 +616,8 @@ struct AgentRoutineApprovalDetails: View {
     let metadata: [String: String]
     private var title: LocalizedText {
         switch metadata["agentRoutineAction"] {
+        case "create": "Create own routine"
+        case "update": "Update own routine"
         case "delete": "Delete own routine"
         case "resume": "Resume own routine"
         default: "Pause own routine"
@@ -623,6 +625,7 @@ struct AgentRoutineApprovalDetails: View {
     }
     private var disclosure: LocalizedText {
         switch metadata["agentRoutineAction"] {
+        case "create", "update": "Enabled routines may incur future model costs. New or rescheduled tasks start after approval without catch-up. Already started or queued runs keep their original task. This does not grant tools or permissions."
         case "delete": "Delete removes this routine and prevents future triggers. There is no undo. Execution history stays in storage; already started or queued runs are not cancelled."
         case "resume": "Resume enables future triggers and may incur model costs. It does not run immediately or replay missed runs. Task, trigger and history stay unchanged."
         default: "Pause disables future triggers. Already started or queued runs are not cancelled. Task, trigger and history stay unchanged."
@@ -632,15 +635,31 @@ struct AgentRoutineApprovalDetails: View {
         VStack(alignment: .leading, spacing: 10) {
             Text(l10n(title)).font(.headline)
             Text(verbatim: metadata["agentName"] ?? "").font(.callout.weight(.semibold))
-            Text(verbatim: metadata["agentRoutineName"] ?? "").font(.callout.weight(.semibold))
             Text(l10n("Routine ID")).font(.caption.weight(.semibold))
             Text(verbatim: metadata["agentRoutineID"] ?? "").font(.caption.monospaced())
-            Text(l10n("Task and trigger")).font(.caption.weight(.semibold))
-            Text(verbatim: metadata["agentRoutinePrompt"] ?? "")
-            Text(verbatim: metadata["agentRoutineTrigger"] ?? "").font(.caption.monospaced())
+            if metadata["agentRoutineAction"] == "update" {
+                Text(l10n("Current routine")).font(.headline)
+                routineDetails(prefix: "previousAgentRoutine")
+                Divider()
+            }
+            if ["create", "update"].contains(metadata["agentRoutineAction"] ?? "") {
+                Text(l10n("Proposed routine")).font(.headline)
+            }
+            routineDetails(prefix: "agentRoutine")
             Text(l10n(disclosure))
                 .font(.caption).foregroundStyle(FiliconTheme.textSecondary)
         }.fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+    }
+    private func routineDetails(prefix: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(verbatim: metadata[prefix + "Name"] ?? "").font(.callout.weight(.semibold))
+            if let enabled = metadata[prefix + "Enabled"] {
+                Text(l10n(enabled == "true" ? "Enabled" : "Disabled")).font(.callout)
+            }
+            Text(l10n("Task and trigger")).font(.caption.weight(.semibold))
+            Text(verbatim: metadata[prefix + "Prompt"] ?? "")
+            Text(verbatim: metadata[prefix + "Trigger"] ?? "").font(.caption.monospaced())
+        }
     }
 }
 

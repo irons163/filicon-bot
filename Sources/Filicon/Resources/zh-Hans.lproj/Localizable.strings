@@ -1,4 +1,12 @@
 "" = "";
+"Create own routine" = "创建自己的计划";
+"Update own routine" = "修改自己的计划";
+"Current routine" = "当前计划";
+"Proposed routine" = "拟定的计划";
+"Enabled routines may incur future model costs. New or rescheduled tasks start after approval without catch-up. Already started or queued runs keep their original task. This does not grant tools or permissions." = "启用的计划日后可能产生模型费用。新增或重新安排的任务从批准后开始，不补执行之前错过的次数。已开始或排入队列的执行会保留原任务内容。此操作不会授予工具或权限。";
+"Routine create needs name, prompt and schedule; update needs your own id and at least one changed field. Only name, prompt, schedule and boolean enabled are supported." = "创建计划需要 name、prompt 和 schedule；修改需要自己计划的 id，并至少更改一个字段。仅支持 name、prompt、schedule 及布尔值 enabled。";
+"Agent routine writes support time schedules only, with an explicit valid time zone. Intervals must be between one minute and 366 days. Review other triggers in Automations." = "代理人仅能创建或修改时间计划，且必须指定有效时区。间隔须介于 1 分钟与 366 天之间。其他触发条件请到“自动化”中查看。";
+"The agent cannot create enabled routines or edit protected routines while spend protection applies. Review Automations first." = "费用保护生效时，代理人不能创建启用的计划或修改受保护的计划。请先到“自动化”中查看。";
 "Images are saved in this group and sent to the responding members' configured models. @mentions limit this turn's recipients." = "图片会保存在此群组，并发送给本轮回复成员配置的模型；可用 @名字 限定本轮接收人。";
 "Forwarding images to a group with SendToAgent is not supported." = "尚不支持使用 SendToAgent 将图片转发至群组。";
 "Attach images…" = "附加图片…";

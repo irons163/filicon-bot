@@ -85,7 +85,28 @@ public actor AutomationService {
     public func applyStateChange(_ change: AutomationStateChange, lifetime: AutomationStateChangeLifetime,
                                  now: Date = Date()) throws -> Automation {
         try lifetime.commit(change) {
-            try validateStateChange(change)
+            try validateStateChange(change, now: now)
+            if change.isDefinitionWrite {
+                var candidate = state
+                var value = change.automation
+                if change.operation == .update,
+                   let index = candidate.automations.firstIndex(where: { $0.id == value.id }) {
+                    let current = candidate.automations[index]
+                    // Only merge approved definition fields. A run may finish
+                    // during approval; preserve its latest history/lastRun.
+                    value.lastRunAt = current.lastRunAt
+                    value.revision = current.revision + 1
+                    value.nextRunAt = current.trigger == value.trigger && current.enabled == value.enabled
+                        ? current.nextRunAt : try computeNextRun(for: value, after: now)
+                    candidate.automations[index] = value
+                } else {
+                    value.nextRunAt = try computeNextRun(for: value, after: now)
+                    candidate.automations.append(value)
+                }
+                try Self.save(candidate, to: storeURL)
+                state = candidate
+                return value
+            }
             guard let index = state.automations.firstIndex(where: { $0.id == change.automation.id }) else {
                 throw AutomationStateChangeError.unavailable
             }
@@ -112,7 +133,11 @@ public actor AutomationService {
         }
     }
 
-    public func validateStateChange(_ change: AutomationStateChange) throws {
+    public func validateStateChange(_ change: AutomationStateChange, now: Date = Date()) throws {
+        if change.isDefinitionWrite {
+            try validateDefinitionChange(change, now: now)
+            return
+        }
         guard let value = state.automations.first(where: { $0.id == change.automation.id }) else { throw AutomationStateChangeError.unavailable }
         guard change.matchesDefinition(value) else { throw AutomationStateChangeError.stale }
         // Deleting a disabled/protected/unknown definition is safe: it cannot
@@ -123,6 +148,60 @@ public actor AutomationService {
             guard !value.guardPaused, !state.spendGuard.guardPausedAutomationIDs.contains(value.id),
                   !containsUnknownTrigger(value.trigger) else { throw AutomationStateChangeError.protected }
             try validate(trigger: value.trigger)
+        }
+    }
+
+    private func validateDefinitionChange(_ change: AutomationStateChange, now: Date) throws {
+        let proposed = change.automation
+        guard !proposed.name.isEmpty, proposed.name.count <= 80,
+              proposed.name == proposed.name.trimmingCharacters(in: .whitespacesAndNewlines),
+              !proposed.prompt.isEmpty, proposed.prompt.count <= 32_000,
+              proposed.prompt == proposed.prompt.trimmingCharacters(in: .whitespacesAndNewlines) else {
+            throw AutomationStateChangeError.invalidDefinition
+        }
+        guard case .cron(let expression, let zoneID) = proposed.trigger,
+              expression.count <= 256, let zoneID, let zone = TimeZone(identifier: zoneID) else {
+            throw AutomationStateChangeError.unsupportedSchedule
+        }
+        if let interval = AutomationSchedule.parseEvery(expression) {
+            guard interval.isFinite, interval >= 60, interval <= 366 * 86_400 else {
+                throw AutomationStateChangeError.unsupportedSchedule
+            }
+        }
+        // Even disabled definitions must have an executable schedule.
+        _ = try AutomationSchedule.nextRun(for: expression, after: now, defaultTimeZone: zone)
+        if change.operation == .create {
+            guard change.previous == nil, !state.automations.contains(where: { $0.id == proposed.id }),
+                  proposed.lastRunAt == nil, proposed.nextRunAt == nil, proposed.revision == 1, !proposed.guardPaused else {
+                throw AutomationStateChangeError.stale
+            }
+            guard state.automations.filter({ $0.agentID == proposed.agentID }).count < Self.maximumDefinitionsPerAgent else {
+                throw AutomationServiceError.maximumDefinitions(Self.maximumDefinitionsPerAgent)
+            }
+        } else {
+            guard let previous = change.previous,
+                  let current = state.automations.first(where: { $0.id == proposed.id }) else {
+                throw AutomationStateChangeError.unavailable
+            }
+            guard change.matchesDefinition(current), proposed.id == previous.id,
+                  proposed.agentID == previous.agentID, proposed.createdAt == previous.createdAt,
+                  proposed.revision == previous.revision, proposed.guardPaused == previous.guardPaused else {
+                throw AutomationStateChangeError.stale
+            }
+            guard case .cron = current.trigger else { throw AutomationStateChangeError.unsupportedSchedule }
+            guard !current.guardPaused, !state.spendGuard.guardPausedAutomationIDs.contains(current.id) else {
+                throw AutomationStateChangeError.protectedDefinition
+            }
+            guard proposed.name != current.name || proposed.prompt != current.prompt
+                    || proposed.trigger != current.trigger || proposed.enabled != current.enabled else {
+                throw AutomationStateChangeError.unavailable
+            }
+        }
+        // A new ID or enabled=true must not recreate an armed task around a
+        // spend pause. Disabled drafts remain possible without future costs.
+        if proposed.enabled && (!state.spendGuard.guardPausedAutomationIDs.isEmpty
+                                || AutomationSpendGuard.evaluate(state.spendGuard, now: now) == .pause) {
+            throw AutomationStateChangeError.protectedDefinition
         }
     }
 

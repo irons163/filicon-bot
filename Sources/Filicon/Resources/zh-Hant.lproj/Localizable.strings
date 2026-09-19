@@ -1,4 +1,12 @@
 "" = "";
+"Create own routine" = "建立自己的排程";
+"Update own routine" = "修改自己的排程";
+"Current routine" = "目前排程";
+"Proposed routine" = "提議的排程";
+"Enabled routines may incur future model costs. New or rescheduled tasks start after approval without catch-up. Already started or queued runs keep their original task. This does not grant tools or permissions." = "啟用的排程日後可能產生模型費用。新增或重新排定的任務從核准後開始，不補跑先前錯過的次數。已開始或排入佇列的執行會保留原任務內容。此操作不會授予工具或權限。";
+"Routine create needs name, prompt and schedule; update needs your own id and at least one changed field. Only name, prompt, schedule and boolean enabled are supported." = "建立排程需要 name、prompt 和 schedule；修改需要自己排程的 id，並至少變更一個欄位。僅支援 name、prompt、schedule 及布林值 enabled。";
+"Agent routine writes support time schedules only, with an explicit valid time zone. Intervals must be between one minute and 366 days. Review other triggers in Automations." = "代理人僅能建立或修改時間排程，且必須指定有效時區。間隔須介於 1 分鐘與 366 天之間。其他觸發條件請至「自動化」檢視。";
+"The agent cannot create enabled routines or edit protected routines while spend protection applies. Review Automations first." = "費用防護生效時，代理人不能建立啟用的排程或修改受保護的排程。請先至「自動化」檢視。";
 "Images are saved in this group and sent to the responding members' configured models. @mentions limit this turn's recipients." = "圖片會保存在此群組，並傳送給本輪回覆成員設定的模型；可用 @名字 限定本輪收件人。";
 "Forwarding images to a group with SendToAgent is not supported." = "尚不支援使用 SendToAgent 將圖片轉交至群組。";
 "Attach images…" = "附加圖片⋯";

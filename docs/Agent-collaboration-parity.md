@@ -15,20 +15,24 @@
 | 圖片訊息 | `loadAgentInboundImages`／`selectedImages`、`agents/agent-messaging.ts` 的 images；`shared-rooms.ts` 的四張限制與 `send-pipeline.ts` 的選圖路徑 | **已接線受限版本**：代理人 → 訊息及一般群組輸入均可手動選擇 PNG/JPEG，實際位元組傳入支援看圖的收件模型。群組預覽揭露保存／模型收件範圍，依本輪使用者 @mention 選擇成員；全部指定模型通過驗證才貼文，失敗保留草稿。`SendToAgent(images:[id])` 只能轉交本次收到的 peer 圖片，或 host 指定且使用者本輪點名給自己的群組圖片；每次顯示收件人、文字與圖片重新預覽核准，回信及同群組成員也不豁免。`SendMessage` 可將這些圖片另行審批後發布到來源對話，群組核准卡揭露房間與完整成員，不擴大模型收件者。拒絕任意路徑、網址、base64 與其他訊息的 ID。最多四張／單張 5 MB／合計 12 MB，存為雜湊驗證的獨立 blobs。**尚缺**：參考的 file/HTTPS 圖片來源、模型新產生的圖片、歷史圖片自動重播。`SendToAgent` 群組目標附圖仍明確拒絕；不支援看圖的模型明確失敗，不默默丟棄圖片。`AgentImageMessagingTests`、`AgentImageAppIntegrationTests`、`GroupImageAppTests`；本輪群組發布的驗證狀態見文末 |
 | 優先訊息中斷非使用者工作 | `steerRecipientForPriorityPeer`，先檢查 active lane != user | **已接線受限版本**：單一 peer 的 `priority:true` 每次須核准（回信也不豁免），manual Priority 也接上排程。來源回合結束並 drain 後，可取消收件者正在執行的背景 peer／委派群組回覆／排程自動化，等 host 工具清理完才啟動優先工作。排隊中的使用者工作及較早優先訊息不被插隊；前景群組、手動 mailbox 首回合、手動 Run Now、channel／workflow／subtask 均受保護。不自動重播被中斷工作；群組 priority 拒絕。**差異**：不是參考的 enqueue 當下立即中斷，保護範圍更保守。`AgentExecutionSchedulerTests`、`AgentMessagingSessionTests`、`AgentBackgroundExecutionTests` |
 | 模型建立／編輯代理人 | `source/host/agents/agent-messaging.ts`: CreateAgent、UpdateAgent | **已接線受限版本**：群組、手動 mailbox 與 peer wake 提供 `CreateAgent(name, description?)`／`UpdateAgent(agent_id, name?, description?)`。每次完整顯示變更並明確核准；每個來源請求共用四次上限。新代理人沿用發起者 provider/model，description 成為公開摘要與初始指令；Update 只合併名稱與公開摘要，不修改私人指令。`AgentManagementSessionTests`、`AgentManagementAppIntegrationTests`。不替未綁定 agent 的一般 DM 加上管理權限 |
-| 模型修改自身公開資料 | `source/host/runner/tools/sand-state-tool.ts` 的 `update_state` profile/set；`source/host/extensions/memory/agent-state.ts` 的 `updateProfile` | **已接線受限版本**：`update_state(target:"profile", action:"set", name?, description?)`。身分由 host 固定；不得傳入別人的 ID。可明確清空公開 description，省略欄位保留原值；私人 persona 不變。每次仍需使用者核准，與 CreateAgent／UpdateAgent、memory、avatar 及 routine 變更共用四次上限。下一個群組回合重新載入 profile，原請求參與成員不擴大。memory／avatar 支援範圍見其他列；routine 僅支援下列 pause/resume/delete；workflow／settings／channel／project 路由仍缺 |
+| 模型修改自身公開資料 | `source/host/runner/tools/sand-state-tool.ts` 的 `update_state` profile/set；`source/host/extensions/memory/agent-state.ts` 的 `updateProfile` | **已接線受限版本**：`update_state(target:"profile", action:"set", name?, description?)`。身分由 host 固定；不得傳入別人的 ID。可明確清空公開 description，省略欄位保留原值；私人 persona 不變。每次仍需使用者核准，與 CreateAgent／UpdateAgent、memory、avatar 及 routine 變更共用四次上限。下一個群組回合重新載入 profile，原請求參與成員不擴大。memory／avatar 支援範圍見其他列；routine 支援下列有限 create/update/pause/resume/delete；workflow／settings／channel／project 路由仍缺 |
 | 模型修改自身頭像 | `source/host/runner/tools/sand-state-tool.ts` 的 avatar set/clear；`source/host/extensions/memory/agent-state.ts` 的 setAvatar/clearAvatar | **部分接線，來源不同**：群組／mailbox 可呼叫 `update_state(target:"avatar", action:"set", pet_id:...)` 選九種內建小寵物，或 `action:"clear"`（不得附 pet_id）恢復 Codex。每次顯示新頭像與原頭像類型並核准；只可改 host 固定的自身 ID。與 profile／memory 共用四次上限，Stop／帳號切換撤銷、核准期間頭像被改則拒絕舊提案；只合併頭像，不覆蓋其他欄位、不刪舊圖片檔案。**未還原參考的任意 host/box path 圖片安裝**，不接受路徑、URL、base64 或模型生成圖；不能視為完整 avatar parity。`AgentAvatarChangeTests`、`AgentManagementAppIntegrationTests` |
 | 明確保存／忘記自身事實 | `source/host/runner/tools/sand-state-tool.ts` 的 memory write/forget；`source/host/extensions/memory/agent-state.ts` 的 memory shards | **已接線受限版本**：群組／mailbox 的 `update_state(target:"memory", action:"write"或"forget", fact:...)` 預設為私人 `scope:"agent"`，共享 scope 見下一列。write 的 tier 接受 profile／log／note（預設 log），forget 使用記錄原文且不得傳 tier。帳號＋代理人由 host 固定，跨 origin、重啟後同一代理人的 group/mailbox runtime 會取得已核准事實，其他代理人／帳號不注入私人事實。每次增刪都顯示全文並核准；UI「代理人 → 編輯 → 代理人記憶」可重新整理、檢視及確認忘記。每事實 1,000 字元；每帳號／代理人 48 項（含最多 8 項 profile）、合計 12,000 字元；不自動淘汰。**尚缺**：project scope、DM／自動化等其他入口統一記憶、完整私人歷史 session。不是自動捕捉整段聊天。`AgentMemoryTests`、`AgentManagementAppIntegrationTests` |
 | 共享使用者事實 | `memory-service.ts` 的 `SharedUserMemoryStore`、`sand-memory.ts` 的 `renderUserMemorySystemPrompt`／`mergeUserMemoryShards`；`agent-state.ts` 的 user shard | **已接線受限版本**：同一工具明確指定 `scope:"user"` 後，逐次核准共享給帳號內所有現有／未來代理人的 group/mailbox 模型，含群組外代理人。省略 scope 或舊紀錄缺少 scope 一律維持 private agent。保留紀錄者 UUID、tier／日期／scope 來源；模型只能忘記自己的同 scope 原文；UI 可管理所有作者的共享紀錄。共享 account 全部作者合計 48 項、8 項 profile、12,000 字元，與私人額度分開，不自動淘汰。**差異**：寫入仍按同 scope 精確文字全體去重，召回另按大小寫／空白摺疊並保留較新原文、tier 與作者；有重要性排名與獨立預算，詳見下一列。project scope 仍拒絕，其他執行入口仍未注入，沒有自動抓取整段聊天。`AgentMemoryTests`、`AgentManagementAppIntegrationTests` |
 
-### 自身 routine 暫停／恢復／刪除
+### 自身 routine 建立／修改／暫停／恢復／刪除
 
-已核對 reconstructed `source/host/runner/tools/sand-state-tool.ts` 的 `routine.pause/resume/delete` 分派與 `extensions/memory/agent-state.ts` 的自身排程操作。Filicon 現在在 group/mailbox 的 `update_state(target:"routine", action:"pause"、"resume"或"delete", id:...)` 接上自身既有排程；目錄只列 host 固定 owner 的 ID／名稱／啟用／費用防護狀態，不列其他代理人的任務。只接受這三個欄位，不能冒用 owner、改 prompt／trigger，或建立排程。每次展示 ID、完整任務與 trigger JSON 並重新核准，auto-review allow 不豁免，與 profile／memory／avatar 共用四次額度。
+已核對 reconstructed `source/host/runner/tools/sand-state-tool.ts` 的 `routine.create/update/pause/resume/delete` 分派與 `extensions/memory/agent-state.ts` 的自身排程操作。Filicon 的 group/mailbox 透過 `update_state(target:"routine", action:"pause"、"resume"或"delete", id:...)` 操作自身既有排程；這三個 action 只接受 target/action/id，不得夾帶定義欄位。目錄只列 host 固定 owner 的 ID／名稱／啟用／費用防護狀態，不列其他代理人的任務。每次展示 ID、完整任務與 trigger JSON 並重新核准，auto-review allow 不豁免，與 profile／memory／avatar 共用四次額度。
+
+同一入口另支援有限 `action:"create"`／`"update"`：create 需 name／prompt／schedule，enabled 可省略且預設 true，ID 及 owner 由 host 產生；update 需自己的 id 及至少一個變更欄位，省略欄位保留。name 最多 80 字元、prompt 32,000、schedule 256，每 owner 最多 50 項。只支援 cron／alias／`@every`（1 分鐘至 366 天），不接受 event/platform/anyOf 或任意 trigger JSON。新 schedule 固定當次 App 時區，可由有效 TZ/CRON_TZ 前綴覆蓋；舊定義缺少時區時，須提供 schedule 才能明確固定時區。
+
+建立／修改完整核准卡顯示新定義與 enabled；修改另展示舊 name／完整 prompt／trigger／enabled。新增／改排時間從核准提交後算，不補跑等待期間錯過的次數、不立即 Run Now；只改 name/prompt 保留現有 nextRun。提交時重新驗證容量、時程、費用防護及定義，沿用儲存額度與同步 lifetime fence；原子候選儲存成功才發布，durable receipt 區分寫入成功與後續 bookkeeping 失敗。修改只合併核准定義並保留最新 lastRun／history，已開始或排隊的 executor 保留舊任務。費用防護生效時拒絕啟用的新定義，受防護排程不得修改；可建立停用草稿，不因此解除任何防護。
 
 暫停只禁止後續觸發，不取消已開始或已交給 executor 排隊的執行。恢復保留定義／歷史，按目前時間重新計算下一次觸發，不呼叫 Run Now、不補跑錯過的時間。費用防護暫停與未知 trigger（含巢狀）拒絕由此工具恢復，須由使用者到自動化頁檢視。核准後再次驗證 owner、revision、名稱／prompt／trigger／啟用及 guard 狀態；既有執行更新的 history／lastRun 不被舊 snapshot 蓋掉。儲存 candidate 成功後才改記憶體，寫檔失敗不得偷偷啟用工作。同步 lifetime 撤銷 fence 與 session receipt 沿用既有管理工具的語意。
 
 刪除先展示無法復原的警告，核准 action 標為 destructive。原子移除定義及其費用防護 ID，不改其他排程、防護政策、執行歷史、wake 或 claims；寫檔失敗時記憶體不變。已開始／已交給 executor 排隊的執行不取消，完成後仍寫入歷史，不會把定義加回；尚未 dispatch 的 cron／事件批次重查定義後跳過已刪項目。執行歷史留在儲存空間，但現有 UI 不提供已刪排程的歷史入口，也沒有還原命令。不刪產出檔案、不斷開外部服務。可刪除停用／費用防護／未知 trigger 的定義，但不能藉此解除其他任務的防護。
 
-這是 **部分還原**：參考允許 routine create/update，這些模型入口仍未接線（UI 既有操作不受影響）；Filicon 對 pause/resume/delete 額外要求明確核准，也沒有因本項替自動化推論加上 host 工具。不是完整原版 automation runtime。
+這是 **部分還原**：參考的 event/platform/combined-trigger create/update 及其連動工作流程審查仍未接線（UI 既有操作不受影響）；Filicon 對每種 routine 變更都要求明確核准，也沒有因本項替自動化推論加上 host 工具。不是完整原版 automation runtime。
 
 ### 記憶召回規則
 
@@ -192,4 +196,14 @@
 
 首輪新增跨重啟的完整 equality 揭露 Date 經 Unix 毫秒 JSON round-trip 的浮點精度差；測試的預期值改用實際儲存編碼精度，保留全部欄位比對，未改 production 儲存或忽略日期。重跑 38 項定向測試通過；完整套件 134 XCTest、699 Swift Testing（86 suites）零失敗，兩個 opt-in live Codex 測試仍未啟用。原生 Filicon App Debug build、嚴格 deep codesign、七語言各 1,465 keys 零缺漏及 git diff --check 通過；pause/resume/delete 核准卡均有七語言 PNG，繁中與法文 delete 已目視確認。
 
-這是隔離 fixture／元件測試，不是全產品逐頁、live 模型或 release 公證驗收；routine create/update 模型入口仍缺。本批尚未提交；未 push、未啟動或重啟使用者的 App。
+這是隔離 fixture／元件測試，不是全產品逐頁、live 模型或 release 公證驗收；當時 routine create/update 模型入口仍缺。本批已提交為 `d651e4a`；未 push、未啟動或重啟使用者的 App。
+
+### 自身時間排程建立／修改驗證（2026-09-19）
+
+上一批刪除已提交為 `d651e4a`，本輪開始時工作目錄乾淨。重新核對 reconstructed 的 routine create/update 後，補上上述有限時間排程入口，不延伸 event/platform/combined trigger、工作流程寫入或未經核准的模型行為。依 SwiftUI skill 讓核准卡分別展示完整「目前排程／提議的排程」與費用、未補跑及未授予工具權限的說明；七語言 pause/resume/delete/create/update 均產出 PNG，繁中 update 與法文 create 已目視確認無裁切。這是元件檢查，不是全產品逐頁驗收。
+
+依測試 skill 使用固定時間／ID、隔離暫存資料、可控制的 provider/executor gate 及 CustomDump，比對核准前不寫入、host owner/ID、預設 enabled、App 時區與明確 TZ 覆蓋、UTF-8 長任務、省略欄位保留、核准後才算 nextRun、name/prompt-only 保留原時間、執行中仍用舊任務而新定義與歷史不被完成回報覆寫。另覆蓋錯誤欄位／類型／null／外來 ID、interval 範圍、預設拒絕、容量、費用防護、event 不被偷偷轉換、拒絕／Stop／帳號切換／owner 封存／延後 commit、核准期間定義變更、寫檔失敗 rollback、durable receipt、共用四次預算及精確 call 重播。App 真實 ToolLoop 包含群組及 mailbox；mailbox 的 owner 是收件代理人，auto-review allow 不跳過完整核准。
+
+首輪新增測試有 `try`／async autoclosure 編譯問題，修正後又找到測試重用已完成 call ID，改成獨立 ID 以實際驗證 event-trigger 拒絕，未放寬 production 重播防護。47 項定向測試先通過，再補上預設拒絕及執行中修改案例；最終完整套件 134 XCTest、710 Swift Testing（86 suites）零失敗，兩個 opt-in live Codex 測試未啟用。原生 `Filicon App` Debug build、嚴格 deep codesign、七語言各 1,473 keys 零缺漏及 `git diff --check` 通過。
+
+本輪修改尚未提交；未 push、未操作使用者的實際排程或聊天、未重啟 App、未呼叫付費模型。這不是 live 模型、外部服務或 release 公證驗收；完整 reconstructed parity 仍未完成，非時間觸發的模型寫入與其他 runtime／memory／state 路由差異繼續保留為未完成。

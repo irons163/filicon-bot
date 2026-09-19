@@ -77,8 +77,28 @@ external service. Stop/account changes revoke
 pending proposals, definition edits invalidate stale approvals, and failed writes
 do not arm an in-memory task. Spend-protection pauses and unsupported triggers
 must be reviewed by the user in Automations before resuming; deleting them cannot
-resume other protected tasks. This tool does not create or edit routine definitions,
-operate on another agent's tasks, or add tools to automation runs.
+resume other protected tasks. This tool cannot operate on another agent's tasks
+or add tools to automation runs.
+
+The same tool also supports **creating and updating own time-based routines**:
+`action:"create"` requires `name`, `prompt` and `schedule`, with an optional boolean
+`enabled` (defaults to true); the host assigns the owner and ID. `action:"update"`
+requires an own routine `id` and at least one changed field. Omitted fields stay
+unchanged. Names are limited to 80 characters, tasks to 32,000, schedules to 256,
+and each agent to 50 definitions. Cron, aliases and `@every` intervals from one
+minute through 366 days are supported. A new schedule pins the app's time zone,
+unless a valid `TZ=` / `CRON_TZ=` prefix overrides it; updating a legacy definition
+without a time zone requires supplying a schedule to pin one explicitly.
+
+Every write shows the **complete before/after task, schedule, time zone and enabled
+state** for explicit approval. New or rescheduled tasks start after approval,
+without catch-up or an immediate run. Name/prompt-only edits retain the next-run
+date. Current execution history is preserved, and already started/queued runs keep
+their original task. Spend protection cannot be bypassed with a new ID or enabled
+flag; disabled drafts remain possible. These writes share the four-change budget,
+storage quota checks, cancellation fences and atomic persistence. Event, platform
+and combined-trigger creation/editing are **not supported by the model tool**;
+the existing Automations UI is unchanged. This is not full reference parity.
 
 In group and mailbox turns, agents can propose remembering or forgetting a short
 fact using `update_state(target:"memory", action:"write"|"forget", fact:...)`.

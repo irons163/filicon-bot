@@ -2579,7 +2579,7 @@ final class AppModel: ObservableObject {
             }, commitRoutine: { [weak self] change, lifetime in
                 guard let self else { throw CancellationError() }
                 return try await self.commitAgentRoutineChange(change, lifetime: lifetime, originID: originID, generation: generation)
-            })
+            }, routineTimeZoneIdentifier: settings.timeZoneIdentifier ?? TimeZone.current.identifier)
         return AgentMessagingSession(
             originConversationID: originID, agents: agentService, messenger: agentMessenger,
             registry: registry, coordinator: coordinator, conversations: agentConversations,
@@ -2797,7 +2797,19 @@ final class AppModel: ObservableObject {
         guard generation == autoReviewAccountGeneration, isAgentMessagingScopeActive(originID),
               let automationService, let agentService,
               let owner = await agentService.profile(id: change.automation.agentID), owner.archivedAt == nil else { throw CancellationError() }
-        let result = try await automationService.applyStateChange(change, lifetime: lifetime)
+        let result: Automation
+        if change.isDefinitionWrite {
+            do {
+                let payload = try JSONEncoder().encode(change.automation)
+                result = try await quotaWrite(scope: "automation", key: change.automation.id.uuidString, data: payload) {
+                    try await automationService.applyStateChange(change, lifetime: lifetime)
+                }
+            } catch {
+                guard let saved = lifetime.committed(for: change) else { throw error }
+                errorMessage = Self.quotaMessage(error)
+                result = saved
+            }
+        } else { result = try await automationService.applyStateChange(change, lifetime: lifetime) }
         // Do not rebind UI to an old account after awaiting storage. The model's
         // existing scheduler observes the same service; no runNow is invoked.
         let definitions = await automationService.list()
@@ -2812,10 +2824,17 @@ final class AppModel: ObservableObject {
         let fence = ApprovalFence(accountID: settings.accountScope ?? "local", agentID: context.conversationID.uuidString.lowercased(),
                                   runID: context.runID, generation: generation)
         await autoReviewBroker.activate(fence)
-        let metadata = ["tool": "update_state", "agentStateTarget": "routine", "agentRoutineAction": change.operation.rawValue,
+        var metadata = ["tool": "update_state", "agentStateTarget": "routine", "agentRoutineAction": change.operation.rawValue,
                         "agentName": sender.name, "agentRoutineName": change.automation.name,
                         "agentRoutineID": change.automation.id.uuidString,
+                        "agentRoutineEnabled": String(change.enabled),
                         "agentRoutinePrompt": change.automation.prompt, "agentRoutineTrigger": try change.triggerJSON]
+        if let previous = change.previous {
+            metadata["previousAgentRoutineName"] = previous.name
+            metadata["previousAgentRoutinePrompt"] = previous.prompt
+            metadata["previousAgentRoutineTrigger"] = try AutomationStateChange(operation: .pause, automation: previous).triggerJSON
+            metadata["previousAgentRoutineEnabled"] = String(previous.enabled)
+        }
         let action = AutoReviewAction(summary: "\(sender.name) → \(change.operation.rawValue): \(change.automation.name)",
             target: .resource(kind: "automation", identifier: change.automation.id.uuidString),
             risks: change.operation == .delete ? [.sensitive, .destructive] : [.sensitive],
