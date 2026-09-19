@@ -75,6 +75,143 @@ struct AgentRoutineChangeTests {
         try .init(id: id, name: "update_state", argumentsJSON: JSONSerialization.data(withJSONObject: fields))
     }
 
+    private var githubFields: [String: Any] {
+        ["type": "github", "repo": "Example/Project", "events": ["review-approved", "ci-failed"],
+         "userAllowlist": ["@Alice", "review-bot[bot]"], "ciBranch": "main"]
+    }
+
+    @Test(arguments: [true, false]) func githubCreateRequiresFullApprovalAndDoesNotRun(enabled: Bool) async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let id = UUID(uuidString: "00000000-0000-0000-0000-000000000099")!
+        let trigger = AutomationTrigger.platform(.github(try .init(repo: "example/project", events: ["review-approved", "ci-failed"],
+            ciBranch: "main", userAllowlist: ["alice", "review-bot[bot]"])))
+        let session = f.session(authorize: { sender, change, _, _ in
+            expectNoDifference(sender, f.owner); expectNoDifference(change.previous, nil)
+            expectNoDifference(change.automation.id, id); expectNoDifference(change.automation.trigger, trigger)
+            expectNoDifference(change.automation.prompt, "Review safely. Do not publish.")
+            expectNoDifference(change.automation.enabled, enabled)
+            let before = await f.automations.list()
+            expectNoDifference(before, [f.routine, f.peerRoutine])
+        }, makeID: { id })
+        defer { session.close() }
+        var raw = githubFields
+        raw["repo"] = " Example/Project "; raw["events"] = ["review-approved", "ci-failed", "review-approved"]
+        raw["userAllowlist"] = [" @Alice ", "review-bot[bot]", "ALICE"]
+        let request = try writeCall(["target": "routine", "action": "create", "name": "GitHub review",
+            "prompt": "Review safely. Do not publish.", "trigger": raw, "enabled": enabled])
+        let tool = session.tools(for: f.owner.id)[2]
+        let result = try await tool.execute(request, context: f.context)
+        let replay = try await tool.execute(request, context: f.context)
+        expectNoDifference(result, replay)
+        let saved = try #require(await f.automations.list().first { $0.id == id })
+        expectNoDifference(saved, .init(id: id, agentID: f.owner.id, name: "GitHub review", prompt: "Review safely. Do not publish.",
+            trigger: trigger, enabled: enabled, createdAt: Date(timeIntervalSince1970: 3_000)))
+        let restored = try AutomationService(storeURL: f.file)
+        let durable = await restored.list().first { $0.id == id }, history = await restored.history(automationID: id)
+        expectNoDifference(durable, saved); expectNoDifference(history, [])
+        let runtime = try await #require(tool as? any ToolRuntimeContextProviding).runtimeContext(for: f.context)
+        #expect(runtime.contains("not aggregate settled checks") && runtime.contains("existing authenticated ingress"))
+        let schema = try #require(JSONSerialization.jsonObject(with: tool.descriptor.inputSchema) as? [String: Any])
+        let properties = try #require(schema["properties"] as? [String: Any])
+        let specification = try #require(properties["trigger"] as? [String: Any])
+        expectNoDifference(specification["additionalProperties"] as? Bool, false)
+        let fields = try #require(specification["properties"] as? [String: Any])
+        let events = try #require(fields["events"] as? [String: Any])
+        let items = try #require(events["items"] as? [String: Any])
+        expectNoDifference(Set(try #require(items["enum"] as? [String])), GitHubAutomationTrigger.knownEvents)
+    }
+
+    @Test func githubUpdatePreservesOmittedFieldsAndCanConvertBackToTime() async throws {
+        let trigger = AutomationTrigger.platform(.github(try .init(repo: "example/project", events: ["pr-opened"], userAllowlist: ["alice"])))
+        let f = try await fixture(trigger: trigger); defer { try? FileManager.default.removeItem(at: f.root) }
+        let session = f.session(authorize: { _, change, _, _ in
+            #expect(change.previous != nil)
+            if change.automation.name == "Renamed" { expectNoDifference(change.automation.trigger, trigger) }
+        })
+        defer { session.close() }
+        let tool = session.tools(for: f.owner.id)[2]
+        _ = try await f.automations.runNow(id: f.routine.id, executor: RoutineExecutor(), now: Date(timeIntervalSince1970: 2_000))
+        let history = await f.automations.history(automationID: f.routine.id)
+        _ = try await tool.execute(writeCall(["target": "routine", "action": "update", "id": f.routine.id.uuidString, "name": "Renamed"]), context: f.context)
+        let first = try #require(await f.automations.list(agentID: f.owner.id).first)
+        var expected = f.routine; expected.name = "Renamed"; expected.lastRunAt = Date(timeIntervalSince1970: 2_000); expected.revision += 1
+        expectNoDifference(first, expected)
+        _ = try await tool.execute(writeCall(["target": "routine", "action": "update", "id": f.routine.id.uuidString,
+            "name": "Time review", "schedule": "@every 1h"], id: "time"), context: f.context)
+        expected.name = "Time review"; expected.trigger = .cron(expression: "@every 1h", timeZoneIdentifier: "Asia/Taipei")
+        expected.nextRunAt = Date(timeIntervalSince1970: 6_600); expected.revision += 1
+        let timeRoutine = await f.automations.list(agentID: f.owner.id).first
+        expectNoDifference(timeRoutine, expected)
+        _ = try await tool.execute(writeCall(["target": "routine", "action": "update", "id": f.routine.id.uuidString,
+            "trigger": githubFields], id: "github"), context: f.context)
+        expected.trigger = .platform(.github(try .init(repo: "example/project", events: ["review-approved", "ci-failed"],
+            ciBranch: "main", userAllowlist: ["alice", "review-bot[bot]"])))
+        expected.nextRunAt = nil; expected.revision += 1
+        let githubRoutine = await f.automations.list(agentID: f.owner.id).first
+        let finalHistory = await f.automations.history(automationID: f.routine.id)
+        expectNoDifference(githubRoutine, expected); expectNoDifference(finalHistory, history)
+    }
+
+    @Test func githubRejectsMalformedOrSilentlyBroadenedTriggersBeforeApproval() async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let session = f.session(authorize: { _, _, _, _ in Issue.record("Invalid trigger reached approval") })
+        defer { session.close() }
+        let base: [String: Any] = ["target": "routine", "action": "create", "name": "Review", "prompt": "Review", "trigger": githubFields]
+        var invalid: [[String: Any]] = []
+        for (key, value): (String, Any) in [
+            ("type", "slack"), ("type", "anyOf"), ("repo", "https://github.com/owner/repo"), ("repo", "*/repo"), ("repo", "owner/.."),
+            ("repo", "owner/" + String(repeating: "a", count: 150)), ("events", []), ("events", ["unknown"]),
+            ("events", ["pr-opened", "unknown"]), ("events", Array(repeating: "pr-opened", count: 15)),
+            ("userAllowlist", [" "]), ("userAllowlist", ["*"]), ("userAllowlist", Array(repeating: "alice", count: 51)),
+            ("userAllowlist", [String(repeating: "a", count: 81)]), ("userAllowlist", "alice"), ("ciBranch", ""),
+            ("ciBranch", "*"), ("ciBranch", "refs//main"), ("ciBranch", "@"), ("ciBranch", "main.lock"), ("ciBranch", ".hidden"),
+            ("ciBranch", "main..other"), ("ciBranch", "main."), ("ciBranch", "main\u{7f}"), ("ciBranch", "feature/.hidden"),
+            ("ciBranch", String(repeating: "a", count: 201)), ("credentials", "never-accepted"), ("ciBranch", NSNull())
+        ] {
+            var trigger = githubFields; trigger[key] = value
+            var fields = base; fields["trigger"] = trigger; invalid.append(fields)
+        }
+        for key in ["type", "repo", "events", "ciBranch"] {
+            var trigger = githubFields; trigger.removeValue(forKey: key)
+            var fields = base; fields["trigger"] = trigger; invalid.append(fields)
+        }
+        for value: Any in [NSNull(), [githubFields], "github"] { var fields = base; fields["trigger"] = value; invalid.append(fields) }
+        var both = base; both["schedule"] = "@daily"; invalid.append(both)
+        for fields in invalid {
+            await #expect(throws: AutomationStateChangeError.self) {
+                _ = try await session.tools(for: f.owner.id)[2].execute(writeCall(fields), context: f.context)
+            }
+        }
+        for id in [f.peerRoutine.id, UUID()] {
+            await #expect(throws: AutomationStateChangeError.unavailable) {
+                _ = try await session.tools(for: f.owner.id)[2].execute(writeCall([
+                    "target": "routine", "action": "update", "id": id.uuidString, "trigger": githubFields]), context: f.context)
+            }
+        }
+        let unchanged = await f.automations.list()
+        expectNoDifference(unchanged, [f.routine, f.peerRoutine])
+    }
+
+    @Test(arguments: ["create", "update"], [false, true])
+    func githubWritesRecheckSpendGuardAfterApproval(action: String, initiallyPaused: Bool) async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        if initiallyPaused { try await f.automations.answerSpendGuard(.pause, at: Date(timeIntervalSince1970: 2_000)) }
+        let session = f.session(authorize: { _, _, _, _ in
+            #expect(!initiallyPaused)
+            try await f.automations.answerSpendGuard(.pause, at: Date(timeIntervalSince1970: 2_000))
+        })
+        defer { session.close() }
+        var fields: [String: Any] = ["target": "routine", "action": action, "trigger": githubFields]
+        if action == "create" { fields["name"] = "Review"; fields["prompt"] = "Review" }
+        else { fields["id"] = f.routine.id.uuidString; fields["enabled"] = true }
+        await #expect(throws: (any Error).self) {
+            _ = try await session.tools(for: f.owner.id)[2].execute(writeCall(fields), context: f.context)
+        }
+        let values = await f.automations.list()
+        expectNoDifference(values.count, 2); #expect(values.allSatisfy { !$0.enabled })
+        expectNoDifference(values.first?.trigger, f.routine.trigger)
+    }
+
     @Test(arguments: [true, false]) func createUsesHostIdentityTimeZoneAndApprovalTime(enabled: Bool) async throws {
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
         let id = UUID(uuidString: "00000000-0000-0000-0000-000000000099")!
@@ -177,8 +314,10 @@ struct AgentRoutineChangeTests {
         session.close()
     }
 
-    @Test(arguments: ["create", "update"], ["deny", "archive", "save-failure", "stale"])
-    func routineWritesFailClosed(action: String, mode: String) async throws {
+    @Test(arguments: ["create", "update", "create-github", "update-github"], ["deny", "archive", "save-failure", "stale"])
+    func routineWritesFailClosed(scenario: String, mode: String) async throws {
+        let action = scenario.hasPrefix("create") ? "create" : "update"
+        let github = scenario.hasSuffix("github")
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
         let session = f.session(authorize: { _, change, _, _ in
             switch mode {
@@ -193,9 +332,10 @@ struct AgentRoutineChangeTests {
                 _ = try await f.automations.save(other)
             }
         })
-        let fields: [String: Any] = action == "create"
+        var fields: [String: Any] = action == "create"
             ? ["target": "routine", "action": action, "name": "Review", "prompt": "Review", "schedule": "@daily"]
             : ["target": "routine", "action": action, "id": f.routine.id.uuidString, "prompt": "Revised"]
+        if github { fields.removeValue(forKey: "schedule"); fields["trigger"] = githubFields }
         await #expect(throws: (any Error).self) { _ = try await session.tools(for: f.owner.id)[2].execute(writeCall(fields), context: f.context) }
         let values = await f.automations.list()
         if mode == "stale" { #expect(values.contains { $0.prompt == "Intervening task" }) }
@@ -210,17 +350,20 @@ struct AgentRoutineChangeTests {
         session.close()
     }
 
-    @Test(arguments: ["create", "update"], [false, true])
-    func routineWritesStopAcrossApprovalAndCommit(action: String, duringCommit: Bool) async throws {
+    @Test(arguments: ["create", "update", "create-github", "update-github"], [false, true])
+    func routineWritesStopAcrossApprovalAndCommit(scenario: String, duringCommit: Bool) async throws {
+        let action = scenario.hasPrefix("create") ? "create" : "update"
+        let github = scenario.hasSuffix("github")
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
         let gate = RoutineGate()
         let session = f.session(authorize: { _, _, _, _ in if !duringCommit { await gate.hold() } }, commit: { change, lifetime in
             if duringCommit { await gate.hold() }
             return try await f.automations.applyStateChange(change, lifetime: lifetime)
         })
-        let fields: [String: Any] = action == "create"
+        var fields: [String: Any] = action == "create"
             ? ["target": "routine", "action": action, "name": "Review", "prompt": "Review", "schedule": "@daily"]
             : ["target": "routine", "action": action, "id": f.routine.id.uuidString, "prompt": "Revised"]
+        if github { fields.removeValue(forKey: "schedule"); fields["trigger"] = githubFields }
         let task = Task { try await session.tools(for: f.owner.id)[2].execute(writeCall(fields), context: f.context) }
         await gate.waitForEntry(); session.close(); await gate.release()
         await #expect(throws: CancellationError.self) { _ = try await task.value }
@@ -228,14 +371,15 @@ struct AgentRoutineChangeTests {
         expectNoDifference(values, [f.routine, f.peerRoutine])
     }
 
-    @Test func routineCreationBudgetReceiptAndCapacityAreBounded() async throws {
+    @Test(arguments: [false, true]) func routineCreationBudgetReceiptAndCapacityAreBounded(github: Bool) async throws {
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
         let session = f.session(commit: { change, lifetime in
             _ = try await f.automations.applyStateChange(change, lifetime: lifetime)
             throw AutomationStateChangeError.invalid
         })
         let tool = session.tools(for: f.owner.id)[2]
-        let fields: [String: Any] = ["target": "routine", "action": "create", "name": "Review", "prompt": "Review", "schedule": "@daily"]
+        var fields: [String: Any] = ["target": "routine", "action": "create", "name": "Review", "prompt": "Review", "schedule": "@daily"]
+        if github { fields.removeValue(forKey: "schedule"); fields["trigger"] = githubFields }
         let request = try writeCall(fields), result = try await tool.execute(request, context: f.context)
         let replay = try await tool.execute(request, context: f.context)
         expectNoDifference(replay, result)
@@ -256,13 +400,16 @@ struct AgentRoutineChangeTests {
         full.close()
     }
 
-    @Test(arguments: ["create", "update"]) func routineWritesRequireAnAuthorizerAndMatchingScope(action: String) async throws {
+    @Test(arguments: ["create", "update", "create-github", "update-github"]) func routineWritesRequireAnAuthorizerAndMatchingScope(scenario: String) async throws {
+        let action = scenario.hasPrefix("create") ? "create" : "update"
+        let github = scenario.hasSuffix("github")
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
         let session = AgentManagementSession(originID: f.context.conversationID, agents: f.agents,
             automations: f.automations, routineTimeZoneIdentifier: "Asia/Taipei")
-        let fields: [String: Any] = action == "create"
+        var fields: [String: Any] = action == "create"
             ? ["target": "routine", "action": action, "name": "Review", "prompt": "Review", "schedule": "@daily"]
             : ["target": "routine", "action": action, "id": f.routine.id.uuidString, "name": "Renamed"]
+        if github { fields.removeValue(forKey: "schedule"); fields["trigger"] = githubFields }
         let tool = session.tools(for: f.owner.id)[2]
         await #expect(throws: AgentMessagingError.approvalRequired) {
             _ = try await tool.execute(writeCall(fields), context: f.context)

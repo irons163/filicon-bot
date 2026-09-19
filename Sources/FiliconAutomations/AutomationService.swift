@@ -159,17 +159,7 @@ public actor AutomationService {
               proposed.prompt == proposed.prompt.trimmingCharacters(in: .whitespacesAndNewlines) else {
             throw AutomationStateChangeError.invalidDefinition
         }
-        guard case .cron(let expression, let zoneID) = proposed.trigger,
-              expression.count <= 256, let zoneID, let zone = TimeZone(identifier: zoneID) else {
-            throw AutomationStateChangeError.unsupportedSchedule
-        }
-        if let interval = AutomationSchedule.parseEvery(expression) {
-            guard interval.isFinite, interval >= 60, interval <= 366 * 86_400 else {
-                throw AutomationStateChangeError.unsupportedSchedule
-            }
-        }
-        // Even disabled definitions must have an executable schedule.
-        _ = try AutomationSchedule.nextRun(for: expression, after: now, defaultTimeZone: zone)
+        try validateAgentTrigger(proposed.trigger, now: now)
         if change.operation == .create {
             guard change.previous == nil, !state.automations.contains(where: { $0.id == proposed.id }),
                   proposed.lastRunAt == nil, proposed.nextRunAt == nil, proposed.revision == 1, !proposed.guardPaused else {
@@ -188,7 +178,10 @@ public actor AutomationService {
                   proposed.revision == previous.revision, proposed.guardPaused == previous.guardPaused else {
                 throw AutomationStateChangeError.stale
             }
-            guard case .cron = current.trigger else { throw AutomationStateChangeError.unsupportedSchedule }
+            switch current.trigger {
+            case .cron, .platform(.github): break
+            default: throw AutomationStateChangeError.unsupportedSchedule
+            }
             guard !current.guardPaused, !state.spendGuard.guardPausedAutomationIDs.contains(current.id) else {
                 throw AutomationStateChangeError.protectedDefinition
             }
@@ -202,6 +195,23 @@ public actor AutomationService {
         if proposed.enabled && (!state.spendGuard.guardPausedAutomationIDs.isEmpty
                                 || AutomationSpendGuard.evaluate(state.spendGuard, now: now) == .pause) {
             throw AutomationStateChangeError.protectedDefinition
+        }
+    }
+
+    private func validateAgentTrigger(_ trigger: AutomationTrigger, now: Date) throws {
+        switch trigger {
+        case .cron(let expression, let zoneID):
+            guard expression.count <= 256, let zoneID, let zone = TimeZone(identifier: zoneID) else {
+                throw AutomationStateChangeError.unsupportedSchedule
+            }
+            if let interval = AutomationSchedule.parseEvery(expression) {
+                guard interval.isFinite, interval >= 60, interval <= 366 * 86_400 else {
+                    throw AutomationStateChangeError.unsupportedSchedule
+                }
+            }
+            _ = try AutomationSchedule.nextRun(for: expression, after: now, defaultTimeZone: zone)
+        case .platform(.github(let github)): try github.validateForAgentWrite()
+        default: throw AutomationStateChangeError.unsupportedSchedule
         }
     }
 
@@ -240,9 +250,11 @@ public actor AutomationService {
         guard !unique.isEmpty else { try? persist(); return [] }
         try? persist()
         var results: [AutomationRun] = []
-        for automation in state.automations where automation.enabled && matchesTrigger(automation.trigger, anyOf: Array(unique)) {
+        for automation in state.automations where automation.enabled {
             var start = 0
-            let values = Array(unique)
+            // One matching delivery must not forward other repositories/users
+            // from the same ingress batch to this routine's model.
+            let values = unique.filter { matchesTrigger(automation.trigger, anyOf: [$0]) }
             while start < values.count {
                 let end = min(start + Self.maximumCoalescedEvents, values.count)
                 let batch = Array(values[start..<end])

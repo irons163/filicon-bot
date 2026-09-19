@@ -35,6 +35,7 @@ public enum AutomationIngressEventNormalizer {
                 "event": githubEvent(headerEvent, action: object["action"] as? String, object: object),
                 "branch": githubBranch(object) as Any,
                 "actor": sender?["login"] ?? "",
+                "prOwner": githubPROwner(object) as Any,
                 "subjectPresent": object["pull_request"] != nil || object["issue"] != nil || object["workflow_run"] != nil,
                 "raw": object,
             ].compactMapValues { Self.nonNil($0) }
@@ -79,20 +80,44 @@ public enum AutomationIngressEventNormalizer {
     private static func githubEvent(_ event: String, action: String?, object: [String: Any]) -> String {
         return switch (event, action) {
         case ("pull_request", "opened"): "pr-opened"
+        case ("pull_request", "synchronize"): "pr-pushed"
+        case ("pull_request", "review_requested"): "review-requested"
         case ("pull_request", "closed") where (object["pull_request"] as? [String: Any])?["merged"] as? Bool == true: "pr-merged"
         case ("pull_request_review", "submitted"):
             switch ((object["review"] as? [String: Any])?["state"] as? String)?.lowercased() {
             case "approved": "review-approved"
             case "changes_requested": "review-changes-requested"
-            default: "review-commented"
+            case "commented": "review-commented"
+            default: "unknown"
             }
-        case ("issue_comment", _): "pr-comment"
-        case ("pull_request_review_comment", _): "inline-review-comment"
+        case ("issue_comment", "created") where (object["issue"] as? [String: Any])?["pull_request"] != nil: "pr-comment"
+        case ("pull_request_review_comment", "created"): "inline-review-comment"
+        case ("pull_request_review_thread", "resolved"): "review-thread-resolved"
+        case ("pull_request_review_thread", "unresolved"): "review-thread-unresolved"
         case ("issues", "assigned"): "issue-assigned"
         case ("workflow_run", "completed"):
-            ((object["workflow_run"] as? [String: Any])?["conclusion"] as? String) == "success" ? "ci-passed" : "ci-failed"
-        case ("push", _): "pr-pushed"
+            githubWorkflowConclusion(object)
         default: "\(event)-\(action ?? "event")"
+        }
+    }
+    private static func githubPROwner(_ object: [String: Any]) -> String? {
+        if let pr = object["pull_request"] as? [String: Any] { return (pr["user"] as? [String: Any])?["login"] as? String }
+        if let issue = object["issue"] as? [String: Any], issue["pull_request"] != nil {
+            return (issue["user"] as? [String: Any])?["login"] as? String
+        }
+        return nil
+    }
+    private static func githubWorkflowConclusion(_ object: [String: Any]) -> String {
+        guard let workflow = object["workflow_run"] as? [String: Any], workflow["event"] as? String == "push",
+              workflow["status"] as? String == "completed",
+              let repository = (object["repository"] as? [String: Any])?["full_name"] as? String,
+              let headRepository = (workflow["head_repository"] as? [String: Any])?["full_name"] as? String,
+              repository.caseInsensitiveCompare(headRepository) == .orderedSame else { return "unknown" }
+        // A single workflow completion, not an aggregate checks/polling engine.
+        switch workflow["conclusion"] as? String {
+        case "success": return "ci-passed"
+        case "failure", "timed_out": return "ci-failed"
+        default: return "unknown"
         }
     }
     private static func githubBranch(_ object: [String: Any]) -> Any? {

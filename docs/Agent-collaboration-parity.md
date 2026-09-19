@@ -24,7 +24,9 @@
 
 已核對 reconstructed `source/host/runner/tools/sand-state-tool.ts` 的 `routine.create/update/pause/resume/delete` 分派與 `extensions/memory/agent-state.ts` 的自身排程操作。Filicon 的 group/mailbox 透過 `update_state(target:"routine", action:"pause"、"resume"或"delete", id:...)` 操作自身既有排程；這三個 action 只接受 target/action/id，不得夾帶定義欄位。目錄只列 host 固定 owner 的 ID／名稱／啟用／費用防護狀態，不列其他代理人的任務。每次展示 ID、完整任務與 trigger JSON 並重新核准，auto-review allow 不豁免，與 profile／memory／avatar 共用四次額度。
 
-同一入口另支援有限 `action:"create"`／`"update"`：create 需 name／prompt／schedule，enabled 可省略且預設 true，ID 及 owner 由 host 產生；update 需自己的 id 及至少一個變更欄位，省略欄位保留。name 最多 80 字元、prompt 32,000、schedule 256，每 owner 最多 50 項。只支援 cron／alias／`@every`（1 分鐘至 366 天），不接受 event/platform/anyOf 或任意 trigger JSON。新 schedule 固定當次 App 時區，可由有效 TZ/CRON_TZ 前綴覆蓋；舊定義缺少時區時，須提供 schedule 才能明確固定時區。
+同一入口另支援有限 `action:"create"`／`"update"`：create 需 name／prompt，以及 schedule 或 trigger（不可同時指定），enabled 可省略且預設 true，ID 及 owner 由 host 產生；update 需自己的 id 及至少一個變更欄位，省略欄位保留。name 最多 80 字元、prompt 32,000、schedule 256，每 owner 最多 50 項。時間排程支援 cron／alias／`@every`（1 分鐘至 366 天）；新 schedule 固定當次 App 時區，可由有效 TZ/CRON_TZ 前綴覆蓋；舊時間定義缺少時區時，須提供 schedule 才能明確固定時區。
+
+事件寫入限單一 GitHub trigger：`{type:"github",repo:"owner/repo",events:[...],userAllowlist?:[...],ciBranch?:...}`。repository 須具體、events 須為既有 14 種已知名稱、使用者最多 50 位；未知欄位／事件／錯誤類型／空篩選項／不合法分支會被拒絕，不默默丟掉限制。空 userAllowlist 代表不限對象；PR opened/pushed/merged/comment/inline-comment 篩選 PR 作者，review requested/approved/changes-requested/commented/thread-resolved/thread-unresolved 要求作者與操作人都在清單內，issue-assigned 篩選操作人。CI 不受使用者清單限制，必須指定一個有效分支；目前僅為該 repository 的個別 push workflow_run 完成（success／failure／timed_out），**不是原版所有 checks settled 的彙整或 PR CI**。時間與 GitHub 可經完整核准互換；其他平台、generic event、anyOf 與任意 trigger JSON 仍拒絕。既有已驗證事件連線必須另行設定，此工具不安裝／啟動 webhook、不登入外部服務；核准後待處理事件可能符合新定義。
 
 建立／修改完整核准卡顯示新定義與 enabled；修改另展示舊 name／完整 prompt／trigger／enabled。新增／改排時間從核准提交後算，不補跑等待期間錯過的次數、不立即 Run Now；只改 name/prompt 保留現有 nextRun。提交時重新驗證容量、時程、費用防護及定義，沿用儲存額度與同步 lifetime fence；原子候選儲存成功才發布，durable receipt 區分寫入成功與後續 bookkeeping 失敗。修改只合併核准定義並保留最新 lastRun／history，已開始或排隊的 executor 保留舊任務。費用防護生效時拒絕啟用的新定義，受防護排程不得修改；可建立停用草稿，不因此解除任何防護。
 
@@ -32,7 +34,7 @@
 
 刪除先展示無法復原的警告，核准 action 標為 destructive。原子移除定義及其費用防護 ID，不改其他排程、防護政策、執行歷史、wake 或 claims；寫檔失敗時記憶體不變。已開始／已交給 executor 排隊的執行不取消，完成後仍寫入歷史，不會把定義加回；尚未 dispatch 的 cron／事件批次重查定義後跳過已刪項目。執行歷史留在儲存空間，但現有 UI 不提供已刪排程的歷史入口，也沒有還原命令。不刪產出檔案、不斷開外部服務。可刪除停用／費用防護／未知 trigger 的定義，但不能藉此解除其他任務的防護。
 
-這是 **部分還原**：參考的 event/platform/combined-trigger create/update 及其連動工作流程審查仍未接線（UI 既有操作不受影響）；Filicon 對每種 routine 變更都要求明確核准，也沒有因本項替自動化推論加上 host 工具。不是完整原版 automation runtime。
+這是 **部分還原**：除上述有限 GitHub 外，參考的其他 event/platform/combined-trigger create/update、GitHub checks 彙整及連動工作流程審查仍未接線（UI 既有操作不受影響）；Filicon 對每種 routine 變更都要求明確核准，也沒有因本項替自動化推論加上 host 工具。不是完整原版 automation runtime。
 
 ### 記憶召回規則
 
@@ -206,4 +208,20 @@
 
 首輪新增測試有 `try`／async autoclosure 編譯問題，修正後又找到測試重用已完成 call ID，改成獨立 ID 以實際驗證 event-trigger 拒絕，未放寬 production 重播防護。47 項定向測試先通過，再補上預設拒絕及執行中修改案例；最終完整套件 134 XCTest、710 Swift Testing（86 suites）零失敗，兩個 opt-in live Codex 測試未啟用。原生 `Filicon App` Debug build、嚴格 deep codesign、七語言各 1,473 keys 零缺漏及 `git diff --check` 通過。
 
-本輪修改尚未提交；未 push、未操作使用者的實際排程或聊天、未重啟 App、未呼叫付費模型。這不是 live 模型、外部服務或 release 公證驗收；完整 reconstructed parity 仍未完成，非時間觸發的模型寫入與其他 runtime／memory／state 路由差異繼續保留為未完成。
+本批已在下一輪提交為 `6f5e9fc`；未 push、未操作使用者的實際排程或聊天、未重啟 App、未呼叫付費模型。這不是 live 模型、外部服務或 release 公證驗收；完整 reconstructed parity 仍未完成，當時非時間觸發的模型寫入與其他 runtime／memory／state 路由差異繼續保留為未完成。
+
+### 自身 GitHub 事件排程建立／修改驗證（2026-09-19）
+
+上一批時間排程已提交為 `6f5e9fc`。本輪重新讀取 reconstructed `sand-state-tool.ts`、`automation-trigger.ts`，接上前述有限 GitHub create/update，不擴充其他平台、複合觸發條件或隱式工具權限。依 SwiftUI 技能沿用獨立核准元件，展示完整新舊定義；新增七語言說明既有連線、待處理事件、作者／操作人篩選與 CI 非彙整限制。GitHub create/update 皆產出七語言 PNG，繁中 update、法文 create 已目視確認全文與篩選條件無裁切；這只是元件驗證，不是全產品逐頁驗收。
+
+核對 [GitHub webhook 事件文件](https://docs.github.com/en/webhooks/webhook-events-and-payloads) 與 [Actions 觸發文件](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows) 後，修正 normalize：PR synchronize／review_requested、review-thread resolved/unresolved；一般 branch push 不再冒充 PR pushed，一般 issue 留言不再冒充 PR comment，未知 review state 不作 commented。CI 僅接受同 repository、push 觸發、completed 的 workflow_run；success 對應 passed，failure/timed_out 對應 failed，取消／略過／未知結論及 PR/fork workflow 不觸發。尚未做原版 checks 彙整，文件、schema、runtime、工具結果及核准皆明示差異。
+
+另修正 PR 作者與操作人篩選，並在每個 routine 分批前篩除不匹配事件，避免只因同批有一筆符合條件，就把其他 repo／使用者的 payload 一起送給模型。核准測試發現 GitHub events 的 Set 編碼順序不固定，已讓編碼排序，保留既有 Codable 欄位格式及讀取相容性。
+
+依測試技能使用隔離暫存資料、受控 provider／gate、固定時間與 CustomDump，新增 GitHub 定義正規化、完整核准、14 種事件篩選、嚴格拒絕無效／未知／混用欄位、時間↔GitHub 轉換、省略觸發條件保留、歷史與重啟、call 重播、共用四次預算、容量、預設拒絕、外來 owner、費用防護核准前後重查、stale／封存／寫檔失敗、Stop／延後 commit 撤銷。App 真實 ToolLoop 覆蓋群組與 mailbox 的核准／拒絕／停止／帳號切換；mailbox 只能更動收件人的排程。事件測試使用 fixture HMAC 經 controller → normalizer → matcher → executor → history，拒絕無效簽章與重播，沒有開啟 HTTP listener、呼叫 GitHub 或付費模型。
+
+65 項定向測試（含參數化案例）通過；最終完整套件為 134 XCTest、720 Swift Testing（87 suites）零失敗，兩個 opt-in live Codex 測試未啟用。原生 `Filicon App` Debug build、嚴格 deep codesign、七語言各 1,475 keys 零缺漏與 `git diff --check` 通過。這不是外部服務端到端或 release 公證驗收。
+
+完整套件中的帳號測試仍有 CoreData NSXPCConnection 診斷但測試通過；原生 build 有「未依賴 AppIntents，因此略過 metadata extraction」警告，未出現編譯錯誤。不將這些結果視為真實帳號連線或 AppIntents 整合已驗證。
+
+本輪 GitHub 事件修改尚未提交；未 push、未重啟 App、未變更使用者實際群組或排程。完整 reconstructed parity 仍未完成；其他事件平台、複合觸發、CI checks 彙整、工作流程審查與既有 runtime／memory／state 差異仍保留待補。

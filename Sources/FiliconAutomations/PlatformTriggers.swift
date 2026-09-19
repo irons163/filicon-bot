@@ -44,6 +44,17 @@ public struct GitHubAutomationTrigger: Codable, Hashable, Sendable {
     public let ciBranch: String?
     public let userAllowlist: [String]
 
+    private enum CodingKeys: String, CodingKey { case repo, events, ciBranch, userAllowlist }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(repo, forKey: .repo)
+        // Keep storage and before/after approval previews stable across Set seeds.
+        try container.encode(events.sorted(), forKey: .events)
+        try container.encodeIfPresent(ciBranch, forKey: .ciBranch)
+        try container.encode(userAllowlist, forKey: .userAllowlist)
+    }
+
     public init(repo: String, events: [String], ciBranch: String? = nil, userAllowlist: [String] = []) throws {
         let repo = repo.trimmingCharacters(in: .whitespacesAndNewlines)
         guard repo.range(of: "^[^\\s/]+/[^\\s/]+$", options: .regularExpression) != nil else { throw AutomationServiceError.invalidDefinition }
@@ -59,6 +70,27 @@ public struct GitHubAutomationTrigger: Codable, Hashable, Sendable {
             return !value.isEmpty && seen.insert(value).inserted ? value : nil
         }.prefix(50).map { $0 }
         self.repo = repo; self.events = allowed; self.ciBranch = branch?.isEmpty == false ? branch : nil
+    }
+
+    /// Model writes fail closed instead of silently dropping invalid filters.
+    public func validateForAgentWrite() throws {
+        guard repo.count <= 140,
+              repo.range(of: #"^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_.-]+$"#, options: .regularExpression) != nil,
+              ![".", ".."].contains(String(repo.split(separator: "/").last ?? "")),
+              !events.isEmpty, events.isSubset(of: Self.knownEvents), userAllowlist.count <= 50,
+              userAllowlist.allSatisfy({ $0.count <= 80 && $0.range(of: #"^[a-z0-9][a-z0-9-]*(\[bot\])?$"#, options: .regularExpression) != nil }) else {
+            throw AutomationStateChangeError.invalidGitHubTrigger
+        }
+        if let branch = ciBranch {
+            guard !branch.isEmpty, branch.count <= 200, branch != "@",
+                  branch == branch.trimmingCharacters(in: .whitespacesAndNewlines),
+                  branch.range(of: #"[\s~^:?*\[\\\]\x00-\x1f\x7f]|^[-/]|/$|\.$|\.\.|@\{|//|(^|/)\.|\.lock($|/)"#, options: .regularExpression) == nil else {
+                throw AutomationStateChangeError.invalidGitHubTrigger
+            }
+        }
+        if !events.isDisjoint(with: ["ci-passed", "ci-failed"]), ciBranch == nil {
+            throw AutomationStateChangeError.invalidGitHubTrigger
+        }
     }
 }
 
@@ -121,9 +153,21 @@ public enum PlatformAutomationTrigger: Codable, Hashable, Sendable {
                   let kind = payload["event"] as? String, trigger.events.contains(kind) else { return false }
             if kind == "ci-passed" || kind == "ci-failed" {
                 guard let branch = trigger.ciBranch, payload["branch"] as? String == branch else { return false }
+                // CI is branch-scoped, never user-gated in the reference.
+                return true
             }
             if !trigger.userAllowlist.isEmpty {
-                guard let actor = (payload["actor"] as? String)?.lowercased(), trigger.userAllowlist.contains(actor) else { return false }
+                func allowed(_ key: String) -> Bool {
+                    guard let value = (payload[key] as? String)?.lowercased() else { return false }
+                    return trigger.userAllowlist.contains(value)
+                }
+                switch kind {
+                case "pr-opened", "pr-pushed", "pr-merged", "pr-comment", "inline-review-comment":
+                    guard allowed("prOwner") else { return false }
+                case "review-requested", "review-approved", "review-changes-requested", "review-commented", "review-thread-resolved", "review-thread-unresolved":
+                    guard allowed("actor"), allowed("prOwner") else { return false }
+                default: guard allowed("actor") else { return false }
+                }
             }
             return payload["subjectPresent"] as? Bool != false || payload["admitMissingSubject"] as? Bool == true
         case .microsoftTeams(let trigger):

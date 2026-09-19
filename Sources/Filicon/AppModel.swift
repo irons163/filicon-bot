@@ -2829,6 +2829,9 @@ final class AppModel: ObservableObject {
                         "agentRoutineID": change.automation.id.uuidString,
                         "agentRoutineEnabled": String(change.enabled),
                         "agentRoutinePrompt": change.automation.prompt, "agentRoutineTrigger": try change.triggerJSON]
+        if [.create, .update, .resume].contains(change.operation), case .platform(.github) = change.automation.trigger {
+            metadata["agentRoutineGitHubTrigger"] = "true"
+        }
         if let previous = change.previous {
             metadata["previousAgentRoutineName"] = previous.name
             metadata["previousAgentRoutinePrompt"] = previous.prompt

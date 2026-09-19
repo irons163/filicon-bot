@@ -80,8 +80,8 @@ must be reviewed by the user in Automations before resuming; deleting them canno
 resume other protected tasks. This tool cannot operate on another agent's tasks
 or add tools to automation runs.
 
-The same tool also supports **creating and updating own time-based routines**:
-`action:"create"` requires `name`, `prompt` and `schedule`, with an optional boolean
+The same tool also supports **creating and updating own time-based or GitHub routines**:
+`action:"create"` requires `name`, `prompt` and either `schedule` or `trigger` (never both), with an optional boolean
 `enabled` (defaults to true); the host assigns the owner and ID. `action:"update"`
 requires an own routine `id` and at least one changed field. Omitted fields stay
 unchanged. Names are limited to 80 characters, tasks to 32,000, schedules to 256,
@@ -96,9 +96,24 @@ without catch-up or an immediate run. Name/prompt-only edits retain the next-run
 date. Current execution history is preserved, and already started/queued runs keep
 their original task. Spend protection cannot be bypassed with a new ID or enabled
 flag; disabled drafts remain possible. These writes share the four-change budget,
-storage quota checks, cancellation fences and atomic persistence. Event, platform
-and combined-trigger creation/editing are **not supported by the model tool**;
-the existing Automations UI is unchanged. This is not full reference parity.
+storage quota checks, cancellation fences and atomic persistence.
+
+GitHub uses a single trigger such as
+`{"type":"github","repo":"owner/repo","events":["pr-opened"],"userAllowlist":["author"]}`.
+The complete repository, event set, user filter and optional `ciBranch` appear in
+the approval preview. Empty/omitted `userAllowlist` allows everyone; PR events
+filter the PR author, review events require both author and actor, and issue
+assignment filters the actor. CI ignores the user filter and requires one branch.
+It currently covers **individual completed push workflows** (`workflow_run` success,
+failure or timed_out), **not** the reference's aggregate settled checks or PR CI.
+Matching occurs before batching so unrelated deliveries are not passed to the model.
+
+This requires an **existing authenticated event connection**; creating a definition
+does not install/start webhooks, log in to GitHub or grant new tools. Already queued
+events can match after approval. Updates may replace a time trigger with GitHub or
+vice versa, while an omitted trigger is preserved. Unknown events, malformed filters,
+other platforms, generic events and combined-trigger writes are rejected. The
+existing Automations UI is unchanged. This is not full reference parity.
 
 In group and mailbox turns, agents can propose remembering or forgetting a short
 fact using `update_state(target:"memory", action:"write"|"forget", fact:...)`.

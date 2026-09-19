@@ -162,8 +162,10 @@ private actor ManagementWakeProbe {
         expectNoDifference(model.agentMessages.first?.delivery?.state, .completed)
     }
 
-    @Test(arguments: ["approve", "deny", "stop", "account"], ["create", "update"])
-    func routineWritesShowCompleteReviewAndRespectLifecycle(mode: String, action: String) async throws {
+    @Test(arguments: ["approve", "deny", "stop", "account"], ["create", "update", "create-github", "update-github"])
+    func routineWritesShowCompleteReviewAndRespectLifecycle(mode: String, scenario: String) async throws {
+        let action = scenario.hasPrefix("create") ? "create" : "update"
+        let github = scenario.hasSuffix("github")
         let (root, model, groupID, owner, peer) = try await fixture()
         defer { try? FileManager.default.removeItem(at: root) }
         await model.setTimeZone("Asia/Taipei")
@@ -177,6 +179,11 @@ private actor ManagementWakeProbe {
         var fields: [String: Any] = ["target": "routine", "action": action, "name": "Approved review",
                                     "prompt": proposedPrompt, "schedule": "@every 2h"]
         if action == "update" { fields["id"] = own.id.uuidString; fields["enabled"] = false }
+        if github {
+            fields.removeValue(forKey: "schedule")
+            fields["trigger"] = ["type": "github", "repo": "example/project", "events": ["review-approved", "ci-failed"],
+                "ciBranch": "main", "userAllowlist": ["author", "reviewer"]]
+        }
         let arguments = try JSONSerialization.data(withJSONObject: fields)
         await model.registry.register(ManagingAgentProvider { _, execute in
             let result = try await execute(.init(id: "routine-write", name: "update_state", argumentsJSON: arguments))
@@ -193,7 +200,9 @@ private actor ManagementWakeProbe {
         expectNoDifference(metadata["agentRoutineName"], "Approved review")
         expectNoDifference(metadata["agentRoutinePrompt"], proposedPrompt)
         expectNoDifference(metadata["agentRoutineEnabled"], action == "create" ? "true" : "false")
-        let trigger = AutomationTrigger.cron(expression: "@every 2h", timeZoneIdentifier: "Asia/Taipei")
+        expectNoDifference(metadata["agentRoutineGitHubTrigger"], github ? "true" : nil)
+        let trigger: AutomationTrigger = github ? .platform(.github(try .init(repo: "example/project", events: ["review-approved", "ci-failed"],
+            ciBranch: "main", userAllowlist: ["author", "reviewer"]))) : .cron(expression: "@every 2h", timeZoneIdentifier: "Asia/Taipei")
         let proposed = Automation(id: id, agentID: owner.id, name: "Approved review", prompt: proposedPrompt, trigger: trigger)
         expectNoDifference(metadata["agentRoutineTrigger"], try AutomationStateChange(operation: .create, automation: proposed).triggerJSON)
         if action == "update" {
@@ -220,8 +229,9 @@ private actor ManagementWakeProbe {
             expectNoDifference(saved.trigger, trigger); expectNoDifference(saved.enabled, action == "create")
             expectNoDifference(saved.revision, action == "create" ? 1 : own.revision + 1)
             expectNoDifference(saved.lastRunAt, nil)
-            if action == "create" { #expect(try #require(saved.nextRunAt) > saved.createdAt) }
-            else { expectNoDifference(saved.nextRunAt, nil); expectNoDifference(saved.createdAt, own.createdAt) }
+            if action == "create" && !github { #expect(try #require(saved.nextRunAt) > saved.createdAt) }
+            else { expectNoDifference(saved.nextRunAt, nil) }
+            if action == "update" { expectNoDifference(saved.createdAt, own.createdAt) }
             expectNoDifference(model.automations.count, before.count + (action == "create" ? 1 : 0))
         } else { expectNoDifference(model.automations, before) }
         expectNoDifference(model.automations.first { $0.id == other.id }, other)
@@ -232,7 +242,9 @@ private actor ManagementWakeProbe {
         expectNoDifference(restored.automationHistory[id] ?? [], [])
     }
 
-    @Test(arguments: ["create", "update"]) func mailboxRoutineWritesAreBoundToRecipient(action: String) async throws {
+    @Test(arguments: ["create", "update", "create-github", "update-github"]) func mailboxRoutineWritesAreBoundToRecipient(scenario: String) async throws {
+        let action = scenario.hasPrefix("create") ? "create" : "update"
+        let github = scenario.hasSuffix("github")
         let (root, model, _, sender, recipient) = try await fixture()
         defer { try? FileManager.default.removeItem(at: root) }
         await model.setTimeZone("Asia/Taipei")
@@ -246,10 +258,14 @@ private actor ManagementWakeProbe {
                 _ = try await execute(.init(id: "foreign", name: "update_state", argumentsJSON: JSONEncoder().encode([
                     "target": "routine", "action": "update", "id": other.id.uuidString, "prompt": "Do not write"])))
             }
-            var fields = ["target": "routine", "action": action, "prompt": "Recipient's new task"]
+            var fields: [String: Any] = ["target": "routine", "action": action, "prompt": "Recipient's new task"]
             if action == "create" { fields["name"] = "Recipient review"; fields["schedule"] = "@daily" }
             else { fields["id"] = own.id.uuidString }
-            _ = try await execute(.init(id: "own", name: "update_state", argumentsJSON: JSONEncoder().encode(fields)))
+            if github {
+                fields.removeValue(forKey: "schedule")
+                fields["trigger"] = ["type": "github", "repo": "example/project", "events": ["pr-opened"]]
+            }
+            _ = try await execute(.init(id: "own", name: "update_state", argumentsJSON: JSONSerialization.data(withJSONObject: fields)))
             return "PASS"
         })
         #expect(await model.sendAgentMessage(senderID: sender.id, recipientID: recipient.id, text: "\(action) your routine"))
@@ -267,7 +283,9 @@ private actor ManagementWakeProbe {
     @Test func routinePreviewRendersInSevenLanguages() throws {
         let output = ProcessInfo.processInfo.environment["FILICON_UI_REVIEW_OUTPUT"].map { URL(fileURLWithPath: $0) }
         for language in ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"] {
-            for action in ["pause", "resume", "delete", "create", "update"] {
+            for scenario in ["pause", "resume", "delete", "create", "update", "create-github", "update-github"] {
+                let github = scenario.hasSuffix("github")
+                let action = scenario.replacingOccurrences(of: "-github", with: "")
                 try FiliconLocalization.$languageOverride.withValue(language) {
                     let titles = ["pause": "Pause own routine", "resume": "Resume own routine", "delete": "Delete own routine",
                                   "create": "Create own routine", "update": "Update own routine"]
@@ -284,11 +302,18 @@ private actor ManagementWakeProbe {
                         metadata["previousAgentRoutinePrompt"] = "Review previous layout. Do not publish."
                         metadata["previousAgentRoutineTrigger"] = "{\n  cron: {\n    expression: @weekly,\n    timeZoneIdentifier: Asia/Taipei\n  }\n}"
                     }
+                    if github {
+                        metadata["agentRoutineGitHubTrigger"] = "true"
+                        let trigger = AutomationTrigger.platform(.github(try .init(repo: "example/project", events: ["review-approved", "ci-failed"],
+                            ciBranch: "main", userAllowlist: ["author", "reviewer"])))
+                        metadata["agentRoutineTrigger"] = try AutomationStateChange(operation: .create, automation: .init(agentID: UUID(),
+                            name: "Review", prompt: "Review contrast", trigger: trigger)).triggerJSON
+                    }
                     let host = NSHostingView(rootView: AgentRoutineApprovalDetails(metadata: metadata)
                         .padding(20).frame(width: 380).background(FiliconTheme.canvas)
                         .environment(\.locale, Locale(identifier: language)).environment(\.colorScheme, .light))
                     host.appearance = NSAppearance(named: .aqua)
-                    let height: CGFloat = action == "update" ? 830 : 570
+                    let height: CGFloat = (action == "update" ? 830 : 570) + (github ? 550 : 0)
                     host.frame = .init(x: 0, y: 0, width: 380, height: height)
                     host.layoutSubtreeIfNeeded()
                     #expect(host.fittingSize.height <= height)
@@ -296,7 +321,7 @@ private actor ManagementWakeProbe {
                     host.cacheDisplay(in: host.bounds, to: bitmap)
                     if let output {
                         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
-                        try #require(bitmap.representation(using: .png, properties: [:])).write(to: output.appending(path: "routine-\(action)-\(language).png"))
+                        try #require(bitmap.representation(using: .png, properties: [:])).write(to: output.appending(path: "routine-\(scenario)-\(language).png"))
                     }
                 }
             }
