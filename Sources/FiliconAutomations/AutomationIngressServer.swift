@@ -31,6 +31,7 @@ public actor AutomationIngressController {
     private let secrets: any AutomationIngressSecretProvider
     private let sink: EventSink
     private let limits: AutomationIngressLimits
+    private let now: @Sendable () -> Date
     private var persistent: AutomationIngressPersistentState
     private var auditEntries: [AutomationIngressAuditEntry]
     private var listener: NWListener?
@@ -40,9 +41,10 @@ public actor AutomationIngressController {
     private let queue = DispatchQueue(label: "com.filicon.automations.ingress", qos: .utility)
 
     public init(stateURL: URL, auditURL: URL, secrets: any AutomationIngressSecretProvider,
-                limits: AutomationIngressLimits = .init(), sink: @escaping EventSink) throws {
+                limits: AutomationIngressLimits = .init(), now: @escaping @Sendable () -> Date = { Date() },
+                sink: @escaping EventSink) throws {
         self.stateURL = stateURL; self.auditURL = auditURL; self.secrets = secrets
-        self.limits = limits; self.sink = sink
+        self.limits = limits; self.now = now; self.sink = sink
         let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
         if FileManager.default.fileExists(atPath: stateURL.path) {
             persistent = try decoder.decode(AutomationIngressPersistentState.self, from: Data(contentsOf: stateURL))
@@ -51,7 +53,8 @@ public actor AutomationIngressController {
             auditEntries = try decoder.decode([AutomationIngressAuditEntry].self, from: Data(contentsOf: auditURL))
         } else { auditEntries = [] }
         runtime.bindMode = persistent.bindMode
-        persistent.usedNonces = persistent.usedNonces.filter { Date().timeIntervalSince($0.value) <= limits.replayWindow }
+        let timestamp = now()
+        persistent.usedNonces = persistent.usedNonces.filter { timestamp.timeIntervalSince($0.value) <= limits.replayWindow }
     }
 
     deinit { listener?.cancel() }
@@ -146,7 +149,7 @@ public actor AutomationIngressController {
     func process(_ request: AutomationHTTPRequest) async -> AutomationHTTPResponse {
         guard activeRequests < limits.maximumConcurrentRequests else { return response(for: .busy) }
         activeRequests += 1; defer { activeRequests -= 1 }
-        let now = Date()
+        let now = self.now()
         let routeID = Self.routeID(from: request.path)
         let route = routeID.flatMap { id in persistent.routes.first { $0.id == id && $0.enabled } }
         do {

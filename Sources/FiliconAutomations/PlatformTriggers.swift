@@ -200,14 +200,17 @@ public enum PlatformAutomationTrigger: Codable, Hashable, Sendable {
             guard let needle = trigger.messageContains else { return true }
             let text = payload["text"] as? String ?? ""
             return trigger.messageContainsIsRegex ? text.range(of: needle, options: .regularExpression) != nil : text.localizedCaseInsensitiveContains(needle)
-        case .linear(let trigger): return Self.matchesCase(trigger, event: event, payload: payload, kind: "linear")
+        case .linear(let trigger):
+            let key = ["issueCreated", "statusChanged"].contains(trigger.event) ? "eventCase" : "event"
+            return Self.matchesCase(trigger, event: event, payload: payload, kind: "linear", eventKey: key)
         case .sentry(let trigger): return Self.matchesCase(trigger, event: event, payload: payload, kind: "sentry")
         case .pagerDuty(let trigger): return Self.matchesCase(trigger, event: event, payload: payload, kind: "pagerduty")
         }
     }
 
-    private static func matchesCase(_ trigger: CaseAutomationTrigger, event: AutomationEvent, payload: [String: Any], kind: String) -> Bool {
-        guard event.kind == kind, payload["event"] as? String == trigger.event else { return false }
+    private static func matchesCase(_ trigger: CaseAutomationTrigger, event: AutomationEvent, payload: [String: Any], kind: String,
+                                    eventKey: String = "event") -> Bool {
+        guard event.kind == kind, payload[eventKey] as? String == trigger.event else { return false }
         if !trigger.primaryIDs.isEmpty {
             guard let id = payload["primaryId"] as? String, trigger.primaryIDs.contains(id) else { return false }
         }

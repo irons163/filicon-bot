@@ -2,7 +2,7 @@
 
 本矩陣保留固定的 48 個 parity ID，對照目前 macOS Swift 實作。`complete` 表示該列所述能力有歷史實作證據，不代表原版所有細項均已重新核驗；`partial` 表示仍有功能、接線或驗證缺口；`NA` 表示該列是來源 runtime 的實作細節，不是 macOS 產品行為。這不是「原版功能全部都有」的保證。
 
-2026-09-18 核對 reconstructed 原始碼後，修正為 44 筆 `complete`、3 筆 `partial`、1 筆 `NA`（`UPD-04`）。`AGENT-01` 已補受審批的模型 `CreateAgent`／`UpdateAgent`、own-profile `update_state(profile.set)` 及 own-agent `memory.write/forget`；本輪另接上明確核准的 `scope:user` 共享事實，跨重啟驗證與完整套件已通過。本輪補上 note 分級、正規化去重與有預算的記憶召回。仍限制在有 agent 身分的群組／mailbox，不改私人 persona，也未涵蓋 project 記憶及其他 update_state 路由，因此維持 partial。其他列的驗證欄保留歷史紀錄，不表示本次重新驗證。細項見 [協作核對紀錄](Agent-collaboration-parity.md)。
+2026-09-19 再次核對後，為 43 筆 `complete`、4 筆 `partial`、1 筆 `NA`（`UPD-04`）。`AUTO-03` 因已確認 Linear event-case／送達處理缺口，改為 partial；本輪先修正 Issue 建立／狀態變更、送達識別及防重播，完整平台語意仍未還原。`AGENT-01` 已補受審批的模型 `CreateAgent`／`UpdateAgent`、own-profile `update_state(profile.set)` 及 own-agent `memory.write/forget`；先前已接上明確核准的 `scope:user` 共享事實與 note 分級、正規化去重及有預算的記憶召回，當時跨重啟與完整套件通過。仍限制在有 agent 身分的群組／mailbox，不改私人 persona，也未涵蓋 project 記憶及其他 update_state 路由，因此維持 partial。其他列的驗證欄保留歷史紀錄，不表示本次重新驗證；目前完整回歸仍待 Mac 解鎖。細項見 [協作核對紀錄](Agent-collaboration-parity.md)。
 
 ## Matrix
 
@@ -66,7 +66,7 @@
 |---|---|---|---|
 | AUTO-01 | `FiliconAutomations/CronSchedule.swift`、`AutomationService.swift` 與 `Scheduler.swift` 提供 cron/alias/`@every`、timezone/DST、next-run、durable claim、cancel/reconcile 與 restart recovery。內部平面 `.anyOf` 已補最早時間與事件／手動共用 last-run 基準、同時命中單次執行、舊資料不自動啟用、stale batch 與開始執行寫檔失敗回滾；模型混合條件入口與七語言完整核准已接上，單項 cron／alias／interval 可與 GitHub／Slack 任意平面混合。 | complete | 本輪 85 項聚焦回歸與原生建置通過；完整回歸待 Mac 解鎖，詳見協作核對紀錄 |
 | AUTO-02 | `AutomationService.swift`、`Models.swift`、`WorkflowWorkspaceView.swift` 與 AppModel integration 提供 routine CRUD、enable/disable、Run Now、next/last run 與 bounded run history。群組／mailbox 可提出自身排程 create/update（固定時區的 cron／alias／@every、單一 GitHub／Slack trigger 或 1–8 個平面時間／事件 OR 條件）、pause/resume/delete；ID、完整 before/after 任務與觸發條件／enabled 核准後套用，防 stale／Stop／帳號切換／寫檔失敗；費用防護不由模型解除；修改保留現有歷史，delete 不取消已執行／已排隊工作，歷史留存但無還原入口。GitHub 可篩選 repo／事件／作者與操作人／CI 分支，須既有已驗證連線，不會自動安裝 webhook；CI 只看個別 push workflow 完成，Slack 支援普通訊息／App 提及／關鍵字／新增表情的明確 ID 或 * 篩選，不支援名稱解析或自身身分；已支援時間／事件混合 OR 的模型 create/update，每項時間皆固定時區並驗證 366 天內可執行，核准明示事件／手動執行重設間隔；尚缺 checks 彙整及其他 event/platform 的模型 create/update。 | complete | 本輪 85 項聚焦回歸通過；完整回歸待 Mac 解鎖，詳見協作核對紀錄 |
-| AUTO-03 | `PlatformTriggers.swift`、`AutomationIngress*`、`EventBatcher.swift` 與 connector integration 提供 Slack/GitHub/Teams/Linear/Sentry/PagerDuty matching、signature/auth、dedupe、burst coalescing、retry 與 audit。 | complete | final gates passed |
+| AUTO-03 | `PlatformTriggers.swift`、`AutomationIngress*`、`EventBatcher.swift` 與 connector integration 提供各平台的 matching／signature／去重及 audit 基礎。Linear 已補 Issue/create → issueCreated、真實 stateId 變更 → statusChanged、實際 team/project 篩選、Linear-Delivery 識別、signed-body timestamp／digest 防重播與 reload；保留舊 entity event，不自動遷移排程。尚缺 Linear endOfCycle／statusIds／cycleIds、模型 Linear 提案及完整平台語意；GitHub 仍為個別 push workflow 而非 checks 彙整，Slack 仍無名稱／人類身分映射。不能將 generic matcher 或歷史 ingress 測試視為原版各事件完整還原。 | partial | `LinearRoutineEventTests` 新增 9 項；連同既有排程與核准共 94 項聚焦回歸、原生建置與嚴格簽章通過；完整回歸待解鎖，非 live 平台驗收 |
 | AUTO-04 | `AgentWorkflowModel.swift`、`AgentWorkflowStore.swift`、`AgentWorkflowRuntime.swift`、`WorkflowService.swift` 與 `WorkflowAppIntegration.swift` 提供 SKILL/workflow import/codec、trigger/action validation、run history/cancel/replay；Teach recording queue scope 與 attachment-backed scoped auto-dispatch 已接線。 | complete | final gates passed |
 
 ### 8. Computer / local execution

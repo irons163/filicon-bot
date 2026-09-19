@@ -1,4 +1,5 @@
 import CryptoKit
+import CoreFoundation
 import Foundation
 
 public struct AutomationHTTPRequest: Sendable {
@@ -72,9 +73,10 @@ public enum AutomationIngressSignatureVerifier {
         case .linear:
             let supplied = try required("linear-signature", request)
             guard constantTimeEqual(supplied, hmacHex(secret: secret, data: request.body)) else { throw AutomationIngressError.unauthorized }
-            let timestamp = try linearTimestamp(request.body, header: request.headers["linear-timestamp"],
-                                                now: now, window: replayWindow)
-            return .init(nonce: boundedNonce(request.headers["linear-delivery"] ?? bodyIdentifier(request.body) ?? bodyDigest(request.body)),
+            let timestamp = try linearTimestamp(request.body, now: now, window: replayWindow)
+            // The signature covers the body, not delivery/timestamp headers.
+            // Changing those headers must not replay the same signed payload.
+            return .init(nonce: bodyDigest(request.body),
                          timestamp: timestamp)
         case .sentry:
             let supplied = try required("sentry-hook-signature", request)
@@ -126,13 +128,12 @@ public enum AutomationIngressSignatureVerifier {
         guard let raw = request.headers["x-filicon-timestamp"] else { return nil }
         return try checkedTimestamp(raw, now: now, window: window)
     }
-    private static func linearTimestamp(_ body: Data, header: String?, now: Date, window: TimeInterval) throws -> Date {
-        let raw: TimeInterval?
-        if let header { raw = TimeInterval(header) }
-        else if let object = try? JSONSerialization.jsonObject(with: body) as? [String: Any] {
-            raw = (object["webhookTimestamp"] as? NSNumber)?.doubleValue
-        } else { raw = nil }
-        guard let milliseconds = raw, milliseconds.isFinite else { throw AutomationIngressError.unauthorized }
+    private static func linearTimestamp(_ body: Data, now: Date, window: TimeInterval) throws -> Date {
+        guard let object = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
+              let raw = object["webhookTimestamp"] as? NSNumber,
+              CFGetTypeID(raw) != CFBooleanGetTypeID() else { throw AutomationIngressError.unauthorized }
+        let milliseconds = raw.doubleValue
+        guard milliseconds.isFinite else { throw AutomationIngressError.unauthorized }
         let value = Date(timeIntervalSince1970: milliseconds / 1_000)
         guard abs(now.timeIntervalSince(value)) <= window else { throw AutomationIngressError.staleRequest }
         return value

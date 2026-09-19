@@ -24,7 +24,7 @@ public enum AutomationIngressProvider: String, Codable, CaseIterable, Identifiab
         case .github:
             "x-hub-signature-256: sha256=HMAC(rawBody); x-github-delivery is required"
         case .linear:
-            "linear-signature: HMAC(rawBody); linear-timestamp or payload webhookTimestamp (Unix milliseconds) is required; linear-delivery identifies replays"
+            "linear-signature: HMAC(rawBody); signed payload webhookTimestamp (Unix milliseconds) is required; body digest prevents replay; linear-delivery identifies deliveries, never webhookId"
         case .sentry:
             "sentry-hook-signature: HMAC(rawBody), optionally prefixed sha256=; sentry-hook-request-id or the body digest is used for replay protection"
         case .pagerDuty:

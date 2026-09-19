@@ -300,4 +300,21 @@ IORegistry 仍回報 `CGSSessionScreenIsLocked=Yes`，上一批完整回歸受 `
 
 IORegistry 仍回報 `CGSSessionScreenIsLocked=Yes`。完整回歸的受保護檔案重新讀取限制仍在，未為過關而削弱保護；解鎖後仍須重跑，不能將聚焦通過說成全套通過。完整 reconstructed parity 仍缺其他平台模型寫入、Slack 名稱／人類身分解析、GitHub checks 彙整，以及前述 memory／runtime／state 差異。
 
-本輪提案與核准修改尚未提交；未 push、未重啟 App，未更動使用者實際群組、聊天或排程。
+本批提案與核准修改已在下一輪提交為 `64ce20b`；提交前再次通過 85 項聚焦測試（`/tmp/filicon-mixed-routine-precommit.log`）。未 push、未重啟 App，未更動使用者實際群組、聊天或排程。
+
+## 本輪增量：Linear 事件分類、送達識別與防重播基礎（2026-09-19，完整回歸待解鎖）
+
+上一批已提交為 `64ce20b`。核對 reconstructed `automation-trigger.ts` 的 issueCreated／statusChanged／endOfCycle 與篩選規則，以及 `sand-state-tool.ts` 的 Linear schema 後，發現既有 ingress 尚未把事件轉成可用的原版 case，且 `webhookId` 被誤用為送達 ID。參照 [Linear 官方 webhook 格式與驗證說明](https://linear.app/developers/webhooks)（2026-09-19 查閱）：Linear-Delivery 識別送達，webhookId 識別 webhook 設定；updatedFrom 表示變更前的屬性，HMAC 僅涵蓋原始 body，webhookTimestamp 位於已簽章的 body。
+
+本輪只修正事件處理底層，尚不開放 Linear 模型 create/update，也未新增設定頁或連線：
+
+- 保留既有 `event:issue` entity 名稱，另外產生 `eventCase:issueCreated`／`statusChanged`，供 Linear case matcher 精確判斷。只接受有有效 issue ID 的 Issue/create；狀態改變須 Issue/update、有效的目前 stateId，以及 updatedFrom 的不同舊 stateId 或 null。只有標題變更、未變的狀態、錯誤型別、其他 entity／action 都不冒充上述 cases；不從 Cycle 更新猜測 endOfCycle。
+- `primaryIDs` 沿用實際 team ID、`secondaryIDs` 沿用 project ID；缺少 team 不再用 issue ID 代替，設定了篩選卻缺少相應欄位即不匹配。保留舊 CaseAutomationTrigger 的儲存格式與既有 entity-event 匹配，不自動修改或啟用使用者的排程。statusIds／cycleIds 等完整原版篩選及提案核准仍待接線。
+- externalEventID 改用有效的 Linear-Delivery，缺省時使用已簽章 body 的 SHA-256 摘要，不再使用共用 webhookId。空白、控制字元及超過 200 字元的 delivery ID 拒絕，不截斷成可能碰撞的值。不同 issue／送達不再被同一 webhook 設定 ID 吞掉；事件依現有規則先過濾再進 prompt。
+- HMAC 驗證後，只採信 body 內數值且有限的 webhookTimestamp，拒絕布林／字串／null／缺少時間。沿用既有 replayWindow（預設 300 秒），不採信未簽章的 Linear-Timestamp 覆蓋。ingress nonce 固定取 body 摘要，因此更換 delivery／timestamp 標頭不能重播相同簽章內容；時間窗內重新載入仍去重。既有 automation history 的送達去重保留。此處不是永久收據、重試佇列或跨版本歷史遷移；不自動重送先前遺漏的事件。
+
+依 Swift 測試技能，在 ingress controller 注入預設仍為實際時間的時鐘 closure，fixture 用固定時間、隔離資料及受控 executor，避免依賴真實排程或外部帳號。新增 9 項測試，先重現 21 個失敗斷言（`/tmp/filicon-linear-ingress-red.log`），再驗證不同送達、無 delivery 標頭 fallback、標頭變造／body 變造／錯誤簽章／過期／錯誤時間、事件分類、缺少／不符篩選、legacy Codable、過濾早於 prompt、history 去重及 ingress 重開。完整簽章 → controller → normalizer → matcher → executor → history 路徑使用固定 fixture，沒有啟動 Linear listener、連線 Linear 或付費模型；既有 loopback listener 回歸測試維持原樣。
+
+最終聚焦回歸為 94 項 Swift Testing／9 suites 通過（含參數化 cases），涵蓋既有 GitHub／Slack／OR／時間排程及群組／mailbox 審批，紀錄 `/tmp/filicon-linear-ingress-regression.log`。原生 `Filicon App` Debug build（`/tmp/filicon-linear-ingress-native.log`）、產物嚴格 deep codesign、七語言各 1,480 keys 零缺漏與 `git diff --check` 通過。無新增 UI 畫面，本輪不宣稱新增視覺驗收；不是 live Linear 或 release 公證驗收。
+
+Mac 仍鎖定，完整回歸仍待受保護檔案可重新讀取後重跑；未削弱保護。這批 Linear 底層修改尚未提交；未 push、未重啟 App，未更動使用者實際群組、聊天、排程或連線。

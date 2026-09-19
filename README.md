@@ -80,7 +80,7 @@ must be reviewed by the user in Automations before resuming; deleting them canno
 resume other protected tasks. This tool cannot operate on another agent's tasks
 or add tools to automation runs.
 
-The same tool also supports **creating and updating own time-based, GitHub/Slack event or event-OR routines**:
+The same tool also supports **creating and updating own time-based, GitHub/Slack event or mixed time/event OR routines**:
 `action:"create"` requires `name`, `prompt` and either `schedule` or `trigger` (never both), with an optional boolean
 `enabled` (defaults to true); the host assigns the owner and ID. `action:"update"`
 requires an own routine `id` and at least one changed field. Omitted fields stay
@@ -158,6 +158,27 @@ also resets interval timing. Pause/resume does not backfill. Loading a legacy
 definition with no next-run date does not silently arm it. Mixed proposals show
 the full before/after definitions and time-zone, interval-reset and model-cost
 disclosures for explicit approval; they do not add a manual mixed-trigger editor.
+
+Linear ingress foundation (not model routine creation): verified Issue/create
+webhooks expose `issueCreated`; Issue/update exposes `statusChanged` only when
+`updatedFrom.stateId` proves a change to a valid current `data.stateId`. Unrelated
+edits and Cycle updates are not inferred to be status/cycle-end events. The legacy
+entity event (`issue`) remains available; existing `primaryIDs` filter actual team
+IDs and `secondaryIDs` filter project IDs, never the issue ID as a missing-team
+fallback. Status/cycle-specific filters and the model proposal/approval path are
+still pending.
+
+Linear uses `Linear-Delivery` as its delivery ID, falling back to a signed-body
+digest when omitted; `webhookId` identifies the configured webhook, not an event.
+The signed numeric `webhookTimestamp` is required and checked against the existing
+replay window (300 seconds by default). An unsigned timestamp header cannot
+override it. The signed-body digest also prevents a repeated request from reaching
+the sink by merely changing headers, including after restart within that window.
+Signature and payload semantics were checked against the
+[Linear webhook documentation](https://linear.app/developers/webhooks).
+Existing receipts are not migrated or replayed; delivery deduplication remains
+bounded by the existing ingress window and automation history. A public endpoint
+or Linear connection is not created by these changes.
 
 In group and mailbox turns, agents can propose remembering or forgetting a short
 fact using `update_state(target:"memory", action:"write"|"forget", fact:...)`.

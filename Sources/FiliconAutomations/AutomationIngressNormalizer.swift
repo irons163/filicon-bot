@@ -63,10 +63,24 @@ public enum AutomationIngressEventNormalizer {
             externalID = object["id"] as? String ?? nonce
         case .linear:
             let data = object["data"] as? [String: Any]
+            let issueID = object["type"] as? String == "Issue" ? linearID(data?["id"]) : nil
             normalized = ["event": (object["type"] as? String ?? object["action"] as? String ?? "unknown").lowercased(),
-                          "primaryId": data?["teamId"] ?? data?["id"] as Any,
-                          "secondaryId": data?["projectId"] as Any, "raw": object].compactMapValues { Self.nonNil($0) }
-            externalID = object["webhookId"] as? String ?? nonce
+                          // Keep the legacy entity event alongside explicit reference cases.
+                          // Missing team IDs must never fall back to the issue's own ID.
+                          "eventCase": linearEventCase(object) as Any,
+                          "primaryId": linearID(data?["teamId"]) as Any,
+                          "secondaryId": linearID(data?["projectId"]) as Any,
+                          "issueId": issueID as Any,
+                          "statusId": linearID(data?["stateId"]) as Any,
+                          "raw": object].compactMapValues { Self.nonNil($0) }
+            if let delivery = request.headers["linear-delivery"] {
+                guard let valid = linearID(delivery) else { throw AutomationIngressError.invalidRequest }
+                externalID = valid
+            } else {
+                // webhookId identifies the configured webhook, NOT a delivery.
+                // The verifier supplies a digest of the signed body as fallback.
+                externalID = nonce
+            }
         case .sentry:
             let data = object["data"] as? [String: Any]
             let project = data?["project"] as? [String: Any]
@@ -86,6 +100,29 @@ public enum AutomationIngressEventNormalizer {
         return AutomationEvent(connectorID: route.id, kind: route.provider.eventKind,
                                externalEventID: String(externalID.prefix(200)),
                                payloadJSON: try JSONSerialization.data(withJSONObject: normalized, options: [.sortedKeys]), occurredAt: now)
+    }
+
+    private static func linearEventCase(_ object: [String: Any]) -> String? {
+        guard object["type"] as? String == "Issue", let data = object["data"] as? [String: Any],
+              linearID(data["id"]) != nil else { return nil }
+        switch object["action"] as? String {
+        case "create": return "issueCreated"
+        case "update":
+            guard let status = linearID(data["stateId"]),
+                  let previous = object["updatedFrom"] as? [String: Any],
+                  let previousStatus = previous["stateId"] else { return nil }
+            // updatedFrom contains only changed properties. A title update or
+            // unchanged/malformed state is not evidence of a status transition.
+            guard previousStatus is NSNull || (linearID(previousStatus).map { $0 != status } ?? false) else { return nil }
+            return "statusChanged"
+        default: return nil
+        }
+    }
+
+    private static func linearID(_ value: Any?) -> String? {
+        guard let value = value as? String, !value.isEmpty, value.count <= 200,
+              value.rangeOfCharacter(from: .whitespacesAndNewlines.union(.controlCharacters)) == nil else { return nil }
+        return value
     }
 
     private static func githubEvent(_ event: String, action: String?, object: [String: Any]) -> String {
