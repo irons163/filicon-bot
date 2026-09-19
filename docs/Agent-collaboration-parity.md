@@ -30,7 +30,9 @@
 
 Slack 事件寫入支援單一 `{type:"slack",channel:"C/G/D 對話 ID 或 *",match:{kind:...}}`，kind 為 message／mention／keyword／reaction；keyword 最多 120 字元，reaction 最多 8 個表情短名稱，清單省略或留空代表所有表情。channel 最多 80 字元且只接受具體 ID 或 `*`；`*` 涵蓋所有已設定連線實際送達的對話，不授予額外 Slack 存取權。mention 是 App／bot 被提及，mention/reaction 需既有已驗證的事件入口；既有 channel 訊息路徑仍支援 message/keyword，沿用 connector 的過濾方式，未保留 event subtype，因此不宣稱與 webhook 分類等同。已驗證 webhook 僅普通使用者訊息及對訊息新增的表情觸發；bot／subtype／編輯／刪除訊息、撤回表情與檔案表情不觸發。不支援原版的 `#channel`／`@人名` 解析與 `bySelf:true`：目前無可靠的使用者身分對應，因此明確拒絕，不把機器人身分當成使用者。未知／混用／null 欄位及無效篩選會在核准前拒絕；預覽顯示完整正規化條件與範圍限制。
 
-另支援時間／事件 OR 組合：`trigger:{type:"group",listeners:[...]}` 或裸 `trigger:[...]`，原始輸入限 1–8 個 cron／GitHub／Slack 條件且不得巢狀。時間條件使用 `{type:"cron",schedule:"..."}`，也可單獨使用或組成純時間群組。每個時間條件在核准前固定 App 時區或有效 TZ/CRON_TZ 覆蓋；模型提案的每項時間條件皆須在 366 天內有下一次執行，間隔限 1 分鐘至 366 天。所有條件先驗證，任一無效就拒絕整份提案，不丟棄限制；正規化後排序、去除完全相同條件，只剩一項則儲存為單一 trigger。任一條件命中同一任務即能觸發，不要求全部成立；同筆事件命中多條只納入一次，不同事件仍可能造成後續執行及費用。每條各自的頻道／repo／作者／操作人／CI 分支篩選維持不變，未命中內容不送入 prompt。去重包含 connector ID 及事件 ID、批次 key 使用長度分隔，防止跨平台 ID 碰撞和分隔符別名；已處理的送達紀錄在重新載入後仍去重。預覽顯示完整 OR 定義以及所有涉及平台的限制，不增加外部連線或權限。模型入口仍拒絕 generic event、其他平台及巢狀組合，不可同時指定 top-level schedule 與 trigger。時間條件取最早下次執行，同時命中只執行一次、不補跑；所有條件共用最近執行基準，因此事件與手動執行也會重設 interval 計時。完整新舊核准畫面以七語言揭露時區固定、間隔重設及額外執行費用；不是手動混合條件編輯器。
+單個 Linear 事件條件使用 `{type:"linear",event:{case:"issueCreated"或"statusChanged",statusIds?:[...]},teamIds?:[...],projectIds?:[...]}`；statusIds 只能用於 statusChanged，篩選改變後的新狀態。每份清單最多 50 個精確 UUID，省略／空清單表示不限；核准前統一 UUID 大小寫、排序、去重。名稱、endOfCycle／cycleIds、未知欄位、null、錯誤型別與無效 ID 皆拒絕，不會忽略篩選而擴大觸發。須既有驗證入口，核准不安裝連線、不增加工具或權限。獨立 Linear 型別沿用 primaryIDs（團隊）／secondaryIDs（專案）的舊儲存欄位；舊資料缺少 statusIDs 仍可載入，不自動轉換或啟用。
+
+另支援時間／事件 OR 組合：`trigger:{type:"group",listeners:[...]}` 或裸 `trigger:[...]`，原始輸入限 1–8 個 cron／GitHub／Slack／Linear 條件且不得巢狀。時間條件使用 `{type:"cron",schedule:"..."}`，也可單獨使用或組成純時間群組。每個時間條件在核准前固定 App 時區或有效 TZ/CRON_TZ 覆蓋；模型提案的每項時間條件皆須在 366 天內有下一次執行，間隔限 1 分鐘至 366 天。所有條件先驗證，任一無效就拒絕整份提案，不丟棄限制；正規化後排序、去除完全相同條件，只剩一項則儲存為單一 trigger。任一條件命中同一任務即能觸發，不要求全部成立；同筆事件命中多條只納入一次，不同事件仍可能造成後續執行及費用。每條各自的頻道／repo／作者／操作人／CI 分支／Linear 團隊、專案與新狀態篩選維持不變，未命中內容不送入 prompt。去重包含 connector ID 及事件 ID、批次 key 使用長度分隔，防止跨平台 ID 碰撞和分隔符別名；已處理的送達紀錄在重新載入後仍去重。預覽顯示完整 OR 定義以及所有涉及平台的限制，不增加外部連線或權限。模型入口仍拒絕 generic event、其他平台及巢狀組合，不可同時指定 top-level schedule 與 trigger。時間條件取最早下次執行，同時命中只執行一次、不補跑；所有條件共用最近執行基準，因此事件與手動執行也會重設 interval 計時。完整新舊核准畫面以七語言揭露時區固定、間隔重設及額外執行費用；不是手動混合條件編輯器。
 
 建立／修改完整核准卡顯示新定義與 enabled；修改另展示舊 name／完整 prompt／trigger／enabled。新增／改排時間從核准提交後算，不補跑等待期間錯過的次數、不立即 Run Now；只改 name/prompt 保留現有 nextRun。提交時重新驗證容量、時程、費用防護及定義，沿用儲存額度與同步 lifetime fence；原子候選儲存成功才發布，durable receipt 區分寫入成功與後續 bookkeeping 失敗。修改只合併核准定義並保留最新 lastRun／history，已開始或排隊的 executor 保留舊任務。費用防護生效時拒絕啟用的新定義，受防護排程不得修改；可建立停用草稿，不因此解除任何防護。
 
@@ -38,7 +40,7 @@ Slack 事件寫入支援單一 `{type:"slack",channel:"C/G/D 對話 ID 或 *",ma
 
 刪除先展示無法復原的警告，核准 action 標為 destructive。原子移除定義及其費用防護 ID，不改其他排程、防護政策、執行歷史、wake 或 claims；寫檔失敗時記憶體不變。已開始／已交給 executor 排隊的執行不取消，完成後仍寫入歷史，不會把定義加回；尚未 dispatch 的 cron／事件批次重查定義後跳過已刪項目。執行歷史留在儲存空間，但現有 UI 不提供已刪排程的歷史入口，也沒有還原命令。不刪產出檔案、不斷開外部服務。可刪除停用／費用防護／未知 trigger 的定義，但不能藉此解除其他任務的防護。
 
-這是 **部分還原**：除上述有限 GitHub／Slack 外，參考的其他 event/platform、Slack 名稱解析／自身身分篩選、GitHub checks 彙整及連動工作流程審查仍未接線（UI 既有操作不受影響）；Filicon 對每種 routine 變更都要求明確核准，也沒有因本項替自動化推論加上 host 工具。不是完整原版 automation runtime。
+這是 **部分還原**：除上述有限 GitHub／Slack／Linear 外，Linear endOfCycle／cycleIds、參考的其他 event/platform、Slack 名稱解析／自身身分篩選、GitHub checks 彙整及連動工作流程審查仍未接線（UI 既有操作不受影響）；Filicon 對每種 routine 變更都要求明確核准，也沒有因本項替自動化推論加上 host 工具。不是完整原版 automation runtime。
 
 ### 記憶召回規則
 
@@ -317,4 +319,19 @@ IORegistry 仍回報 `CGSSessionScreenIsLocked=Yes`。完整回歸的受保護�
 
 最終聚焦回歸為 94 項 Swift Testing／9 suites 通過（含參數化 cases），涵蓋既有 GitHub／Slack／OR／時間排程及群組／mailbox 審批，紀錄 `/tmp/filicon-linear-ingress-regression.log`。原生 `Filicon App` Debug build（`/tmp/filicon-linear-ingress-native.log`）、產物嚴格 deep codesign、七語言各 1,480 keys 零缺漏與 `git diff --check` 通過。無新增 UI 畫面，本輪不宣稱新增視覺驗收；不是 live Linear 或 release 公證驗收。
 
-Mac 仍鎖定，完整回歸仍待受保護檔案可重新讀取後重跑；未削弱保護。這批 Linear 底層修改尚未提交；未 push、未重啟 App，未更動使用者實際群組、聊天、排程或連線。
+此基礎批次已在下一輪提交為 `5241434`；提交前再次通過 94 項聚焦回歸（`/tmp/filicon-linear-ingress-precommit.log`）。當時 Mac 仍鎖定，完整回歸尚待解鎖，未削弱保護。未 push、未重啟 App，未更動使用者實際群組、聊天、排程或連線。
+
+## 本輪增量：Linear 模型排程提案、精確篩選與核准（2026-09-19）
+
+上一批已提交為 `5241434`。依 reconstructed `sand-state-tool.ts` 的 Linear shape，接上 group/mailbox 的自身 routine create/update，支援 issueCreated、statusChanged、teamIds、projectIds 與改變後的新 statusIds；不支援 endOfCycle／cycleIds，亦不猜測 Cycle 更新。可和 cron／GitHub／Slack 組成最多 8 項平面 OR 條件，沿用最早排程／事件去重及完整核准語意。
+
+- 模型每份 ID 清單最多 50 個 UUID，先檢查原始數量與所有值，再統一大小寫、去重排序。省略與空清單皆表示不限；issueCreated 不接受 statusIds（即使空清單）。未知欄位、null、錯誤型別、名稱、無效 UUID 與不支援的 case 一律拒絕，不能丟棄條件後繼續。核心提交再次驗證，不只依賴工具 schema。
+- 新 `LinearAutomationTrigger` 與其他平台型別分離，沿用舊 event／primaryIDs／secondaryIDs 儲存欄位及 enum 包裝；statusIDs 缺省為空，明確 null 不視為缺省。舊 `issue` 定義維持 entity matching，不自動升級、啟用或重播。team/project/status 指定時全部必須匹配，缺少欄位不放行；UUID 大小寫一致處理，legacy 非 UUID 值維持精確比對。
+- 每次預覽完整新舊 prompt／trigger／enabled，新增七語言 Linear 限制說明，揭露既有驗證入口、不安裝連線、空清單不限、只看真正事件與可能的模型費用。原有四次修改預算、owner 綁定、Stop／帳號切換撤銷、費用防護與持久化收據均沿用。未新增手動 Linear 編輯器、名稱解析、外部連線或自動化工具權限。
+- 依 Swift 測試技能使用隔離暫存資料、固定邏輯時間、受控 provider/executor/gate 與 CustomDump；涵蓋 create/update、完整核准與拒絕、0/50/51 邊界、status 改變後篩選、缺少 ID、舊 Codable、核心繞過拒絕、UUID 正規化／重播、時間及事件轉換、省略保留、歷史重開、費用保護、容量、延遲 commit／Stop／帳號切換與 mailbox owner。App OR fixtures 現在含 GitHub／Linear／Slack，mixed 再加入 cron。
+
+最終聚焦回歸 101 項／9 suites 通過（`/tmp/filicon-linear-proposals-final-regression.log`）。七語言共 105 個核准預覽（15 情境 × 7 語言），固定 380 點寬度檢查容納高度；另實際檢視繁中修改與法文建立圖，未見截字。測試截圖改以內容 fitting height 輸出，避免空白邊界；不是完整產品逐頁視覺驗收。各語言 1,482 keys、零缺漏。原生 `Filicon App` Debug build（`/tmp/filicon-linear-proposals-native.log`）及產物 `codesign --verify --deep --strict` 通過，未啟動產物；仍有既有 AppIntents metadata 略過及 ad-hoc runtime 提示。
+
+這次系統不再回報先前的鎖定旗標，完整套件沒有重現受保護檔案重新讀取失敗。預設執行完整套件時，134 XCTest 通過，但 Swift Testing 有 5 項既有測試／6 個斷言失敗：conversation 取消／跨 conversation 並行、subagent steer、程序 stdout 及群組核准重複觀測（`/tmp/filicon-linear-proposals-full.log`）。這 5 項隔離重跑皆通過（`/tmp/filicon-linear-proposals-failure-recheck.log`）；明確 `swift test --no-parallel` 的完整重跑為 **134 XCTest、774 Swift Testing／91 suites，全數通過**（`/tmp/filicon-linear-proposals-full-serial.log`）。兩項需 opt-in 的 live Codex 測試未執行。保留並行不穩定問題，不宣稱本輪已根治，也未放寬檔案保護或調整那些測試的門檻。
+
+本輪模型提案及核准修改尚未提交。未 push、未重啟使用者 App、未改真實聊天／群組／排程／連線，未連線 Linear 或付費模型。完整原版 parity 仍未完成；後續仍有 Linear 週期結束、其他平台模型提案、Slack 名稱／人類身分、GitHub checks 彙整及記憶／runtime 差異。

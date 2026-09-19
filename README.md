@@ -80,7 +80,7 @@ must be reviewed by the user in Automations before resuming; deleting them canno
 resume other protected tasks. This tool cannot operate on another agent's tasks
 or add tools to automation runs.
 
-The same tool also supports **creating and updating own time-based, GitHub/Slack event or mixed time/event OR routines**:
+The same tool also supports **creating and updating own time-based, GitHub/Slack/Linear event or mixed time/event OR routines**:
 `action:"create"` requires `name`, `prompt` and either `schedule` or `trigger` (never both), with an optional boolean
 `enabled` (defaults to true); the host assigns the owner and ID. `action:"update"`
 requires an own routine `id` and at least one changed field. Omitted fields stay
@@ -125,7 +125,17 @@ signed-in human to a Slack identity. No filter is silently discarded.
 Emoji qualifiers such as `::skin-tone-2` are also rejected rather than being
 silently reduced to a broader base-emoji filter.
 
-Combine 1–8 cron/GitHub/Slack conditions with `{"type":"group","listeners":[...]}`
+An individual Linear condition looks like
+`{"type":"linear","event":{"case":"statusChanged","statusIds":["aaaaaaaa-0000-0000-0000-000000000001"]}}`.
+The other supported case is `issueCreated` (without `statusIds`). Optional
+`teamIds` and `projectIds` narrow both cases; `statusIds` matches the **new** status.
+Each list accepts up to 50 exact UUIDs; omitted/empty means any. Use actual IDs
+from your service, not the illustrative ID above, names or guessed IDs. UUID case
+and repeated values normalize before the full approval preview. Unknown fields,
+nulls, wrong types, invalid IDs and cycle-end proposals are rejected, including
+inside groups. No invalid filter is silently removed.
+
+Combine 1–8 cron/GitHub/Slack/Linear conditions with `{"type":"group","listeners":[...]}`
 or a bare `trigger:[...]` array. This is **OR, not AND**: any one condition can
 fire the same prompt, with each condition retaining its own filters. A delivery
 matching multiple conditions is included once; distinct deliveries can cause
@@ -145,7 +155,7 @@ any invalid condition reject the entire proposal, including disabled proposals.
 
 This requires an **existing authenticated connection**; creating a definition
 does not install/start webhooks, log in to an external service or grant new tools. Already queued
-events can match after approval. Updates may switch between time, GitHub, Slack and mixed OR
+events can match after approval. Updates may switch between time, GitHub, Slack, Linear and mixed OR
 triggers, while an omitted trigger is preserved. Unknown events, malformed filters,
 other platforms and generic events are rejected. A top-level `schedule` cannot
 accompany `trigger`. The
@@ -159,14 +169,17 @@ definition with no next-run date does not silently arm it. Mixed proposals show
 the full before/after definitions and time-zone, interval-reset and model-cost
 disclosures for explicit approval; they do not add a manual mixed-trigger editor.
 
-Linear ingress foundation (not model routine creation): verified Issue/create
+Linear ingress: verified Issue/create
 webhooks expose `issueCreated`; Issue/update exposes `statusChanged` only when
 `updatedFrom.stateId` proves a change to a valid current `data.stateId`. Unrelated
 edits and Cycle updates are not inferred to be status/cycle-end events. The legacy
 entity event (`issue`) remains available; existing `primaryIDs` filter actual team
 IDs and `secondaryIDs` filter project IDs, never the issue ID as a missing-team
-fallback. Status/cycle-specific filters and the model proposal/approval path are
-still pending.
+fallback. A dedicated Linear trigger keeps those legacy storage keys; old definitions
+without `statusIDs` retain their original meaning. Model-written definitions
+support new-status filters, but `endOfCycle` and `cycleIds` remain unsupported.
+No legacy definition is silently converted or enabled, and the manual editor is
+not expanded by this model-proposal work.
 
 Linear uses `Linear-Delivery` as its delivery ID, falling back to a signed-body
 digest when omitted; `webhookId` identifies the configured webhook, not an event.

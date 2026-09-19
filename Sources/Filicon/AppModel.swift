@@ -2835,6 +2835,9 @@ final class AppModel: ObservableObject {
         if [.create, .update, .resume].contains(change.operation), change.automation.trigger.platformSources.contains("slack") {
             metadata["agentRoutineSlackTrigger"] = "true"
         }
+        if [.create, .update, .resume].contains(change.operation), change.automation.trigger.platformSources.contains("linear") {
+            metadata["agentRoutineLinearTrigger"] = "true"
+        }
         if [.create, .update, .resume].contains(change.operation), case .anyOf = change.automation.trigger {
             metadata["agentRoutineAnyOfTrigger"] = "true"
             if change.automation.trigger.containsTimeTrigger {

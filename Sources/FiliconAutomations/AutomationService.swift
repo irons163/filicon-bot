@@ -185,6 +185,7 @@ public actor AutomationService {
             }
             switch current.trigger {
             case .cron, .platform(.github), .platform(.slack): break
+            case .platform(.linear): try validateAgentTrigger(current.trigger, now: now)
             case .anyOf: try validateAgentTrigger(current.trigger, now: now)
             default: throw AutomationStateChangeError.unsupportedSchedule
             }
@@ -218,13 +219,14 @@ public actor AutomationService {
             _ = try AutomationSchedule.nextRun(for: expression, after: now, defaultTimeZone: zone)
         case .platform(.github(let github)): try github.validateForAgentWrite()
         case .platform(.slack(let slack)): try slack.validateForAgentWrite()
+        case .platform(.linear(let linear)): try linear.validateForAgentWrite()
         case .anyOf(let members):
             guard (2...Self.maximumListeners).contains(members.count), Set(members).count == members.count else {
                 throw AutomationStateChangeError.invalidEventGroup
             }
             for member in members {
                 switch member {
-                case .cron, .platform(.github), .platform(.slack): try validateAgentTrigger(member, now: now)
+                case .cron, .platform(.github), .platform(.slack), .platform(.linear): try validateAgentTrigger(member, now: now)
                 default: throw AutomationStateChangeError.invalidEventGroup
                 }
             }

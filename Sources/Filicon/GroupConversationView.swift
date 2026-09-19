@@ -664,6 +664,10 @@ struct AgentRoutineApprovalDetails: View {
                 Text(l10n("Slack requires an existing authenticated connection; no webhook is installed or started. Use conversation IDs, not names. * matches all delivered conversations across connections. Mentions mean app/bot mentions; mentions and reactions require verified event ingress. Verified event ingress accepts only plain human messages and added reactions to messages. An empty emoji list allows any emoji. Own-user filtering is unavailable. Queued events may trigger after approval and incur model costs."))
                     .font(.caption).foregroundStyle(FiliconTheme.textSecondary)
             }
+            if metadata["agentRoutineLinearTrigger"] == "true" {
+                Text(l10n("Linear requires existing authenticated ingress; no webhook or connection is installed or started. Only issue creation and actual status changes are supported, not cycle end. Filters use team, project and new-status UUIDs, not names. Each empty list means any. Queued events may trigger after approval and incur model costs."))
+                    .font(.caption).foregroundStyle(FiliconTheme.textSecondary)
+            }
         }.fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
     }
     private func routineDetails(prefix: String) -> some View {

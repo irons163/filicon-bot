@@ -63,6 +63,66 @@ struct LinearRoutineEventTests {
         expectNoDifference(try webhook(issue, delivery: nil).externalEventID, fallback.externalEventID)
     }
 
+    @Test func statusFiltersUseNewStateAndRequireAllSpecifiedIDs() throws {
+        let team = "bbbbbbbb-0000-0000-0000-000000000001", project = "cccccccc-0000-0000-0000-000000000001"
+        let state = "aaaaaaaa-0000-0000-0000-000000000001"
+        let filter = PlatformAutomationTrigger.linear(try .init(event: "statusChanged", allowedEvents: ["statusChanged"],
+            primaryIDs: [team.uppercased()], secondaryIDs: [project], statusIDs: [state]))
+        var fields = issue
+        fields["action"] = "update"; fields["updatedFrom"] = ["stateId": "aaaaaaaa-0000-0000-0000-000000000002"]
+        let data = ["id": "ISSUE-1", "teamId": team, "projectId": project, "stateId": state.uppercased()]
+        fields["data"] = data
+        #expect(try filter.matches(webhook(fields)))
+        for key in ["teamId", "projectId", "stateId"] {
+            for value: String? in [nil, "aaaaaaaa-0000-0000-0000-000000000003"] {
+                var altered = data; altered[key] = value; fields["data"] = altered
+                #expect(try !filter.matches(webhook(fields)))
+            }
+        }
+        fields["data"] = data; fields["action"] = "create"
+        #expect(try !filter.matches(webhook(fields)))
+        expectNoDifference(try JSONDecoder().decode(PlatformAutomationTrigger.self, from: JSONEncoder().encode(filter)), filter)
+    }
+
+    @Test func legacyLinearStorageLoadsWithoutChangingItsMeaning() throws {
+        let legacy = Data(#"{"linear":{"_0":{"event":"issue","primaryIDs":["TEAM-1"],"secondaryIDs":["PROJECT-1"]}}}"#.utf8)
+        let decoded = try JSONDecoder().decode(PlatformAutomationTrigger.self, from: legacy)
+        expectNoDifference(decoded, try trigger("issue"))
+        #expect(try decoded.matches(webhook(issue)))
+        let invalidNull = Data(#"{"linear":{"_0":{"event":"statusChanged","primaryIDs":[],"secondaryIDs":[],"statusIDs":null}}}"#.utf8)
+        #expect(throws: DecodingError.self) { try JSONDecoder().decode(PlatformAutomationTrigger.self, from: invalidNull) }
+        // A Linear-only filter must never get silently reused by another platform.
+        let sentry = PlatformAutomationTrigger.sentry(try .init(event: "issue", allowedEvents: ["issue"]))
+        expectNoDifference(try JSONDecoder().decode(PlatformAutomationTrigger.self, from: JSONEncoder().encode(sentry)), sentry)
+    }
+
+    @Test func coreValidationCannotBeBypassedByDirectWritesOrDecodedDefinitions() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "filicon-linear-validation-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let service = try AutomationService(storeURL: root.appending(path: "automations.json"))
+        let validID = "aaaaaaaa-0000-0000-0000-000000000001"
+        let invalid = [
+            try LinearAutomationTrigger(event: "endOfCycle", allowedEvents: ["endOfCycle"]),
+            try .init(event: "issue", allowedEvents: ["issue"]),
+            try .init(event: "issueCreated", allowedEvents: ["issueCreated"], statusIDs: [validID]),
+            try .init(event: "statusChanged", allowedEvents: ["statusChanged"], primaryIDs: ["Engineering"]),
+            try .init(event: "statusChanged", allowedEvents: ["statusChanged"], secondaryIDs: ["*"]),
+            try .init(event: "statusChanged", allowedEvents: ["statusChanged"], statusIDs: ["Done"])
+        ]
+        for raw in invalid {
+            let decoded = try JSONDecoder().decode(LinearAutomationTrigger.self, from: JSONEncoder().encode(raw))
+            for trigger: AutomationTrigger in [.platform(.linear(decoded)), .anyOf([
+                .cron(expression: "@daily", timeZoneIdentifier: "UTC"), .platform(.linear(decoded))])] {
+                let value = Automation(agentID: connector, name: "No", prompt: "No", trigger: trigger, enabled: false)
+                await #expect(throws: AutomationStateChangeError.invalidLinearTrigger) {
+                    _ = try await service.applyStateChange(.init(operation: .create, automation: value),
+                        lifetime: .init(), now: now)
+                }
+            }
+        }
+        let saved = await service.list(); expectNoDifference(saved, [])
+    }
+
     @Test func signedBodyDefinesReplayIdentityEvenWhenHeadersChange() throws {
         let original = try request(issue)
         let renamed = try request(issue, delivery: "different-header", timestampHeader: "1800000000001")

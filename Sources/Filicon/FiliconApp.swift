@@ -1978,7 +1978,8 @@ private struct AutomationListenerDraft: Identifiable {
                 )
                 let platform: PlatformAutomationTrigger
                 switch kind {
-                case .linear: platform = .linear(value)
+                case .linear: platform = .linear(try .init(event: value.event, allowedEvents: [value.event],
+                    primaryIDs: value.primaryIDs, secondaryIDs: value.secondaryIDs))
                 case .sentry: platform = .sentry(value)
                 default: platform = .pagerDuty(value)
                 }
