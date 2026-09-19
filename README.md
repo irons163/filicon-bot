@@ -143,6 +143,13 @@ triggers, while an omitted trigger is preserved. Unknown events, malformed filte
 other platforms, generic events and mixed time/event group writes are rejected. The
 existing Automations UI is unchanged. This is not full reference parity.
 
+Scheduler foundation: internal flat `anyOf` definitions can now select the
+earliest cron/interval member alongside event members. Coincident time members
+produce one run; all members share the last-run anchor, so an event or manual run
+also resets interval timing. Pause/resume does not backfill. Loading a legacy
+definition with no next-run date does not silently arm it. This **does not yet
+enable mixed time/event proposals** in the model tool or add a mixed-trigger UI.
+
 In group and mailbox turns, agents can propose remembering or forgetting a short
 fact using `update_state(target:"memory", action:"write"|"forget", fact:...)`.
 Each change needs explicit approval. Omitted scope (or `scope:"agent"`) remains

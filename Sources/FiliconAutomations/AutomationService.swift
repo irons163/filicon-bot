@@ -52,27 +52,32 @@ public actor AutomationService {
         guard !value.name.isEmpty, !value.prompt.isEmpty else { throw AutomationServiceError.invalidDefinition }
         try validate(trigger: value.trigger)
         if case .unknown = value.trigger { value.enabled = false }
-        if let index = state.automations.firstIndex(where: { $0.id == value.id }) {
-            value.revision = max(state.automations[index].revision + 1, value.revision)
+        var candidate = state
+        if let index = candidate.automations.firstIndex(where: { $0.id == value.id }) {
+            value.revision = max(candidate.automations[index].revision + 1, value.revision)
             value.nextRunAt = try computeNextRun(for: value, after: now)
-            state.automations[index] = value
+            candidate.automations[index] = value
         } else {
             guard state.automations.filter({ $0.agentID == value.agentID }).count < Self.maximumDefinitionsPerAgent else {
                 throw AutomationServiceError.maximumDefinitions(Self.maximumDefinitionsPerAgent)
             }
             value.nextRunAt = try computeNextRun(for: value, after: value.lastRunAt ?? value.createdAt)
-            state.automations.append(value)
+            candidate.automations.append(value)
         }
-        try persist(); return value
+        try Self.save(candidate, to: storeURL)
+        state = candidate
+        return value
     }
 
     public func setEnabled(id: UUID, enabled: Bool, now: Date = Date()) throws {
         guard let index = state.automations.firstIndex(where: { $0.id == id }) else { throw AutomationServiceError.unknownAutomation(id) }
-        state.automations[index].enabled = enabled
-        state.automations[index].guardPaused = false
-        state.automations[index].revision += 1
-        state.automations[index].nextRunAt = enabled ? try computeNextRun(for: state.automations[index], after: now) : nil
-        try persist()
+        var candidate = state
+        candidate.automations[index].enabled = enabled
+        candidate.automations[index].guardPaused = false
+        candidate.automations[index].revision += 1
+        candidate.automations[index].nextRunAt = enabled ? try computeNextRun(for: candidate.automations[index], after: now) : nil
+        try Self.save(candidate, to: storeURL)
+        state = candidate
     }
 
     public func delete(id: UUID) throws {
@@ -358,17 +363,28 @@ public actor AutomationService {
         if origin != .manual {
             guard let current = state.automations.first(where: { $0.id == automation.id }),
                   current.enabled, current.revision == automation.revision else { throw AutomationServiceError.duplicateClaim }
+            // An event/manual run advances the shared schedule without editing
+            // the definition's revision. Do not fire an obsolete due snapshot.
+            if origin == .schedule {
+                guard let scheduled = current.nextRunAt, scheduled <= now,
+                      scheduled == automation.nextRunAt else { throw AutomationServiceError.duplicateClaim }
+            }
         }
         guard !state.claims.contains(claim) else { throw AutomationServiceError.duplicateClaim }
         guard !activeAgents.contains(automation.agentID) else { throw AutomationServiceError.agentBusy(automation.agentID) }
-        state.claims.insert(claim); activeAgents.insert(automation.agentID)
+        var candidate = state
+        candidate.claims.insert(claim)
         var run = AutomationRun(automationID: automation.id, trigger: origin, startedAt: now, coalescedEventIDs: events.map(\.externalEventID))
-        state.runs.append(run)
-        if let index = state.automations.firstIndex(where: { $0.id == automation.id }) {
-            state.automations[index].lastRunAt = now
-            state.automations[index].nextRunAt = try computeNextRun(for: state.automations[index], after: now)
+        candidate.runs.append(run)
+        if let index = candidate.automations.firstIndex(where: { $0.id == automation.id }) {
+            candidate.automations[index].lastRunAt = now
+            candidate.automations[index].nextRunAt = try computeNextRun(for: candidate.automations[index], after: now)
         }
-        try persist()
+        // Publish the claim/busy state only after schedule computation and the
+        // durable write succeed, so failed scheduled starts remain retryable.
+        try Self.save(candidate, to: storeURL)
+        state = candidate
+        activeAgents.insert(automation.agentID)
         let prompt = buildPrompt(automation: automation, events: events)
         do {
             let result = try await executor.execute(automation: automation, prompt: prompt, events: events)
@@ -392,6 +408,9 @@ public actor AutomationService {
     private func validate(trigger: AutomationTrigger) throws {
         switch trigger {
         case .cron(let expression, let timeZoneIdentifier):
+            if let identifier = timeZoneIdentifier, TimeZone(identifier: identifier) == nil {
+                throw ScheduleError.invalidTimeZone(identifier)
+            }
             if AutomationSchedule.parseEvery(expression) == nil {
                 _ = try AutomationSchedule.compile(expression, defaultTimeZone: timeZoneIdentifier.flatMap(TimeZone.init(identifier:)))
             }
@@ -410,8 +429,14 @@ public actor AutomationService {
     }
 
     private func computeNextRun(for automation: Automation, after: Date) throws -> Date? {
-        guard automation.enabled else { return nil }
-        switch automation.trigger {
+        // Forward-compatible definitions must not acquire a new timed branch
+        // while another member is unknown to this version of the app.
+        guard automation.enabled, !containsUnknownTrigger(automation.trigger) else { return nil }
+        return try computeNextRun(for: automation.trigger, after: after)
+    }
+
+    private func computeNextRun(for trigger: AutomationTrigger, after: Date) throws -> Date? {
+        switch trigger {
         case .cron(let expression, let identifier):
             let zone: TimeZone?
             if let identifier {
@@ -419,7 +444,25 @@ public actor AutomationService {
                 zone = parsed
             } else { zone = nil }
             return try AutomationSchedule.nextRun(for: expression, after: after, defaultTimeZone: zone)
-        case .event, .platform, .anyOf: return nil
+        case .anyOf(let members):
+            // One routine has one shared last-run anchor (including event and
+            // manual runs), matching the reference scheduler. Coincident time
+            // members therefore produce a single claim/execution, not a fanout.
+            var earliest: Date?
+            for member in members {
+                do {
+                    if let next = try computeNextRun(for: member, after: after) {
+                        earliest = earliest.map { min($0, next) } ?? next
+                    }
+                } catch ScheduleError.noRunWithinSearchBound {
+                    // E.g. leap day outside the calendar's 366-day horizon.
+                    // Other OR members remain eligible; invalid syntax/zone
+                    // still throws rather than silently weakening the trigger.
+                    continue
+                }
+            }
+            return earliest
+        case .event, .platform: return nil
         case .unknown: return nil
         }
     }

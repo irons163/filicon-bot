@@ -30,7 +30,7 @@
 
 Slack 事件寫入支援單一 `{type:"slack",channel:"C/G/D 對話 ID 或 *",match:{kind:...}}`，kind 為 message／mention／keyword／reaction；keyword 最多 120 字元，reaction 最多 8 個表情短名稱，清單省略或留空代表所有表情。channel 最多 80 字元且只接受具體 ID 或 `*`；`*` 涵蓋所有已設定連線實際送達的對話，不授予額外 Slack 存取權。mention 是 App／bot 被提及，mention/reaction 需既有已驗證的事件入口；既有 channel 訊息路徑仍支援 message/keyword，沿用 connector 的過濾方式，未保留 event subtype，因此不宣稱與 webhook 分類等同。已驗證 webhook 僅普通使用者訊息及對訊息新增的表情觸發；bot／subtype／編輯／刪除訊息、撤回表情與檔案表情不觸發。不支援原版的 `#channel`／`@人名` 解析與 `bySelf:true`：目前無可靠的使用者身分對應，因此明確拒絕，不把機器人身分當成使用者。未知／混用／null 欄位及無效篩選會在核准前拒絕；預覽顯示完整正規化條件與範圍限制。
 
-另支援純事件 OR 組合：`trigger:{type:"group",listeners:[...]}` 或裸 `trigger:[...]`，原始輸入限 1–8 個 GitHub／Slack 條件且不得巢狀。所有條件先驗證，任一無效就拒絕整份提案，不丟棄限制；正規化後排序、去除完全相同條件，只剩一項則儲存為單一 trigger。任一條件命中同一任務即能觸發，不要求全部成立；同筆事件命中多條只納入一次，不同事件仍可能造成後續執行及費用。每條各自的頻道／repo／作者／操作人／CI 分支篩選維持不變，未命中內容不送入 prompt。去重包含 connector ID 及事件 ID、批次 key 使用長度分隔，防止跨平台 ID 碰撞和分隔符別名；已處理的送達紀錄在重新載入後仍去重。預覽顯示完整 OR 定義以及所有涉及平台的限制，不增加外部連線或權限。時間條件混合、generic event、其他平台及巢狀組合仍拒絕；既有 `.anyOf` 排程時間計算尚未補齊，本輪不開放該路徑。
+另支援純事件 OR 組合：`trigger:{type:"group",listeners:[...]}` 或裸 `trigger:[...]`，原始輸入限 1–8 個 GitHub／Slack 條件且不得巢狀。所有條件先驗證，任一無效就拒絕整份提案，不丟棄限制；正規化後排序、去除完全相同條件，只剩一項則儲存為單一 trigger。任一條件命中同一任務即能觸發，不要求全部成立；同筆事件命中多條只納入一次，不同事件仍可能造成後續執行及費用。每條各自的頻道／repo／作者／操作人／CI 分支篩選維持不變，未命中內容不送入 prompt。去重包含 connector ID 及事件 ID、批次 key 使用長度分隔，防止跨平台 ID 碰撞和分隔符別名；已處理的送達紀錄在重新載入後仍去重。預覽顯示完整 OR 定義以及所有涉及平台的限制，不增加外部連線或權限。模型入口仍拒絕時間條件混合、generic event、其他平台及巢狀組合；後續已補 `.anyOf` 最早時間與事件共用執行基準的引擎基礎，但模型 schema、核准說明與完整混合條件寫入尚未開放。
 
 建立／修改完整核准卡顯示新定義與 enabled；修改另展示舊 name／完整 prompt／trigger／enabled。新增／改排時間從核准提交後算，不補跑等待期間錯過的次數、不立即 Run Now；只改 name/prompt 保留現有 nextRun。提交時重新驗證容量、時程、費用防護及定義，沿用儲存額度與同步 lifetime fence；原子候選儲存成功才發布，durable receipt 區分寫入成功與後續 bookkeeping 失敗。修改只合併核准定義並保留最新 lastRun／history，已開始或排隊的 executor 保留舊任務。費用防護生效時拒絕啟用的新定義，受防護排程不得修改；可建立停用草稿，不因此解除任何防護。
 
@@ -259,4 +259,24 @@ Slack 事件寫入支援單一 `{type:"slack",channel:"C/G/D 對話 ID 或 *",ma
 
 完整回歸尚未完成：較廣的 `AgentManagementAppIntegrationTests` 在受保護 `agents.json` 重新讀取時收到 `NSCocoaErrorDomain 257 / NSPOSIXErrorDomain 1`；獨立重跑頭像持久化測試也失敗，IORegistry 顯示 `CGSSessionScreenIsLocked=Yes`。既有檔案使用 `.completeFileProtectionUnlessOpen`，未為過關而削弱保護。已請使用者解鎖，解鎖後須重跑完整套件才可宣稱全部通過。紀錄：`/tmp/filicon-event-group-targeted.log`、`/tmp/filicon-event-group-reload-check.log`。新功能的聚焦通過不代替完整回歸。
 
-本輪 OR 修改尚未提交；未 push、未重啟 App，未更動實際群組、聊天或排程。
+本批 OR 修改已在下一輪提交為 `c642048`；提交前再次通過 59 項聚焦測試（`/tmp/filicon-event-group-precommit.log`）。未 push、未重啟 App，未更動實際群組、聊天或排程。
+
+## 本輪增量：混合時間／事件排程引擎基礎（2026-09-19，完整回歸待解鎖）
+
+上一批已提交為 `c642048`。核對 reconstructed `source/host/automations/automation-store.ts` 的 `earliestNextRunAt`／`recordRunWith`，及 `source/shared/automation-schedule.ts` 的 `computeNextRunAt`／`automationAnchor` 後，補上內部平面 `.anyOf` 的時間分支。這輪刻意不開放模型建立／修改混合條件，不改 schema、工具說明或核准 UI；這些仍是下一階段缺項，不能宣稱已達完整原版 parity。
+
+行為與安全邊界：
+
+- 各 cron／interval 成員計算後取最早時間；同時命中或錯過多個時段只執行一次，不補跑。時區與 TZ/CRON_TZ 前綴沿用既有排程器。每個任務只有一個最近執行基準，包含事件及手動執行；因此事件也會重設 `@every` 的等待時間，並非每個 listener 獨立計時。
+- 某個合法 calendar 條件在既有 366 天搜尋範圍內無下次時間（如遠期閏日），不阻止其他 OR 成員；所有時間成員都無下一次時間時為 nil。不擴大搜尋範圍；單一 cron 原本的 no-run error 行為保留。無效語法／時區不默默忽略，停用時也拒絕無效時區。巢狀及超過 8 項仍拒絕。
+- 複合條件包含未知 trigger 時不新增時間排程，既有事件匹配語義不變。重新載入舊的 `nextRunAt=nil` 定義不自動啟用時間分支或遷移使用者設定；只有明確 save／enable 或正常執行後重新計算。
+- 執行批次等待其他任務時，如果該任務已被事件或手動執行更新了 nextRun，舊的到期 snapshot 不得再執行；除 revision 外重新比對 nextRunAt。暫停／費用防護同時阻擋時間與事件，使用者恢復後從恢復時刻安排，不立即執行。
+- 一般 save、setEnabled、開始執行時，先算時間並原子儲存 candidate，成功後才發布記憶體狀態、run claim 與 busy 狀態。排程計算／寫檔失敗不留下幽靈定義或卡住 scheduled retry。此處不是事件送達重試佇列改造；既有 ingress/event 去重與忙碌時處理方式未擴充。
+
+依測試技能使用固定邏輯時間、隔離暫存資料及 executor gate，不等真實排程也不呼叫模型。先以新增測試重現 `.anyOf` 沒有 nextRun、停用定義未檢查時區、寫檔失敗發布狀態與消耗 claim（`/tmp/filicon-mixed-schedule-red.log`）。修正後新增 13 項測試，涵蓋最早時間／同時命中、逾期合併、事件及手動基準、跨時區與 DST、明確 TZ 覆蓋、閏日搜尋邊界、純事件／未知條件、舊資料不自動啟用、reload、pause/resume、費用防護、暫停中模型不可解除防護、stale batch、語法／時區／巢狀／容量、create/update/enable/fire 寫檔失敗及排程計算失敗回滾。
+
+最終聚焦回歸為 78 項 Swift Testing／8 suites 通過（含參數化 cases），包含既有 cron、ingress、GitHub／Slack／OR、routine 審批、群組／mailbox 核准與拒絕／停止及七語言預覽測試。紀錄 `/tmp/filicon-mixed-schedule-regression.log`。原生 `Filicon App` Debug build（`/tmp/filicon-mixed-schedule-native.log`）、產物嚴格 deep codesign 及 `git diff --check` 通過；只建置，未啟動產物。無新 UI 文案；本輪沒有新增視覺驗收。
+
+IORegistry 仍回報 `CGSSessionScreenIsLocked=Yes`，上一批完整回歸受 `.completeFileProtectionUnlessOpen` 檔案重新讀取限制仍未解除；本輪不重複把已知受鎖定影響的全套測試當作成功，未削弱檔案保護。解鎖後仍須重跑完整套件。這不是 live 模型、外部事件服務或 release 公證驗收。
+
+本輪引擎修改尚未提交；未 push、未重啟 App，未更動實際群組、聊天或排程。
