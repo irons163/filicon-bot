@@ -6,7 +6,7 @@
 
 ## Matrix
 
-本輪完整重跑通過（134 XCTest、898 Swift Testing／102 suites），但首次執行的既有 stdin 輸出測試曾收到空結果。`ProcessSupervisor` 的退出／輸出收尾時序風險尚未修正；重跑成功不是根治證明。詳細紀錄與各功能限制見上方連結。
+上一輪完整重跑通過（134 XCTest、898 Swift Testing／102 suites），但首次執行的既有 stdin 輸出測試曾收到空結果。本輪已以受控時序重現並修正 `ProcessSupervisor` 的提前完成：等待雙管線輸出交付、限制收尾等待，且將 terminationError 正確映射為失敗工具結果。不是僅靠重跑通過。最終驗證及背景子孫程序等限制見最新協作核對紀錄；其他既有並行風險不宣稱一併根治。
 
 ### 1. UI surface
 
@@ -75,7 +75,7 @@
 
 | ID | 現行實作（authoritative evidence） | 狀態 | 驗證 |
 |---|---|---|---|
-| COMP-01 | `FiliconLocalTools`、`FiliconLocalToolHelper`、`FiliconLocalToolXPCService`、`ProcessSupervisor.swift` 與 `RequestGuard.swift` 提供 command/read/write/send-input、permission gate、generation/timeout/termination 與 XPC isolation。 | complete | final gates passed |
+| COMP-01 | `FiliconLocalTools`、`FiliconLocalToolHelper`、`FiliconLocalToolXPCService`、`ProcessSupervisor.swift` 與 `RequestGuard.swift` 提供 command/read/write/send-input、permission gate、generation/timeout/termination 與 XPC isolation。本輪 `ProcessOutputReader` 等 stdout/stderr 確認交付後才公布完成；64 KiB 單區塊交付、10 MiB 合併上限、子程序退出後一秒有界收尾。部分輸出／diagnostics 保留，App 依 terminationError 標示工具失敗；不擴大執行授權或宣稱任意背景子孫監督。 | complete | 歷史 final gates；本輪 `ProcessOutputTests`／`LocalToolsTests`／`ProcessResultPresentationTests` 與完整驗證見協作核對紀錄 |
 | COMP-02 | `HTTPSRemoteComputerBackend.swift`、`RemoteIsolation.swift`、`RemoteComputerControlsView.swift` 與 lifecycle coordinator 提供 HTTPS remote runtime status/start/update/recreate/recovery、resource caps、filesystem boundary、terminal/file transfer。 | complete | final gates passed |
 | COMP-03 | `ScreenCaptureKitBackend.swift`、`VNCTrustedBridge.swift`、`VNCIsolationPolicy.swift`、`VNCTakeoverController.swift` 與 `VNCWebView.swift` 提供 trusted preview、takeover/handback、clipboard/input guard、session lease 與 reconnect。 | complete | final gates passed |
 | COMP-04 | `TeachRecordingController.swift`、`TeachSensitiveMasking.swift`、`ScreenCaptureKitBackend.swift` 與 workflow integration 提供 private-monitor recording、600-second cap、mask/pause sensitive windows、save/discard、recovery/quarantine 與 update confirmation。 | complete | final gates passed |

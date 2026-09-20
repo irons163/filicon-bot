@@ -700,6 +700,23 @@ that operation does not run; the agent receives the correct root for a new call.
 Cancelling/stopping the request prevents execution, and stale selections cannot
 revive it. Folder access can still be revoked in Settings.
 
+Local process completion waits for both the child exit status **and** acknowledged
+stdout/stderr EOF. While final output is draining, `isRunning` stays true and
+`exitStatus` remains unset; a terminal snapshot's bytes and offset are stable.
+Each pipe delivers one bounded 64 KiB chunk at a time, preserving its own order;
+there is no total ordering guarantee between stdout and stderr. The existing
+combined 10 MiB output cap still terminates an overproducing command.
+
+If inherited pipe writers remain open after the direct child exits, collection
+has a one-second drain deadline. After that deadline or Stop during this phase,
+the terminal snapshot retains captured bytes and exit code with a `terminationError` indicating potentially
+incomplete output, not an empty successful result. The app marks such results
+as tool errors without discarding the diagnostic payload. Reader cancellation
+acknowledges any already-read chunk before closing, and does not signal a reaped
+PID/process group. This is not background-descendant supervision or a guarantee
+of collecting output produced after the deadline. Existing command timeouts,
+permission receipts, workspace authorization and run/generation checks remain.
+
 Each tool-enabled response receives a current host permission snapshot, and
 workspace discovery returns `host_tool_permissions` alongside the roots.
 `ask` means the agent can request an operation and wait for approval; `never`

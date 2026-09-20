@@ -9,18 +9,34 @@ actor LocalProcessSupervisor {
         let pid: pid_t
         let generation: UUID
         let runID: UUID
-        let stdinFD: Int32
-        let stdout: FileHandle
-        let stderr: FileHandle
+        var stdinFD: Int32
+        let stdout: LocalProcessOutputReader
+        let stderr: LocalProcessOutputReader
         var output = Data()
         var exitStatus: Int32?
         var truncated = false
         var terminationError: LocalToolError?
         var timeout: Task<Void, Never>?
+        var drainDeadline: Task<Void, Never>?
+        var closedStreams: Set<Stream> = []
+        var finished: Bool { exitStatus != nil && closedStreams.count == 2 }
     }
+
+    private enum Stream: Hashable, Sendable { case stdout, stderr }
+    static let incompleteOutput = LocalToolError.ioFailure("Process exited but output pipes did not close before the drain deadline. Output may be incomplete.")
+    static let stoppedOutput = LocalToolError.ioFailure("Process output collection was stopped after process exit. Output may be incomplete.")
 
     private var sessions: [UUID: Session] = [:]
     private let fileSystem = SafeFileSystem()
+    // Internal scheduling seams let tests hold output delivery across waitpid.
+    private let beforeOutputDelivery: @Sendable () async -> Void
+    private let onProcessExit: @Sendable () async -> Void
+
+    init(beforeOutputDelivery: @escaping @Sendable () async -> Void = {},
+         onProcessExit: @escaping @Sendable () async -> Void = {}) {
+        self.beforeOutputDelivery = beforeOutputDelivery
+        self.onProcessExit = onProcessExit
+    }
 
     func start(_ command: LocalCommand, scope: LocalRequestScope) throws -> LocalProcessSnapshot {
         guard !command.executable.isEmpty, command.timeoutMilliseconds > 0 else {
@@ -36,6 +52,14 @@ actor LocalProcessSupervisor {
         var stderrPipe = [Int32](repeating: -1, count: 2)
         guard pipe(&stdinPipe) == 0, pipe(&stdoutPipe) == 0, pipe(&stderrPipe) == 0 else {
             closePipes([stdinPipe, stdoutPipe, stderrPipe]); throw systemError("pipe")
+        }
+        // Dispatch readers never block a thread on a child that keeps a pipe open.
+        for fd in [stdoutPipe[0], stderrPipe[0]] {
+            let flags = fcntl(fd, F_GETFL)
+            guard flags >= 0, fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0 else {
+                let error = systemError("nonblocking output pipe")
+                closePipes([stdinPipe, stdoutPipe, stderrPipe]); throw error
+            }
         }
 
         var actions: posix_spawn_file_actions_t? = nil
@@ -81,15 +105,13 @@ actor LocalProcessSupervisor {
         }
 
         let id = UUID()
-        let stdout = FileHandle(fileDescriptor: stdoutPipe[0], closeOnDealloc: true)
-        let stderr = FileHandle(fileDescriptor: stderrPipe[0], closeOnDealloc: true)
-        stdout.readabilityHandler = { [weak self] handle in
-            let data = handle.availableData
-            if !data.isEmpty { Task { await self?.append(data, sessionID: id) } }
+        let stdout = LocalProcessOutputReader(fd: stdoutPipe[0]) { [weak self] event in
+            if case .bytes = event { await self?.beforeOutputDelivery() }
+            await self?.receive(event, stream: .stdout, sessionID: id)
         }
-        stderr.readabilityHandler = { [weak self] handle in
-            let data = handle.availableData
-            if !data.isEmpty { Task { await self?.append(data, sessionID: id) } }
+        let stderr = LocalProcessOutputReader(fd: stderrPipe[0]) { [weak self] event in
+            if case .bytes = event { await self?.beforeOutputDelivery() }
+            await self?.receive(event, stream: .stderr, sessionID: id)
         }
         let timeout = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(command.timeoutMilliseconds))
@@ -131,7 +153,7 @@ actor LocalProcessSupervisor {
         if let failure { throw failure }
         if closeAfterWrite {
             Darwin.close(session.stdinFD)
-            session = Session(id: session.id, pid: session.pid, generation: session.generation, runID: session.runID, stdinFD: -1, stdout: session.stdout, stderr: session.stderr, output: session.output, exitStatus: session.exitStatus, truncated: session.truncated, terminationError: session.terminationError, timeout: session.timeout)
+            session.stdinFD = -1
             sessions[sessionID] = session
         }
     }
@@ -139,12 +161,28 @@ actor LocalProcessSupervisor {
     func terminate(sessionID: UUID, generation: UUID) throws {
         guard let session = sessions[sessionID] else { throw LocalToolError.processNotFound }
         guard session.generation == generation else { throw LocalToolError.staleGeneration }
-        terminateGroup(session.pid, sessionID: session.id)
+        guard !session.finished else { return }
+        if session.exitStatus == nil { terminateGroup(session.pid, sessionID: session.id) }
+        else { stopDraining(sessionID: sessionID, error: Self.stoppedOutput) }
     }
 
     func cancel(runID: UUID, generation: UUID) {
-        for session in sessions.values where session.runID == runID && session.generation == generation && session.exitStatus == nil {
-            terminateGroup(session.pid, sessionID: session.id)
+        for session in sessions.values where session.runID == runID && session.generation == generation && !session.finished {
+            if session.exitStatus == nil { terminateGroup(session.pid, sessionID: session.id) }
+            else { stopDraining(sessionID: session.id, error: Self.stoppedOutput) }
+        }
+    }
+
+    private func receive(_ event: LocalProcessOutputReader.Event, stream: Stream, sessionID: UUID) {
+        guard var session = sessions[sessionID], !session.finished, !session.closedStreams.contains(stream) else { return }
+        switch event {
+        case .bytes(let data): append(data, sessionID: sessionID)
+        case .closed(let error):
+            session.closedStreams.insert(stream)
+            if let error, session.terminationError == nil { session.terminationError = error }
+            if session.finished { session.drainDeadline?.cancel(); session.drainDeadline = nil }
+            sessions[sessionID] = session
+            if error != nil, session.exitStatus == nil { terminateGroup(session.pid, sessionID: sessionID) }
         }
     }
 
@@ -156,7 +194,8 @@ actor LocalProcessSupervisor {
             session.truncated = true
             session.terminationError = .outputLimitExceeded
             sessions[sessionID] = session
-            terminateGroup(session.pid, sessionID: session.id)
+            session.stdout.stop(); session.stderr.stop()
+            if session.exitStatus == nil { terminateGroup(session.pid, sessionID: session.id) }
         } else {
             session.output.append(data)
             sessions[sessionID] = session
@@ -170,16 +209,30 @@ actor LocalProcessSupervisor {
         terminateGroup(session.pid, sessionID: session.id)
     }
 
-    private func didExit(sessionID: UUID, status: Int32) {
+    private func didExit(sessionID: UUID, status: Int32) async {
         guard var session = sessions[sessionID] else { return }
         session.timeout?.cancel()
-        session.stdout.readabilityHandler = nil
-        session.stderr.readabilityHandler = nil
-        if session.stdinFD >= 0 { Darwin.close(session.stdinFD) }
+        if session.stdinFD >= 0 { Darwin.close(session.stdinFD); session.stdinFD = -1 }
         let signal = status & 0x7f
         session.exitStatus = signal == 0 ? ((status >> 8) & 0xff) : -signal
         session.timeout = nil
+        if !session.finished {
+            session.drainDeadline = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(1))
+                guard !Task.isCancelled else { return }
+                await self?.stopDraining(sessionID: sessionID)
+            }
+        }
         sessions[sessionID] = session
+        await onProcessExit()
+    }
+
+    private func stopDraining(sessionID: UUID, error: LocalToolError = LocalProcessSupervisor.incompleteOutput) {
+        guard let session = sessions[sessionID], session.exitStatus != nil, !session.finished else { return }
+        // Closing readers still acknowledges their already-read chunk before EOF.
+        // No signal is sent to a reaped PID/process group that might be reused.
+        session.stdout.stop(error: error)
+        session.stderr.stop(error: error)
     }
 
     private func terminateGroup(_ pid: pid_t, sessionID: UUID) {
@@ -198,7 +251,7 @@ actor LocalProcessSupervisor {
     }
 
     private func snapshot(_ session: Session, offset: Int) -> LocalProcessSnapshot {
-        LocalProcessSnapshot(sessionID: session.id, processID: session.pid, output: session.output.suffix(from: offset), nextOffset: session.output.count, isRunning: session.exitStatus == nil, exitStatus: session.exitStatus, truncated: session.truncated, terminationError: session.terminationError)
+        LocalProcessSnapshot(sessionID: session.id, processID: session.pid, output: session.output.suffix(from: offset), nextOffset: session.output.count, isRunning: !session.finished, exitStatus: session.finished ? session.exitStatus : nil, truncated: session.truncated, terminationError: session.terminationError)
     }
 
     private func executableRealPath(_ path: String) throws -> String {

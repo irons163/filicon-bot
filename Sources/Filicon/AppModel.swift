@@ -6518,7 +6518,7 @@ private struct MCPKeychainTokenReferenceStore: MCPTokenReferenceStore {
     }
 }
 
-private struct LocalAppToolExecutor: ToolExecutor {
+struct LocalAppToolExecutor: ToolExecutor {
     enum Kind: String, CaseIterable, Sendable {
         case readFile = "local__read_file"
         case listDirectory = "local__list_directory"
@@ -6587,7 +6587,12 @@ private struct LocalAppToolExecutor: ToolExecutor {
             } onCancel: {
                 Task { await runtime.cancel(runID: context.runID) }
             }
-            return .init(callID: call.id, content: [.text(try render(result))])
+            // Collection failure is not a successful command result, even when
+            // the leader exited with status 0. Keep partial bytes and diagnostics.
+            let collectionFailed: Bool
+            if case .process(let snapshot) = result { collectionFailed = snapshot.terminationError != nil }
+            else { collectionFailed = false }
+            return .init(callID: call.id, content: [.text(try render(result))], isError: collectionFailed)
         } catch is CancellationError {
             throw CancellationError()
         } catch {

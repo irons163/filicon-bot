@@ -71,7 +71,7 @@ let package = Package(
         .testTarget(name: "FiliconAgentsTests", dependencies: ["FiliconAgents", "FiliconDomain"]),
         .testTarget(name: "FiliconChannelsTests", dependencies: ["FiliconChannels"]),
         .testTarget(name: "FiliconAutomationsTests", dependencies: ["FiliconAutomations"]),
-        .testTarget(name: "FiliconLocalToolsTests", dependencies: ["FiliconLocalTools"]),
+        .testTarget(name: "FiliconLocalToolsTests", dependencies: ["FiliconLocalTools", .product(name: "CustomDump", package: "swift-custom-dump")]),
         .testTarget(name: "FiliconUpdaterTests", dependencies: ["FiliconUpdater"]),
         .testTarget(name: "FiliconVoiceTests", dependencies: ["FiliconVoice"]),
         .testTarget(name: "FiliconSettingsTests", dependencies: ["FiliconSettings", "FiliconDomain"]),

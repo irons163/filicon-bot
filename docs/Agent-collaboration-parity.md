@@ -1,6 +1,26 @@
 # 協作能力核對紀錄（更新至 2026-09-21）
 
-## 本輪增量：只讀搜尋未注入的已核准記憶（2026-09-21）
+## 本輪增量：本機程序輸出收尾與錯誤標記（2026-09-21）
+
+先提交上一批為 `26d789c`（`feat: add scoped read-only search for approved agent memories`），提交前 **81 項／6 suites** 回歸通過。本輪處理上輪完整套件實際出現的 stdout 遺失：舊 `ProcessSupervisor.didExit` 先關閉 readability handlers／公布退出，而 bytes 還可能在等待 actor 接收的 Task 中，造成已完成的 snapshot 為空或之後又增長。本批為 native 執行可靠性修正，不新增原版雲端能力。
+
+- 改為程序退出狀態與 stdout／stderr 的 EOF 都已交付後，才回報 `isRunning=false` 與 exitStatus。收尾期間仍可讀增量輸出，拒絕對已退出的程序送 stdin；完成後 output／offset 穩定，沒有晚到 bytes 回頭改寫終態。
+- 新增 queue-confined `LocalProcessOutputReader`，使用 nonblocking dispatch source。每條管線一次最多一個 64 KiB 區塊，等 supervisor 接收後才續讀，EOF 不能超車；合併 10 MiB 上限與超限終止保留。只保證各管線內順序，不宣稱 stdout 與 stderr 有全域發生順序。取消時平衡 suspend/resume，取消 handler 關閉其擁有的 descriptor。
+- 直接子程序退出後，若繼承管線的其他 writer 不關閉，最多安排一秒收尾等待，再停止收集並回報可能不完整的 `terminationError`；使用者 Stop 也可結束收尾，但錯誤理由與期限到期分開。已讀、等待交付的區塊先確認再送 terminal event。此階段不向已知退出的 PID／process group 發送訊號；一般尚在執行的程序仍沿用 TERM／KILL、原執行逾時與 run/generation 防護。不是任意背景子孫程序管理，也不保證收集期限之後的輸出。
+- App 原先將含 terminationError 的 process JSON 當成功工具結果。現改為 `isError=true`，保留 partial bytes、offset、exit code 與診斷；逾時／超限／收尾失敗不再顯示為成功卡片。正常完成或單純非零 exit code 的既有結果契約不變。本批未變更 UI 版面、權限或使用者設定。
+
+依 Swift 測試／SPM 技能，只在 local-tools 測試 target 加入專案既有 CustomDump，沒有新增 runtime 依賴。測試使用隔離目錄、固定 scope IDs、短命 fixture 程序與 continuation handshake：先修正新增測試的 async autoclosure 編譯錯誤，再用舊 supervisor 加入不改預設行為的時序 hook，確實重現 **7 個失敗斷言**（`/tmp/filicon-process-output-red-final.log`）。新版通過受控晚到 stdout/stderr、768 KiB 雙管線＋增量 offset、空輸出／提前關管線、期限／Stop、reader 取消不能超車、25 次快速退出與同 supervisor 的 12 個並行程序。另先重現 App **3 個錯誤標記失敗**（`/tmp/filicon-process-result-red.log`），再驗證四種 snapshot 保留完整 JSON 且錯誤標記正確。測試等待只用於觀察真實 I/O／期限，沒有用延長睡眠修補產品競態。
+
+驗證結果：
+
+- supervisor 聚焦 **20 項／2 suites 通過**（`/tmp/filicon-process-output-regression.log`）；含 App 錯誤映射／群組核准的擴大回歸 **33 項／4 suites 通過**（`/tmp/filicon-process-output-app-regression.log`）。其後新增的 12 程序並行隔離測試納入完整套件。
+- 最終 `swift test --no-parallel` **134 XCTest、906 Swift Testing／104 suites 全數通過**（`/tmp/filicon-process-output-full-final.log`），兩項 opt-in live Codex 測試未啟用；既有 CoreData NSXPC 診斷仍在。本輪原有 stdin 測試、輸出上限、逾時與程序群終止均通過，沒有放寬斷言或省略失敗測試。
+- 原生 `Filicon App` **clean build、deep strict codesign 通過**，包含 helpers 與 XPC（`/tmp/filicon-process-output-native-final.log`）；既有 AppIntents metadata／ad-hoc runtime 提示仍在。沒有執行 release 公證或啟動使用者 App。
+- 七語言各 **1,545 keys、零缺漏**，localization audit 與 `git diff --check` 通過；本輪沒有新增 UI 標籤／版面，不宣稱全 UI 視覺驗收。
+
+本批尚未提交；未 push、未啟動／重啟 App 或使用者 Xcode 工作程序、未存取 live 模型。保留原有 parity partial 項目，不宣稱所有程序生命週期或原版能力已完整還原。
+
+## 已提交增量：只讀搜尋未注入的已核准記憶（2026-09-21）
 
 先提交上一批為 `7814a77`（`feat: recall relevant approved memories for current agent messages`），提交前 **55 項／5 suites** 回歸通過。本輪核對本機非官方 reconstructed 的 `host/runner/sand-memory.ts`：提示明確允許以 Read／Shell grep `profile.md` 與 `log/` 找未列出的舊事實。本輪提供 **Filicon-native `SearchMemory` 對應**，不是宣稱原版有同名工具，也不向模型開放 App 內部儲存檔案。
 
@@ -19,7 +39,7 @@
 - 原生 `Filicon App` **clean build 及 deep strict codesign 通過**，包含兩個 helper 與 XPC（`/tmp/filicon-memory-search-native.log`）。既有 AppIntents metadata／ad-hoc runtime 提示仍在；未啟動 App。
 - 七語言各 **1,545 keys、零缺漏**，localization audit 與 `git diff --check` 通過。沒有 UI 版面變更，也未宣稱全產品逐頁視覺驗收。
 
-本批尚未提交。`AGENT-01` 維持 partial：仍缺 project 記憶、自動抽取、任意 archive／檔案／語意檢索、其他執行入口及完整原版 persona/runtime；本輪未 push、未啟動／重啟使用者 App、未更動真實資料。
+本批已在下一輪提交為 `26d789c`。`AGENT-01` 維持 partial：仍缺 project 記憶、自動抽取、任意 archive／檔案／語意檢索、其他執行入口及完整原版 persona/runtime；本輪未 push、未啟動／重啟使用者 App、未更動真實資料。
 
 ## 已提交增量：依當前訊息召回已核准的相關記憶（2026-09-20）
 
