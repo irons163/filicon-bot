@@ -45,6 +45,47 @@ public enum AutomationStateChangeError: String, LocalizedError, Sendable {
     public var errorDescription: String? { rawValue }
 }
 
+public enum AutomationEditError: String, LocalizedError, Sendable {
+    case invalidText = "Enter a nonempty name (up to 80 characters) and instruction (up to 32,000 characters)."
+    case stale = "This routine changed or was deleted while editing. Close the editor and reopen the latest version. Your draft has not been saved."
+    case unsupportedTrigger = "This trigger cannot be edited here. Its original definition is preserved; you can still edit the name and instruction."
+    case unavailable = "This editor is no longer active, or its agent is unavailable. Close it and reopen the routine."
+    public var errorDescription: String? { rawValue }
+}
+
+extension AutomationTrigger {
+    /// A deliberately bounded manual editor. Other formats can be renamed
+    /// without being rewritten, normalized or stripped of unknown fields.
+    public func validateForManualEditing() throws {
+        switch self {
+        case .cron(let expression, let zoneID):
+            guard !expression.isEmpty, expression.count <= 256,
+                  zoneID == nil || zoneID.flatMap(TimeZone.init(identifier:)) != nil else {
+                throw AutomationEditError.unsupportedTrigger
+            }
+            if let interval = AutomationSchedule.parseEvery(expression) {
+                guard interval.isFinite, interval >= 60, interval <= 366 * 86_400 else {
+                    throw AutomationStateChangeError.unsupportedSchedule
+                }
+            } else {
+                _ = try AutomationSchedule.compile(expression, defaultTimeZone: zoneID.flatMap(TimeZone.init(identifier:)))
+            }
+        case .platform(.linear(let value)): try value.validateForAgentWrite()
+        case .platform(.sentry(let value)): try value.validateForSentryAgentWrite()
+        case .platform(.pagerDuty(let value)): try value.validateForPagerDutyAgentWrite()
+        case .anyOf(let members):
+            guard (2...AutomationService.maximumListeners).contains(members.count), Set(members).count == members.count else {
+                throw AutomationStateChangeError.invalidEventGroup
+            }
+            for member in members {
+                if case .anyOf = member { throw AutomationEditError.unsupportedTrigger }
+                try member.validateForManualEditing()
+            }
+        default: throw AutomationEditError.unsupportedTrigger
+        }
+    }
+}
+
 /// Closing the originating request revokes even an already-approved actor hop.
 /// Receipts distinguish a durable write from a later UI/bookkeeping failure.
 public final class AutomationStateChangeLifetime: @unchecked Sendable {

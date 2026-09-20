@@ -483,7 +483,7 @@
 "Installed" = "설치하기";
 "Installing update…" = "설치 업데이트 ...";
 "Installing version" = "설치 버전";
-"Instruction" = "(주)";
+"Instruction" = "지침";
 "Instructions" = "지침";
 "Interrupted" = "중단됨";
 "Interval" = "회사연혁";
@@ -887,7 +887,7 @@
 "Save to Keychain" = "키체인에 저장";
 "Saved" = "팟캐스트";
 "Saving…" = "저장...";
-"Schedule" = "- 연혁";
+"Schedule" = "일정";
 "Schedule · {0}" = "일정 · {0}";
 "Scheme" = "팟캐스트";
 "Scope" = "관련 상품";
@@ -1193,7 +1193,7 @@
 "This version of Filicon is below the required minimum version{0}." = "이 버전의 Filicon 필요한 최소한 version{0} 아래입니다.";
 "Thread" = "대화";
 "Thread ID (optional)" = "(선택) 실 ID";
-"Time zone" = "시간 영역";
+"Time zone" = "시간대";
 "Timeline" = "퀵메뉴";
 "Timeline · {0}" = "타임 라인 · {0}";
 "Title" = "제목";
@@ -1514,3 +1514,11 @@
 "Optional filters: enter up to 50 IDs per field, separated by commas. Empty means any. Use IDs, not names or wildcards." = "선택 필터: 각 필드에 최대 50개의 ID를 쉼표로 구분해 입력하세요. 비워 두면 제한이 없습니다. 이름이나 와일드카드가 아닌 ID를 사용하세요.";
 "Requires an existing verified event connection. Creating a routine does not connect an account or start a webhook. Future matching events may incur model costs." = "기존의 검증된 이벤트 연결이 필요합니다. 루틴을 만들어도 계정에 연결하거나 webhook을 시작하지 않습니다. 이후 일치하는 이벤트로 모델 비용이 발생할 수 있습니다.";
 "Status filters apply only to status changes. Cycle completion uses team/cycle IDs, not projects, and requires an explicit completion event, not just an elapsed date. Clear incompatible filters when switching events." = "상태 필터는 상태 변경에만 적용됩니다. 주기 완료에는 프로젝트가 아닌 팀/주기 ID를 사용하며, 날짜 경과가 아닌 명시적인 완료 이벤트가 필요합니다. 이벤트를 바꿀 때 호환되지 않는 필터를 지우세요.";
+"Edit routine" = "루틴 편집";
+"Routine conditions" = "루틴 조건";
+"Any one matching condition can trigger this routine." = "조건 중 하나라도 일치하면 이 루틴이 실행될 수 있습니다.";
+"Saving keeps the owner, enabled state, spend protection and run history. It does not run the routine now. Changed schedules restart from save time; already queued events may match new conditions and incur model costs." = "저장 시 소유자, 활성화 상태, 지출 보호 및 실행 기록이 유지되며 즉시 실행하지 않습니다. 변경된 시간 조건은 저장 시점부터 다시 계산됩니다. 대기 중인 이벤트가 새 조건과 일치하여 모델 비용이 발생할 수 있습니다.";
+"Enter a nonempty name (up to 80 characters) and instruction (up to 32,000 characters)." = "비어 있지 않은 이름(최대 80자)과 지침(최대 32,000자)을 입력하세요.";
+"This routine changed or was deleted while editing. Close the editor and reopen the latest version. Your draft has not been saved." = "편집 중에 이 루틴이 변경되거나 삭제되었습니다. 편집기를 닫고 최신 버전을 다시 여세요. 초안은 저장되지 않았습니다.";
+"This trigger cannot be edited here. Its original definition is preserved; you can still edit the name and instruction." = "이 트리거는 여기서 편집할 수 없습니다. 원래 정의는 유지되며 이름과 지침은 편집할 수 있습니다.";
+"This editor is no longer active, or its agent is unavailable. Close it and reopen the routine." = "이 편집기는 더 이상 활성 상태가 아니거나 에이전트를 사용할 수 없습니다. 닫은 후 루틴을 다시 여세요.";

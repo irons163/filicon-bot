@@ -69,6 +69,59 @@ public actor AutomationService {
         return value
     }
 
+    /// Manual edits change definition fields only. Compare and write within one
+    /// actor hop, preserving runtime history that may advance while the UI is open.
+    @discardableResult
+    public func updateManualDefinition(_ change: AutomationStateChange, lifetime: AutomationStateChangeLifetime,
+                                       now: Date = Date()) throws -> Automation {
+        try lifetime.check()
+        return try lifetime.commit(change) {
+            let proposed = change.automation
+            guard change.operation == .update, let previous = change.previous,
+                  let index = state.automations.firstIndex(where: { $0.id == previous.id }) else {
+                throw AutomationEditError.stale
+            }
+            let current = state.automations[index]
+            guard change.matchesDefinition(current), proposed.id == current.id,
+                  proposed.agentID == current.agentID, proposed.createdAt == current.createdAt,
+                  proposed.revision == current.revision, proposed.enabled == current.enabled,
+                  proposed.guardPaused == current.guardPaused else { throw AutomationEditError.stale }
+            var value = current
+            value.name = proposed.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            value.prompt = proposed.prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !value.name.isEmpty, value.name.count <= 80,
+                  !value.prompt.isEmpty, value.prompt.count <= 32_000 else { throw AutomationEditError.invalidText }
+            if proposed.trigger != current.trigger {
+                // Do not convert unsupported/legacy conditions just by opening
+                // this editor, nor accept a bypass of the limited form controls.
+                try current.trigger.validateForManualEditing()
+                try proposed.trigger.validateForManualEditing()
+                value.trigger = proposed.trigger
+                if timeConditions(current.trigger) != timeConditions(proposed.trigger) {
+                    value.nextRunAt = current.guardPaused || state.spendGuard.guardPausedAutomationIDs.contains(current.id)
+                        ? nil : try computeNextRun(for: value, after: now)
+                }
+            }
+            guard value.name != current.name || value.prompt != current.prompt || value.trigger != current.trigger else {
+                return current
+            }
+            value.revision += 1
+            var candidate = state
+            candidate.automations[index] = value
+            try Self.save(candidate, to: storeURL)
+            state = candidate
+            return value
+        }
+    }
+
+    private func timeConditions(_ trigger: AutomationTrigger) -> Set<AutomationTrigger> {
+        switch trigger {
+        case .cron: [trigger]
+        case .anyOf(let members): members.reduce(into: []) { $0.formUnion(timeConditions($1)) }
+        default: []
+        }
+    }
+
     public func setEnabled(id: UUID, enabled: Bool, now: Date = Date()) throws {
         guard let index = state.automations.firstIndex(where: { $0.id == id }) else { throw AutomationServiceError.unknownAutomation(id) }
         var candidate = state

@@ -887,7 +887,7 @@
 "Save to Keychain" = "Guardar en el llavero";
 "Saved" = "Guardado";
 "Saving…" = "Salvando...";
-"Schedule" = "Cuadro";
+"Schedule" = "Programación";
 "Schedule · {0}" = "Programación · {0}";
 "Scheme" = "Plan";
 "Scope" = "Ámbito";
@@ -1514,3 +1514,11 @@
 "Optional filters: enter up to 50 IDs per field, separated by commas. Empty means any. Use IDs, not names or wildcards." = "Filtros opcionales: hasta 50 ID por campo, separados por comas. Vacío significa sin restricción. Use ID, no nombres ni comodines.";
 "Requires an existing verified event connection. Creating a routine does not connect an account or start a webhook. Future matching events may incur model costs." = "Requiere una conexión de eventos existente y verificada. Crear una rutina no conecta una cuenta ni inicia un webhook. Los eventos futuros que coincidan pueden generar costes del modelo.";
 "Status filters apply only to status changes. Cycle completion uses team/cycle IDs, not projects, and requires an explicit completion event, not just an elapsed date. Clear incompatible filters when switching events." = "Los filtros de estado solo se aplican a cambios de estado. La finalización de un ciclo usa ID de equipo/ciclo, no de proyecto, y requiere un evento explícito de finalización, no solo una fecha vencida. Borre los filtros incompatibles al cambiar de evento.";
+"Edit routine" = "Editar rutina";
+"Routine conditions" = "Condiciones de la rutina";
+"Any one matching condition can trigger this routine." = "Cualquier condición coincidente puede activar esta rutina.";
+"Saving keeps the owner, enabled state, spend protection and run history. It does not run the routine now. Changed schedules restart from save time; already queued events may match new conditions and incur model costs." = "Al guardar se conservan el propietario, la activación, la protección de gastos y el historial, sin ejecutar la rutina de inmediato. Los horarios modificados se recalculan desde el momento de guardar; los eventos ya en cola pueden cumplir las nuevas condiciones y generar costes del modelo.";
+"Enter a nonempty name (up to 80 characters) and instruction (up to 32,000 characters)." = "Introduzca un nombre no vacío (hasta 80 caracteres) y una instrucción no vacía (hasta 32.000 caracteres).";
+"This routine changed or was deleted while editing. Close the editor and reopen the latest version. Your draft has not been saved." = "Esta rutina se modificó o eliminó durante la edición. Cierre el editor y vuelva a abrir la versión más reciente. Su borrador no se ha guardado.";
+"This trigger cannot be edited here. Its original definition is preserved; you can still edit the name and instruction." = "Este activador no se puede editar aquí. Se conserva su definición original; puede editar el nombre y la instrucción.";
+"This editor is no longer active, or its agent is unavailable. Close it and reopen the routine." = "Este editor ya no está activo o su agente no está disponible. Ciérrelo y vuelva a abrir la rutina.";

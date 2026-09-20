@@ -273,6 +273,7 @@ final class AppModel: ObservableObject {
     private let agentAvatarStore: AgentAvatarStore
     private let groupService: GroupService?
     private let automationService: AutomationService?
+    private var routineEditSessions: [UUID: RoutineEditSession] = [:]
     var workflowService: WorkflowService? = nil
     private var automationScheduler: AutomationScheduler?
     private var automationTriggerHub: AutomationTriggerHub?
@@ -2387,6 +2388,9 @@ final class AppModel: ObservableObject {
 
     func archiveAgent(id: UUID) async {
         guard let agentService else { return }
+        for session in routineEditSessions.values.filter({ $0.automation.agentID == id }) {
+            endAutomationEdit(session)
+        }
         do { try await agentService.archive(id: id); agents = await agentService.list(includeArchived: true) }
         catch { errorMessage = error.localizedDescription }
     }
@@ -3662,6 +3666,43 @@ final class AppModel: ObservableObject {
         } catch { errorMessage = error.localizedDescription }
     }
 
+    func beginAutomationEdit(_ automation: Automation) -> RoutineEditSession? {
+        guard !agentMessagingAccountTransition, automationService != nil else { return nil }
+        let session = RoutineEditSession(automation: automation)
+        routineEditSessions[session.id] = session
+        return session
+    }
+
+    func endAutomationEdit(_ session: RoutineEditSession) {
+        session.lifetime.close()
+        routineEditSessions.removeValue(forKey: session.id)
+    }
+
+    func saveAutomationEdit(_ session: RoutineEditSession, draft: RoutineEditDraft) async throws {
+        guard routineEditSessions[session.id]?.lifetime === session.lifetime,
+              !agentMessagingAccountTransition, let automationService, let agentService,
+              draft.original == session.automation else { throw AutomationEditError.unavailable }
+        let generation = autoReviewAccountGeneration
+        guard let owner = await agentService.profile(id: session.automation.agentID), owner.archivedAt == nil else {
+            throw AutomationEditError.unavailable
+        }
+        try session.lifetime.check()
+        let change = try draft.change
+        do {
+            let payload = try JSONEncoder().encode(change.automation)
+            _ = try await quotaWrite(scope: "automation", key: change.automation.id.uuidString, data: payload) {
+                try await automationService.updateManualDefinition(change, lifetime: session.lifetime)
+            }
+        } catch {
+            // A post-commit quota bookkeeping failure must not masquerade as a
+            // failed definition write, inviting a stale duplicate retry.
+            guard session.lifetime.committed(for: change) != nil else { throw error }
+            if generation == autoReviewAccountGeneration { errorMessage = Self.quotaMessage(error) }
+        }
+        let definitions = await automationService.list()
+        if generation == autoReviewAccountGeneration { automations = definitions }
+    }
+
     func setAutomationEnabled(id: UUID, enabled: Bool) async {
         guard let automationService else { return }
         do { try await automationService.setEnabled(id: id, enabled: enabled); await reloadAutomationDetails(markViewed: false) }
@@ -4540,6 +4581,8 @@ final class AppModel: ObservableObject {
     func cancelAutoReviewApprovals(nextAccountID: String) async {
         // Queued peer work is scoped to the account that approved the exchange.
         agentMessagingAccountTransition = true
+        for session in routineEditSessions.values { session.lifetime.close() }
+        routineEditSessions.removeAll()
         agentMemoryUILifetime.close()
         agentMemoryUILifetime = AgentMemoryChangeLifetime()
         for session in agentMessagingSessions.values { session.revokeProfileChanges() }

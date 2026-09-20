@@ -483,7 +483,7 @@
 "Installed" = "インストール済み";
 "Installing update…" = "アップデートのインストール...";
 "Installing version" = "バージョンのインストール";
-"Instruction" = "導入事例";
+"Instruction" = "指示";
 "Instructions" = "指示";
 "Interrupted" = "中断";
 "Interval" = "インターバル";
@@ -1514,3 +1514,11 @@
 "Optional filters: enter up to 50 IDs per field, separated by commas. Empty means any. Use IDs, not names or wildcards." = "任意のフィルター：各欄に最大 50 個の ID をカンマ区切りで入力します。空欄は制限なしです。名前やワイルドカードではなく ID を使用してください。";
 "Requires an existing verified event connection. Creating a routine does not connect an account or start a webhook. Future matching events may incur model costs." = "既存の検証済みイベント接続が必要です。ルーチンの作成ではアカウントの接続や webhook の起動は行いません。今後の一致するイベントでモデルの利用料金が発生する場合があります。";
 "Status filters apply only to status changes. Cycle completion uses team/cycle IDs, not projects, and requires an explicit completion event, not just an elapsed date. Clear incompatible filters when switching events." = "ステータスのフィルターはステータス変更にのみ適用されます。サイクル完了ではチーム／サイクル ID を使用し、プロジェクトは使えません。日付の経過だけではなく、明示的な完了イベントが必要です。イベントを切り替えたら、適用できないフィルターを消去してください。";
+"Edit routine" = "ルーチンを編集";
+"Routine conditions" = "ルーチンの条件";
+"Any one matching condition can trigger this routine." = "いずれかの条件に一致すると、このルーチンが実行されます。";
+"Saving keeps the owner, enabled state, spend protection and run history. It does not run the routine now. Changed schedules restart from save time; already queued events may match new conditions and incur model costs." = "保存しても所有者、有効状態、支出保護、実行履歴は保持され、即時実行はしません。変更した時刻条件は保存時点から再計算します。キュー内のイベントが新条件に一致し、モデルの利用料金が発生する場合があります。";
+"Enter a nonempty name (up to 80 characters) and instruction (up to 32,000 characters)." = "空でない名前（最大 80 文字）と指示（最大 32,000 文字）を入力してください。";
+"This routine changed or was deleted while editing. Close the editor and reopen the latest version. Your draft has not been saved." = "編集中にこのルーチンが変更または削除されました。編集画面を閉じ、最新版を開き直してください。下書きは保存されていません。";
+"This trigger cannot be edited here. Its original definition is preserved; you can still edit the name and instruction." = "このトリガーはここでは編集できません。元の定義は保持されます。名前と指示は編集できます。";
+"This editor is no longer active, or its agent is unavailable. Close it and reopen the routine." = "この編集画面は無効になったか、エージェントが利用できません。閉じてからルーチンを開き直してください。";

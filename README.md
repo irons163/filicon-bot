@@ -201,8 +201,8 @@ also resets interval timing. Pause/resume does not backfill. Loading a legacy
 definition with no next-run date does not silently arm it. Mixed proposals show
 the full before/after definitions and time-zone, interval-reset and model-cost
 disclosures for explicit approval. The manual new-routine form also supports
-flat OR listeners; editing an existing saved definition still uses an approved
-agent proposal rather than a dedicated manual edit form.
+flat OR listeners. Saved routines now have a dedicated **Edit** button; the
+supported manual editing subset is described below.
 
 In **Automations → New routine**, Linear, Sentry and PagerDuty now have event
 menus instead of free-text event names. Linear offers issue creation, status
@@ -219,6 +219,20 @@ These controls and notices cover all seven UI languages and preserve platform
 brand names. They do not install accounts/webhooks or migrate existing routines.
 Authenticated fixture matching, isolated persistence/OR tests and native rendering
 are verified, not live external-account end-to-end behavior.
+
+In **Automations → Edit**, change a saved routine's name and instruction, plus
+cron/interval, canonical Linear/Sentry/PagerDuty conditions or a flat OR of up to
+eight of those conditions. Other platforms, legacy and unknown formats expose
+their original trigger as read-only; name/instruction edits preserve it without
+migration. Untouched members keep their original IDs and time-zone representation.
+Saving preserves the owner, enabled state, spend protection, history and in-flight
+execution, and does not run the routine immediately. Changed time conditions
+restart from save time; metadata or event-filter edits do not reset an unchanged
+time condition. Already queued events may match new conditions and incur model
+costs. A stale definition, deleted routine, cancelled editor, archived owner or
+account change blocks an uncommitted save. Failed storage keeps the draft and
+the last persisted definition. These controls have seven-language coverage;
+GitHub/Slack/Teams/generic trigger editing and live platform parity remain open.
 
 Linear ingress: verified Issue/create
 webhooks expose `issueCreated`; Issue/update exposes `statusChanged` only when

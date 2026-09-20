@@ -1799,6 +1799,7 @@ struct RoutineAutomationWorkspaceView: View {
     @State private var name = ""
     @State private var prompt = ""
     @State private var listeners = [AutomationListenerDraft()]
+    @State private var editSession: RoutineEditSession?
     var body: some View {
         let _ = uiLocale.identifier
         Form {
@@ -1882,6 +1883,7 @@ struct RoutineAutomationWorkspaceView: View {
                             }
                             Spacer()
                             Toggle(l10n("Enabled"), isOn: Binding(get: { automation.enabled }, set: { value in Task { await model.setAutomationEnabled(id: automation.id, enabled: value) } })).labelsHidden()
+                            Button(l10n("Edit")) { editSession = model.beginAutomationEdit(automation) }
                             Button(l10n("Run Now")) { Task { await model.runAutomationNow(id: automation.id) } }
                             Button(l10n("Delete"), role: .destructive) { Task { await model.deleteAutomation(id: automation.id) } }
                         }
@@ -1890,6 +1892,10 @@ struct RoutineAutomationWorkspaceView: View {
             }
         }.formStyle(.grouped).navigationTitle(l10n("Automations"))
             .task { await model.reloadAutomationDetails(markViewed: true) }
+            .sheet(item: $editSession) { session in
+                RoutineAutomationEditView(session: session)
+                    .environmentObject(model)
+            }
     }
 
     private func create() {
@@ -1911,6 +1917,173 @@ struct RoutineAutomationWorkspaceView: View {
         case .anyOf(let values): l10n("\(values.count) listeners")
         case .unknown(let kind, _): l10n("Unavailable: \(kind)")
         }
+    }
+}
+
+struct RoutineEditSession: Identifiable {
+    let id = UUID()
+    let automation: Automation
+    let lifetime = AutomationStateChangeLifetime()
+}
+
+struct RoutineEditDraft: Equatable {
+    let original: Automation
+    private let initialListeners: [AutomationListenerDraft]?
+    private let originalMembers: [AutomationTrigger]
+    var name: String
+    var prompt: String
+    var listeners: [AutomationListenerDraft]
+    static let editableKinds: [AutomationListenerKind] = [.schedule, .linear, .sentry, .pagerDuty]
+
+    init(_ automation: Automation) {
+        original = automation; name = automation.name; prompt = automation.prompt
+        let triggers: [AutomationTrigger]
+        if case .anyOf(let members) = automation.trigger { triggers = members } else { triggers = [automation.trigger] }
+        originalMembers = triggers
+        let drafts = triggers.compactMap(Self.listener)
+        initialListeners = (try? automation.trigger.validateForManualEditing()) != nil && drafts.count == triggers.count ? drafts : nil
+        listeners = initialListeners ?? []
+    }
+
+    var canEditConditions: Bool { initialListeners != nil }
+    var hasChanges: Bool { name != original.name || prompt != original.prompt || listeners != (initialListeners ?? []) }
+    var validationMessage: String? {
+        do { _ = try change; return nil } catch { return error.localizedDescription }
+    }
+    var change: AutomationStateChange {
+        get throws {
+            var proposed = original
+            proposed.name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            proposed.prompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !proposed.name.isEmpty, proposed.name.count <= 80,
+                  !proposed.prompt.isEmpty, proposed.prompt.count <= 32_000 else { throw AutomationEditError.invalidText }
+            if let initialListeners, listeners != initialListeners {
+                guard !listeners.isEmpty, listeners.count <= AutomationService.maximumListeners else {
+                    throw AutomationServiceError.listenerLimit
+                }
+                let members = try listeners.map { listener in
+                    if let index = initialListeners.firstIndex(of: listener) { return originalMembers[index] }
+                    return try listener.trigger
+                }
+                proposed.trigger = members.count == 1 ? members[0] : .anyOf(members)
+                try proposed.trigger.validateForManualEditing()
+            } else if initialListeners == nil, !listeners.isEmpty {
+                throw AutomationEditError.unsupportedTrigger
+            }
+            // Untouched triggers, including nil time zones and old formats,
+            // stay byte-for-byte equivalent at the Codable value boundary.
+            return .init(operation: .update, automation: proposed, previous: original)
+        }
+    }
+
+    private static func listener(_ trigger: AutomationTrigger) -> AutomationListenerDraft? {
+        var draft = AutomationListenerDraft()
+        switch trigger {
+        case .cron(let expression, let zone):
+            draft.kind = .schedule; draft.primary = expression; draft.secondary = zone ?? ""
+        case .platform(.linear(let value)):
+            draft.kind = .linear; draft.primary = value.event
+            draft.secondary = value.primaryIDs.sorted().joined(separator: ", ")
+            draft.tertiary = value.secondaryIDs.sorted().joined(separator: ", ")
+            draft.statusIDs = value.statusIDs.sorted().joined(separator: ", ")
+            draft.cycleIDs = value.cycleIDs.sorted().joined(separator: ", ")
+        case .platform(.sentry(let value)), .platform(.pagerDuty(let value)):
+            if case .platform(.sentry) = trigger { draft.kind = .sentry } else { draft.kind = .pagerDuty }
+            draft.primary = value.event; draft.secondary = value.primaryIDs.sorted().joined(separator: ", ")
+        default: return nil
+        }
+        return draft
+    }
+}
+
+struct RoutineAutomationEditFields: View {
+    @Environment(\.locale) private var uiLocale
+    @Binding var draft: RoutineEditDraft
+    static let preservationNotice = "Saving keeps the owner, enabled state, spend protection and run history. It does not run the routine now. Changed schedules restart from save time; already queued events may match new conditions and incur model costs."
+
+    var body: some View {
+        Form {
+            Section {
+                TextField(FiliconLocalization.string("Name", language: uiLocale.identifier), text: $draft.name)
+                TextField(FiliconLocalization.string("Instruction", language: uiLocale.identifier), text: $draft.prompt, axis: .vertical)
+                    .lineLimit(4...8)
+            }
+            Section(FiliconLocalization.string("Routine conditions", language: uiLocale.identifier)) {
+                if draft.canEditConditions {
+                    ForEach($draft.listeners) { $listener in
+                        AutomationListenerEditor(listener: $listener, canRemove: draft.listeners.count > 1,
+                            remove: { draft.listeners.removeAll { $0.id == listener.id } }, allowedKinds: RoutineEditDraft.editableKinds)
+                    }
+                    Button(FiliconLocalization.string("Add listener", language: uiLocale.identifier)) { draft.listeners.append(AutomationListenerDraft()) }
+                        .disabled(draft.listeners.count >= AutomationService.maximumListeners)
+                    Text(FiliconLocalization.string("Any one matching condition can trigger this routine.", language: uiLocale.identifier))
+                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Text(FiliconLocalization.string(AutomationEditError.unsupportedTrigger.rawValue, language: uiLocale.identifier))
+                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    Text((try? AutomationStateChange(operation: .update, automation: draft.original).triggerJSON) ?? "")
+                        .font(.system(.caption, design: .monospaced)).textSelection(.enabled)
+                }
+            }
+            Section {
+                Text(FiliconLocalization.string(Self.preservationNotice, language: uiLocale.identifier))
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                if let message = draft.validationMessage {
+                    Text(FiliconLocalization.string(message, language: uiLocale.identifier))
+                        .font(.caption).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }.formStyle(.grouped)
+    }
+}
+
+struct RoutineAutomationEditView: View {
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.locale) private var uiLocale
+    let session: RoutineEditSession
+    @State private var draft: RoutineEditDraft
+    @State private var isSaving = false
+    @State private var saveError: String?
+
+    init(session: RoutineEditSession) {
+        self.session = session
+        _draft = State(initialValue: RoutineEditDraft(session.automation))
+    }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(FiliconLocalization.string("Edit routine", language: uiLocale.identifier)).font(.title2.bold())
+            Text(model.agents.first { $0.id == session.automation.agentID }?.name ?? session.automation.agentID.uuidString)
+                .font(.caption).foregroundStyle(.secondary)
+            RoutineAutomationEditFields(draft: $draft).disabled(isSaving)
+            if let saveError {
+                Text(FiliconLocalization.string(saveError, language: uiLocale.identifier))
+                    .font(.caption).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
+            }
+            HStack {
+                Button(FiliconLocalization.string("Cancel", language: uiLocale.identifier), action: cancelButtonTapped)
+                    .keyboardShortcut(.cancelAction)
+                Spacer()
+                Button(FiliconLocalization.string(isSaving ? "Saving…" : "Save", language: uiLocale.identifier)) { Task { await saveButtonTapped() } }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(isSaving || !draft.hasChanges || draft.validationMessage != nil)
+            }
+        }.padding(20).frame(width: 650, height: 720)
+            .background(Color(nsColor: .windowBackgroundColor))
+            .onDisappear { model.endAutomationEdit(session) }
+            .onChange(of: draft) { _, _ in saveError = nil }
+    }
+    private func saveButtonTapped() async {
+        guard !isSaving else { return }
+        isSaving = true
+        defer { isSaving = false }
+        do { try await model.saveAutomationEdit(session, draft: draft); dismiss() }
+        catch is CancellationError { saveError = AutomationEditError.unavailable.rawValue }
+        catch { saveError = error.localizedDescription }
+    }
+    private func cancelButtonTapped() {
+        model.endAutomationEdit(session)
+        dismiss()
     }
 }
 
@@ -2098,6 +2271,7 @@ struct AutomationListenerEditor: View {
     @Binding var listener: AutomationListenerDraft
     let canRemove: Bool
     let remove: () -> Void
+    var allowedKinds: [AutomationListenerKind] = AutomationListenerKind.allCases
 
     var body: some View {
         let _ = uiLocale.identifier
@@ -2105,7 +2279,7 @@ struct AutomationListenerEditor: View {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     Picker(FiliconLocalization.string("Trigger", language: uiLocale.identifier), selection: $listener.kind) {
-                        ForEach(AutomationListenerKind.allCases) { Text($0.label(language: uiLocale.identifier)).tag($0) }
+                        ForEach(allowedKinds) { Text($0.label(language: uiLocale.identifier)).tag($0) }
                     }
                     if canRemove { Button(FiliconLocalization.string("Remove", language: uiLocale.identifier), role: .destructive, action: remove) }
                 }
@@ -2123,9 +2297,9 @@ struct AutomationListenerEditor: View {
     @ViewBuilder private var fields: some View {
         switch listener.kind {
         case .schedule:
-            TextField(l10n("Cron, alias, or @every 30m"), text: $listener.primary)
-            Picker(l10n("Time zone"), selection: $listener.secondary) {
-                Text(l10n("System (\(TimeZone.current.identifier))")).tag("")
+            TextField(FiliconLocalization.string("Cron, alias, or @every 30m", language: uiLocale.identifier), text: $listener.primary)
+            Picker(FiliconLocalization.string("Time zone", language: uiLocale.identifier), selection: $listener.secondary) {
+                Text(FiliconLocalization.render("System (\(TimeZone.current.identifier))", language: uiLocale.identifier)).tag("")
                 ForEach(TimeZone.knownTimeZoneIdentifiers, id: \.self) { Text($0).tag($0) }
             }
         case .connector:

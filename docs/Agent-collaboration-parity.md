@@ -1,6 +1,23 @@
 # 協作能力核對紀錄（更新至 2026-09-20）
 
-## 本輪增量：手動新增 Linear／Sentry／PagerDuty 排程（2026-09-20）
+## 本輪增量：既有排程的手動編輯與儲存生命週期（2026-09-20）
+
+上一批已提交 `f874dcd`（`fix: add validated platform event menus for new routines`），提交前再次通過 59 項／6 suites 聚焦回歸。本批補自動化清單的「編輯」入口，不更動外部連線或立即執行排程。
+
+- 支援名稱、任務內容與 cron／interval、canonical Linear／Sentry／PagerDuty 及其最多八項平面 OR 條件。其他平台、legacy／unknown／含不支援成員的組合，只能改名稱與任務內容，原始 trigger 唯讀保留。未變動的成員保留 nil 時區、UUID 大小寫及精確 ID 等原有值，不因只改另一分支而重寫。
+- 服務層在同一 actor turn 比對原始定義／revision 並原子寫入；編輯期間新執行紀錄、wakes、claims、費用保護和現行 runtime 欄位保留，不接受草稿夾帶 owner／enabled／guardPaused／revision／createdAt 變更。只改名稱／任務／事件篩選，不重設未改動的時間條件；改動時間條件則從儲存時間重算，下次時間仍尊重停用及費用暫停。
+- 執行中的工作沿用啟動時任務，完成後保留新定義與新排程。儲存不是 Run Now；已入列事件可能符合新條件並產生模型費用。取消／關閉、帳號切換、封存 owner 撤銷未提交寫入；另一處修改、停用再啟用、刪除或費用保護變更會拒絕 stale 草稿。磁碟寫入失敗不公布假成功，草稿留在編輯視窗；已持久化的收據和後續 quota 記帳錯誤分開處理。
+- 依 SwiftUI 技能分離可測草稿、欄位和儲存動作；沿用既有 lifetime／quota，不新增依賴或自造 Binding。新增八個七語言文字項目，人工檢查時修正日／韓「指令」、法／西／韓「排程」及韓文「時區」既有誤譯。七語言各 1,520 keys、零缺漏不等於全產品翻譯品質保證。
+
+依 Swift 測試技能使用隔離目錄、固定識別／時間、受控 executor 與 continuation handshake，新增 `ManualRoutineEditTests` 11 項及 `RoutineEditAppTests` 七項，涵蓋執行進度／歷史保留、執行中編輯、無變更、時間重新計算、stale／不可變欄位繞過、取消／帳號／封存、寫入失敗重試、未知格式保留、App 儲存和七語言。聚焦回歸 **52 項／6 suites 通過**（`/tmp/filicon-routine-edit-focused-final.log`）。NSHostingView 產生三種完整 sheet 狀態 × 七語言 × 明暗，共 42 張，驗證 fitting size，並人工抽查每種語言代表圖；長表單保留原生捲動、取消與儲存固定在下方。產物在 `/tmp/filicon-routine-edit-previews/`，不是使用者 App 的 live UI 驗收。
+
+完整回歸：鎖定時擴大並行回歸的四項既有頭像／記憶測試失敗；非並行完整測試雖通過 134 XCTest，Swift Testing 在 agents／workflows 等受保護檔案重開時回報 Cocoa 257／EPERM，後續既有跨對話測試的索引越界使 helper 中止（`/tmp/filicon-routine-edit-focused.log`、`/tmp/filicon-routine-edit-full.log`）。隔離重跑同樣失敗，不是已證實的並行 flake；IORegistry 當時明確回報 `CGSSessionScreenIsLocked=Yes`。未削弱 `.completeFileProtectionUnlessOpen`、未跳過測試；系統解除鎖定旗標後，完整 `swift test --no-parallel` **134 XCTest、861 Swift Testing／98 suites 全數通過**（`/tmp/filicon-routine-edit-full-unlocked.log`），受保護檔案重開及後續索引越界未再出現。兩項 opt-in live Codex 測試未執行；既有 CoreData/XPC 診斷仍存在。不宣稱更早的並行時序問題已修好。
+
+原生驗證：最初 Debug build 與嚴格簽章通過；最終三語言標籤更新後，增量 build 成功但 `codesign --verify --deep --strict` 回報 ko／es／fr 資源與舊 seal 不一致。同一隔離 DerivedData 執行完整 `clean build` 後，**原生 Debug build 及嚴格 deep／strict 簽章皆通過**（`/tmp/filicon-routine-edit-native-clean.log`）。未修改使用者 Xcode 產物或宣稱增量簽章問題已根治；既有 AppIntents／ad-hoc 提示仍在，未執行 release 公證。
+
+本批尚未提交；未 push、未啟動／重啟 App、未更動真實群組／聊天／排程／連線。`AUTO-03` 維持 partial：GitHub／Slack／Teams／generic 條件專用編輯、Teams 可信身分／主文／Graph／同步回覆、GitHub checks 彙整、Slack 名稱／人類身分映射及 live 帳號驗收仍有差異。
+
+## 已提交增量：手動新增 Linear／Sentry／PagerDuty 排程（2026-09-20）
 
 上一批已提交 `4222c64`（`fix: preserve safe retries and revoke stale webhook admissions`），提交前再次通過 87 項／10 suites 聚焦回歸。接著核對本機非官方 reconstructed 參考 `source/host/runner/tools/sand-state-tool.ts` 與現行 `PlatformTriggers.swift`：手動建立表單仍接受任意 Event，預設 issue-updated／issue-created／incident-triggered 與受支援的 canonical case 不一致，且缺少新狀態／週期篩選欄。
 
@@ -14,7 +31,7 @@
 
 NSHostingView 以 440 pt 寬渲染六種表單狀態 × 七語言 × 明暗兩種外觀，共 84 張；包含保留不相容篩選的錯誤態，驗證 fitting size，人工抽查各語言的代表畫面並修正品牌翻譯。產物在 `/tmp/filicon-case-editor-previews/`，不是操作使用者 App 的 live UI 驗收。七語言各 **1,512 keys、零缺漏**，`git diff --check` 通過。
 
-本批尚未提交；未 push、未啟動／重啟使用者 App、未更動真實群組／聊天／排程／連線。`AUTO-03` 維持 partial：尚無既有儲存排程的專用手動編輯表單；Teams 可信使用者／主文／Graph／同步回覆、GitHub checks 彙整、Slack 名稱／人類身分映射及實際帳號端到端驗收仍有差異。
+本批已在下一輪提交為 `f874dcd`；未 push、未啟動／重啟使用者 App、未更動真實群組／聊天／排程／連線。`AUTO-03` 維持 partial：當時尚無既有儲存排程的專用手動編輯表單；Teams 可信使用者／主文／Graph／同步回覆、GitHub checks 彙整、Slack 名稱／人類身分映射及實際帳號端到端驗收仍有差異。
 
 ## 已提交增量：共用事件入口的安全重試與接收生命週期（2026-09-20）
 

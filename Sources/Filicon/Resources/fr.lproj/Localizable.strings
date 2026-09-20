@@ -887,7 +887,7 @@
 "Save to Keychain" = "Enregistrer dans le trousseau";
 "Saved" = "Enregistrer";
 "Saving…" = "Sauver...";
-"Schedule" = "Tableau";
+"Schedule" = "Planification";
 "Schedule · {0}" = "Planification · {0}";
 "Scheme" = "Régime";
 "Scope" = "Portée";
@@ -1514,3 +1514,11 @@
 "Optional filters: enter up to 50 IDs per field, separated by commas. Empty means any. Use IDs, not names or wildcards." = "Filtres facultatifs : jusqu’à 50 ID par champ, séparés par des virgules. Un champ vide ne limite pas la portée. Utilisez des ID, pas des noms ni des jokers.";
 "Requires an existing verified event connection. Creating a routine does not connect an account or start a webhook. Future matching events may incur model costs." = "Nécessite une connexion d’événements existante et vérifiée. Créer une routine ne connecte aucun compte et ne démarre aucun webhook. Les événements correspondants à venir peuvent entraîner des frais de modèle.";
 "Status filters apply only to status changes. Cycle completion uses team/cycle IDs, not projects, and requires an explicit completion event, not just an elapsed date. Clear incompatible filters when switching events." = "Les filtres de statut ne concernent que les changements de statut. La fin de cycle utilise des ID d’équipe/cycle, pas de projet, et exige un événement de fin explicite, pas seulement une date dépassée. Effacez les filtres incompatibles en changeant d’événement.";
+"Edit routine" = "Modifier la routine";
+"Routine conditions" = "Conditions de la routine";
+"Any one matching condition can trigger this routine." = "Toute condition correspondante peut déclencher cette routine.";
+"Saving keeps the owner, enabled state, spend protection and run history. It does not run the routine now. Changed schedules restart from save time; already queued events may match new conditions and incur model costs." = "L’enregistrement conserve le propriétaire, l’activation, la protection des dépenses et l’historique, sans exécution immédiate. Les horaires modifiés repartent de l’heure d’enregistrement ; les événements déjà en file peuvent satisfaire les nouvelles conditions et entraîner des frais de modèle.";
+"Enter a nonempty name (up to 80 characters) and instruction (up to 32,000 characters)." = "Saisissez un nom non vide (80 caractères maximum) et une instruction non vide (32 000 caractères maximum).";
+"This routine changed or was deleted while editing. Close the editor and reopen the latest version. Your draft has not been saved." = "Cette routine a été modifiée ou supprimée pendant l’édition. Fermez l’éditeur et rouvrez la dernière version. Votre brouillon n’a pas été enregistré.";
+"This trigger cannot be edited here. Its original definition is preserved; you can still edit the name and instruction." = "Ce déclencheur ne peut pas être modifié ici. Sa définition d’origine est conservée ; vous pouvez modifier le nom et l’instruction.";
+"This editor is no longer active, or its agent is unavailable. Close it and reopen the routine." = "Cet éditeur n’est plus actif ou son agent est indisponible. Fermez-le et rouvrez la routine.";

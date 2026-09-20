@@ -1514,3 +1514,11 @@
 "Optional filters: enter up to 50 IDs per field, separated by commas. Empty means any. Use IDs, not names or wildcards." = "選填篩選條件：每欄最多輸入 50 個 ID，以逗號分隔。留空表示不限。請使用 ID，不接受名稱或萬用字元。";
 "Requires an existing verified event connection. Creating a routine does not connect an account or start a webhook. Future matching events may incur model costs." = "需要既有且已驗證的事件連線。建立排程不會連接帳號或啟動 webhook。後續符合條件的事件可能產生模型費用。";
 "Status filters apply only to status changes. Cycle completion uses team/cycle IDs, not projects, and requires an explicit completion event, not just an elapsed date. Clear incompatible filters when switching events." = "狀態篩選僅適用於狀態變更。週期完成使用團隊／週期 ID，不支援專案；必須收到明確的完成事件，僅日期到期不會觸發。切換事件時，請清除不適用的篩選條件。";
+"Edit routine" = "編輯排程";
+"Routine conditions" = "排程條件";
+"Any one matching condition can trigger this routine." = "任一條件符合即可觸發此排程。";
+"Saving keeps the owner, enabled state, spend protection and run history. It does not run the routine now. Changed schedules restart from save time; already queued events may match new conditions and incur model costs." = "儲存會保留擁有者、啟用狀態、費用保護及執行歷史，不會立即執行排程。變更的時間條件會從儲存時間重新計算；已入列事件可能符合新條件並產生模型費用。";
+"Enter a nonempty name (up to 80 characters) and instruction (up to 32,000 characters)." = "請輸入非空白名稱（最多 80 字元）及任務內容（最多 32,000 字元）。";
+"This routine changed or was deleted while editing. Close the editor and reopen the latest version. Your draft has not been saved." = "編輯期間此排程已被修改或刪除。請關閉編輯器並重新開啟最新版本。你的草稿尚未儲存。";
+"This trigger cannot be edited here. Its original definition is preserved; you can still edit the name and instruction." = "此處無法編輯這種觸發條件。原始定義會保留；仍可修改名稱與任務內容。";
+"This editor is no longer active, or its agent is unavailable. Close it and reopen the routine." = "此編輯器已失效，或代理人無法使用。請關閉後重新開啟排程。";
