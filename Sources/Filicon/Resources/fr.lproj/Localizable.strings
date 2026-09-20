@@ -272,7 +272,7 @@
 "Connection" = "Connexion";
 "Connections" = "Connexions";
 "Connector Activity" = "Activité du connecteur";
-"Connector UUID" = "Connecteur UUID";
+"Connector UUID" = "UUID du connecteur";
 "Connectors" = "Connecteurs";
 "Connectors: {0}" = "Connecteurs: {0}";
 "Continue" = "Continuer";
@@ -518,7 +518,7 @@
 "Isolation declaration rejected" = "Déclaration d'isolement rejetée";
 "Isolation declaration trusted" = "Déclaration d'isolement confiance";
 "Isolation trust" = "Confiance en matière d'isolement";
-"JSON filters" = "JSON filtres";
+"JSON filters" = "Filtres JSON";
 "Japanese" = "Japonais";
 "Join a room" = "Rejoindre un salon";
 "Join requests" = "Demandes d’accès";
@@ -1539,3 +1539,8 @@
 "This routine changed or was deleted while editing. Close the editor and reopen the latest version. Your draft has not been saved." = "Cette routine a été modifiée ou supprimée pendant l’édition. Fermez l’éditeur et rouvrez la dernière version. Votre brouillon n’a pas été enregistré.";
 "This trigger cannot be edited here. Its original definition is preserved; you can still edit the name and instruction." = "Ce déclencheur ne peut pas être modifié ici. Sa définition d’origine est conservée ; vous pouvez modifier le nom et l’instruction.";
 "This editor is no longer active, or its agent is unavailable. Close it and reopen the routine." = "Cet éditeur n’est plus actif ou son agent est indisponible. Fermez-le et rouvrez la routine.";
+"Enter the exact UUID of an existing connector. Names and wildcard connectors are not supported." = "Saisissez l’UUID exact d’un connecteur existant. Les noms et les connecteurs génériques ne sont pas pris en charge.";
+"Enter an event kind of 1 to 128 characters, with no control characters or surrounding whitespace." = "Saisissez un type d’événement de 1 à 128 caractères, sans caractères de contrôle ni espaces au début ou à la fin.";
+"Filters must be a JSON object of at most 16 KiB, without duplicate keys. Maximum depth is 16 and maximum values is 4,096. Numbers allow up to 256 characters and exponent magnitude 10,000." = "Les filtres doivent être un objet JSON de 16 Kio maximum, sans clés en double. Profondeur maximale : 16 ; nombre maximal de valeurs : 4 096. Les nombres sont limités à 256 caractères et à un exposant de valeur absolue 10 000.";
+"Uses the exact connector UUID and event kind; no connection is created. All top-level JSON filters must match. Nested objects and arrays match exactly; value types are not converted. An empty object matches any valid object payload from this connector and kind." = "Utilise l’UUID exact du connecteur et le type d’événement, sans créer de connexion. Tous les filtres JSON de premier niveau doivent correspondre. Les objets imbriqués et tableaux doivent être identiques, sans conversion de type. Un objet vide accepte tout objet valide de ce connecteur et de ce type.";
+"Connector event" = "Événement du connecteur";

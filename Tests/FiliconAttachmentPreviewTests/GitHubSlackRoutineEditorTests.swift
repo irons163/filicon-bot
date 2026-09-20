@@ -161,13 +161,14 @@ struct GitHubSlackRoutineEditorTests {
         }
     }
 
-    @Test(arguments: [AutomationListenerKind.github, .slack], ["save", "cancel", "stale", "storage"])
+    @Test(arguments: [AutomationListenerKind.github, .slack, .connector], ["save", "cancel", "stale", "storage"])
     func appEditsPersistOnlyWhenTheSessionAndStorageAreValid(kind: AutomationListenerKind, mode: String) async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-platform-editor-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }
         let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
         let agent = try #require(await model.createAgent(name: "Fixture", summary: "", instructions: "No provider calls", providerID: "fixture", modelID: "fixture"))
-        let listener = kind == .github ? github() : AutomationListenerDraft.defaults(for: .slack, id: id)
+        var listener = kind == .github ? github() : AutomationListenerDraft.defaults(for: kind, id: id)
+        if kind == .connector { listener.primary = id.uuidString; listener.secondary = "deploy"; listener.filtersJSON = #"{"environment":"prod"}"# }
         await model.createAutomation(agentID: agent.id, name: "Fixture", prompt: "No network", trigger: try listener.trigger)
         let before = try #require(model.automations.first)
         let session = try #require(model.beginAutomationEdit(before))
@@ -175,6 +176,7 @@ struct GitHubSlackRoutineEditorTests {
         var draft = RoutineEditDraft(before)
         try #require(draft.canEditConditions)
         draft.listeners[0].primary = kind == .github ? "example/changed" : "C456"
+        if kind == .connector { draft.listeners[0].primary = "aaaaaaaa-0000-0000-0000-000000000092" }
         let expectedDraft = draft
         switch mode {
         case "cancel": model.endAutomationEdit(session)

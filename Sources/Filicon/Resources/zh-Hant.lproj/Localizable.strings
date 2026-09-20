@@ -272,7 +272,7 @@
 "Connection" = "連線";
 "Connections" = "連線";
 "Connector Activity" = "聯結器活動";
-"Connector UUID" = "聯結器 UUID";
+"Connector UUID" = "連接器 UUID";
 "Connectors" = "連接器";
 "Connectors: {0}" = "聯結器 :{0}";
 "Continue" = "繼續";
@@ -518,7 +518,7 @@
 "Isolation declaration rejected" = "被拒絕的孤立宣告";
 "Isolation declaration trusted" = "信任隔離宣告";
 "Isolation trust" = "隔離信任";
-"JSON filters" = "JSON過濾器";
+"JSON filters" = "JSON 篩選條件";
 "Japanese" = "日文";
 "Join a room" = "加入聊天室";
 "Join requests" = "加入申請";
@@ -1539,3 +1539,8 @@
 "This routine changed or was deleted while editing. Close the editor and reopen the latest version. Your draft has not been saved." = "編輯期間此排程已被修改或刪除。請關閉編輯器並重新開啟最新版本。你的草稿尚未儲存。";
 "This trigger cannot be edited here. Its original definition is preserved; you can still edit the name and instruction." = "此處無法編輯這種觸發條件。原始定義會保留；仍可修改名稱與任務內容。";
 "This editor is no longer active, or its agent is unavailable. Close it and reopen the routine." = "此編輯器已失效，或代理人無法使用。請關閉後重新開啟排程。";
+"Enter the exact UUID of an existing connector. Names and wildcard connectors are not supported." = "請輸入現有連接器的精確 UUID。不支援名稱或萬用連接器。";
+"Enter an event kind of 1 to 128 characters, with no control characters or surrounding whitespace." = "請輸入 1 至 128 個字元的事件類型，不可包含控制字元或前後空白。";
+"Filters must be a JSON object of at most 16 KiB, without duplicate keys. Maximum depth is 16 and maximum values is 4,096. Numbers allow up to 256 characters and exponent magnitude 10,000." = "篩選條件必須是最多 16 KiB、沒有重複鍵的 JSON 物件。最大深度為 16，最多 4,096 個值。數字最多 256 個字元，指數絕對值上限為 10,000。";
+"Uses the exact connector UUID and event kind; no connection is created. All top-level JSON filters must match. Nested objects and arrays match exactly; value types are not converted. An empty object matches any valid object payload from this connector and kind." = "依精確的連接器 UUID 與事件類型比對，不會建立連線。所有最上層 JSON 條件都必須符合；巢狀物件與陣列必須完全相同，不轉換值的型別。空物件會符合此連接器與事件類型的任何有效物件資料。";
+"Connector event" = "連接器事件";

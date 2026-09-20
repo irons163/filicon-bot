@@ -1539,3 +1539,8 @@
 "This routine changed or was deleted while editing. Close the editor and reopen the latest version. Your draft has not been saved." = "编辑期间此例行任务已被修改或删除。请关闭编辑器并重新打开最新版本。你的草稿尚未保存。";
 "This trigger cannot be edited here. Its original definition is preserved; you can still edit the name and instruction." = "此处无法编辑这种触发条件。原始定义会保留；仍可修改名称与任务内容。";
 "This editor is no longer active, or its agent is unavailable. Close it and reopen the routine." = "此编辑器已失效，或代理不可用。请关闭后重新打开例行任务。";
+"Enter the exact UUID of an existing connector. Names and wildcard connectors are not supported." = "请输入现有连接器的准确 UUID。不支持名称或通配连接器。";
+"Enter an event kind of 1 to 128 characters, with no control characters or surrounding whitespace." = "请输入 1 至 128 个字符的事件类型，不可包含控制字符或首尾空白。";
+"Filters must be a JSON object of at most 16 KiB, without duplicate keys. Maximum depth is 16 and maximum values is 4,096. Numbers allow up to 256 characters and exponent magnitude 10,000." = "筛选条件必须是最多 16 KiB、没有重复键的 JSON 对象。最大深度为 16，最多 4,096 个值。数字最多 256 个字符，指数绝对值上限为 10,000。";
+"Uses the exact connector UUID and event kind; no connection is created. All top-level JSON filters must match. Nested objects and arrays match exactly; value types are not converted. An empty object matches any valid object payload from this connector and kind." = "按准确的连接器 UUID 和事件类型匹配，不会创建连接。所有顶层 JSON 条件都必须匹配；嵌套对象与数组必须完全相同，不转换值的类型。空对象会匹配此连接器与事件类型的任何有效对象数据。";
+"Connector event" = "连接器事件";

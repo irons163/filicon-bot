@@ -1,6 +1,26 @@
 # 協作能力核對紀錄（更新至 2026-09-20）
 
-## 本輪增量：GitHub／Slack 排程條件的安全新增與編輯（2026-09-20）
+## 本輪增量：通用連接器事件篩選的安全比對與手動編輯（2026-09-20）
+
+上一批提交為 `fd0a334`（`feat: add validated GitHub and Slack routine editors`），提交前 60 項／7 suites 回歸通過。本批是 Filicon-native generic connector 的安全補強；不把它稱作 reconstructed 雲端能力還原，不增加 Teams 身分或外部帳號接線。
+
+- 修正原本 JSON 解析失敗／非物件被視為 match-all 的錯誤，以及以 `String(describing:)` 比對造成的型別混淆。儲存與執行共用有界驗證：重複鍵（包含 escape 後相同鍵）、損壞資料、陣列／純量根、超限條件均拒絕，不丟棄篩選。舊損壞條件原樣保留，但其事件分支不匹配；其他有效 OR 成員或明確 Run Now 不受這個分支阻擋。
+- 精確 connector UUID 與事件類型；所有最上層條件必須符合，巢狀物件完整比較且無關鍵排序，陣列保留順序，字串不做 Unicode 正規化，布林／數字／字串不互轉。十進位數字保留係數與指數，避免浮點捨入把不同長 ID 或高精度小數變成相同值；1、1.0、1e0 相等。空物件僅匹配同 connector/kind 的有效物件 payload，損壞 payload 不匹配。
+- 限制明示為 filters 16 KiB、payload 1 MiB、根深度 0 至最大 16、含容器最多 4,096 個值、單一數字 256 字元／原始指數絕對值 10,000。event kind 為 1–128 字元、無控制字元或前後空白。不查名稱、不建立連線、不驗證 connector 是否在線；仍須既有事件來源。
+- 原生新增與既有排程編輯共用草稿驗證，支援 generic 與已支援時間／平台條件的平面 OR，未改的 JSON bytes 保留。損壞的既有條件只可改名稱／任務，不能藉編輯靜默修復或放寬。沿用 revision、lifetime、原子儲存、取消／stale／磁碟失敗保護；模型 `update_state` generic create/update 仍明確拒絕。
+- 依 SwiftUI 與測試技能，把驗證置於可測草稿與核心服務，使用 value binding、固定 ID／時間、隔離儲存、fixture executor 與 CustomDump 比較。最初測試程式的 async assertion 編譯錯誤已修正，再針對未修 matcher 實際重現 20 個失敗斷言（`/tmp/filicon-connector-filter-red.log`）。另外涵蓋 JSON 語法／UTF-8／escape／邊界、型別／精度／巢狀比對、persisted legacy、手動 OR 編輯／重開／去重／connector scope、App 儲存／取消／stale／磁碟失敗與模型權限不擴大。測試 fixture 曾把同 connector／同 delivery ID 用於兩種事件類型，觸發正確的既有去重；已改用不同 delivery ID，不修改產品的去重規則。
+
+最終驗證：
+
+- 聚焦回歸 **59 項／7 suites 通過**（`/tmp/filicon-connector-focused-final.log`）。
+- 完整 `swift test --no-parallel` **134 XCTest、882 Swift Testing／101 suites 通過**，兩項 opt-in live Codex 測試未啟用（`/tmp/filicon-connector-full-final.log`）。既有 CoreData NSXPC 診斷仍在，未造成測試失敗。
+- 原生 `Filicon App` **clean build 與 deep strict codesign 通過**，包含新 matcher、兩個 helper 及 XPC（`/tmp/filicon-connector-native-final.log`）；AppIntents metadata 與 ad-hoc runtime 提示仍在。
+- NSHostingView 產生 generic 有效／空條件／重複鍵三態 × 七語言 × 明暗 **42 張**，完整 editor sheet 七態 **98 張**，另重跑既有預覽；驗證 fitting size，人工抽查七語言代表畫面與完整可編輯／唯讀 sheet。長表單可捲動，底部取消／儲存固定；產物 `/tmp/filicon-connector-previews/`，不是使用者 App 的 live UI 驗收。
+- 預覽抓到舊選單 `Connector event` 在所有 catalog 皆未登錄，已補鍵與翻譯並納入斷言，JSON 欄位增加固定標籤；也修正本表單既有法／西／韓／繁中標籤。這說明僅 catalog key 對齊不代表全 UI 已翻譯。最終七語言各 **1,542 keys、零缺漏**，`git diff --check` 通過。
+
+本批尚未提交；未 push、未啟動／重啟使用者 App、未更動真實聊天／群組／排程／連線。`AUTO-03` 維持 partial：Teams 身分／主文／Graph／同步回覆與條件編輯、GitHub checks 彙整、Slack 名稱／人類身分映射及 live 帳號驗收仍未齊備。
+
+## 已提交增量：GitHub／Slack 排程條件的安全新增與編輯（2026-09-20）
 
 上一批已提交 `aa29b36`（`feat: safely edit existing routine definitions`），提交前再次通過 52 項／6 suites 聚焦回歸。本輪核對本機非官方 reconstructed 的 `sand-state-tool.ts` 與現行平台 matcher／ingress，補上既有 GitHub／Slack 排程的手動條件編輯，也收緊共用新增表單。
 
@@ -17,7 +37,7 @@
 - NSHostingView 產生 GitHub／Slack／不相容條件三態 × 七語言 × 明暗共 **42 張**，完整 editor sheet 五態共 **70 張**，另外重跑既有平台 84 張；驗證 fitting size，人工抽查各語言和唯讀狀態、修正後再渲染。表單可捲動，取消／儲存固定於底部。產物：`/tmp/filicon-github-slack-previews/`，不是使用者 App 的 live UI 驗收。
 - 七語言各 **1,537 keys、零缺漏**。視覺檢查發現並修正舊有法文 CI 分支、韓文比對／關鍵字／提及／表情，以及相關六語言欄位標籤。新增明確翻譯回歸斷言。`git diff --check` 通過。
 
-本批尚未提交；未 push、未啟動／重啟 App、未更動真實群組／聊天／排程／連線。`AUTO-03` 維持 partial：Teams／generic 條件專用編輯、Teams 可信身分／主文／Graph／同步回覆、GitHub checks 彙整、Slack 名稱／人類身分映射及 live 帳號驗收仍有差異。
+本批已在下一輪提交為 `fd0a334`；未 push、未啟動／重啟 App、未更動真實群組／聊天／排程／連線。`AUTO-03` 維持 partial：當時 Teams／generic 條件專用編輯、Teams 可信身分／主文／Graph／同步回覆、GitHub checks 彙整、Slack 名稱／人類身分映射及 live 帳號驗收仍有差異。
 
 ## 已提交增量：既有排程的手動編輯與儲存生命週期（2026-09-20）
 

@@ -1539,3 +1539,8 @@
 "This routine changed or was deleted while editing. Close the editor and reopen the latest version. Your draft has not been saved." = "編集中にこのルーチンが変更または削除されました。編集画面を閉じ、最新版を開き直してください。下書きは保存されていません。";
 "This trigger cannot be edited here. Its original definition is preserved; you can still edit the name and instruction." = "このトリガーはここでは編集できません。元の定義は保持されます。名前と指示は編集できます。";
 "This editor is no longer active, or its agent is unavailable. Close it and reopen the routine." = "この編集画面は無効になったか、エージェントが利用できません。閉じてからルーチンを開き直してください。";
+"Enter the exact UUID of an existing connector. Names and wildcard connectors are not supported." = "既存のコネクターの正確な UUID を入力してください。名前やワイルドカードは使用できません。";
+"Enter an event kind of 1 to 128 characters, with no control characters or surrounding whitespace." = "イベントの種類を 1～128 文字で入力してください。制御文字や前後の空白は使用できません。";
+"Filters must be a JSON object of at most 16 KiB, without duplicate keys. Maximum depth is 16 and maximum values is 4,096. Numbers allow up to 256 characters and exponent magnitude 10,000." = "フィルターは重複キーのない 16 KiB 以下の JSON オブジェクトにしてください。深さは最大 16、値は最大 4,096 個です。数値は最大 256 文字、指数の絶対値は最大 10,000 です。";
+"Uses the exact connector UUID and event kind; no connection is created. All top-level JSON filters must match. Nested objects and arrays match exactly; value types are not converted. An empty object matches any valid object payload from this connector and kind." = "正確なコネクター UUID とイベントの種類で照合します。接続は作成しません。最上位の JSON 条件はすべて一致する必要があります。入れ子のオブジェクトや配列は完全一致とし、型を変換しません。空のオブジェクトは、このコネクターと種類の有効なオブジェクトデータすべてに一致します。";
+"Connector event" = "コネクターイベント";

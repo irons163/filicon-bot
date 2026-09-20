@@ -272,7 +272,7 @@
 "Connection" = "Conexión";
 "Connections" = "Conexiones";
 "Connector Activity" = "Actividad de conexión";
-"Connector UUID" = "Conector UUID";
+"Connector UUID" = "UUID del conector";
 "Connectors" = "Conectores";
 "Connectors: {0}" = "Conectores: {0}";
 "Continue" = "Continuar";
@@ -1539,3 +1539,8 @@
 "This routine changed or was deleted while editing. Close the editor and reopen the latest version. Your draft has not been saved." = "Esta rutina se modificó o eliminó durante la edición. Cierre el editor y vuelva a abrir la versión más reciente. Su borrador no se ha guardado.";
 "This trigger cannot be edited here. Its original definition is preserved; you can still edit the name and instruction." = "Este activador no se puede editar aquí. Se conserva su definición original; puede editar el nombre y la instrucción.";
 "This editor is no longer active, or its agent is unavailable. Close it and reopen the routine." = "Este editor ya no está activo o su agente no está disponible. Ciérrelo y vuelva a abrir la rutina.";
+"Enter the exact UUID of an existing connector. Names and wildcard connectors are not supported." = "Introduce el UUID exacto de un conector existente. No se admiten nombres ni comodines para los conectores.";
+"Enter an event kind of 1 to 128 characters, with no control characters or surrounding whitespace." = "Introduce un tipo de evento de 1 a 128 caracteres, sin caracteres de control ni espacios al principio o al final.";
+"Filters must be a JSON object of at most 16 KiB, without duplicate keys. Maximum depth is 16 and maximum values is 4,096. Numbers allow up to 256 characters and exponent magnitude 10,000." = "Los filtros deben ser un objeto JSON de hasta 16 KiB, sin claves duplicadas. Profundidad máxima: 16; máximo de valores: 4096. Los números admiten hasta 256 caracteres y exponentes con valor absoluto de hasta 10 000.";
+"Uses the exact connector UUID and event kind; no connection is created. All top-level JSON filters must match. Nested objects and arrays match exactly; value types are not converted. An empty object matches any valid object payload from this connector and kind." = "Usa el UUID exacto del conector y el tipo de evento; no crea conexiones. Todos los filtros JSON de primer nivel deben coincidir. Los objetos anidados y las matrices deben ser idénticos, sin conversiones de tipo. Un objeto vacío acepta cualquier objeto válido de este conector y tipo.";
+"Connector event" = "Evento del conector";

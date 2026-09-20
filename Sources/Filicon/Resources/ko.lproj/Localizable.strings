@@ -272,7 +272,7 @@
 "Connection" = "연결";
 "Connections" = "연결 목록";
 "Connector Activity" = "연결관 활동";
-"Connector UUID" = "연결관 UUID";
+"Connector UUID" = "커넥터 UUID";
 "Connectors" = "연결관";
 "Connectors: {0}" = "커넥터: {0}";
 "Continue" = "계속하기";
@@ -1539,3 +1539,8 @@
 "This routine changed or was deleted while editing. Close the editor and reopen the latest version. Your draft has not been saved." = "편집 중에 이 루틴이 변경되거나 삭제되었습니다. 편집기를 닫고 최신 버전을 다시 여세요. 초안은 저장되지 않았습니다.";
 "This trigger cannot be edited here. Its original definition is preserved; you can still edit the name and instruction." = "이 트리거는 여기서 편집할 수 없습니다. 원래 정의는 유지되며 이름과 지침은 편집할 수 있습니다.";
 "This editor is no longer active, or its agent is unavailable. Close it and reopen the routine." = "이 편집기는 더 이상 활성 상태가 아니거나 에이전트를 사용할 수 없습니다. 닫은 후 루틴을 다시 여세요.";
+"Enter the exact UUID of an existing connector. Names and wildcard connectors are not supported." = "기존 커넥터의 정확한 UUID를 입력하세요. 이름이나 와일드카드 커넥터는 지원하지 않습니다.";
+"Enter an event kind of 1 to 128 characters, with no control characters or surrounding whitespace." = "이벤트 종류는 1~128자로 입력하세요. 제어 문자나 앞뒤 공백은 사용할 수 없습니다.";
+"Filters must be a JSON object of at most 16 KiB, without duplicate keys. Maximum depth is 16 and maximum values is 4,096. Numbers allow up to 256 characters and exponent magnitude 10,000." = "필터는 중복 키가 없는 16 KiB 이하의 JSON 객체여야 합니다. 최대 깊이는 16, 값은 최대 4,096개입니다. 숫자는 최대 256자이며 지수의 절댓값은 10,000 이하여야 합니다.";
+"Uses the exact connector UUID and event kind; no connection is created. All top-level JSON filters must match. Nested objects and arrays match exactly; value types are not converted. An empty object matches any valid object payload from this connector and kind." = "정확한 커넥터 UUID와 이벤트 종류로 비교하며, 연결을 생성하지 않습니다. 최상위 JSON 조건이 모두 일치해야 합니다. 중첩 객체와 배열은 완전히 일치해야 하며 값의 형식은 변환하지 않습니다. 빈 객체는 해당 커넥터와 이벤트 종류의 모든 유효한 객체 데이터와 일치합니다.";
+"Connector event" = "커넥터 이벤트";

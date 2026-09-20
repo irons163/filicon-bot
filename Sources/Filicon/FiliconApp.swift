@@ -1933,7 +1933,7 @@ struct RoutineEditDraft: Equatable {
     var name: String
     var prompt: String
     var listeners: [AutomationListenerDraft]
-    static let editableKinds: [AutomationListenerKind] = [.schedule, .github, .slack, .linear, .sentry, .pagerDuty]
+    static let editableKinds: [AutomationListenerKind] = [.schedule, .connector, .github, .slack, .linear, .sentry, .pagerDuty]
 
     init(_ automation: Automation) {
         original = automation; name = automation.name; prompt = automation.prompt
@@ -1981,6 +1981,10 @@ struct RoutineEditDraft: Equatable {
         switch trigger {
         case .cron(let expression, let zone):
             draft.kind = .schedule; draft.primary = expression; draft.secondary = zone ?? ""
+        case .event(let value):
+            guard let filters = String(data: value.filtersJSON, encoding: .utf8) else { return nil }
+            draft.kind = .connector; draft.primary = value.connectorID.uuidString
+            draft.secondary = value.kind; draft.filtersJSON = filters
         case .platform(.github(let value)):
             draft.kind = .github; draft.primary = value.repo
             draft.secondary = value.events.sorted().joined(separator: ", ")
@@ -2228,7 +2232,7 @@ struct AutomationListenerDraft: Identifiable, Equatable {
     }
 
     var validationMessage: String? {
-        guard !kind.events.isEmpty || kind == .github || kind == .slack else { return nil }
+        guard !kind.events.isEmpty || kind == .github || kind == .slack || kind == .connector else { return nil }
         do { _ = try trigger; return nil }
         catch { return error.localizedDescription }
     }
@@ -2308,12 +2312,12 @@ struct AutomationListenerDraft: Identifiable, Equatable {
             case .schedule:
                 return .cron(expression: primary, timeZoneIdentifier: secondary.isEmpty ? TimeZone.current.identifier : secondary)
             case .connector:
-                guard let connectorID = UUID(uuidString: primary),
-                      let data = filtersJSON.data(using: .utf8),
-                      (try? JSONSerialization.jsonObject(with: data)) is [String: Any] else {
-                    throw AutomationServiceError.invalidDefinition
+                guard let connectorID = UUID(uuidString: primary.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+                    throw ConnectorEventFilterError.invalidConnector
                 }
-                return .event(.init(connectorID: connectorID, kind: secondary, filtersJSON: data))
+                let value = AutomationEventTrigger(connectorID: connectorID, kind: secondary, filtersJSON: Data(filtersJSON.utf8))
+                try value.validateFilters()
+                return .event(value)
             case .slack:
                 return try slackTrigger()
             case .github:
@@ -2362,6 +2366,7 @@ struct AutomationListenerEditor: View {
     let canRemove: Bool
     let remove: () -> Void
     var allowedKinds: [AutomationListenerKind] = AutomationListenerKind.allCases
+    static let connectorNotice = "Uses the exact connector UUID and event kind; no connection is created. All top-level JSON filters must match. Nested objects and arrays match exactly; value types are not converted. An empty object matches any valid object payload from this connector and kind."
 
     var body: some View {
         let _ = uiLocale.identifier
@@ -2393,9 +2398,15 @@ struct AutomationListenerEditor: View {
                 ForEach(TimeZone.knownTimeZoneIdentifiers, id: \.self) { Text($0).tag($0) }
             }
         case .connector:
-            TextField(l10n("Connector UUID"), text: $listener.primary)
-            TextField(l10n("Event kind"), text: $listener.secondary)
-            TextField(l10n("JSON filters"), text: $listener.filtersJSON, axis: .vertical).font(.system(.body, design: .monospaced))
+            idField("Connector UUID", text: $listener.primary)
+            idField("Event kind", text: $listener.secondary)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(FiliconLocalization.string("JSON filters", language: uiLocale.identifier)).font(.caption)
+                TextField(FiliconLocalization.string("JSON filters", language: uiLocale.identifier), text: $listener.filtersJSON, axis: .vertical)
+                    .labelsHidden().textFieldStyle(.roundedBorder).multilineTextAlignment(.leading)
+                    .font(.system(.body, design: .monospaced)).lineLimit(3...8)
+            }
+            notice(Self.connectorNotice)
         case .slack:
             idField("Slack conversation ID or *", text: $listener.primary)
             Picker(FiliconLocalization.string("Match", language: uiLocale.identifier), selection: $listener.secondary) {

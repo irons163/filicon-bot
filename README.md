@@ -234,7 +234,7 @@ actors and PR owners, or the actor assigning an issue, not the assignee. These
 controls disclose their existing-ingress requirements and do not connect accounts.
 
 In **Automations → Edit**, change a saved routine's name and instruction, plus
-cron/interval, supported GitHub/Slack/Linear/Sentry/PagerDuty conditions or a flat
+cron/interval, generic connector events, supported GitHub/Slack/Linear/Sentry/PagerDuty conditions or a flat
 OR of up to eight of those conditions. Other platforms, legacy and unknown formats expose
 their original trigger as read-only; name/instruction edits preserve it without
 migration. Untouched members keep their original IDs and time-zone representation.
@@ -245,9 +245,32 @@ time condition. Already queued events may match new conditions and incur model
 costs. A stale definition, deleted routine, cancelled editor, archived owner or
 account change blocks an uncommitted save. Failed storage keeps the draft and
 the last persisted definition. These controls have seven-language coverage;
-Teams/generic condition editing, identity/name lookup, aggregate GitHub checks
+Teams condition editing, identity/name lookup, aggregate GitHub checks
 and live platform parity remain open. Existing Slack name-based or self-only
 conditions remain read-only, not silently changed into unrestricted conditions.
+
+Generic connector events use an exact connector UUID and case-sensitive event kind
+(1–128 characters, no control characters or surrounding whitespace). There is no
+name lookup, connection creation, or liveness check. The existing connector must
+already deliver events. Filters must be a JSON object, not an array or scalar;
+duplicate keys (including escaped equivalents), malformed syntax and exceeded
+bounds are rejected. All top-level fields must match; nested objects match in full
+regardless of key order, arrays in order, strings by decoded Unicode spelling,
+and types without coercion. Decimal numbers compare exactly without floating-point
+rounding (`1`, `1.0` and `1e0` are equal; `true`, `1` and `"1"` are distinct).
+An explicit `{}` matches any valid object payload from that connector and kind.
+Invalid legacy conditions remain stored and read-only, but their event branch
+never matches; metadata edits preserve the original bytes. Other valid OR members
+and explicit Run Now retain their existing behavior.
+
+Filter limits: 16 KiB, depth 16 (root at zero), 4,096 values including containers,
+256 characters per number and absolute written exponent at most 10,000. Matching
+payloads are limited to 1 MiB and the same depth/value/number bounds; malformed,
+ambiguous or oversized payloads never match, even with empty filters. The manual
+editor shares service validation and supports flat mixed OR conditions, preserving
+untouched raw JSON. This is Filicon-native hardening, not a reconstructed cloud
+feature. Agent `update_state` generic-event creation/update remains unsupported;
+no new tool or external account permission is granted.
 
 Linear ingress: verified Issue/create
 webhooks expose `issueCreated`; Issue/update exposes `statusChanged` only when

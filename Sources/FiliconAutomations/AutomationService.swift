@@ -472,8 +472,7 @@ public actor AutomationService {
                 _ = try AutomationSchedule.compile(expression, defaultTimeZone: timeZoneIdentifier.flatMap(TimeZone.init(identifier:)))
             }
         case .event(let event):
-            guard !event.kind.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                  (try? JSONSerialization.jsonObject(with: event.filtersJSON)) != nil else { throw AutomationServiceError.invalidDefinition }
+            try event.validateFilters()
         case .platform: break
         case .anyOf(let triggers):
             guard triggers.count >= 2, triggers.count <= Self.maximumListeners else { throw AutomationServiceError.listenerLimit }
@@ -534,13 +533,7 @@ public actor AutomationService {
     }
 
     private func matches(_ expected: AutomationEventTrigger, event: AutomationEvent) -> Bool {
-        guard expected.connectorID == event.connectorID, expected.kind == event.kind else { return false }
-        guard let filters = try? JSONSerialization.jsonObject(with: expected.filtersJSON) as? [String: Any], !filters.isEmpty else { return true }
-        guard let payload = try? JSONSerialization.jsonObject(with: event.payloadJSON) as? [String: Any] else { return false }
-        return filters.allSatisfy { key, value in
-            guard let actual = payload[key] else { return false }
-            return String(describing: actual) == String(describing: value)
-        }
+        expected.matches(event)
     }
 
     private func buildPrompt(automation: Automation, events: [AutomationEvent]) -> String {
