@@ -400,4 +400,23 @@ IORegistry 仍回報 `CGSSessionScreenIsLocked=Yes`。完整回歸的受保護�
 
 驗證：136 項 Swift Testing／12 suites 聚焦回歸通過（`/tmp/filicon-pagerduty-proposals-focused.log`）；明確 `swift test --no-parallel` 完整回歸為 **134 XCTest、802 Swift Testing／93 suites 通過**（`/tmp/filicon-pagerduty-proposals-full.log`），兩項 opt-in live Codex 測試未執行。原生 `Filicon App` Debug build（`/tmp/filicon-pagerduty-proposals-native.log`）、產物 `codesign --verify --deep --strict`、localization audit 與 `git diff --check` 通過。完整測試仍有 CoreData XPC 診斷但零失敗；原生建置為既有 ad-hoc runtime 提示。未宣稱已修復先前的並行測試時序問題，也不是真實 PagerDuty 帳號或 release 公證驗收。
 
-此提案批次尚未提交。未 push、未啟動或重啟使用者 App、未改實際聊天／群組／排程／連線。`AUTO-03` 仍為 partial：仍缺平台專用編輯器、Linear endOfCycle／cycleIds、GitHub checks 彙整及 Slack 名稱／身分映射等完整語意；不能把本批增量稱為原版所有能力皆已完成。
+此提案批次已在下一輪提交為 `abd68c5`；提交前再次通過 136 項聚焦回歸（`/tmp/filicon-pagerduty-proposals-precommit.log`）。未 push、未啟動或重啟使用者 App、未改實際聊天／群組／排程／連線。`AUTO-03` 仍為 partial：仍缺平台專用編輯器、Linear endOfCycle／cycleIds、GitHub checks 彙整及 Slack 名稱／身分映射等完整語意；不能把本批增量稱為原版所有能力皆已完成。
+
+## 本輪增量：原生 Linear 週期完成事件與精確篩選基礎（2026-09-20）
+
+上一批已提交為 `abd68c5`。核對 reconstructed `sand-state-tool.ts`、`automation-trigger.ts`、`sand-automation-cloud-trigger.ts` 與 `sand-automation-fire-consumer.ts`，確認原版將 endOfCycle／cycleIds 送到雲端，收到的是已分類的完成通知，並非本機將一般 Cycle 更新直接當成週期結束。此輪提供 macOS 的原生 webhook 適配，不能宣稱已還原雲端全部語意。
+
+2026-09-20 查閱 [Linear webhook 文件](https://linear.app/developers/webhooks)及官方 SDK 的 [Cycle schema](https://github.com/linear/linear/blob/3addb24bdf771700da1c050742e70e645cc7e36a/packages/sdk/src/schema.graphql)、[CycleWebhookPayload](https://github.com/linear/linear/blob/3addb24bdf771700da1c050742e70e645cc7e36a/packages/sdk/src/_generated_documents.ts)：更新包含先前變更值，completedAt 為完成時間；Cycle 有 teamId，但沒有 projectId。以下事件判定是基於這些欄位的本機保守實作，尚未取得 live 帳號驗證：
+
+- 必須是已驗證的 Cycle/update、有效 cycle/team UUID、`updatedFrom.completedAt` 明確為 null、新 completedAt 為有效且不晚於本機接收時間的帶時區時間戳，才產生 eventCase=endOfCycle 與正規化 cycleId。不靠 endsAt 是否過期、時鐘前進、封存、進度、名稱或缺少舊值推測；一般完成與提前完成都可符合，不必等待舊 endsAt。
+- 只以 team UUID 和 cycleIDs 精確篩選；UUID 忽略字母大小寫，空集合表示不限。原生 Cycle 沒有專案關係，要求 project 篩選即不匹配，即使 payload 額外帶 projectId 也不放行；不從 issue 或名稱補猜。週期不接受 statusIDs，issue／其他事件不接受 cycleIDs，不能忽略不支援的限制。
+- 既有 Linear 儲存鍵及舊建構介面保留，新增 cycleIDs 只在非空時寫出排序陣列，缺省解碼為空，明確 null／錯誤型別拒絕。舊 issue／cycle entity matching 保留；raw endOfCycle 標籤本身不作完成證據。沒有自動改寫或啟用任何既有定義。
+- 已分類完成的 externalEventID 由 cycle UUID 與毫秒精度的完成時間組成；等價時區表示、新 delivery header、重新簽章且刷新 webhookTimestamp 的重試，均不能重複執行仍保留的完成紀錄。不同 cycle 或較晚完成時間則區分；既有 connector scope 繼續隔離事件身分。其他 Linear 事件維持 Linear-Delivery／body digest fallback。簽章、signed webhookTimestamp 時限和 body digest 快取不放寬；歷史及快取過期後仍非永久去重，未新增 poller、連線或公開入口。
+
+本輪先做底層，不開放 cycle 的模型 create/update 或編輯器；既有 Linear 提案入口仍明確拒絕 endOfCycle／cycleIds，核心亦拒絕直接繞過寫入，不會顯示已支援卻無完整核准說明的選項。下一批需接上提案、完整變更核准、專案篩選限制與七語言提示。
+
+依 Swift 測試技能使用固定時間、隔離資料、受控 executor／secret 與 CustomDump，先以兩項測試重現 14 個分類／身分斷言失敗（`/tmp/filicon-linear-cycle-red.log`），再補八項測試：明確完成／提前完成、無效與未完成事件、時間格式與未來值、UUID／專案／狀態篩選、legacy Codable、核心提案拒絕、純時間前進不得觸發、簽章至 executor/history 的先篩選再執行、重開及超過快取期限後的去重。核准、費用、Stop、群組／mailbox 等既有回歸保持通過；未呼叫真實模型或外部帳號。
+
+聚焦回歸為 144 項 Swift Testing／12 suites 通過（`/tmp/filicon-linear-cycle-regression.log`）。明確 `swift test --no-parallel` 完整回歸為 **134 XCTest、810 Swift Testing／93 suites 全數通過**（`/tmp/filicon-linear-cycle-full.log`），兩項 opt-in live Codex 測試未執行；不宣稱已修復先前的並行時序問題。原生 `Filicon App` Debug build（`/tmp/filicon-linear-cycle-native.log`）及產物 `codesign --verify --deep --strict` 通過；本輪未啟動產物。七語言各 1,488 keys、零缺漏，沒有新增 UI 版面，不宣稱本輪另做全產品視覺驗收。完整測試仍有既有 CoreData XPC 診斷但零失敗，原生建置有既有 AppIntents metadata／ad-hoc runtime 提示；`git diff --check` 通過。這不是 live Linear 或 release 公證驗收。
+
+本輪尚未提交，未 push、未重啟使用者 App、未更動實際群組／聊天／排程／連線。`AUTO-03` 維持 partial；cycle 模型提案／專用編輯器、原版雲端專案歸屬、GitHub checks 彙整、Slack 名稱／人類身分映射等差異仍在。

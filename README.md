@@ -208,7 +208,7 @@ support new-status filters, but `endOfCycle` and `cycleIds` remain unsupported.
 No legacy definition is silently converted or enabled, and the manual editor is
 not expanded by this model-proposal work.
 
-Linear uses `Linear-Delivery` as its delivery ID, falling back to a signed-body
+Linear issue and legacy events use `Linear-Delivery` as their delivery ID, falling back to a signed-body
 digest when omitted; `webhookId` identifies the configured webhook, not an event.
 The signed numeric `webhookTimestamp` is required and checked against the existing
 replay window (300 seconds by default). An unsigned timestamp header cannot
@@ -219,6 +219,33 @@ Signature and payload semantics were checked against the
 Existing receipts are not migrated or replayed; delivery deduplication remains
 bounded by the existing ingress window and automation history. A public endpoint
 or Linear connection is not created by these changes.
+
+The **native Linear cycle-event foundation** now classifies `Cycle/update` as
+`endOfCycle` only when `updatedFrom.completedAt` is explicitly null and the new
+`data.completedAt` is a valid, nonfuture timestamp with an explicit time zone.
+It requires cycle and team UUIDs. Editing `endsAt`, archiving, progress updates,
+already-completed snapshots, or the clock merely passing an end date do not
+prove this transition. Both scheduled and early completion can qualify.
+This adaptation uses Linear's [Cycle completion semantics](https://github.com/linear/linear/blob/3addb24bdf771700da1c050742e70e645cc7e36a/packages/sdk/src/schema.graphql)
+and [Cycle webhook fields](https://github.com/linear/linear/blob/3addb24bdf771700da1c050742e70e645cc7e36a/packages/sdk/src/_generated_documents.ts),
+not the reference cloud backend's preclassified notification or a local polling
+schedule. It has not been validated against a live Linear account.
+
+Internal cycle conditions can filter exact team and `cycleIDs` UUIDs. The native
+Cycle payload has no project association, so project-filtered cycle conditions
+fail closed; no project is inferred from issues. Status filters on cycles and
+cycle filters on issue events cannot be silently ignored. Missing stored
+`cycleIDs` means no filter; explicit null or a wrong type fails decoding. Old
+entity labels such as `cycle` remain entity events, not evidence of completion.
+
+A completion's event identity combines the cycle UUID and completion time at
+millisecond precision, scoped by the connector in automation history. Equivalent
+timestamp offsets and changed delivery IDs/retry envelopes do not duplicate a
+retained completion. A different cycle or later completion is distinct. Ingress
+still verifies the signature and fresh signed `webhookTimestamp`, with the
+existing body-digest replay cache. Protection is bounded by retained history,
+not permanent. No definitions are migrated or enabled. **Cycle model proposals,
+their full approval disclosure and a manual cycle editor are not wired yet.**
 
 Sentry ingress now distinguishes the documented issue actions (`created`,
 `resolved`, `assigned`, `archived`, `unresolved`) as `issueCreated`,

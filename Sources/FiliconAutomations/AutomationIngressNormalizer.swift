@@ -64,22 +64,32 @@ public enum AutomationIngressEventNormalizer {
         case .linear:
             let data = object["data"] as? [String: Any]
             let issueID = object["type"] as? String == "Issue" ? linearID(data?["id"]) : nil
+            let cycle = linearCycleCompletion(object, now: now)
             normalized = ["event": (object["type"] as? String ?? object["action"] as? String ?? "unknown").lowercased(),
                           // Keep the legacy entity event alongside explicit reference cases.
                           // Missing team IDs must never fall back to the issue's own ID.
-                          "eventCase": linearEventCase(object) as Any,
+                          "eventCase": (cycle != nil ? "endOfCycle" : linearEventCase(object)) as Any,
                           "primaryId": linearID(data?["teamId"]) as Any,
                           "secondaryId": linearID(data?["projectId"]) as Any,
                           "issueId": issueID as Any,
-                          "statusId": linearID(data?["stateId"]) as Any,
+                          "statusId": (issueID != nil ? linearID(data?["stateId"]) : nil) as Any,
+                          "cycleId": cycle?.id as Any,
                           "raw": object].compactMapValues { Self.nonNil($0) }
+            let deliveryID: String?
             if let delivery = request.headers["linear-delivery"] {
                 guard let valid = linearID(delivery) else { throw AutomationIngressError.invalidRequest }
-                externalID = valid
+                deliveryID = valid
+            } else { deliveryID = nil }
+            if let cycle {
+                // Cycle completion is a logical transition, not a delivery.
+                // Signed retries with new delivery IDs/timestamps must not run
+                // the same completion again while execution history is retained.
+                let milliseconds = Int64((cycle.completedAt.timeIntervalSince1970 * 1_000).rounded())
+                externalID = "linear-cycle-end:\(cycle.id):\(milliseconds)"
             } else {
                 // webhookId identifies the configured webhook, NOT a delivery.
                 // The verifier supplies a digest of the signed body as fallback.
-                externalID = nonce
+                externalID = deliveryID ?? nonce
             }
         case .sentry:
             let data = object["data"] as? [String: Any]
@@ -155,6 +165,29 @@ public enum AutomationIngressEventNormalizer {
             return "statusChanged"
         default: return nil
         }
+    }
+
+    private static func linearCycleCompletion(_ object: [String: Any], now: Date) -> (id: String, completedAt: Date)? {
+        guard object["type"] as? String == "Cycle", object["action"] as? String == "update",
+              let data = object["data"] as? [String: Any],
+              let rawID = data["id"] as? String, rawID.count == 36, let id = UUID(uuidString: rawID),
+              let team = data["teamId"] as? String, team.count == 36, UUID(uuidString: team) != nil,
+              let previous = object["updatedFrom"] as? [String: Any], previous["completedAt"] is NSNull,
+              let rawDate = data["completedAt"] as? String, rawDate.count <= 40,
+              rawDate.range(of: #"\A[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,9})?(Z|[+-][0-9]{2}:[0-9]{2})\z"#, options: .regularExpression) != nil else {
+            return nil
+        }
+        // Linear documents completedAt=null as unfinished. endsAt alone (even
+        // in the past), archive/progress changes or a missing prior value do
+        // not prove completion. This is a native webhook adaptation, not the
+        // reference cloud backend's already-classified endOfCycle event.
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.isLenient = false
+        formatter.dateFormat = rawDate.contains(".") ? "yyyy-MM-dd'T'HH:mm:ss.SSSSSSSSSXXXXX" : "yyyy-MM-dd'T'HH:mm:ssXXXXX"
+        guard let date = formatter.date(from: rawDate), date.timeIntervalSince1970.isFinite, date <= now else { return nil }
+        return (id.uuidString.lowercased(), date)
     }
 
     private static func linearID(_ value: Any?) -> String? {

@@ -205,18 +205,25 @@ enum PagerDutyIncidentEvent: String {
 }
 
 /// Keeps the legacy Linear storage keys while isolating Linear-only filters
-/// from Sentry/PagerDuty. Missing statusIDs in older definitions means any status.
+/// from Sentry/PagerDuty. Missing statusIDs/cycleIDs means no such filter.
 public struct LinearAutomationTrigger: Codable, Hashable, Sendable {
     public let event: String
     public let primaryIDs: Set<String> // Team IDs (legacy storage key).
     public let secondaryIDs: Set<String> // Project IDs (legacy storage key).
     public let statusIDs: Set<String>
-    private enum CodingKeys: String, CodingKey { case event, primaryIDs, secondaryIDs, statusIDs }
+    public let cycleIDs: Set<String>
+    private enum CodingKeys: String, CodingKey { case event, primaryIDs, secondaryIDs, statusIDs, cycleIDs }
 
     public init(event: String, allowedEvents: Set<String>, primaryIDs: Set<String> = [],
                 secondaryIDs: Set<String> = [], statusIDs: Set<String> = []) throws {
+        try self.init(event: event, allowedEvents: allowedEvents, primaryIDs: primaryIDs,
+                      secondaryIDs: secondaryIDs, statusIDs: statusIDs, cycleIDs: [])
+    }
+    public init(event: String, allowedEvents: Set<String>, primaryIDs: Set<String> = [],
+                secondaryIDs: Set<String> = [], statusIDs: Set<String> = [], cycleIDs: Set<String>) throws {
         guard allowedEvents.contains(event) else { throw AutomationServiceError.invalidDefinition }
         self.event = event; self.primaryIDs = primaryIDs; self.secondaryIDs = secondaryIDs; self.statusIDs = statusIDs
+        self.cycleIDs = cycleIDs
     }
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -225,6 +232,7 @@ public struct LinearAutomationTrigger: Codable, Hashable, Sendable {
         secondaryIDs = try container.decode(Set<String>.self, forKey: .secondaryIDs)
         // Null is not omission: a malformed persisted filter must not broaden.
         statusIDs = container.contains(.statusIDs) ? try container.decode(Set<String>.self, forKey: .statusIDs) : []
+        cycleIDs = container.contains(.cycleIDs) ? try container.decode(Set<String>.self, forKey: .cycleIDs) : []
     }
     public func encode(to encoder: any Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
@@ -232,17 +240,24 @@ public struct LinearAutomationTrigger: Codable, Hashable, Sendable {
         try container.encode(primaryIDs.sorted(), forKey: .primaryIDs)
         try container.encode(secondaryIDs.sorted(), forKey: .secondaryIDs)
         try container.encode(statusIDs.sorted(), forKey: .statusIDs)
+        // Preserve existing issue-only JSON when there is no cycle filter.
+        if !cycleIDs.isEmpty { try container.encode(cycleIDs.sorted(), forKey: .cycleIDs) }
     }
     public func validateForAgentWrite() throws {
-        guard ["issueCreated", "statusChanged"].contains(event), event == "statusChanged" || statusIDs.isEmpty,
+        guard ["issueCreated", "statusChanged"].contains(event), cycleIDs.isEmpty,
+              event == "statusChanged" || statusIDs.isEmpty,
               [primaryIDs, secondaryIDs, statusIDs].allSatisfy({ ids in
                   ids.count <= 50 && ids.allSatisfy { UUID(uuidString: $0) != nil && $0.count == 36 }
               }) else { throw AutomationStateChangeError.invalidLinearTrigger }
     }
     fileprivate func matches(_ event: AutomationEvent, payload: [String: Any]) -> Bool {
-        let key = ["issueCreated", "statusChanged"].contains(self.event) ? "eventCase" : "event"
+        let key = ["issueCreated", "statusChanged", "endOfCycle"].contains(self.event) ? "eventCase" : "event"
         guard event.kind == "linear", payload[key] as? String == self.event,
-              self.event == "statusChanged" || statusIDs.isEmpty else { return false }
+              self.event == "statusChanged" || statusIDs.isEmpty,
+              self.event == "endOfCycle" || cycleIDs.isEmpty else { return false }
+        // A native Cycle webhook has a team but no project association. Do not
+        // drop a requested project restriction or fabricate one from issues.
+        if self.event == "endOfCycle", !secondaryIDs.isEmpty { return false }
         // Canonical UUID comparison accepts letter case differences, while
         // preserving exact matching for old non-UUID manual definitions.
         func matches(_ ids: Set<String>, key: String) -> Bool {
@@ -252,7 +267,7 @@ public struct LinearAutomationTrigger: Codable, Hashable, Sendable {
             return ids.contains(actual)
         }
         return matches(primaryIDs, key: "primaryId") && matches(secondaryIDs, key: "secondaryId")
-            && matches(statusIDs, key: "statusId")
+            && matches(statusIDs, key: "statusId") && matches(cycleIDs, key: "cycleId")
     }
 }
 
