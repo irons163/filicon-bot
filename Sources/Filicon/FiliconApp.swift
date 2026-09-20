@@ -1914,6 +1914,17 @@ struct RoutineAutomationWorkspaceView: View {
     }
 }
 
+struct TeamsRoutineAvailabilityNotice: View {
+    @Environment(\.locale) private var uiLocale
+    nonisolated static let message = "Teams native ingress supports only outgoing channel messages with an explicit text filter. Graph team UUIDs require aadGroupId; Bot team IDs are separate. Signed-in-user matching and root-post classification are unavailable. This editor keeps blockUnauthenticatedUsers enabled, so Teams event conditions do not run. No account, Graph subscription or webhook is installed."
+
+    var body: some View {
+        Text(FiliconLocalization.string(Self.message, language: uiLocale.identifier))
+            .font(.caption).foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
 private enum AutomationListenerKind: String, CaseIterable, Identifiable {
     case schedule = "Schedule"
     case connector = "Connector event"
@@ -2038,7 +2049,8 @@ private struct AutomationListenerEditor: View {
             TextField(l10n("Tenant ID"), text: $listener.primary)
             TextField(l10n("Team IDs, comma-separated"), text: $listener.secondary)
             TextField(l10n("Channel IDs, comma-separated (optional)"), text: $listener.tertiary)
-            TextField(l10n("Message contains (optional)"), text: $listener.quaternary)
+            TextField(l10n("Message contains (required)"), text: $listener.quaternary)
+            TeamsRoutineAvailabilityNotice()
         case .linear, .sentry, .pagerDuty:
             TextField(l10n("Event"), text: $listener.primary)
             TextField(l10n("Primary IDs, comma-separated (optional)"), text: $listener.secondary)

@@ -113,7 +113,8 @@ struct AutomationTests {
 
         let teams = try TeamsAutomationTrigger(tenantID: "tenant", teamIDs: ["team"], channelIDs: ["channel"], messageContains: "deploy", blockUnauthenticatedUsers: true)
         let teamsEvent = AutomationEvent(connectorID: UUID(), kind: "microsoftTeams", externalEventID: "t1", payloadJSON: Data(#"{"tenantId":"tenant","teamId":"team","channelId":"channel","authenticated":true,"text":"DEPLOY now"}"#.utf8))
-        #expect(PlatformAutomationTrigger.microsoftTeams(teams).matches(teamsEvent))
+        // Legacy HMAC-only payloads do not prove an authenticated application user.
+        #expect(!PlatformAutomationTrigger.microsoftTeams(teams).matches(teamsEvent))
     }
 
     @Test func schedulerTickAndTriggerHubDriveDurableRuns() async throws {

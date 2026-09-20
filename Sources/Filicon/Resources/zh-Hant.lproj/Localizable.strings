@@ -578,7 +578,7 @@
 "Memory cap" = "記憶體上限";
 "Mention" = "提及";
 "Message" = "訊息";
-"Message contains (optional)" = "訊息包含（選填）";
+"Message contains (required)" = "訊息包含（必填）";
 "Message not sent: {0}" = "未傳送資訊: {0}";
 "Message sent." = "訊息已傳送。";
 "Message the group; @name and @everyone are supported" = "傳訊息給群組；支援 @名字 和 @everyone";
@@ -1490,3 +1490,5 @@
 "x-pagerduty-signature: only comma-separated v1=HMAC(rawBody) candidates; body digest prevents replay within the cache window; signed event.id identifies events; X-Webhook-Id is diagnostic only; occurred_at is event time, not delivery freshness" = "x-pagerduty-signature：只接受以逗號分隔的 v1=HMAC(rawBody) 候選值；本文摘要在快取時限內防止重播；已簽章的 event.id 識別事件；X-Webhook-Id 僅供診斷；occurred_at 是事件時間，不能證明送達是新近發生";
 "PagerDuty supports incidentTriggered, incidentAcknowledged, incidentResolved, incidentEscalated or incidentAny, with optional serviceIds (up to 50 exact case-sensitive ID strings, 1 to 200 characters each). Empty means any service. No name lookup or wildcard IDs. Whitespace, control characters, unknown fields and invalid filters are rejected." = "PagerDuty 支援 incidentTriggered、incidentAcknowledged、incidentResolved、incidentEscalated 或 incidentAny，可選填 serviceIds（最多 50 個區分大小寫的精確 ID 字串，每個 1 至 200 字元）。空白表示任意服務。不提供名稱查找或萬用字元 ID。空白字元、控制字元、未知欄位及無效篩選條件均會被拒絕。";
 "PagerDuty requires existing authenticated ingress; no webhook or connection is installed or started. Supports incident triggering, acknowledgment, resolution and escalation; incidentAny matches these four cases only. Service filters use exact case-sensitive IDs with no name lookup; empty means any service. Replay protection is bounded; occurred_at is event time, not delivery freshness. Queued events may trigger after approval and incur model costs." = "PagerDuty 需要既有且通過驗證的事件入口；不會安裝或啟動 webhook 或連線。支援事故觸發、確認、解決及升級；incidentAny 僅涵蓋這四種事件。服務篩選採用區分大小寫的精確 ID，不查找名稱；空白表示任意服務。防重播有時限；occurred_at 是事件時間，不能證明送達是新近發生。已排入佇列的事件可能在核准後觸發，並產生模型費用。";
+"Teams outgoing webhook Authorization: HMAC base64(HMAC(rawBody)); signing key is base64 text or decoded bytes. HMAC verifies transport, not Filicon user sign-in. Replay protection is bounded; no signed timestamp proves freshness." = "Teams 傳出 webhook 使用 Authorization: HMAC base64(HMAC(rawBody))；簽章金鑰可為 base64 文字或已解碼位元組。HMAC 僅驗證傳輸來源，不代表使用者已登入 Filicon。重放防護有範圍限制；沒有已簽章時間戳可證明新鮮度。";
+"Teams native ingress supports only outgoing channel messages with an explicit text filter. Graph team UUIDs require aadGroupId; Bot team IDs are separate. Signed-in-user matching and root-post classification are unavailable. This editor keeps blockUnauthenticatedUsers enabled, so Teams event conditions do not run. No account, Graph subscription or webhook is installed." = "Teams 原生事件入口僅支援設有明確文字篩選的傳出頻道訊息。Graph 團隊 UUID 需要 aadGroupId；Bot 團隊 ID 屬於不同命名空間。目前不支援已登入使用者比對及主文分類。此編輯器保留啟用 blockUnauthenticatedUsers，因此 Teams 事件條件不會執行。不會安裝帳號連線、Graph 訂閱或 webhook。";

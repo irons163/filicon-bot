@@ -128,6 +128,42 @@ public struct TeamsAutomationTrigger: Codable, Hashable, Sendable {
         self.messageContains = messageContains?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
         self.messageContainsIsRegex = messageContainsIsRegex; self.blockUnauthenticatedUsers = blockUnauthenticatedUsers
     }
+
+    static func identifier(_ value: Any?, limit: Int = 200) -> String? {
+        guard let text = value as? String, !text.isEmpty, text.count <= limit,
+              text.rangeOfCharacter(from: .whitespacesAndNewlines.union(.controlCharacters)) == nil else { return nil }
+        return text
+    }
+
+    static func canonicalUUID(_ value: Any?) -> String? {
+        guard let text = value as? String, text.count == 36, let uuid = UUID(uuidString: text) else { return nil }
+        return uuid.uuidString.lowercased()
+    }
+
+    func matches(_ payload: [String: Any]) -> Bool {
+        // There is no trusted application-user mapping on the native outgoing
+        // webhook path. Fail closed, including old queued authenticated=true
+        // payloads; do not silently relax the persisted policy.
+        guard !blockUnauthenticatedUsers, payload["supportedEvent"] as? Bool == true,
+              let tenant = Self.canonicalUUID(payload["tenantId"]), tenant == Self.canonicalUUID(tenantID),
+              let botTeam = Self.identifier(payload["teamId"]) else { return false }
+        let graphTeam = Self.canonicalUUID(payload["graphTeamId"])
+        guard teamIDs.contains(where: { team in
+            if let graphID = Self.canonicalUUID(team) { return graphID == graphTeam }
+            return team == botTeam
+        }) else { return false }
+        if !channelIDs.isEmpty {
+            guard let channel = Self.identifier(payload["channelId"]), channelIDs.contains(channel) else { return false }
+        }
+        // The reference's unfiltered condition means root posts only. The
+        // outgoing Activity schema makes replyToId optional, so its absence
+        // cannot establish a root. Until Graph/thread classification exists,
+        // require an explicit text filter; those reference conditions admit replies.
+        guard let needle = messageContains, !needle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              let text = payload["text"] as? String, text.count <= 4_000 else { return false }
+        return messageContainsIsRegex ? text.range(of: needle, options: .regularExpression) != nil
+            : text.localizedCaseInsensitiveContains(needle)
+    }
 }
 
 public struct CaseAutomationTrigger: Codable, Hashable, Sendable {
@@ -324,15 +360,7 @@ public enum PlatformAutomationTrigger: Codable, Hashable, Sendable {
             }
             return payload["subjectPresent"] as? Bool != false || payload["admitMissingSubject"] as? Bool == true
         case .microsoftTeams(let trigger):
-            guard event.kind == "microsoftTeams", payload["tenantId"] as? String == trigger.tenantID,
-                  let team = payload["teamId"] as? String, trigger.teamIDs.contains(team) else { return false }
-            if !trigger.channelIDs.isEmpty {
-                guard let channel = payload["channelId"] as? String, trigger.channelIDs.contains(channel) else { return false }
-            }
-            if trigger.blockUnauthenticatedUsers, payload["authenticated"] as? Bool != true { return false }
-            guard let needle = trigger.messageContains else { return true }
-            let text = payload["text"] as? String ?? ""
-            return trigger.messageContainsIsRegex ? text.range(of: needle, options: .regularExpression) != nil : text.localizedCaseInsensitiveContains(needle)
+            return event.kind == "microsoftTeams" && trigger.matches(payload)
         case .linear(let trigger):
             return trigger.matches(event, payload: payload)
         case .sentry(let trigger):

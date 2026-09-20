@@ -1,7 +1,27 @@
-# 協作能力核對紀錄（2026-09-19）
+# 協作能力核對紀錄（更新至 2026-09-20）
+
+## 本輪增量：Teams 傳出事件安全判定與去重（2026-09-20）
+
+上一批 Linear 週期提案已提交 `054d8d3`。此輪核對 reconstructed 的 `sand-state-tool.ts`（Graph team IDs）、`automation-trigger.ts`（登入條件需要 platformMatched；未設文字篩選時排除 rootMessageId 回覆）、`sand-automation-cloud-trigger.ts` 及 `sand-automation-fire-consumer.ts`（雲端已分類的通知與有界欄位）。現有 macOS HMAC 傳出 webhook 不能冒充該雲端服務。
+
+2026-09-20 查閱 Microsoft [outgoing webhook](https://learn.microsoft.com/en-us/microsoftteams/platform/webhooks-and-connectors/how-to/add-outgoing-webhook)、[TeamInfo](https://learn.microsoft.com/en-us/javascript/api/%40microsoft/agents-hosting-extensions-teams/teaminfo?view=agents-sdk-js-latest) 與 [Activity protocol](https://github.com/microsoft/botframework-sdk/blob/main/specs/botframework-activity/botframework-activity.md)。文件的 HMAC 驗證通訊；aadGroupId 與 Bot team ID 分開；replyToId 為可省略欄位。據此採以下保守適配，並非 live 帳號驗收：
+
+- 不再把簽章、from.aadObjectId 或 payload 的 authenticated/platformMatched 當 Filicon 使用者登入證據。原生入口沒有可信使用者映射，blockUnauthenticatedUsers 為 true 時一律不匹配，舊佇列的 authenticated=true 也不能通過。沒有改寫或放寬既有定義。
+- Graph UUID 篩選僅使用 channelData.team.aadGroupId，缺少時不從 Bot ID 或名稱猜測；舊 Bot ID 保留 teamId 精確比對，另存 graphTeamId。租戶／Graph UUID 正規化大小寫，Bot／channel ID 保留原字串。
+- 僅分類具有 type=message、channelId=msteams、conversationType=channel 與有效 tenant/team/channel/conversation/sender/activity ID、最多 4,000 字元文字的活動；編輯／刪除／invoke／typing／其他 type、非頻道與缺欄上下文不啟動排程。明確 bot role 排除，但沒有把缺少 role 解讀成已驗證的人類登入。
+- reference 空文字篩選只接受主文；原生 replyToId 缺省無法證明主文，也不解析不透明 conversation ID 猜測。目前即使既有條件明確允許未登入者，仍須非空 substring/regex 文字篩選，這類 reference 規則可接受回覆。未加入 Graph 根訊息查詢或全部頻道訂閱。
+- HMAC 仍驗證 raw body，接受 base64 或已解碼金鑰，body digest 仍作 ingress nonce。支援訊息的事件 ID 另外 hash tenant/Bot-team/channel/conversation/activity；重新簽章、改 timestamp 或增減可選 Graph metadata 不改身分；不同頻道／對話／活動分開，既有 connector scope 保留。無效或超長 activity ID 拒絕而非截斷。超過 replay cache 後仍由保留的 history 去重，但兩者都過期後並非永久防重放，沒有簽章時間戳證明新鮮度，沒有遷移舊 receipts。
+
+**目前手動 Teams 編輯器仍保留 blockUnauthenticatedUsers 預設 true，因此其中的 Teams 事件條件不會執行。** 畫面已明示此限制，文字欄改標必填；OR 中的其他 listeners／明確 Run Now 不受此事件判定影響。未增加放寬權限開關，Teams 模型 routine create/update 仍拒絕。後續須完成可信身分／主文事件接線及完整核准，不能把這批稱為 Teams 全功能可用。
+
+依 Swift 測試技能，以固定時間、隔離目錄、測試 secret/executor 和 CustomDump 重現錯誤再修正；新增八項 Teams 測試，涵蓋六種非訊息 type、舊登入旗標、Graph/Bot namespace、篩選、缺欄／超限、回覆／未知根、簽章篡改、同 ID 重新送達、重開／cache 過期後 history 去重及預設政策保留。更新舊 fixture，避免其把 HMAC 錯當登入。依 SwiftUI 技能，把提示抽成不含業務邏輯的元件並補兩項 localization／render 測試；七語言、明暗共 14 張、440 點寬預覽，驗證 fitting height，每種語言各人工檢視一張未見截斷（`/tmp/filicon-teams-review.JDWLc0/`）。不是全產品 UI 逐頁驗收。
+
+驗證：156 項 Swift Testing／13 suites 聚焦回歸通過（`/tmp/filicon-teams-events-regression.log`）；`swift test --no-parallel` 完整回歸為 **134 XCTest、822 Swift Testing／94 suites 通過**（`/tmp/filicon-teams-events-full.log`），兩項 opt-in live Codex 測試未執行。原生 `Filicon App` Debug build（`/tmp/filicon-teams-events-native.log`）與 `codesign --verify --deep --strict` 通過；七語言各 1,490 keys、零缺漏，`git diff --check` 通過。新元件的並行警告已消除；仍有既有 CoreData XPC 診斷及原生 AppIntents metadata／ad-hoc runtime 提示，未宣稱修好先前並行測試時序問題。此為隔離 fixture／原生建置驗證，不是 live Teams 或 release 公證驗收。
+
+本批尚未提交；未 push、未啟動或重啟使用者 App、未改實際聊天／群組／資料／排程／連線。`AUTO-03` 維持 partial，仍缺 Teams 身分映射／主文判定／Graph subscription／模型提案與 outgoing webhook 同步回覆的帳號端到端驗收，以及既有 GitHub checks 彙整、Slack 名稱／人類身分映射等差異。
 
 
-## 本輪增量：Linear 週期完成的自身排程提案與完整核准（2026-09-20）
+## 已提交增量：Linear 週期完成的自身排程提案與完整核准（2026-09-20）
 
 上一批已提交為 `ddf7587`。再次核對 reconstructed `sand-state-tool.ts` 的 endOfCycle／cycleIds shape 與 `shared/automations.ts` 三種 Linear cases，接上群組及 mailbox 的自身 routine create/update，可單項或與 cron／GitHub／Slack／Linear issue／Sentry／PagerDuty 組成最多八項平面 OR。這是原生完成事件的受核准提案，不是新增雲端連線或還原原版全部平台語意。
 
@@ -15,7 +35,8 @@
 
 驗證：146 項 Swift Testing／12 suites 聚焦回歸通過（`/tmp/filicon-cycle-proposal-focused.log`）；明確 `swift test --no-parallel` 完整回歸為 **134 XCTest、812 Swift Testing／93 suites 通過**（`/tmp/filicon-cycle-proposal-full.log`），兩項 opt-in live Codex 測試未執行。原生 `Filicon App` Debug build（`/tmp/filicon-cycle-proposal-native.log`）、產物 `codesign --verify --deep --strict`、localization audit 及 `git diff --check` 通過。仍有既有 CoreData XPC 診斷及 ad-hoc runtime 提示；未宣稱修復先前並行時序問題，也不是 live Linear 帳號或 release 公證驗收。
 
-本批提案增量尚未提交，未 push、未啟動或重啟使用者 App，未更動真實群組／聊天／排程／連線。`AUTO-03` 維持 partial：平台專用編輯器、原版雲端專案關聯、GitHub checks 彙整、Slack 名稱／人類身分映射等仍有差異，不能將本批稱為「原版都有了」。
+本批提案增量已在下一輪提交為 `054d8d3`，提交前再次通過 146 項聚焦回歸（`/tmp/filicon-cycle-proposal-precommit.log`）。未 push、未啟動或重啟使用者 App，未更動真實群組／聊天／排程／連線。`AUTO-03` 維持 partial：平台專用編輯器、原版雲端專案關聯、GitHub checks 彙整、Slack 名稱／人類身分映射等仍有差異，不能將本批稱為「原版都有了」。
+
 參考來源為非官方 `grok-bot-0.18-reconstructed`，不是官方產品原始碼。
 此表只涵蓋已讀過來源且對照現行接線的協作功能；未涵蓋功能不能推定完成。
 

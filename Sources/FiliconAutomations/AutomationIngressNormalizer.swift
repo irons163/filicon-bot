@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 public enum AutomationIngressEventNormalizer {
@@ -52,15 +53,7 @@ public enum AutomationIngressEventNormalizer {
             ].compactMapValues { Self.nonNil($0) }
             externalID = request.headers["x-github-delivery"] ?? nonce
         case .microsoftTeams:
-            let channel = object["channelData"] as? [String: Any]
-            let tenant = channel?["tenant"] as? [String: Any]
-            let team = channel?["team"] as? [String: Any]
-            let targetChannel = channel?["channel"] as? [String: Any]
-            normalized = ["tenantId": tenant?["id"] as Any,
-                          "teamId": team?["id"] as Any,
-                          "channelId": targetChannel?["id"] as Any,
-                          "text": object["text"] ?? "", "authenticated": true, "raw": object].compactMapValues { Self.nonNil($0) }
-            externalID = object["id"] as? String ?? nonce
+            (normalized, externalID) = try teamsMessage(object, nonce: nonce)
         case .linear:
             let data = object["data"] as? [String: Any]
             let issueID = object["type"] as? String == "Issue" ? linearID(data?["id"]) : nil
@@ -148,6 +141,50 @@ public enum AutomationIngressEventNormalizer {
         return AutomationEvent(connectorID: route.id, kind: route.provider.eventKind,
                                externalEventID: String(externalID.prefix(200)),
                                payloadJSON: try JSONSerialization.data(withJSONObject: normalized, options: [.sortedKeys]), occurredAt: now)
+    }
+
+    private static func teamsMessage(_ object: [String: Any], nonce: String) throws -> ([String: Any], String) {
+        let channelData = object["channelData"] as? [String: Any]
+        let tenant = channelData?["tenant"] as? [String: Any]
+        let team = channelData?["team"] as? [String: Any]
+        let channel = channelData?["channel"] as? [String: Any]
+        let conversation = object["conversation"] as? [String: Any]
+        let sender = object["from"] as? [String: Any]
+        let tenantID = TeamsAutomationTrigger.canonicalUUID(tenant?["id"])
+        let botTeamID = TeamsAutomationTrigger.identifier(team?["id"])
+        let graphTeamID = TeamsAutomationTrigger.canonicalUUID(team?["aadGroupId"])
+        let channelID = TeamsAutomationTrigger.identifier(channel?["id"])
+        let conversationID = TeamsAutomationTrigger.identifier(conversation?["id"], limit: 512)
+        let activityID = TeamsAutomationTrigger.identifier(object["id"])
+        if object["id"] != nil && activityID == nil { throw AutomationIngressError.invalidRequest }
+        let text = object["text"] as? String
+        let supported = object["type"] as? String == "message" && object["channelId"] as? String == "msteams"
+            && conversation?["conversationType"] as? String == "channel" && channelData?["eventType"] == nil
+            && TeamsAutomationTrigger.identifier(sender?["id"]) != nil && sender?["role"] as? String != "bot"
+            && tenantID != nil && botTeamID != nil && channelID != nil && conversationID != nil && activityID != nil
+            && text != nil && (text?.count ?? 0) <= 4_000
+        let normalized: [String: Any] = [
+            "supportedEvent": supported,
+            "tenantId": tenantID as Any,
+            // Preserve legacy Bot Framework team filters. Graph IDs are a
+            // separate namespace and may be absent; never invent a mapping.
+            "teamId": botTeamID as Any, "graphTeamId": graphTeamID as Any,
+            "channelId": channelID as Any, "conversationId": conversationID as Any,
+            "activityId": activityID as Any,
+            "replyToId": TeamsAutomationTrigger.identifier(object["replyToId"]) as Any,
+            "text": supported ? text ?? "" : "",
+            // HMAC authenticates the transport, not a signed-in Filicon user.
+            // Neither from.aadObjectId nor a payload flag supplies that proof.
+            "authenticated": false, "raw": object,
+        ].compactMapValues { Self.nonNil($0) }
+        guard supported, let tenantID, let botTeamID, let channelID, let conversationID, let activityID else {
+            return (normalized, nonce)
+        }
+        // Activity IDs are scoped to a conversation. Optional Graph metadata,
+        // timestamps and request headers must not turn a retry into a new run.
+        let scope = try JSONSerialization.data(withJSONObject: [tenantID, botTeamID, channelID, conversationID, activityID])
+        let digest = SHA256.hash(data: scope).map { String(format: "%02x", $0) }.joined()
+        return (normalized, "teams-message:" + digest)
     }
 
     private static func linearEventCase(_ object: [String: Any]) -> String? {

@@ -1,4 +1,6 @@
+import AppKit
 import Foundation
+import SwiftUI
 import CustomDump
 import FiliconAutomations
 import Testing
@@ -6,6 +8,48 @@ import Testing
 
 @Suite("UI localization")
 struct LocalizationTests {
+    @MainActor @Test func teamsAvailabilityRendersInSevenLanguagesAndBothAppearances() throws {
+        let output = ProcessInfo.processInfo.environment["FILICON_UI_REVIEW_OUTPUT"].map { URL(fileURLWithPath: $0) }
+        for language in ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"] {
+            for dark in [false, true] {
+                let host = NSHostingView(rootView: VStack(alignment: .leading, spacing: 16) {
+                    Text("Microsoft Teams").font(.headline)
+                    Text(FiliconLocalization.string(AutomationIngressProvider.microsoftTeams.authenticationSemantics, language: language))
+                        .font(.caption).fixedSize(horizontal: false, vertical: true)
+                    Divider()
+                    TeamsRoutineAvailabilityNotice()
+                }.padding(24).frame(width: 440).background(Color(nsColor: .windowBackgroundColor))
+                    .environment(\.locale, Locale(identifier: language)).environment(\.colorScheme, dark ? .dark : .light))
+                host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+                host.frame = .init(x: 0, y: 0, width: 440, height: 480)
+                host.layoutSubtreeIfNeeded()
+                #expect(host.fittingSize.height <= 480)
+                let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                host.cacheDisplay(in: host.bounds, to: bitmap)
+                let png = try #require(bitmap.representation(using: .png, properties: [:]))
+                #expect(!png.isEmpty)
+                if let output {
+                    try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+                    try png.write(to: output.appending(path: "teams-\(language)-\(dark ? "dark" : "light").png"))
+                }
+            }
+        }
+    }
+
+    @Test func teamsTransportAndUnavailablePoliciesAreDisclosedInSevenLanguages() {
+        let authentication = AutomationIngressProvider.microsoftTeams.authenticationSemantics
+        let notice = TeamsRoutineAvailabilityNotice.message
+        for language in ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"] {
+            let auth = FiliconLocalization.string(authentication, language: language)
+            let availability = FiliconLocalization.string(notice, language: language)
+            expectNoDifference(auth == authentication, language == "en")
+            expectNoDifference(availability == notice, language == "en")
+            expectNoDifference(FiliconLocalization.string("Message contains (required)", language: language) == "Message contains (required)", language == "en")
+            for token in ["Authorization", "HMAC", "base64", "rawBody", "Filicon"] { #expect(auth.contains(token)) }
+            for token in ["Graph", "aadGroupId", "Bot", "blockUnauthenticatedUsers"] { #expect(availability.contains(token)) }
+        }
+    }
+
     @Test func pagerDutyAuthenticationDisclosureIsLocalizedWithoutChangingProtocolNames() {
         let key = AutomationIngressProvider.pagerDuty.authenticationSemantics
         for language in ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"] {

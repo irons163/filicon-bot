@@ -18,7 +18,7 @@ public enum AutomationIngressProvider: String, Codable, CaseIterable, Identifiab
         case .generic:
             "x-filicon-signature: v1=HMAC(timestamp + '.' + nonce + '.' + rawBody); x-filicon-timestamp and x-filicon-nonce are required"
         case .microsoftTeams:
-            "Microsoft Teams outgoing webhook Authorization: HMAC base64(HMAC(rawBody)); the configured Teams signing key may be base64 text or decoded bytes"
+            "Teams outgoing webhook Authorization: HMAC base64(HMAC(rawBody)); signing key is base64 text or decoded bytes. HMAC verifies transport, not Filicon user sign-in. Replay protection is bounded; no signed timestamp proves freshness."
         case .slack:
             "x-slack-signature: v0=HMAC('v0:' + x-slack-request-timestamp + ':' + rawBody); timestamp is required"
         case .github:

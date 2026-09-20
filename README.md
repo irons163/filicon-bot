@@ -323,6 +323,47 @@ limitation and future costs. A specialized manual editor and live-account
 validation remain unsupported/unverified. Verification uses isolated signed
 fixtures; it does not create a connection or public listener.
 
+Teams outgoing-webhook ingress now distinguishes transport authenticity from
+application-user authentication. HMAC and `from.aadObjectId` do **not** establish
+that a sender is signed in to Filicon. Conditions with
+`blockUnauthenticatedUsers: true` therefore fail closed, including previously
+queued payloads claiming `authenticated: true`. Existing definitions are not
+rewritten or relaxed. **The manual Teams editor retains this default, so its
+Teams event conditions currently cannot run**; the editor now discloses this.
+Other listeners in an OR routine and explicit manual runs are not disabled.
+
+The native adapter only classifies bounded `message` activities from `msteams`
+channel conversations with tenant, team, channel, conversation, sender and
+activity IDs plus string text (up to 4,000 characters). Edits, deletions, invokes,
+other activity types and incomplete contexts cannot trigger a Teams condition.
+Graph UUID filters use `channelData.team.aadGroupId` when supplied; legacy Bot
+Framework team filters still use `channelData.team.id`. These are separate
+namespaces, with no name lookup or inference when Graph metadata is missing.
+Tenant/Graph UUID comparison ignores case; opaque Bot/channel IDs remain exact.
+
+Even when a stored condition explicitly permits senders without Filicon sign-in,
+it must have a nonempty text filter (substring or regex). The reference's empty
+filter means root posts only, whereas the Activity protocol makes `replyToId`
+optional. This adapter does not guess root status from its absence or parse
+opaque conversation IDs. Explicit text filters may match replies. This is a
+conservative native adaptation, not the reference cloud's `platformMatched`
+user/regex service or Graph subscription coverage. See Microsoft's
+[outgoing-webhook protocol](https://learn.microsoft.com/en-us/microsoftteams/platform/webhooks-and-connectors/how-to/add-outgoing-webhook),
+[TeamInfo fields](https://learn.microsoft.com/en-us/javascript/api/%40microsoft/agents-hosting-extensions-teams/teaminfo?view=agents-sdk-js-latest),
+and [Activity specification](https://github.com/microsoft/botframework-sdk/blob/main/specs/botframework-activity/botframework-activity.md)
+(checked 2026-09-20).
+
+The HMAC body digest still protects the ingress replay cache. Supported message
+identity additionally hashes tenant/Bot-team/channel/conversation/activity IDs,
+so a re-signed retry or changed timestamp cannot execute a retained message
+again; optional Graph metadata does not alter its identity. Invalid supplied
+activity IDs are rejected rather than truncated. Identity is bounded and
+connector-scoped; there is no permanent deduplication after cache/history expiry,
+signed delivery freshness, or migration of old receipts. Seven-language notices
+explain these limits. This does not add Teams model routine proposals, a user
+authentication control, account login, Graph polling/subscriptions or a public
+webhook, and has not been validated against a live Teams account.
+
 In group and mailbox turns, agents can propose remembering or forgetting a short
 fact using `update_state(target:"memory", action:"write"|"forget", fact:...)`.
 Each change needs explicit approval. Omitted scope (or `scope:"agent"`) remains

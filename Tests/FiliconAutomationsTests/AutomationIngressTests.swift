@@ -107,7 +107,7 @@ struct AutomationIngressTests {
             (.linear, #"{"type":"Issue","webhookId":"l-1","webhookTimestamp":1800000000000,"data":{"id":"ISSUE","teamId":"TEAM"}}"#, ["event": "issue"]),
             (.sentry, #"{"action":"created","data":{"issue":{"id":"123","project":{"id":"456","slug":"api"}}}}"#, ["event": "created", "eventCase": "issueCreated", "projectId": "456"]),
             (.pagerDuty, #"{"event":{"id":"p-1","event_type":"incident.triggered","resource_type":"incident","data":{"id":"INC","type":"incident","service":{"id":"SVC","type":"service_reference"}}}}"#, ["event": "incident.triggered", "eventCase": "incidentTriggered", "serviceId": "SVC", "incidentId": "INC"]),
-            (.microsoftTeams, #"{"id":"t-1","text":"deploy","channelData":{"tenant":{"id":"TEN"},"team":{"id":"TEAM"},"channel":{"id":"CHAN"}}}"#, ["tenantId": "TEN"]),
+            (.microsoftTeams, #"{"type":"message","id":"t-1","channelId":"msteams","text":"deploy","from":{"id":"29:user"},"conversation":{"id":"19:conversation","conversationType":"channel"},"channelData":{"tenant":{"id":"aaaaaaaa-0000-0000-0000-000000000001"},"team":{"id":"19:team"},"channel":{"id":"19:channel"}}}"#, ["tenantId": "aaaaaaaa-0000-0000-0000-000000000001"]),
         ]
 
         for (provider, rawBody, expected) in vectors {
@@ -120,6 +120,10 @@ struct AutomationIngressTests {
                                                                     nonce: auth.nonce, now: now)
             #expect(event.kind == (provider == .generic ? "deploy" : provider.eventKind))
             let payload = try json(event)
+            if provider == .microsoftTeams {
+                #expect(try #require(payload["supportedEvent"] as? Bool))
+                #expect(try !#require(payload["authenticated"] as? Bool))
+            }
             if provider == .slack {
                 #expect(try #require(payload["isMention"] as? Bool))
                 #expect(try #require(payload["supportedEvent"] as? Bool))
