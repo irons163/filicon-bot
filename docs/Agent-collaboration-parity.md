@@ -383,4 +383,21 @@ IORegistry 仍回報 `CGSSessionScreenIsLocked=Yes`。完整回歸的受保護�
 
 驗證：131 項 Swift Testing／12 suites 聚焦回歸（`/tmp/filicon-pagerduty-events-focused.log`）；明確 `swift test --no-parallel` 完整回歸為 134 XCTest、797 Swift Testing／93 suites 通過（`/tmp/filicon-pagerduty-events-full.log`），兩項 opt-in live Codex 測試未執行。原生 `Filicon App` Debug build（`/tmp/filicon-pagerduty-events-native.log`）、產物 `codesign --verify --deep --strict`、localization audit 與 `git diff --check` 通過。驗證說明已有七語言，各 1,486 keys、零缺漏；測試檢查翻譯和協定欄位名稱，沒有新增版面或宣稱全產品人工視覺驗收。完整回歸仍有 CoreData NSXPC 診斷但零測試失敗，原生建置為既有 ad-hoc runtime 提示；先前並行時序穩定性問題未宣稱修復。
 
-此 PagerDuty 基礎批次尚未提交。未 push、未啟動或重啟使用者 App、未改實際聊天／群組／排程／連線。`AUTO-03` 仍為 partial；下一批可接 PagerDuty 自身模型排程提案、完整核准及混合 OR。其他剩餘差異包含 Linear endOfCycle／cycleIds、GitHub checks 彙整及 Slack 名稱／身分映射，不能將底層 fixture 視為原版完整能力或帳號端到端驗收。
+此 PagerDuty 基礎批次已在下一輪提交為 `e92a1de`；提交前再次通過 131 項聚焦回歸（`/tmp/filicon-pagerduty-events-precommit.log`）。未 push、未啟動或重啟使用者 App、未改實際聊天／群組／排程／連線。`AUTO-03` 仍為 partial；下一批可接 PagerDuty 自身模型排程提案、完整核准及混合 OR。其他剩餘差異包含 Linear endOfCycle／cycleIds、GitHub checks 彙整及 Slack 名稱／身分映射，不能將底層 fixture 視為原版完整能力或帳號端到端驗收。
+
+## 本輪增量：PagerDuty 自身排程提案與完整核准（2026-09-20）
+
+上一批已提交為 `e92a1de`。依 reconstructed `source/host/runner/tools/sand-state-tool.ts` 的 PagerDuty shape 與 `source/shared/automations.ts` 五種 cases，接上群組／mailbox 的自身 routine create/update。可單獨使用，或與 cron、GitHub、Slack、Linear、Sentry 組成最多八項平面 OR 條件；不新增外部連線或手動專用編輯器。
+
+- 支援 incidentTriggered／incidentAcknowledged／incidentResolved／incidentEscalated 及 incidentAny；最後一項僅指前四種事故事件。`serviceIds` 省略／空清單表示任意服務；原始清單最多 50 個不透明、區分大小寫的 ID 字串，各 1–200 字元，先完整驗證再排序去重。不修剪或改寫大小寫，不做名稱查找或猜測 ID；拒絕空字串、空白／控制字元與 `*`。不宣稱能從字串外觀驗證服務是否真實存在。
+- schema、解析器與核心提交都驗證支援範圍。拒絕未知 case／欄位、null、錯誤型別、secondary filters、超限與巢狀群組；任一成員無效就整份拒絕，停用提案也不例外。舊 raw-event 定義保留原義，不允許模型 update 將它轉為 canonical case；既有儲存格式與 pause/resume/delete 語意維持不變。
+- 沿用固定 owner、完整 before/after prompt／trigger／enabled／時區核准、四次共用變更預算、50 筆容量、費用防護、Stop／帳號切換／等待期間變更的取消邊界、原子儲存及 durable receipt。修改保留執行歷史，可核准後切換時間、PagerDuty 與混合條件；省略觸發條件就保留。不要求立即執行或補跑，不授予新工具權限。
+- 核准與成功回條明示需既有已驗證入口、不安裝或啟動連線、精確服務範圍、incidentAny 的四類限制、有限防重播、occurred_at 非送達新鮮度證據及佇列事件／模型費用。所有已支援平台的混合 OR 預覽包含每項條件與各平台警告，不隱藏 PagerDuty 限制。
+
+依 Swift 測試技能使用固定時間、隔離目錄、受控 provider／executor／核准 gate 與 CustomDump。先重現四個 create 參數案例的 invalidDefinition（`/tmp/filicon-pagerduty-proposals-red.log`），再補五種 case、0/50/51 清單邊界、1/200 字元、大小寫精確性、核心繞過拒絕、legacy 轉換拒絕、完整核准、歷史重開、重複請求、拒絕／停止／帳號切換／費用防護／容量／儲存失敗測試。群組核准矩陣為 16 種情境 × 四種結果，跨對話 mailbox 的 16 種情境亦檢查 recipient owner，包含 PagerDuty 單項與混合 OR。未呼叫真實模型或外部帳號。
+
+依 SwiftUI 技能，解析與安全邏輯留在 service，核准元件只顯示 host 產生的完整定義及說明。七語言共 133 張 routine 預覽（19 情境 × 七語言）於固定 380 點寬度成功渲染，並檢查 fitting height；輸出 `/tmp/filicon-pagerduty-routine-review.TS0Ovo/`。實際檢視 `routine-update-pagerduty-zh-Hant.png`、`routine-create-pagerduty-fr.png` 與 `routine-create-mixed-zh-Hant.png`，未見內容裁切；不是全產品逐頁或七語言逐張人工驗收。各語言 1,488 keys、零缺漏。
+
+驗證：136 項 Swift Testing／12 suites 聚焦回歸通過（`/tmp/filicon-pagerduty-proposals-focused.log`）；明確 `swift test --no-parallel` 完整回歸為 **134 XCTest、802 Swift Testing／93 suites 通過**（`/tmp/filicon-pagerduty-proposals-full.log`），兩項 opt-in live Codex 測試未執行。原生 `Filicon App` Debug build（`/tmp/filicon-pagerduty-proposals-native.log`）、產物 `codesign --verify --deep --strict`、localization audit 與 `git diff --check` 通過。完整測試仍有 CoreData XPC 診斷但零失敗；原生建置為既有 ad-hoc runtime 提示。未宣稱已修復先前的並行測試時序問題，也不是真實 PagerDuty 帳號或 release 公證驗收。
+
+此提案批次尚未提交。未 push、未啟動或重啟使用者 App、未改實際聊天／群組／排程／連線。`AUTO-03` 仍為 partial：仍缺平台專用編輯器、Linear endOfCycle／cycleIds、GitHub checks 彙整及 Slack 名稱／身分映射等完整語意；不能把本批增量稱為原版所有能力皆已完成。

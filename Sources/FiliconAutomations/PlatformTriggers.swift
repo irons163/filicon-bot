@@ -132,6 +132,7 @@ public struct TeamsAutomationTrigger: Codable, Hashable, Sendable {
 
 public struct CaseAutomationTrigger: Codable, Hashable, Sendable {
     public static let sentryEvents: Set<String> = ["issueCreated", "issueResolved", "issueAssigned", "issueArchived", "issueUnresolved", "issueAny"]
+    public static let pagerDutyEvents: Set<String> = ["incidentTriggered", "incidentAcknowledged", "incidentResolved", "incidentEscalated", "incidentAny"]
     public let event: String
     public let primaryIDs: Set<String>
     public let secondaryIDs: Set<String>
@@ -152,6 +153,14 @@ public struct CaseAutomationTrigger: Codable, Hashable, Sendable {
     public func validateForSentryAgentWrite() throws {
         guard Self.sentryEvents.contains(event), secondaryIDs.isEmpty, primaryIDs.count <= 50,
               primaryIDs.allSatisfy(Self.isSentryProjectID) else { throw AutomationStateChangeError.invalidSentryTrigger }
+    }
+    public static func isPagerDutyServiceID(_ value: String) -> Bool {
+        (1...200).contains(value.count) && value != "*"
+            && value.rangeOfCharacter(from: .whitespacesAndNewlines.union(.controlCharacters)) == nil
+    }
+    public func validateForPagerDutyAgentWrite() throws {
+        guard Self.pagerDutyEvents.contains(event), secondaryIDs.isEmpty, primaryIDs.count <= 50,
+              primaryIDs.allSatisfy(Self.isPagerDutyServiceID) else { throw AutomationStateChangeError.invalidPagerDutyTrigger }
     }
 }
 

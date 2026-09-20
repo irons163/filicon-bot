@@ -162,10 +162,10 @@ private actor ManagementWakeProbe {
         expectNoDifference(model.agentMessages.first?.delivery?.state, .completed)
     }
 
-    @Test(arguments: ["approve", "deny", "stop", "account"], ["create", "update", "create-github", "update-github", "create-slack", "update-slack", "create-group", "update-group", "create-mixed", "update-mixed", "create-linear", "update-linear", "create-sentry", "update-sentry"])
+    @Test(arguments: ["approve", "deny", "stop", "account"], ["create", "update", "create-github", "update-github", "create-slack", "update-slack", "create-group", "update-group", "create-mixed", "update-mixed", "create-linear", "update-linear", "create-sentry", "update-sentry", "create-pagerduty", "update-pagerduty"])
     func routineWritesShowCompleteReviewAndRespectLifecycle(mode: String, scenario: String) async throws {
         let action = scenario.hasPrefix("create") ? "create" : "update"
-        let github = scenario.hasSuffix("github"), slack = scenario.hasSuffix("slack"), linear = scenario.hasSuffix("linear"), sentry = scenario.hasSuffix("sentry")
+        let github = scenario.hasSuffix("github"), slack = scenario.hasSuffix("slack"), linear = scenario.hasSuffix("linear"), sentry = scenario.hasSuffix("sentry"), pagerDuty = scenario.hasSuffix("pagerduty")
         let mixed = scenario.hasSuffix("mixed")
         let group = scenario.hasSuffix("group") || mixed
         let (root, model, groupID, owner, peer) = try await fixture()
@@ -192,6 +192,7 @@ private actor ManagementWakeProbe {
         }
         if linear { fields.removeValue(forKey: "schedule"); fields["trigger"] = linearRoutineFields }
         if sentry { fields.removeValue(forKey: "schedule"); fields["trigger"] = sentryRoutineFields }
+        if pagerDuty { fields.removeValue(forKey: "schedule"); fields["trigger"] = pagerDutyRoutineFields }
         if group { fields.removeValue(forKey: "schedule"); fields["trigger"] = mixed ? mixedGroupFields : eventGroupFields }
         let arguments = try JSONSerialization.data(withJSONObject: fields)
         await model.registry.register(ManagingAgentProvider { _, execute in
@@ -213,9 +214,10 @@ private actor ManagementWakeProbe {
         expectNoDifference(metadata["agentRoutineSlackTrigger"], slack || group ? "true" : nil)
         expectNoDifference(metadata["agentRoutineLinearTrigger"], linear || group ? "true" : nil)
         expectNoDifference(metadata["agentRoutineSentryTrigger"], sentry || group ? "true" : nil)
+        expectNoDifference(metadata["agentRoutinePagerDutyTrigger"], pagerDuty || group ? "true" : nil)
         expectNoDifference(metadata["agentRoutineAnyOfTrigger"], group ? "true" : nil)
         expectNoDifference(metadata["agentRoutineTimeGroupTrigger"], mixed ? "true" : nil)
-        let trigger: AutomationTrigger = sentry ? try sentryRoutineTrigger() : linear ? try linearRoutineTrigger() : group ? try (mixed ? mixedGroupTrigger() : eventGroupTrigger()) : github ? .platform(.github(try .init(repo: "example/project", events: ["review-approved", "ci-failed"],
+        let trigger: AutomationTrigger = pagerDuty ? try pagerDutyRoutineTrigger() : sentry ? try sentryRoutineTrigger() : linear ? try linearRoutineTrigger() : group ? try (mixed ? mixedGroupTrigger() : eventGroupTrigger()) : github ? .platform(.github(try .init(repo: "example/project", events: ["review-approved", "ci-failed"],
             ciBranch: "main", userAllowlist: ["author", "reviewer"]))) : slack ? .platform(.slack(try .init(channel: "*", match: .reaction(emoji: ["eyes"], bySelf: false)))) : .cron(expression: "@every 2h", timeZoneIdentifier: "Asia/Taipei")
         let proposed = Automation(id: id, agentID: owner.id, name: "Approved review", prompt: proposedPrompt, trigger: trigger)
         expectNoDifference(metadata["agentRoutineTrigger"], try AutomationStateChange(operation: .create, automation: proposed).triggerJSON)
@@ -243,7 +245,7 @@ private actor ManagementWakeProbe {
             expectNoDifference(saved.trigger, trigger); expectNoDifference(saved.enabled, action == "create")
             expectNoDifference(saved.revision, action == "create" ? 1 : own.revision + 1)
             expectNoDifference(saved.lastRunAt, nil)
-            if action == "create" && ((!github && !slack && !linear && !sentry && !group) || mixed) { #expect(try #require(saved.nextRunAt) > saved.createdAt) }
+            if action == "create" && ((!github && !slack && !linear && !sentry && !pagerDuty && !group) || mixed) { #expect(try #require(saved.nextRunAt) > saved.createdAt) }
             else { expectNoDifference(saved.nextRunAt, nil) }
             if action == "update" { expectNoDifference(saved.createdAt, own.createdAt) }
             expectNoDifference(model.automations.count, before.count + (action == "create" ? 1 : 0))
@@ -256,9 +258,9 @@ private actor ManagementWakeProbe {
         expectNoDifference(restored.automationHistory[id] ?? [], [])
     }
 
-    @Test(arguments: ["create", "update", "create-github", "update-github", "create-slack", "update-slack", "create-group", "update-group", "create-mixed", "update-mixed", "create-linear", "update-linear", "create-sentry", "update-sentry"]) func mailboxRoutineWritesAreBoundToRecipient(scenario: String) async throws {
+    @Test(arguments: ["create", "update", "create-github", "update-github", "create-slack", "update-slack", "create-group", "update-group", "create-mixed", "update-mixed", "create-linear", "update-linear", "create-sentry", "update-sentry", "create-pagerduty", "update-pagerduty"]) func mailboxRoutineWritesAreBoundToRecipient(scenario: String) async throws {
         let action = scenario.hasPrefix("create") ? "create" : "update"
-        let github = scenario.hasSuffix("github"), slack = scenario.hasSuffix("slack"), linear = scenario.hasSuffix("linear"), sentry = scenario.hasSuffix("sentry")
+        let github = scenario.hasSuffix("github"), slack = scenario.hasSuffix("slack"), linear = scenario.hasSuffix("linear"), sentry = scenario.hasSuffix("sentry"), pagerDuty = scenario.hasSuffix("pagerduty")
         let mixed = scenario.hasSuffix("mixed")
         let group = scenario.hasSuffix("group") || mixed, groupJSON = try JSONSerialization.data(withJSONObject: mixed ? mixedGroupFields : eventGroupFields)
         let (root, model, _, sender, recipient) = try await fixture()
@@ -287,6 +289,7 @@ private actor ManagementWakeProbe {
             }
             if linear { fields.removeValue(forKey: "schedule"); fields["trigger"] = ["type": "linear", "event": ["case": "issueCreated"]] }
             if sentry { fields.removeValue(forKey: "schedule"); fields["trigger"] = ["type": "sentry", "event": ["case": "issueAny"]] }
+            if pagerDuty { fields.removeValue(forKey: "schedule"); fields["trigger"] = ["type": "pagerduty", "event": ["case": "incidentAny"]] }
             if group { fields.removeValue(forKey: "schedule"); fields["trigger"] = try JSONSerialization.jsonObject(with: groupJSON) }
             _ = try await execute(.init(id: "own", name: "update_state", argumentsJSON: JSONSerialization.data(withJSONObject: fields)))
             return "PASS"
@@ -302,6 +305,7 @@ private actor ManagementWakeProbe {
         if group { expectNoDifference(saved.trigger, try (mixed ? mixedGroupTrigger() : eventGroupTrigger())) }
         if linear { expectNoDifference(saved.trigger, .platform(.linear(try .init(event: "issueCreated", allowedEvents: ["issueCreated"])))) }
         if sentry { expectNoDifference(saved.trigger, .platform(.sentry(try .init(event: "issueAny", allowedEvents: ["issueAny"])))) }
+        if pagerDuty { expectNoDifference(saved.trigger, .platform(.pagerDuty(try .init(event: "incidentAny", allowedEvents: ["incidentAny"])))) }
         expectNoDifference(model.automations.first { $0.id == other.id }, other)
         expectNoDifference(model.agentMessages.first?.delivery?.state, .completed)
     }
@@ -309,11 +313,11 @@ private actor ManagementWakeProbe {
     @Test func routinePreviewRendersInSevenLanguages() throws {
         let output = ProcessInfo.processInfo.environment["FILICON_UI_REVIEW_OUTPUT"].map { URL(fileURLWithPath: $0) }
         for language in ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"] {
-            for scenario in ["pause", "resume", "delete", "create", "update", "create-github", "update-github", "create-slack", "update-slack", "create-group", "update-group", "create-mixed", "update-mixed", "create-linear", "update-linear", "create-sentry", "update-sentry"] {
-                let github = scenario.hasSuffix("github"), slack = scenario.hasSuffix("slack"), linear = scenario.hasSuffix("linear"), sentry = scenario.hasSuffix("sentry")
+            for scenario in ["pause", "resume", "delete", "create", "update", "create-github", "update-github", "create-slack", "update-slack", "create-group", "update-group", "create-mixed", "update-mixed", "create-linear", "update-linear", "create-sentry", "update-sentry", "create-pagerduty", "update-pagerduty"] {
+                let github = scenario.hasSuffix("github"), slack = scenario.hasSuffix("slack"), linear = scenario.hasSuffix("linear"), sentry = scenario.hasSuffix("sentry"), pagerDuty = scenario.hasSuffix("pagerduty")
                 let mixed = scenario.hasSuffix("mixed")
                 let group = scenario.hasSuffix("group") || mixed
-                let action = scenario.replacingOccurrences(of: "-github", with: "").replacingOccurrences(of: "-slack", with: "").replacingOccurrences(of: "-group", with: "").replacingOccurrences(of: "-mixed", with: "").replacingOccurrences(of: "-linear", with: "").replacingOccurrences(of: "-sentry", with: "")
+                let action = scenario.replacingOccurrences(of: "-github", with: "").replacingOccurrences(of: "-slack", with: "").replacingOccurrences(of: "-group", with: "").replacingOccurrences(of: "-mixed", with: "").replacingOccurrences(of: "-linear", with: "").replacingOccurrences(of: "-sentry", with: "").replacingOccurrences(of: "-pagerduty", with: "")
                 try FiliconLocalization.$languageOverride.withValue(language) {
                     let titles = ["pause": "Pause own routine", "resume": "Resume own routine", "delete": "Delete own routine",
                                   "create": "Create own routine", "update": "Update own routine"]
@@ -357,6 +361,13 @@ private actor ManagementWakeProbe {
                         metadata["agentRoutineTrigger"] = try AutomationStateChange(operation: .create, automation: .init(agentID: UUID(),
                             name: "Review", prompt: "Review contrast", trigger: sentryRoutineTrigger())).triggerJSON
                     }
+                    if pagerDuty || group {
+                        metadata["agentRoutinePagerDutyTrigger"] = "true"
+                        let disclosure = "PagerDuty requires existing authenticated ingress; no webhook or connection is installed or started. Supports incident triggering, acknowledgment, resolution and escalation; incidentAny matches these four cases only. Service filters use exact case-sensitive IDs with no name lookup; empty means any service. Replay protection is bounded; occurred_at is event time, not delivery freshness. Queued events may trigger after approval and incur model costs."
+                        if language != "en" { #expect(FiliconLocalization.string(disclosure) != disclosure) }
+                        metadata["agentRoutineTrigger"] = try AutomationStateChange(operation: .create, automation: .init(agentID: UUID(),
+                            name: "Review", prompt: "Review contrast", trigger: pagerDutyRoutineTrigger())).triggerJSON
+                    }
                     if group {
                         metadata["agentRoutineGitHubTrigger"] = "true"
                         metadata["agentRoutineSlackTrigger"] = "true"
@@ -375,7 +386,7 @@ private actor ManagementWakeProbe {
                         .padding(20).frame(width: 380).background(FiliconTheme.canvas)
                         .environment(\.locale, Locale(identifier: language)).environment(\.colorScheme, .light))
                     host.appearance = NSAppearance(named: .aqua)
-                    let height: CGFloat = (action == "update" ? 830 : 570) + (mixed ? 3_600 : group ? 3_000 : linear || sentry ? 800 : github || slack ? 600 : 0)
+                    let height: CGFloat = (action == "update" ? 830 : 570) + (mixed ? 4_400 : group ? 3_800 : linear || sentry || pagerDuty ? 800 : github || slack ? 600 : 0)
                     host.frame = .init(x: 0, y: 0, width: 380, height: height)
                     host.layoutSubtreeIfNeeded()
                     #expect(host.fittingSize.height <= height)
@@ -405,6 +416,12 @@ private actor ManagementWakeProbe {
     private var sentryRoutineFields: [String: Any] {
         ["type": "sentry", "event": ["case": "issueAny"], "projectIds": ["123", "007"]]
     }
+    private var pagerDutyRoutineFields: [String: Any] {
+        ["type": "pagerduty", "event": ["case": "incidentAny"], "serviceIds": ["PF9KMXH", "PA12345"]]
+    }
+    private func pagerDutyRoutineTrigger() throws -> AutomationTrigger {
+        .platform(.pagerDuty(try .init(event: "incidentAny", allowedEvents: ["incidentAny"], primaryIDs: ["PF9KMXH", "PA12345"])))
+    }
     private func sentryRoutineTrigger() throws -> AutomationTrigger {
         .platform(.sentry(try .init(event: "issueAny", allowedEvents: ["issueAny"], primaryIDs: ["123", "007"])))
     }
@@ -423,6 +440,7 @@ private actor ManagementWakeProbe {
             ["type": "github", "repo": "example/project", "events": ["review-approved", "ci-failed"],
              "ciBranch": "main", "userAllowlist": ["author", "reviewer"]],
             linearRoutineFields,
+            pagerDutyRoutineFields,
             sentryRoutineFields,
             ["type": "slack", "channel": "*", "match": ["kind": "reaction", "emoji": ["eyes"]]]
         ]]
@@ -432,6 +450,7 @@ private actor ManagementWakeProbe {
             .platform(.github(try .init(repo: "example/project", events: ["review-approved", "ci-failed"],
                 ciBranch: "main", userAllowlist: ["author", "reviewer"]))),
             try linearRoutineTrigger(),
+            try pagerDutyRoutineTrigger(),
             try sentryRoutineTrigger(),
             .platform(.slack(try .init(channel: "*", match: .reaction(emoji: ["eyes"], bySelf: false))))
         ])

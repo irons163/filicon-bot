@@ -80,7 +80,7 @@ must be reviewed by the user in Automations before resuming; deleting them canno
 resume other protected tasks. This tool cannot operate on another agent's tasks
 or add tools to automation runs.
 
-The same tool also supports **creating and updating own time-based, GitHub/Slack/Linear/Sentry event or mixed time/event OR routines**:
+The same tool also supports **creating and updating own time-based, GitHub/Slack/Linear/Sentry/PagerDuty event or mixed time/event OR routines**:
 `action:"create"` requires `name`, `prompt` and either `schedule` or `trigger` (never both), with an optional boolean
 `enabled` (defaults to true); the host assigns the owner and ID. `action:"update"`
 requires an own routine `id` and at least one changed field. Omitted fields stay
@@ -147,7 +147,22 @@ matching. No numeric coercion, trimming, unsupported filters or invalid members
 are silently accepted. Core validation also rejects malformed direct writes and
 conversions of legacy raw-action definitions. No existing definition is migrated.
 
-Combine 1–8 cron/GitHub/Slack/Linear/Sentry conditions with `{"type":"group","listeners":[...]}`
+An individual PagerDuty condition looks like
+`{"type":"pagerduty","event":{"case":"incidentAny"},"serviceIds":["PF9KMXH"]}`.
+Supported cases are `incidentTriggered`, `incidentAcknowledged`,
+`incidentResolved`, `incidentEscalated`, and `incidentAny` (only those four
+incident cases). Optional `serviceIds` accepts at most 50 exact, case-sensitive
+ID strings of 1–200 characters each; omitted/empty means any service. Use real
+service IDs, not the illustrative ID above or guessed IDs; no name lookup is
+performed. IDs are opaque: case is preserved, and no numeric conversion or
+trimming occurs. Empty strings, whitespace, control characters and the wildcard
+`*` are rejected. The raw list is validated before sorting/deduplication.
+Unknown fields, nulls, wrong types and invalid filters reject the whole proposal,
+including a mixed group. Core validation also rejects malformed direct writes
+and model conversions of legacy raw-event definitions; no existing definition
+is migrated.
+
+Combine 1–8 cron/GitHub/Slack/Linear/Sentry/PagerDuty conditions with `{"type":"group","listeners":[...]}`
 or a bare `trigger:[...]` array. This is **OR, not AND**: any one condition can
 fire the same prompt, with each condition retaining its own filters. A delivery
 matching multiple conditions is included once; distinct deliveries can cause
@@ -167,7 +182,7 @@ any invalid condition reject the entire proposal, including disabled proposals.
 
 This requires an **existing authenticated connection**; creating a definition
 does not install/start webhooks, log in to an external service or grant new tools. Already queued
-events can match after approval. Updates may switch between time, GitHub, Slack, Linear, Sentry and mixed OR
+events can match after approval. Updates may switch between time, GitHub, Slack, Linear, Sentry, PagerDuty and mixed OR
 triggers, while an omitted trigger is preserved. Unknown events, malformed filters,
 other platforms and generic events are rejected. A top-level `schedule` cannot
 accompany `trigger`. The
@@ -260,9 +275,13 @@ is not PagerDuty-signed evidence. Deduplication is not permanent after both cach
 and history expire; old receipts are not migrated. See PagerDuty's
 [signature protocol](https://github.com/PagerDuty/developer-docs/blob/main/docs/webhooks/04-Signatures.md)
 and [delivery behavior](https://github.com/PagerDuty/developer-docs/blob/main/docs/webhooks/02-Behavior.md).
-**PagerDuty model create/update proposals and a specialized editor are not wired
-yet.** This foundation was verified with isolated signed fixtures, not a live
-PagerDuty account; it does not create a connection or public listener.
+PagerDuty own-routine create/update proposals now use the same full approval,
+ownership, spend, cancellation and persistence checks in group/mailbox turns,
+including mixed OR conditions. Seven-language approval previews disclose the
+exact service scope, four incident cases, bounded replay protection, event-time
+limitation and future costs. A specialized manual editor and live-account
+validation remain unsupported/unverified. Verification uses isolated signed
+fixtures; it does not create a connection or public listener.
 
 In group and mailbox turns, agents can propose remembering or forgetting a short
 fact using `update_state(target:"memory", action:"write"|"forget", fact:...)`.

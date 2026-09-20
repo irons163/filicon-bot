@@ -88,6 +88,159 @@ struct AgentRoutineChangeTests {
         ["type": "linear", "event": ["case": "statusChanged", "statusIds": ["aaaaaaaa-0000-0000-0000-000000000001"]],
          "teamIds": ["bbbbbbbb-0000-0000-0000-000000000001"], "projectIds": ["cccccccc-0000-0000-0000-000000000001"]]
     }
+    private var pagerDutyFields: [String: Any] {
+        ["type": "pagerduty", "event": ["case": "incidentAny"], "serviceIds": ["PF9KMXH", "PA12345"]]
+    }
+    private func pagerDutyTrigger() throws -> AutomationTrigger {
+        .platform(.pagerDuty(try .init(event: "incidentAny", allowedEvents: ["incidentAny"], primaryIDs: ["PF9KMXH", "PA12345"])))
+    }
+
+    @Test(arguments: [true, false], ["single", "group"])
+    func pagerDutyCreateRequiresApprovalAndCanonicalReplay(enabled: Bool, form: String) async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let id = UUID(uuidString: "00000000-0000-0000-0000-000000000099")!
+        let pagerDuty = try pagerDutyTrigger()
+        let expected: AutomationTrigger = form == "single" ? pagerDuty : .anyOf([
+            .cron(expression: "@every 1h", timeZoneIdentifier: "Asia/Taipei"), pagerDuty])
+        let session = f.session(authorize: { sender, change, _, _ in
+            expectNoDifference(sender.id, f.owner.id)
+            expectNoDifference(change.automation.trigger, expected)
+            expectNoDifference(change.automation.enabled, enabled)
+            let before = await f.automations.list()
+            expectNoDifference(before, [f.routine, f.peerRoutine])
+        }, makeID: { id })
+        defer { session.close() }
+        let tool = session.tools(for: f.owner.id)[2]
+        var fields: [String: Any] = ["target": "routine", "action": "create", "name": "PagerDuty review", "prompt": "Review only",
+            "trigger": form == "single" ? pagerDutyFields : [pagerDutyFields, ["type": "cron", "schedule": "@every 1h"]], "enabled": enabled]
+        let result = try await tool.execute(writeCall(fields), context: f.context)
+        var duplicate = pagerDutyFields; duplicate["serviceIds"] = ["PA12345", "PF9KMXH", "PA12345"]
+        fields["trigger"] = form == "single" ? [duplicate, pagerDutyFields] : [duplicate, ["type": "cron", "schedule": "@every 1h"], pagerDutyFields]
+        let replay = try await tool.execute(writeCall(fields), context: f.context)
+        expectNoDifference(replay, result)
+        #expect(result.content.contains { if case .text(let text) = $0 { text.contains("PagerDuty") && text.contains("no webhook") } else { false } })
+        let saved = try #require(await f.automations.list().first { $0.id == id })
+        expectNoDifference(saved.trigger, expected)
+        expectNoDifference(saved.lastRunAt, nil)
+        expectNoDifference(saved.nextRunAt, enabled && form == "group" ? Date(timeIntervalSince1970: 6_600) : nil)
+        let restored = try AutomationService(storeURL: f.file)
+        let durable = await restored.list().first { $0.id == id }, history = await restored.history(automationID: id)
+        expectNoDifference(durable, saved); expectNoDifference(history, [])
+    }
+
+    @Test func pagerDutyRejectsInvalidFieldsWithoutApproval() async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let session = f.session(authorize: { _, _, _, _ in Issue.record("Invalid PagerDuty proposal reached approval") })
+        defer { session.close() }
+        var invalid: [[String: Any]] = []
+        for value: Any in [["API Service"], ["*"], [" PF9KMXH"], ["PF9KMXH\n"], ["PF9\u{0000}"], ["P\u{00A0}1"], [""],
+            [String(repeating: "1", count: 201)], [123], [true], [NSNull()], NSNull(), "123", Array(repeating: "123", count: 51)] {
+            var raw = pagerDutyFields; raw["serviceIds"] = value; invalid.append(raw)
+        }
+        for (key, value): (String, Any) in [("event", ["case": "created"]), ("event", ["case": "incidentAny", "statusIds": []]),
+            ("event", ["case": NSNull()]), ("event", "incidentTriggered"), ("event", ["case": "incidentReopened"]),
+            ("teamIds", []), ("primaryIDs", []), ("secondaryIDs", []), ("type", "pagerDuty"), ("agent_id", f.peer.id.uuidString)] {
+            var raw = pagerDutyFields; raw[key] = value; invalid.append(raw)
+        }
+        for key in ["type", "event"] { var raw = pagerDutyFields; raw.removeValue(forKey: key); invalid.append(raw) }
+        for raw in invalid {
+            for trigger: Any in [raw, [slackFields, raw]] {
+                await #expect(throws: (any Error).self) {
+                    _ = try await session.tools(for: f.owner.id)[2].execute(writeCall([
+                        "target": "routine", "action": "create", "name": "No", "prompt": "No", "trigger": trigger]), context: f.context)
+                }
+            }
+        }
+        let after = await f.automations.list()
+        expectNoDifference(after, [f.routine, f.peerRoutine])
+    }
+
+    @Test(arguments: ["incidentTriggered", "incidentResolved", "incidentAcknowledged", "incidentEscalated", "incidentAny"], [0, 50])
+    func pagerDutyAcceptsExactFilterBounds(eventCase: String, count: Int) async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let session = f.session(); defer { session.close() }
+        let ids = (0..<count).map { $0 == 0 ? "P" : $0 == 1 ? "p" : "P" + String(repeating: "0", count: 197) + String(format: "%02d", $0) }
+        let expected = AutomationTrigger.platform(.pagerDuty(try .init(event: eventCase, allowedEvents: [eventCase], primaryIDs: Set(ids))))
+        let tool = session.tools(for: f.owner.id)[2]
+        _ = try await tool.execute(writeCall(["target": "routine", "action": "create", "name": "Bounded", "prompt": "Review",
+            "trigger": ["type": "pagerduty", "event": ["case": eventCase], "serviceIds": ids]]), context: f.context)
+        let saved = try #require(await f.automations.list().first { $0.name == "Bounded" })
+        expectNoDifference(saved.trigger, expected)
+        let schema = try #require(JSONSerialization.jsonObject(with: tool.descriptor.inputSchema) as? [String: Any])
+        let properties = try #require(schema["properties"] as? [String: Any])
+        let trigger = try #require(properties["trigger"] as? [String: Any])
+        let variants = try #require(trigger["anyOf"] as? [[String: Any]])
+        let pagerDuty = try #require(variants.first {
+            let fields = $0["properties"] as? [String: Any], type = fields?["type"] as? [String: Any]
+            return type?["enum"] as? [String] == ["pagerduty"]
+        })
+        expectNoDifference(pagerDuty["additionalProperties"] as? Bool, false)
+        let fields = try #require(pagerDuty["properties"] as? [String: Any])
+        let projects = try #require(fields["serviceIds"] as? [String: Any])
+        expectNoDifference(projects["maxItems"] as? Int, 50)
+        let item = try #require(projects["items"] as? [String: Any])
+        expectNoDifference(item["minLength"] as? Int, 1)
+        expectNoDifference(item["maxLength"] as? Int, 200)
+    }
+
+    @Test func pagerDutyCoreRejectsBypassesAndLegacyConversions() async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let invalid = try [
+            CaseAutomationTrigger(event: "created", allowedEvents: ["created"]),
+            .init(event: "incidentAny", allowedEvents: ["incidentAny"], primaryIDs: ["API Service"]),
+            .init(event: "incidentAny", allowedEvents: ["incidentAny"], primaryIDs: Set((0...50).map(String.init))),
+            .init(event: "incidentAny", allowedEvents: ["incidentAny"], secondaryIDs: ["123"]),
+        ]
+        for raw in invalid {
+            for trigger: AutomationTrigger in [.platform(.pagerDuty(raw)), .anyOf([f.routine.trigger, .platform(.pagerDuty(raw))])] {
+                let proposed = Automation(agentID: f.owner.id, name: "No", prompt: "No", trigger: trigger, enabled: false)
+                await #expect(throws: (any Error).self) {
+                    _ = try await f.automations.applyStateChange(.init(operation: .create, automation: proposed), lifetime: .init())
+                }
+            }
+        }
+        let legacy = try await f.automations.save(.init(agentID: f.owner.id, name: "Legacy", prompt: "Legacy", trigger: .platform(.pagerDuty(invalid[0]))))
+        var updated = legacy; updated.trigger = try pagerDutyTrigger()
+        await #expect(throws: (any Error).self) {
+            _ = try await f.automations.applyStateChange(.init(operation: .update, automation: updated, previous: legacy), lifetime: .init())
+        }
+        let after = await f.automations.list()
+        expectNoDifference(after, [f.routine, f.peerRoutine, legacy])
+    }
+    @Test func pagerDutyUpdatesPreserveHistoryAndConvertOnlyAfterApproval() async throws {
+        let initial = try pagerDutyTrigger()
+        let f = try await fixture(trigger: initial); defer { try? FileManager.default.removeItem(at: f.root) }
+        _ = try await f.automations.runNow(id: f.routine.id, executor: RoutineExecutor(), now: Date(timeIntervalSince1970: 2_000))
+        let history = await f.automations.history(automationID: f.routine.id)
+        let session = f.session(authorize: { _, change, _, _ in
+            let current = try #require(await f.automations.list().first { $0.id == f.routine.id })
+            expectNoDifference(change.previous, current)
+        })
+        defer { session.close() }
+        let tool = session.tools(for: f.owner.id)[2]
+        var expected = try #require(await f.automations.list().first { $0.id == f.routine.id })
+        for kind in ["rename", "time", "pagerDuty", "group"] {
+            var fields: [String: Any] = ["target": "routine", "action": "update", "id": f.routine.id.uuidString]
+            if kind == "rename" { fields["name"] = "Renamed"; expected.name = "Renamed" }
+            else if kind == "time" {
+                fields["schedule"] = "@every 1h"
+                expected.trigger = .cron(expression: "@every 1h", timeZoneIdentifier: "Asia/Taipei")
+                expected.nextRunAt = Date(timeIntervalSince1970: 6_600)
+            } else if kind == "pagerDuty" { fields["trigger"] = pagerDutyFields; expected.trigger = initial; expected.nextRunAt = nil }
+            else {
+                fields["trigger"] = [slackFields, pagerDutyFields]
+                expected.trigger = .anyOf([initial, .platform(.slack(try .init(channel: "C123", match: .reaction(emoji: ["eyes"], bySelf: false))))])
+            }
+            _ = try await tool.execute(writeCall(fields, id: .init(rawValue: kind)), context: f.context)
+            expected.revision += 1
+            let actual = await f.automations.list().first { $0.id == f.routine.id }
+            expectNoDifference(actual, expected)
+        }
+        let restored = try AutomationService(storeURL: f.file)
+        let durable = await restored.list().first { $0.id == f.routine.id }, finalHistory = await restored.history(automationID: f.routine.id)
+        expectNoDifference(durable, try persisted(expected)); expectNoDifference(finalHistory, try persisted(history))
+    }
+
     private var sentryFields: [String: Any] {
         ["type": "sentry", "event": ["case": "issueAny"], "projectIds": ["123", "007"]]
     }
@@ -584,14 +737,15 @@ struct AgentRoutineChangeTests {
         let properties = try #require(schema["properties"] as? [String: Any])
         let specification = try #require(properties["trigger"] as? [String: Any])
         let variants = try #require(specification["anyOf"] as? [[String: Any]])
-        expectNoDifference(variants.count, 7)
-        expectNoDifference(variants[5]["additionalProperties"] as? Bool, false)
-        let group = try #require(variants[5]["properties"] as? [String: Any])
+        expectNoDifference(variants.count, 8)
+        let groupVariant = try #require(variants.first { ($0["required"] as? [String])?.contains("listeners") == true })
+        expectNoDifference(groupVariant["additionalProperties"] as? Bool, false)
+        let group = try #require(groupVariant["properties"] as? [String: Any])
         let listeners = try #require(group["listeners"] as? [String: Any])
         expectNoDifference(listeners["maxItems"] as? Int, AutomationService.maximumListeners)
         expectNoDifference(listeners["minItems"] as? Int, 1)
         let items = try #require(listeners["items"] as? [String: Any])
-        expectNoDifference((items["anyOf"] as? [Any])?.count, 5) // Cron/GitHub/Slack/Linear/Sentry only; no recursive or other platforms.
+        expectNoDifference((items["anyOf"] as? [Any])?.count, 6) // Cron/GitHub/Slack/Linear/Sentry/PagerDuty only; no recursive or other platforms.
     }
 
     @Test(arguments: [1, 8]) func eventGroupsAcceptExactBounds(count: Int) async throws {
@@ -881,7 +1035,7 @@ struct AgentRoutineChangeTests {
         let properties = try #require(schema["properties"] as? [String: Any])
         let combined = try #require(properties["trigger"] as? [String: Any])
         let variants = try #require(combined["anyOf"] as? [[String: Any]])
-        expectNoDifference(variants.count, 7)
+        expectNoDifference(variants.count, 8)
         let specification = try #require(variants.first { ($0["required"] as? [String])?.contains("repo") == true })
         expectNoDifference(specification["additionalProperties"] as? Bool, false)
         let fields = try #require(specification["properties"] as? [String: Any])
@@ -961,10 +1115,10 @@ struct AgentRoutineChangeTests {
         expectNoDifference(unchanged, [f.routine, f.peerRoutine])
     }
 
-    @Test(arguments: ["create-github", "update-github", "create-slack", "update-slack", "create-group", "update-group", "create-mixed", "update-mixed", "create-linear", "update-linear", "create-sentry", "update-sentry"], [false, true])
+    @Test(arguments: ["create-github", "update-github", "create-slack", "update-slack", "create-group", "update-group", "create-mixed", "update-mixed", "create-linear", "update-linear", "create-sentry", "update-sentry", "create-pagerduty", "update-pagerduty"], [false, true])
     func eventWritesRecheckSpendGuardAfterApproval(scenario: String, initiallyPaused: Bool) async throws {
         let action = scenario.hasPrefix("create") ? "create" : "update"
-        let eventFields = scenario.hasSuffix("sentry") ? sentryFields : scenario.hasSuffix("linear") ? linearFields : scenario.hasSuffix("github") ? githubFields : scenario.hasSuffix("group") ? groupFields : scenario.hasSuffix("mixed") ? mixedFields : slackFields
+        let eventFields = scenario.hasSuffix("pagerduty") ? pagerDutyFields : scenario.hasSuffix("sentry") ? sentryFields : scenario.hasSuffix("linear") ? linearFields : scenario.hasSuffix("github") ? githubFields : scenario.hasSuffix("group") ? groupFields : scenario.hasSuffix("mixed") ? mixedFields : slackFields
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
         if initiallyPaused { try await f.automations.answerSpendGuard(.pause, at: Date(timeIntervalSince1970: 2_000)) }
         let session = f.session(authorize: { _, _, _, _ in
@@ -1085,10 +1239,10 @@ struct AgentRoutineChangeTests {
         session.close()
     }
 
-    @Test(arguments: ["create", "update", "create-github", "update-github", "create-slack", "update-slack", "create-group", "update-group", "create-mixed", "update-mixed", "create-linear", "update-linear", "create-sentry", "update-sentry"], ["deny", "archive", "save-failure", "stale"])
+    @Test(arguments: ["create", "update", "create-github", "update-github", "create-slack", "update-slack", "create-group", "update-group", "create-mixed", "update-mixed", "create-linear", "update-linear", "create-sentry", "update-sentry", "create-pagerduty", "update-pagerduty"], ["deny", "archive", "save-failure", "stale"])
     func routineWritesFailClosed(scenario: String, mode: String) async throws {
         let action = scenario.hasPrefix("create") ? "create" : "update"
-        let eventFields = scenario.hasSuffix("sentry") ? sentryFields : scenario.hasSuffix("linear") ? linearFields : scenario.hasSuffix("github") ? githubFields : scenario.hasSuffix("slack") ? slackFields : scenario.hasSuffix("group") ? groupFields : scenario.hasSuffix("mixed") ? mixedFields : nil
+        let eventFields = scenario.hasSuffix("pagerduty") ? pagerDutyFields : scenario.hasSuffix("sentry") ? sentryFields : scenario.hasSuffix("linear") ? linearFields : scenario.hasSuffix("github") ? githubFields : scenario.hasSuffix("slack") ? slackFields : scenario.hasSuffix("group") ? groupFields : scenario.hasSuffix("mixed") ? mixedFields : nil
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
         let session = f.session(authorize: { _, change, _, _ in
             switch mode {
@@ -1121,10 +1275,10 @@ struct AgentRoutineChangeTests {
         session.close()
     }
 
-    @Test(arguments: ["create", "update", "create-github", "update-github", "create-slack", "update-slack", "create-group", "update-group", "create-mixed", "update-mixed", "create-linear", "update-linear", "create-sentry", "update-sentry"], [false, true])
+    @Test(arguments: ["create", "update", "create-github", "update-github", "create-slack", "update-slack", "create-group", "update-group", "create-mixed", "update-mixed", "create-linear", "update-linear", "create-sentry", "update-sentry", "create-pagerduty", "update-pagerduty"], [false, true])
     func routineWritesStopAcrossApprovalAndCommit(scenario: String, duringCommit: Bool) async throws {
         let action = scenario.hasPrefix("create") ? "create" : "update"
-        let eventFields = scenario.hasSuffix("sentry") ? sentryFields : scenario.hasSuffix("linear") ? linearFields : scenario.hasSuffix("github") ? githubFields : scenario.hasSuffix("slack") ? slackFields : scenario.hasSuffix("group") ? groupFields : scenario.hasSuffix("mixed") ? mixedFields : nil
+        let eventFields = scenario.hasSuffix("pagerduty") ? pagerDutyFields : scenario.hasSuffix("sentry") ? sentryFields : scenario.hasSuffix("linear") ? linearFields : scenario.hasSuffix("github") ? githubFields : scenario.hasSuffix("slack") ? slackFields : scenario.hasSuffix("group") ? groupFields : scenario.hasSuffix("mixed") ? mixedFields : nil
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
         let gate = RoutineGate()
         let session = f.session(authorize: { _, _, _, _ in if !duringCommit { await gate.hold() } }, commit: { change, lifetime in
@@ -1142,8 +1296,8 @@ struct AgentRoutineChangeTests {
         expectNoDifference(values, [f.routine, f.peerRoutine])
     }
 
-    @Test(arguments: ["time", "github", "slack", "group", "mixed", "linear", "sentry"]) func routineCreationBudgetReceiptAndCapacityAreBounded(kind: String) async throws {
-        let eventFields = kind == "sentry" ? sentryFields : kind == "linear" ? linearFields : kind == "github" ? githubFields : kind == "slack" ? slackFields : kind == "group" ? groupFields : kind == "mixed" ? mixedFields : nil
+    @Test(arguments: ["time", "github", "slack", "group", "mixed", "linear", "sentry", "pagerduty"]) func routineCreationBudgetReceiptAndCapacityAreBounded(kind: String) async throws {
+        let eventFields = kind == "pagerduty" ? pagerDutyFields : kind == "sentry" ? sentryFields : kind == "linear" ? linearFields : kind == "github" ? githubFields : kind == "slack" ? slackFields : kind == "group" ? groupFields : kind == "mixed" ? mixedFields : nil
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
         let session = f.session(commit: { change, lifetime in
             _ = try await f.automations.applyStateChange(change, lifetime: lifetime)
@@ -1172,9 +1326,9 @@ struct AgentRoutineChangeTests {
         full.close()
     }
 
-    @Test(arguments: ["create", "update", "create-github", "update-github", "create-slack", "update-slack", "create-group", "update-group", "create-mixed", "update-mixed", "create-linear", "update-linear", "create-sentry", "update-sentry"]) func routineWritesRequireAnAuthorizerAndMatchingScope(scenario: String) async throws {
+    @Test(arguments: ["create", "update", "create-github", "update-github", "create-slack", "update-slack", "create-group", "update-group", "create-mixed", "update-mixed", "create-linear", "update-linear", "create-sentry", "update-sentry", "create-pagerduty", "update-pagerduty"]) func routineWritesRequireAnAuthorizerAndMatchingScope(scenario: String) async throws {
         let action = scenario.hasPrefix("create") ? "create" : "update"
-        let eventFields = scenario.hasSuffix("sentry") ? sentryFields : scenario.hasSuffix("linear") ? linearFields : scenario.hasSuffix("github") ? githubFields : scenario.hasSuffix("slack") ? slackFields : scenario.hasSuffix("group") ? groupFields : scenario.hasSuffix("mixed") ? mixedFields : nil
+        let eventFields = scenario.hasSuffix("pagerduty") ? pagerDutyFields : scenario.hasSuffix("sentry") ? sentryFields : scenario.hasSuffix("linear") ? linearFields : scenario.hasSuffix("github") ? githubFields : scenario.hasSuffix("slack") ? slackFields : scenario.hasSuffix("group") ? groupFields : scenario.hasSuffix("mixed") ? mixedFields : nil
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
         let session = AgentManagementSession(originID: f.context.conversationID, agents: f.agents,
             automations: f.automations, routineTimeZoneIdentifier: "Asia/Taipei")

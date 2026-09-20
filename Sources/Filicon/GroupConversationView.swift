@@ -672,6 +672,10 @@ struct AgentRoutineApprovalDetails: View {
                 Text(l10n("Sentry requires existing authenticated ingress; no webhook or connection is installed or started. Supports issue creation, resolution, assignment, archiving and reopening; issueAny matches these five cases, not all events. Project filters use exact decimal IDs, not names; empty means any project. Replay protection is bounded and signatures do not prove freshness. Queued events may trigger after approval and incur model costs."))
                     .font(.caption).foregroundStyle(FiliconTheme.textSecondary)
             }
+            if metadata["agentRoutinePagerDutyTrigger"] == "true" {
+                Text(l10n("PagerDuty requires existing authenticated ingress; no webhook or connection is installed or started. Supports incident triggering, acknowledgment, resolution and escalation; incidentAny matches these four cases only. Service filters use exact case-sensitive IDs with no name lookup; empty means any service. Replay protection is bounded; occurred_at is event time, not delivery freshness. Queued events may trigger after approval and incur model costs."))
+                    .font(.caption).foregroundStyle(FiliconTheme.textSecondary)
+            }
         }.fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
     }
     private func routineDetails(prefix: String) -> some View {
