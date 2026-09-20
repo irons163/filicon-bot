@@ -176,6 +176,25 @@ enum SentryIssueEvent: String {
     }
 }
 
+/// The four V3 incident events supported by the reference. "Any" does not
+/// include unrelated service events or other incident event types.
+enum PagerDutyIncidentEvent: String {
+    case triggered = "incidentTriggered"
+    case acknowledged = "incidentAcknowledged"
+    case resolved = "incidentResolved"
+    case escalated = "incidentEscalated"
+
+    init?(eventType: String?) {
+        switch eventType {
+        case "incident.triggered": self = .triggered
+        case "incident.acknowledged": self = .acknowledged
+        case "incident.resolved": self = .resolved
+        case "incident.escalated": self = .escalated
+        default: return nil
+        }
+    }
+}
+
 /// Keeps the legacy Linear storage keys while isolating Linear-only filters
 /// from Sentry/PagerDuty. Missing statusIDs in older definitions means any status.
 public struct LinearAutomationTrigger: Codable, Hashable, Sendable {
@@ -303,7 +322,18 @@ public enum PlatformAutomationTrigger: Codable, Hashable, Sendable {
             // Existing raw-action definitions keep their old storage and payload
             // keys. Do not silently reinterpret a legacy slug filter as an ID.
             return Self.matchesCase(trigger, event: event, payload: payload, kind: "sentry")
-        case .pagerDuty(let trigger): return Self.matchesCase(trigger, event: event, payload: payload, kind: "pagerduty")
+        case .pagerDuty(let trigger):
+            if trigger.event == "incidentAny" || PagerDutyIncidentEvent(rawValue: trigger.event) != nil {
+                guard event.kind == "pagerduty", let eventCase = payload["eventCase"] as? String,
+                      PagerDutyIncidentEvent(rawValue: eventCase) != nil,
+                      trigger.event == "incidentAny" || eventCase == trigger.event,
+                      trigger.secondaryIDs.isEmpty else { return false }
+                guard !trigger.primaryIDs.isEmpty else { return true }
+                guard let serviceID = payload["serviceId"] as? String else { return false }
+                return trigger.primaryIDs.contains(serviceID)
+            }
+            // Raw event-type definitions retain their existing exact filters.
+            return Self.matchesCase(trigger, event: event, payload: payload, kind: "pagerduty")
         }
     }
 

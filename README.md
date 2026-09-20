@@ -236,6 +236,34 @@ cases, bounded replay protection and future costs. A specialized manual editor
 and live-account validation remain unsupported/unverified. This does not
 install/start connections or expose an endpoint.
 
+PagerDuty V3 ingress maps `incident.triggered`, `incident.acknowledged`,
+`incident.resolved` and `incident.escalated` to `incidentTriggered`,
+`incidentAcknowledged`, `incidentResolved` and `incidentEscalated`.
+`incidentAny` covers only those four cases. Canonical classification requires
+a nested `event` with a valid event ID, `resource_type: incident`, and incident
+data with a valid ID and `type: incident`. Canonical `primaryIDs` filters match
+the exact `event.data.service.id` of a `service_reference`, never a summary,
+incident ID, subscription ID or fallback field. Empty service filters mean any
+valid incident; secondary filters fail closed. Legacy raw-event definitions
+keep their original matching and storage, without migration or auto-enabling.
+This follows the [PagerDuty V3 payload documentation](https://github.com/PagerDuty/developer-docs/blob/main/docs/webhooks/01-Overview.md).
+
+PagerDuty signature verification now accepts only comma-separated `v1=` HMAC
+candidates, allowing secret rotation without accepting unversioned signatures.
+The signed-body digest keys the bounded replay cache; signed `event.id` identifies
+the event for retained automation history. Missing legacy IDs fall back to the
+digest, while malformed or overlong IDs are rejected rather than truncated.
+Unsigned `X-Webhook-Id` (or the old `x-pagerduty-delivery` alias) is diagnostic only.
+`occurred_at` is event time, not delivery freshness: legitimate deliveries may be
+retried long after the event. The optional Filicon timestamp check remains, but
+is not PagerDuty-signed evidence. Deduplication is not permanent after both cache
+and history expire; old receipts are not migrated. See PagerDuty's
+[signature protocol](https://github.com/PagerDuty/developer-docs/blob/main/docs/webhooks/04-Signatures.md)
+and [delivery behavior](https://github.com/PagerDuty/developer-docs/blob/main/docs/webhooks/02-Behavior.md).
+**PagerDuty model create/update proposals and a specialized editor are not wired
+yet.** This foundation was verified with isolated signed fixtures, not a live
+PagerDuty account; it does not create a connection or public listener.
+
 In group and mailbox turns, agents can propose remembering or forgetting a short
 fact using `update_state(target:"memory", action:"write"|"forget", fact:...)`.
 Each change needs explicit approval. Omitted scope (or `scope:"agent"`) remains

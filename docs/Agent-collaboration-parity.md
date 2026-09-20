@@ -368,4 +368,19 @@ IORegistry 仍回報 `CGSSessionScreenIsLocked=Yes`。完整回歸的受保護�
 
 驗證：122 項 Swift Testing／11 suites 聚焦回歸通過（`/tmp/filicon-sentry-proposals-focused.log`）；明確 `swift test --no-parallel` 完整回歸為 134 XCTest、788 Swift Testing／92 suites 通過（`/tmp/filicon-sentry-proposals-full.log`），兩項 opt-in live Codex 測試未執行。原生 `Filicon App` Debug build（`/tmp/filicon-sentry-proposals-native.log`）、產物 `codesign --verify --deep --strict`、localization audit 與 `git diff --check` 通過；僅既有 AppIntents／ad-hoc runtime 提示。未宣稱已修復先前的並行測試時序問題。
 
-本輪提案增量尚未提交。未 push、未啟動或重啟 App、未更動真實聊天／群組／排程／連線。`AUTO-03` 仍為 partial：後續可核對 PagerDuty 事件與模型提案、Linear endOfCycle／cycleIds、GitHub checks 彙整與 Slack 名稱／身分映射；不能將本批視為原版全部能力或 Sentry live 帳號驗收完成。
+此提案增量已在下一輪提交為 `24431bf`；提交前再次通過 122 項聚焦回歸（`/tmp/filicon-sentry-proposals-precommit.log`）。未 push、未啟動或重啟 App、未更動真實聊天／群組／排程／連線。`AUTO-03` 仍為 partial：後續可核對 PagerDuty 事件與模型提案、Linear endOfCycle／cycleIds、GitHub checks 彙整與 Slack 名稱／身分映射；不能將本批視為原版全部能力或 Sentry live 帳號驗收完成。
+
+## 本輪增量：PagerDuty 事件分類、服務篩選與防重播基礎（2026-09-19）
+
+上一批已提交為 `24431bf`。核對 reconstructed `source/shared/automations.ts`、`source/host/automations/automation-trigger.ts` 與 `sand-state-tool.ts` 的四種 incident cases、incidentAny 和 serviceIds，以及 PagerDuty 官方的 [V3 payload](https://github.com/PagerDuty/developer-docs/blob/main/docs/webhooks/01-Overview.md)、[signature protocol](https://github.com/PagerDuty/developer-docs/blob/main/docs/webhooks/04-Signatures.md) 和 [delivery behavior](https://github.com/PagerDuty/developer-docs/blob/main/docs/webhooks/02-Behavior.md)（2026-09-19 查閱）。本輪只補 ingress／matching 基礎，未開放 PagerDuty 模型 create/update 或新增外部連線。
+
+- 將 incident.triggered／acknowledged／resolved／escalated 對應成 incidentTriggered／incidentAcknowledged／incidentResolved／incidentEscalated；incidentAny 只含這四類，排除 reopened／reassigned／priority_updated、service、未知事件。需 nested event、有效 event.id、resource_type=incident、data.type=incident 與有效 data.id；不將舊平面 payload 自動升級成 canonical 事件。
+- canonical primaryIDs 精確篩選 event.data.service.id，且 type 必須為 service_reference；不使用摘要名稱、incident ID、頂層 service 或訂閱 ID，也不忽略大小寫。缺少／無效服務 ID 不得命中指定篩選；空集合表示任意有效事故。secondaryIDs 不受支援且不會被靜默忽略。舊 raw event-type 定義及 primaryId／secondaryId 保留原義與 Codable 格式，不遷移或自動啟用。
+- 簽章僅接受逗號分隔的 v1=HMAC(rawBody) 候選值；支援輪替期間多候選，忽略未知版本，不接受裸 digest。用 body digest 作 nonce，避免改 unsigned delivery header 重播或共用 webhookId 漏掉不同事件。用已簽章 event.id 作 history 身分；缺少 ID 的 legacy payload 退回 body digest。存在但無效的事件 ID 直接拒絕，不截斷；事件／事故／服務 ID 與診斷 delivery ID 限非空、最長 200 字元、無空白／控制字元。X-Webhook-Id 及舊 x-pagerduty-delivery alias 僅供診斷，前者優先。
+- occurred_at 是事件發生時間，不是送達新鮮度證據；不拿它套 300 秒時限而誤拒絕延後重試。保留原可選 x-filicon-timestamp 檢查，但未宣稱它受 PagerDuty 簽章保護。預設 300 秒 ingress nonce cache 可跨重開，時限後依仍保留的 run history 去重；兩者清除／過期後仍非永久防重播。未遷移歷史收據或新增重試佇列。
+
+依 Swift 測試技能使用固定時間、隔離暫存目錄、受控 secret／executor 與 CustomDump，先重現 8 項測試中的 63 個失敗斷言（`/tmp/filicon-pagerduty-events-red.log`），再使全部通過。包含四種事件、incidentAny、wrong-platform/resource/type/ID、精確服務篩選、legacy round-trip、UTF-8 本文、版本／輪替／body 與 secret 變造、未簽章標頭變更、長 ID、重開與快取時限後 history 去重。同一事故不同事件不漏發，同一 signed event ID 換 envelope 仍只執行一次。受控 ingress→service→executor/history 流程驗證先篩選再進 prompt，未呼叫真實模型或 PagerDuty 帳號。
+
+驗證：131 項 Swift Testing／12 suites 聚焦回歸（`/tmp/filicon-pagerduty-events-focused.log`）；明確 `swift test --no-parallel` 完整回歸為 134 XCTest、797 Swift Testing／93 suites 通過（`/tmp/filicon-pagerduty-events-full.log`），兩項 opt-in live Codex 測試未執行。原生 `Filicon App` Debug build（`/tmp/filicon-pagerduty-events-native.log`）、產物 `codesign --verify --deep --strict`、localization audit 與 `git diff --check` 通過。驗證說明已有七語言，各 1,486 keys、零缺漏；測試檢查翻譯和協定欄位名稱，沒有新增版面或宣稱全產品人工視覺驗收。完整回歸仍有 CoreData NSXPC 診斷但零測試失敗，原生建置為既有 ad-hoc runtime 提示；先前並行時序穩定性問題未宣稱修復。
+
+此 PagerDuty 基礎批次尚未提交。未 push、未啟動或重啟使用者 App、未改實際聊天／群組／排程／連線。`AUTO-03` 仍為 partial；下一批可接 PagerDuty 自身模型排程提案、完整核准及混合 OR。其他剩餘差異包含 Linear endOfCycle／cycleIds、GitHub checks 彙整及 Slack 名稱／身分映射，不能將底層 fixture 視為原版完整能力或帳號端到端驗收。

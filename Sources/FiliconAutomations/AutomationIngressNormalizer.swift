@@ -111,13 +111,29 @@ public enum AutomationIngressEventNormalizer {
             // by relabeling a request after the ingress replay window expires.
             externalID = nonce
         case .pagerDuty:
-            let event = object["event"] as? [String: Any] ?? object
+            let envelope = object["event"] as? [String: Any]
+            let event = envelope ?? object
             let data = event["data"] as? [String: Any]
             let service = data?["service"] as? [String: Any]
+            let eventID = pagerDutyID(event["id"])
+            if event["id"] != nil && eventID == nil { throw AutomationIngressError.invalidRequest }
+            let incidentID = data?["type"] as? String == "incident" ? pagerDutyID(data?["id"]) : nil
+            let eventCase = envelope != nil && eventID != nil && event["resource_type"] as? String == "incident" && incidentID != nil
+                ? PagerDutyIncidentEvent(eventType: event["event_type"] as? String)?.rawValue : nil
+            for name in ["x-webhook-id", "x-pagerduty-delivery"] {
+                if let value = request.headers[name], pagerDutyID(value) == nil { throw AutomationIngressError.invalidRequest }
+            }
             normalized = ["event": event["event_type"] ?? object["event_type"] ?? "unknown",
+                          "eventCase": eventCase as Any,
+                          "serviceId": (service?["type"] as? String == "service_reference" ? pagerDutyID(service?["id"]) : nil) as Any,
+                          "incidentId": incidentID as Any,
+                          "deliveryId": (request.headers["x-webhook-id"] ?? request.headers["x-pagerduty-delivery"]) as Any,
+                          // Preserve the legacy raw-event filter keys.
                           "primaryId": service?["id"] as Any,
                           "secondaryId": data?["id"] as Any, "raw": object].compactMapValues { Self.nonNil($0) }
-            externalID = event["id"] as? String ?? nonce
+            // event.id is the signed V3 event identity, not an incident or
+            // subscription ID. Missing legacy IDs fall back to body digest.
+            externalID = eventID ?? nonce
         }
         return AutomationEvent(connectorID: route.id, kind: route.provider.eventKind,
                                externalEventID: String(externalID.prefix(200)),
@@ -152,6 +168,12 @@ public enum AutomationIngressEventNormalizer {
         // Boolean/number (or fall back to a name/slug) into a project filter.
         guard let value = value as? String, !value.isEmpty, value.utf8.count <= 200,
               value.utf8.allSatisfy({ (48...57).contains($0) }) else { return nil }
+        return value
+    }
+
+    private static func pagerDutyID(_ value: Any?) -> String? {
+        guard let value = value as? String, !value.isEmpty, value.count <= 200,
+              value.rangeOfCharacter(from: .whitespacesAndNewlines.union(.controlCharacters)) == nil else { return nil }
         return value
     }
 

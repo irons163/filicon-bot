@@ -6,6 +6,17 @@ import Testing
 
 @Suite("UI localization")
 struct LocalizationTests {
+    @Test func pagerDutyAuthenticationDisclosureIsLocalizedWithoutChangingProtocolNames() {
+        let key = AutomationIngressProvider.pagerDuty.authenticationSemantics
+        for language in ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"] {
+            let text = FiliconLocalization.string(key, language: language)
+            expectNoDifference(text == key, language == "en")
+            for token in ["x-pagerduty-signature", "v1=HMAC(rawBody)", "event.id", "X-Webhook-Id", "occurred_at"] {
+                #expect(text.contains(token))
+            }
+        }
+    }
+
     @Test func sentryAuthenticationDisclosureIsLocalizedWithoutChangingProtocolNames() {
         let key = AutomationIngressProvider.sentry.authenticationSemantics
         for language in ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"] {

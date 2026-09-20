@@ -73,7 +73,7 @@ struct AutomationIngressTests {
             headers["sentry-hook-resource"] = "issue"
         case .pagerDuty:
             headers["x-pagerduty-signature"] = "v1=bad, v1=" + hmac(body)
-            headers["x-pagerduty-delivery"] = nonce
+            headers["x-webhook-id"] = nonce
         }
         return .init(method: "POST", path: route.path, headers: headers, body: body)
     }
@@ -106,7 +106,7 @@ struct AutomationIngressTests {
             (.github, #"{"action":"opened","repository":{"full_name":"acme/app"},"sender":{"login":"octo"},"pull_request":{"merged":false}}"#, ["event": "pr-opened"]),
             (.linear, #"{"type":"Issue","webhookId":"l-1","webhookTimestamp":1800000000000,"data":{"id":"ISSUE","teamId":"TEAM"}}"#, ["event": "issue"]),
             (.sentry, #"{"action":"created","data":{"issue":{"id":"123","project":{"id":"456","slug":"api"}}}}"#, ["event": "created", "eventCase": "issueCreated", "projectId": "456"]),
-            (.pagerDuty, #"{"event":{"id":"p-1","event_type":"incident.triggered","data":{"id":"INC","service":{"id":"SVC"}}}}"#, ["event": "incident.triggered"]),
+            (.pagerDuty, #"{"event":{"id":"p-1","event_type":"incident.triggered","resource_type":"incident","data":{"id":"INC","type":"incident","service":{"id":"SVC","type":"service_reference"}}}}"#, ["event": "incident.triggered", "eventCase": "incidentTriggered", "serviceId": "SVC", "incidentId": "INC"]),
             (.microsoftTeams, #"{"id":"t-1","text":"deploy","channelData":{"tenant":{"id":"TEN"},"team":{"id":"TEAM"},"channel":{"id":"CHAN"}}}"#, ["tenantId": "TEN"]),
         ]
 

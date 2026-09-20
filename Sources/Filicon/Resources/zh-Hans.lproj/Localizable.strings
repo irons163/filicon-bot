@@ -1487,3 +1487,4 @@
 "The automation is unavailable, belongs to another agent, or already has the requested state." = "此自动化不可用、属于其他代理，或已处于请求的状态。";
 "The automation changed while awaiting approval. Inspect it and request approval again." = "等待批准期间自动化已更改。请检查当前设置后重新请求批准。";
 "This automation cannot be resumed by the agent. Review its spend protection and trigger in Automations." = "代理无法恢复此自动化。请到“自动化”检查费用保护及触发条件。";
+"x-pagerduty-signature: only comma-separated v1=HMAC(rawBody) candidates; body digest prevents replay within the cache window; signed event.id identifies events; X-Webhook-Id is diagnostic only; occurred_at is event time, not delivery freshness" = "x-pagerduty-signature：只接受以逗号分隔的 v1=HMAC(rawBody) 候选值；正文摘要在缓存时限内防止重放；已签名的 event.id 标识事件；X-Webhook-Id 仅供诊断；occurred_at 是事件时间，不能证明送达是近期发生";

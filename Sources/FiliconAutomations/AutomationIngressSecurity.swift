@@ -87,9 +87,16 @@ public enum AutomationIngressSignatureVerifier {
                          timestamp: try optionalCheckedTimestamp(request, now: now, window: replayWindow))
         case .pagerDuty:
             let supplied = try required("x-pagerduty-signature", request)
-            let candidates = supplied.split(separator: ",").map { String($0).trimmingCharacters(in: .whitespaces).removingPrefix("v1=") }
-            guard candidates.contains(where: { constantTimeEqual($0, hmacHex(secret: secret, data: request.body)) }) else { throw AutomationIngressError.unauthorized }
-            return .init(nonce: boundedNonce(request.headers["x-pagerduty-delivery"] ?? bodyIdentifier(request.body) ?? bodyDigest(request.body)),
+            let candidates = supplied.split(separator: ",").compactMap { part -> String? in
+                let candidate = part.trimmingCharacters(in: .whitespaces)
+                return candidate.hasPrefix("v1=") ? String(candidate.dropFirst(3)) : nil
+            }
+            let expected = hmacHex(secret: secret, data: request.body)
+            guard candidates.contains(where: { constantTimeEqual($0, expected) }) else { throw AutomationIngressError.unauthorized }
+            // V3 signs only the body. Delivery headers are mutable, while a
+            // subscription ID may be shared by many distinct events.
+            // occurred_at is event time, not authenticated delivery freshness.
+            return .init(nonce: bodyDigest(request.body),
                          timestamp: try optionalCheckedTimestamp(request, now: now, window: replayWindow))
         case .microsoftTeams:
             let supplied = try required("authorization", request)
@@ -139,11 +146,6 @@ public enum AutomationIngressSignatureVerifier {
         let value = Date(timeIntervalSince1970: milliseconds / 1_000)
         guard abs(now.timeIntervalSince(value)) <= window else { throw AutomationIngressError.staleRequest }
         return value
-    }
-    private static func bodyIdentifier(_ body: Data) -> String? {
-        guard let object = try? JSONSerialization.jsonObject(with: body) as? [String: Any] else { return nil }
-        if let value = object["webhookId"] as? String ?? object["id"] as? String { return value }
-        return (object["event"] as? [String: Any])?["id"] as? String
     }
     private static func boundedNonce(_ value: String) -> String {
         String(value.prefix(512))

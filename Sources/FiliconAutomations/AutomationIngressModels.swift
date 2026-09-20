@@ -28,7 +28,7 @@ public enum AutomationIngressProvider: String, Codable, CaseIterable, Identifiab
         case .sentry:
             "sentry-hook-signature: HMAC(rawBody), optionally prefixed sha256=; body digest identifies events and prevents replay within the cache window; Request-ID is diagnostic only; no signed timestamp proves freshness"
         case .pagerDuty:
-            "x-pagerduty-signature: comma-separated v1=HMAC(rawBody) candidates; delivery or payload identifiers are used for replay protection"
+            "x-pagerduty-signature: only comma-separated v1=HMAC(rawBody) candidates; body digest prevents replay within the cache window; signed event.id identifies events; X-Webhook-Id is diagnostic only; occurred_at is event time, not delivery freshness"
         }
     }
 }

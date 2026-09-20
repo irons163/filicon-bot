@@ -1487,3 +1487,4 @@
 "The automation is unavailable, belongs to another agent, or already has the requested state." = "この自動化は利用できないか、他のエージェントに属しているか、すでに指定した状態です。";
 "The automation changed while awaiting approval. Inspect it and request approval again." = "承認待ちの間に自動化が変更されました。現在の設定を確認して、再度承認を求めてください。";
 "This automation cannot be resumed by the agent. Review its spend protection and trigger in Automations." = "エージェントはこの自動化を再開できません。「自動化」で支出保護とトリガーを確認してください。";
+"x-pagerduty-signature: only comma-separated v1=HMAC(rawBody) candidates; body digest prevents replay within the cache window; signed event.id identifies events; X-Webhook-Id is diagnostic only; occurred_at is event time, not delivery freshness" = "x-pagerduty-signature：カンマ区切りの v1=HMAC(rawBody) 候補のみ受け付けます。本文のダイジェストでキャッシュ有効期間内の再送を防ぎ、署名対象の event.id でイベントを識別します。X-Webhook-Id は診断専用です。occurred_at はイベント発生時刻であり、配信が新しいことを証明しません";
