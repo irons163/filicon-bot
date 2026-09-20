@@ -665,7 +665,7 @@ struct AgentRoutineApprovalDetails: View {
                     .font(.caption).foregroundStyle(FiliconTheme.textSecondary)
             }
             if metadata["agentRoutineLinearTrigger"] == "true" {
-                Text(l10n("Linear requires existing authenticated ingress; no webhook or connection is installed or started. Only issue creation and actual status changes are supported, not cycle end. Filters use team, project and new-status UUIDs, not names. Each empty list means any. Queued events may trigger after approval and incur model costs."))
+                Text(l10n("Linear requires existing authenticated ingress; no webhook or connection is installed or started. Supports issue creation, actual status changes and cycle completion. Completion requires completedAt changing from null to a valid time, including early completion; a scheduled end date alone does not trigger it. Filters use exact UUIDs, not names; empty means any. statusIds is only for statusChanged; cycleIds is only for endOfCycle. Cycles have no project relationship, so projectIds must be omitted or empty. Replay protection is bounded. Queued events may trigger after approval and incur model costs."))
                     .font(.caption).foregroundStyle(FiliconTheme.textSecondary)
             }
             if metadata["agentRoutineSentryTrigger"] == "true" {

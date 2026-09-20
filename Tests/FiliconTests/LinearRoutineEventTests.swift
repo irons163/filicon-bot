@@ -180,7 +180,7 @@ struct LinearRoutineEventTests {
         }
     }
 
-    @Test func cycleFoundationDoesNotEnableModelWritesOrRewriteExistingDefinitions() async throws {
+    @Test func cycleStoragePreservesDefinitionsAndRejectsFiltersOnWrongCases() async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-cycle-storage-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }
         let file = root.appending(path: "automations.json")
@@ -191,7 +191,7 @@ struct LinearRoutineEventTests {
         let saved = try await service.save(value, now: now)
         let reopened = try AutomationService(storeURL: file)
         let restored = await reopened.list(); expectNoDifference(restored, [saved])
-        for eventCase in ["issueCreated", "statusChanged", "endOfCycle"] {
+        for eventCase in ["issueCreated", "statusChanged"] {
             let filter = try LinearAutomationTrigger(event: eventCase, allowedEvents: [eventCase], cycleIDs: [cycleID])
             let proposed = Automation(agentID: connector, name: "Not available", prompt: "No", trigger: .platform(.linear(filter)), enabled: false)
             await #expect(throws: AutomationStateChangeError.invalidLinearTrigger) {
@@ -337,7 +337,11 @@ struct LinearRoutineEventTests {
         let service = try AutomationService(storeURL: root.appending(path: "automations.json"))
         let validID = "aaaaaaaa-0000-0000-0000-000000000001"
         let invalid = [
-            try LinearAutomationTrigger(event: "endOfCycle", allowedEvents: ["endOfCycle"]),
+            try LinearAutomationTrigger(event: "endOfCycle", allowedEvents: ["endOfCycle"], secondaryIDs: [validID]),
+            try .init(event: "endOfCycle", allowedEvents: ["endOfCycle"], statusIDs: [validID]),
+            try .init(event: "endOfCycle", allowedEvents: ["endOfCycle"], cycleIDs: ["Cycle"]),
+            try .init(event: "endOfCycle", allowedEvents: ["endOfCycle"],
+                cycleIDs: Set((1...51).map { String(format: "dddddddd-0000-0000-0000-%012d", $0) })),
             try .init(event: "issue", allowedEvents: ["issue"]),
             try .init(event: "issueCreated", allowedEvents: ["issueCreated"], statusIDs: [validID]),
             try .init(event: "statusChanged", allowedEvents: ["statusChanged"], primaryIDs: ["Engineering"]),

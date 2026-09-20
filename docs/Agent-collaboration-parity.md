@@ -1,5 +1,21 @@
 # 協作能力核對紀錄（2026-09-19）
 
+
+## 本輪增量：Linear 週期完成的自身排程提案與完整核准（2026-09-20）
+
+上一批已提交為 `ddf7587`。再次核對 reconstructed `sand-state-tool.ts` 的 endOfCycle／cycleIds shape 與 `shared/automations.ts` 三種 Linear cases，接上群組及 mailbox 的自身 routine create/update，可單項或與 cron／GitHub／Slack／Linear issue／Sentry／PagerDuty 組成最多八項平面 OR。這是原生完成事件的受核准提案，不是新增雲端連線或還原原版全部平台語意。
+
+- cycleIds 僅用於 endOfCycle，statusIds 僅用於 statusChanged；原始清單最多 50 個精確 UUID，先驗證再正規化大小寫、排序去重。省略／空清單表示不限。原生 Cycle 無 project 關聯，因此非空 projectIds 拒絕，省略或空清單才可用；不猜測專案、不丟棄指定條件。schema 列出三種互斥 event shape 並說明 project 限制，解析器與核心再次驗證，拒絕 null、未知欄位、錯誤型別、不適用／無效／超限篩選；混合組內任一無效即整份拒絕。
+- 沿用固定 owner、完整 before/after 任務／trigger／enabled／時區核准、四次共用變更預算、50 筆容量、durable receipt、原子儲存、Stop／帳號切換／stale／費用防護。模型不能自行解除保護、取得新工具權限或要求立即執行；修改與核准恢復保留歷史，不自動啟用舊資料，legacy cycle entity 不得被模型暗中轉成完成事件。
+- 成功回條、runtime 與七語言核准說明明示既有驗證入口、不安裝／啟動連線、completedAt 的明確完成轉換（含提前完成）、日期到期本身不觸發、精確 UUID 和專案限制、有限防重播及佇列事件／模型費用。沒有新增 poller 或手動 cycle 編輯器。
+
+依 Swift 測試技能採固定時間、隔離目錄、受控 provider／核准 gate 與 CustomDump。先重現兩項測試中的 18 個提案／schema 失敗（`/tmp/filicon-cycle-proposal-red.log`），新增 cycle create／恢復與 legacy 保護測試，擴充 0/50/51 UUID 邊界、case 專屬欄位、核心繞過、大小寫與重複收據、歷史保留、取消／拒絕／儲存失敗／費用／容量矩陣。群組為 18 情境 × 四種結果（72 案例），mailbox 為 18 情境並驗證 recipient owner；混合 fixtures 同時含 Linear issue 和 cycle，不讓其中一項被覆蓋。
+
+依 SwiftUI 技能，安全判斷留在 service/parser，畫面只顯示 host 的核准定義。固定 380 點寬度完成 21 情境 × 七語言共 147 張預覽，並驗證 fitting height（`/tmp/filicon-cycle-proposal-review.XV0tRi/`）。實際檢視繁中 cycle update、法文 cycle create、繁中七項混合 OR 預覽，未見截斷；不是全產品逐頁或每張語言圖人工驗收。各語言 1,488 keys、零缺漏。
+
+驗證：146 項 Swift Testing／12 suites 聚焦回歸通過（`/tmp/filicon-cycle-proposal-focused.log`）；明確 `swift test --no-parallel` 完整回歸為 **134 XCTest、812 Swift Testing／93 suites 通過**（`/tmp/filicon-cycle-proposal-full.log`），兩項 opt-in live Codex 測試未執行。原生 `Filicon App` Debug build（`/tmp/filicon-cycle-proposal-native.log`）、產物 `codesign --verify --deep --strict`、localization audit 及 `git diff --check` 通過。仍有既有 CoreData XPC 診斷及 ad-hoc runtime 提示；未宣稱修復先前並行時序問題，也不是 live Linear 帳號或 release 公證驗收。
+
+本批提案增量尚未提交，未 push、未啟動或重啟使用者 App，未更動真實群組／聊天／排程／連線。`AUTO-03` 維持 partial：平台專用編輯器、原版雲端專案關聯、GitHub checks 彙整、Slack 名稱／人類身分映射等仍有差異，不能將本批稱為「原版都有了」。
 參考來源為非官方 `grok-bot-0.18-reconstructed`，不是官方產品原始碼。
 此表只涵蓋已讀過來源且對照現行接線的協作功能；未涵蓋功能不能推定完成。
 
@@ -419,4 +435,4 @@ IORegistry 仍回報 `CGSSessionScreenIsLocked=Yes`。完整回歸的受保護�
 
 聚焦回歸為 144 項 Swift Testing／12 suites 通過（`/tmp/filicon-linear-cycle-regression.log`）。明確 `swift test --no-parallel` 完整回歸為 **134 XCTest、810 Swift Testing／93 suites 全數通過**（`/tmp/filicon-linear-cycle-full.log`），兩項 opt-in live Codex 測試未執行；不宣稱已修復先前的並行時序問題。原生 `Filicon App` Debug build（`/tmp/filicon-linear-cycle-native.log`）及產物 `codesign --verify --deep --strict` 通過；本輪未啟動產物。七語言各 1,488 keys、零缺漏，沒有新增 UI 版面，不宣稱本輪另做全產品視覺驗收。完整測試仍有既有 CoreData XPC 診斷但零失敗，原生建置有既有 AppIntents metadata／ad-hoc runtime 提示；`git diff --check` 通過。這不是 live Linear 或 release 公證驗收。
 
-本輪尚未提交，未 push、未重啟使用者 App、未更動實際群組／聊天／排程／連線。`AUTO-03` 維持 partial；cycle 模型提案／專用編輯器、原版雲端專案歸屬、GitHub checks 彙整、Slack 名稱／人類身分映射等差異仍在。
+此底層批次已在下一輪提交為 `ddf7587`；提交前再次通過 144 項聚焦回歸（`/tmp/filicon-linear-cycle-precommit.log`）。未 push、未重啟使用者 App、未更動實際群組／聊天／排程／連線。`AUTO-03` 維持 partial；當時 cycle 模型提案／專用編輯器、原版雲端專案歸屬、GitHub checks 彙整、Slack 名稱／人類身分映射等差異仍在。

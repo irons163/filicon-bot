@@ -127,13 +127,19 @@ silently reduced to a broader base-emoji filter.
 
 An individual Linear condition looks like
 `{"type":"linear","event":{"case":"statusChanged","statusIds":["aaaaaaaa-0000-0000-0000-000000000001"]}}`.
-The other supported case is `issueCreated` (without `statusIds`). Optional
-`teamIds` and `projectIds` narrow both cases; `statusIds` matches the **new** status.
-Each list accepts up to 50 exact UUIDs; omitted/empty means any. Use actual IDs
-from your service, not the illustrative ID above, names or guessed IDs. UUID case
-and repeated values normalize before the full approval preview. Unknown fields,
-nulls, wrong types, invalid IDs and cycle-end proposals are rejected, including
-inside groups. No invalid filter is silently removed.
+Also supported: `issueCreated` (without `statusIds`) and cycle completion, e.g.
+`{"type":"linear","event":{"case":"endOfCycle","cycleIds":["dddddddd-0000-0000-0000-000000000001"]},"teamIds":["bbbbbbbb-0000-0000-0000-000000000001"]}`.
+Optional `teamIds` narrows all three cases; `projectIds` narrows issue cases only.
+`statusIds` matches the **new** status and is only allowed for `statusChanged`;
+`cycleIds` is only allowed for `endOfCycle`. Native cycles have no project
+relationship, so a cycle proposal with nonempty `projectIds` is rejected:
+omit it or use an empty list, never discard a requested project restriction.
+Each raw list accepts up to 50 exact UUIDs; omitted/empty means any. Use actual
+IDs from your service, not the illustrative IDs above, names or guessed IDs.
+UUID case and repeated values normalize before the full approval preview.
+Unknown fields, nulls, wrong types and invalid filters reject the entire
+proposal, including inside groups and disabled proposals. The same constraints
+apply to core writes. No invalid filter is silently removed.
 
 An individual Sentry condition looks like
 `{"type":"sentry","event":{"case":"issueAny"},"projectIds":["123"]}`.
@@ -199,12 +205,12 @@ disclosures for explicit approval; they do not add a manual mixed-trigger editor
 Linear ingress: verified Issue/create
 webhooks expose `issueCreated`; Issue/update exposes `statusChanged` only when
 `updatedFrom.stateId` proves a change to a valid current `data.stateId`. Unrelated
-edits and Cycle updates are not inferred to be status/cycle-end events. The legacy
+edits and ordinary Cycle updates are not inferred to be status/cycle-end events. The legacy
 entity event (`issue`) remains available; existing `primaryIDs` filter actual team
 IDs and `secondaryIDs` filter project IDs, never the issue ID as a missing-team
 fallback. A dedicated Linear trigger keeps those legacy storage keys; old definitions
 without `statusIDs` retain their original meaning. Model-written definitions
-support new-status filters, but `endOfCycle` and `cycleIds` remain unsupported.
+support new-status filters and the explicit cycle-completion conditions below.
 No legacy definition is silently converted or enabled, and the manual editor is
 not expanded by this model-proposal work.
 
@@ -220,7 +226,7 @@ Existing receipts are not migrated or replayed; delivery deduplication remains
 bounded by the existing ingress window and automation history. A public endpoint
 or Linear connection is not created by these changes.
 
-The **native Linear cycle-event foundation** now classifies `Cycle/update` as
+The **native Linear cycle-event adapter** classifies `Cycle/update` as
 `endOfCycle` only when `updatedFrom.completedAt` is explicitly null and the new
 `data.completedAt` is a valid, nonfuture timestamp with an explicit time zone.
 It requires cycle and team UUIDs. Editing `endsAt`, archiving, progress updates,
@@ -231,7 +237,7 @@ and [Cycle webhook fields](https://github.com/linear/linear/blob/3addb24bdf77170
 not the reference cloud backend's preclassified notification or a local polling
 schedule. It has not been validated against a live Linear account.
 
-Internal cycle conditions can filter exact team and `cycleIDs` UUIDs. The native
+Cycle conditions can filter exact team and `cycleIDs` UUIDs (model proposals use `cycleIds`). The native
 Cycle payload has no project association, so project-filtered cycle conditions
 fail closed; no project is inferred from issues. Status filters on cycles and
 cycle filters on issue events cannot be silently ignored. Missing stored
@@ -244,8 +250,15 @@ timestamp offsets and changed delivery IDs/retry envelopes do not duplicate a
 retained completion. A different cycle or later completion is distinct. Ingress
 still verifies the signature and fresh signed `webhookTimestamp`, with the
 existing body-digest replay cache. Protection is bounded by retained history,
-not permanent. No definitions are migrated or enabled. **Cycle model proposals,
-their full approval disclosure and a manual cycle editor are not wired yet.**
+not permanent. No definitions are migrated or automatically enabled. Group and
+mailbox agents can now propose their own cycle routines through `update_state`
+create/update, alone or in a flat time/event OR group. Full before/after task,
+trigger, enabled state, pinned time zones and seven-language disclosures require
+explicit approval. Existing ownership, cancellation, spend guard, capacity and
+durable-receipt protections remain in place; changing a definition retains its
+run history. Approval does not request an immediate run or grant tools/permissions.
+This does **not** add a manual cycle editor, polling, name/project lookup or the
+reference backend's cloud project relationships.
 
 Sentry ingress now distinguishes the documented issue actions (`created`,
 `resolved`, `assigned`, `archived`, `unresolved`) as `issueCreated`,

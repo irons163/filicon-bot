@@ -244,9 +244,11 @@ public struct LinearAutomationTrigger: Codable, Hashable, Sendable {
         if !cycleIDs.isEmpty { try container.encode(cycleIDs.sorted(), forKey: .cycleIDs) }
     }
     public func validateForAgentWrite() throws {
-        guard ["issueCreated", "statusChanged"].contains(event), cycleIDs.isEmpty,
+        guard ["issueCreated", "statusChanged", "endOfCycle"].contains(event),
+              event == "endOfCycle" || cycleIDs.isEmpty,
+              event != "endOfCycle" || secondaryIDs.isEmpty,
               event == "statusChanged" || statusIDs.isEmpty,
-              [primaryIDs, secondaryIDs, statusIDs].allSatisfy({ ids in
+              [primaryIDs, secondaryIDs, statusIDs, cycleIDs].allSatisfy({ ids in
                   ids.count <= 50 && ids.allSatisfy { UUID(uuidString: $0) != nil && $0.count == 36 }
               }) else { throw AutomationStateChangeError.invalidLinearTrigger }
     }
