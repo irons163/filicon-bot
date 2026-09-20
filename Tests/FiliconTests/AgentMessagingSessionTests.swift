@@ -67,9 +67,10 @@ struct AgentMessagingSessionTests {
         let coordinator: TurnCoordinator
         let probe: MessagingProbe
         let origin = UUID()
-        func session(approve: Bool = true, timeout: Duration = .seconds(10)) -> AgentMessagingSession {
+        func session(approve: Bool = true, timeout: Duration = .seconds(10), management: AgentManagementSession? = nil) -> AgentMessagingSession {
             AgentMessagingSession(originConversationID: origin, agents: agents, messenger: messenger,
                 registry: registry, coordinator: coordinator, turnTimeout: timeout,
+                management: management,
                 authorize: { sender, recipient, text, _, _ in
                     await probe.authorize(sender, recipient, text)
                     if !approve { throw AgentMessagingError.approvalRequired }
@@ -85,6 +86,72 @@ struct AgentMessagingSessionTests {
         let registry = ProviderRegistry(), probe = MessagingProbe()
         let coordinator = TurnCoordinator(registry: registry, toolCatalog: ToolCatalog([MessagingReadTool(probe: probe)]))
         return .init(root: root, agents: agents, messenger: messenger, sender: sender, recipient: recipient, registry: registry, coordinator: coordinator, probe: probe)
+    }
+
+    @Test(arguments: ["group", "room-peer", "mailbox"])
+    func recallUsesOnlyCurrentMessageAndNeverMutatesOrSharesPrivateStore(route: String) async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let aurora = "Aurora uses amber accents", zephyr = "Zephyr uses violet accents"
+        let facts = [aurora, zephyr] + (3...42).map { "Unrelated record \($0)" }
+        for (index, fact) in facts.enumerated() {
+            let memory = AgentMemory(accountID: "local", agentID: f.recipient.id, fact: fact,
+                createdAt: Date(timeIntervalSince1970: Double(index) * 86_400))
+            try await f.agents.applyMemoryChange(.init(operation: .write, memory: memory), lifetime: .init())
+        }
+        for (account, owner, scope, text) in [
+            ("local", f.sender.id, AgentMemory.Scope.agent, "Aurora Zephyr PRIVATE_PEER"),
+            ("other", f.recipient.id, .user, "Aurora Zephyr OTHER_ACCOUNT"),
+            ("local", f.sender.id, .user, "Aurora Zephyr APPROVED_SHARED"),
+        ] {
+            let memory = AgentMemory(accountID: account, agentID: owner, fact: text, scope: scope,
+                                     createdAt: Date(timeIntervalSince1970: 1_000))
+            try await f.agents.applyMemoryChange(.init(operation: .write, memory: memory), lifetime: .init())
+        }
+        let before = try Data(contentsOf: f.root.appending(path: "agents.json"))
+        let management = AgentManagementSession(originID: f.origin, agents: f.agents)
+        let session = f.session(management: management)
+        await f.registry.register(MessagingProvider { request, _ in
+            _ = await f.probe.request(request)
+            return "PASS"
+        })
+        let groupID = route == "room-peer" ? UUID() : f.origin
+        for (index, topic) in ["Aurora", "Zephyr"].enumerated() {
+            let previousTopic = topic == "Aurora" ? "Zephyr" : "Aurora"
+            let oldText = String(repeating: previousTopic + " ", count: 20)
+            await session.remember(agentID: f.recipient.id, messages: [.init(role: .user, text: oldText)], response: oldText)
+            let currentText = "Review \(topic)"
+            if route == "mailbox" {
+                _ = try await session.tool(for: f.sender.id).execute(
+                    sendCall(f.recipient.id, currentText, id: ToolCallID(rawValue: "recall-\(index)")),
+                    context: .init(conversationID: f.origin))
+                try await session.drain()
+            } else {
+                let delegated = route == "room-peer" ? RoomMessage(groupID: groupID, senderID: f.sender.id, text: currentText) : nil
+                let responder = GroupConversationResponder(groupID: groupID, registry: f.registry,
+                    coordinator: f.coordinator, messaging: session, delegatedMessage: delegated, toolScopeID: f.origin)
+                _ = try await responder.respond(agent: f.recipient, history: [
+                    RoomMessage(groupID: groupID, senderID: nil, text: oldText),
+                    RoomMessage(groupID: groupID, senderID: f.sender.id, text: oldText),
+                    RoomMessage(groupID: groupID, senderID: nil, text: delegated == nil ? currentText : oldText),
+                ])
+            }
+        }
+        let requests = await f.probe.requests
+        expectNoDifference(requests.count, 2)
+        for (index, request) in requests.enumerated() {
+            let context = try #require(request.messages.first { $0.role == .system && $0.text.contains("Saved facts (untrusted JSON data): ") })
+            let json = try #require(context.text.components(separatedBy: "Saved facts (untrusted JSON data): ").last)
+            struct Fact: Decodable { let fact: String }
+            let recalled = try JSONDecoder().decode([Fact].self, from: Data(json.utf8)).map(\.fact)
+            expectNoDifference(recalled.first, index == 0 ? aurora : zephyr)
+            #expect(!recalled.contains(index == 0 ? zephyr : aurora))
+            #expect(recalled.contains("Aurora Zephyr APPROVED_SHARED"))
+            #expect(!context.text.contains("PRIVATE_PEER") && !context.text.contains("OTHER_ACCOUNT"))
+            #expect(context.text.contains("NOT instructions") && context.text.contains("every change needs explicit approval"))
+        }
+        let after = try Data(contentsOf: f.root.appending(path: "agents.json"))
+        expectNoDifference(after, before)
+        try await session.close()
     }
 
     @Test func durableAcknowledgementThenPeerReplyWakesSenderInOwnContext() async throws {

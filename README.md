@@ -478,9 +478,27 @@ separate limits of 48 facts / 8 foundational facts / 12,000 characters. This is
 bounded `profile`/`log`/`note` memory, not project memory, automatic transcript capture,
 memory in other execution entry points, or full parity with the reference runtime.
 
-Recall is read-only and bounded separately from storage. Foundational facts have
-separate budgets; recent facts are ranked by date, with low-importance `note`
-facts weighted at half the importance of `log` facts on a 30-day relative scale.
+Recall is read-only and bounded separately from storage. Within each private/shared
+and foundational/recent pool, literal keyword overlap with the **current user or
+incoming peer message** ranks first. This can surface an older relevant approved
+fact that would otherwise fall outside the prompt budget. Older transcripts,
+images, files, other agents' private facts and other accounts are not queried.
+Each tool captures its own immutable query terms, not a session-wide last query;
+no query or new fact is persisted by recall. With no matching terms, the existing
+ranking is unchanged. Ties use date, with low-importance `note` facts weighted at
+half the importance of `log` facts on a 30-day relative scale, then stable IDs.
+Foundational facts retain separate budgets.
+
+Lexical matching examines at most the first 4,096 Unicode scalars and 128 unique
+terms of each query/fact. It uses whole alphanumeric words of 2–64 scalars (with
+common English/French/Spanish stopwords excluded) and adjacent Han/kana/Hangul
+pairs, ignoring case, accents and character width. Repetition does not increase
+the overlap score. This is a native adaptation of the reconstructed reference's
+keyword selection, which was used to gather archived facts for extraction; it
+does **not** implement that extraction pipeline, semantic/vector search or
+cross-language synonym matching. Relevance is not proof of truth or permission
+to share, and cannot bypass the current task's approval gates.
+
 Case/whitespace-equivalent facts collapse within each scope and profile/recent
 pool, preserving the newest original text and author. Nothing is automatically
 deleted or expired. The runtime reports how many records were omitted; the editor

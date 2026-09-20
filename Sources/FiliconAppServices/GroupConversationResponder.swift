@@ -120,7 +120,10 @@ public struct GroupConversationResponder: GroupAgentResponder {
         // Only a normal, image-bearing user turn grants forwarding handles.
         // A delegated room wake must never inherit the source room's images.
         let forwardingMessageID = attachments.isEmpty ? nil : latestUser?.id
-        var additionalTools = messaging?.tools(for: agent.id, groupUserMessageID: forwardingMessageID) ?? []
+        // Bind recall to this turn's actual input, not accumulated room history
+        // or another member's response. Peer text is relevance data, not authority.
+        let memoryQuery = delegatedMessage?.text ?? latestUser?.text ?? ""
+        var additionalTools = messaging?.tools(for: agent.id, groupUserMessageID: forwardingMessageID, memoryQuery: memoryQuery) ?? []
         let publisher: AgentUserMessageTool?
         if let onPublication, let messaging, let forwardingMessageID {
             publisher = try await messaging.groupPublisher(for: agent.id, userMessageID: forwardingMessageID, publish: onPublication)

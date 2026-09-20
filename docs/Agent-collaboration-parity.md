@@ -1,6 +1,24 @@
 # 協作能力核對紀錄（更新至 2026-09-20）
 
-## 本輪增量：通用連接器事件篩選的安全比對與手動編輯（2026-09-20）
+## 本輪增量：依當前訊息召回已核准的相關記憶（2026-09-20）
+
+先提交上一批為 `3fc0d91`（`fix: validate connector event filters and enable safe editing`），提交前 **59 項／7 suites** 回歸通過。本輪核對本機非官方 reconstructed 的 `host/runner/sand-memory.ts`：`selectRelevantMemories` 以關鍵字重疊排序，`gatherExtractionMemories` 把相關 archive facts 加入記憶抽取輸入；`turn-memory.ts` 接上抽取，而 `memory-service.ts` 的一般 recall 仍以近期為主。因此這輪是 **Filicon-native 召回增強**，不是宣稱已完整還原原版的自動抽取或語意搜尋。
+
+- `AgentMemoryQuery` 僅保留有界、去重的詞項，最多前 4,096 Unicode scalars／128 個詞項；一般字詞長度 2–64，排除部分英／法／西常見詞；漢字／假名／韓文使用相鄰雙字。忽略大小寫、重音與全半形，重複詞不加分；不是同義詞／翻譯／向量搜尋。超限不掃描完整長輸入，也不把截斷的半個詞當完整詞。
+- scope／account 可見性先篩選，原有私人／共享與 foundational／recent 四個池、筆數／UTF-8 JSON bytes 預算、完整事實與來源 metadata 不變。同池優先字詞交集數，再用既有日期／note 重要性／固定 ID 排序；無相關詞時完全沿用原排序。正規化去重仍先保留最新原文及作者，不以相關性復活舊副本；太大事實整筆略過，不截斷或擠占其他池。
+- 一般群組只取當前使用者訊息；群組間 peer wake 只取本次傳入訊息；mailbox／手動代理人訊息只取該封 inbound。工具值綁定 immutable query，不用共用的 last-query 狀態，不混入歷史、其他代理人答覆、圖片或檔案內容；不把原始 query 注入系統提示或寫入儲存。既有 owner／account／conversation／archived／Stop 與逐次修改核准保護保留。
+- 按 Swift 測試技能使用固定日期／排序 ID、隔離存檔、fixture provider 與 CustomDump。核心涵蓋七語言例句、Unicode／詞項上限、去重與 escaped byte budgets；三條對話路徑先重現 **6 個失敗斷言**（`/tmp/filicon-memory-query-wiring-red.log`），接線後確認連續不同主題不串 query、舊歷史不影響召回、私人／跨帳號事實不漏出、共享事實保留且存檔 bytes 不變。另驗證同 session 的獨立工具 snapshot、錯誤 conversation、封存與停止後拒絕召回。
+
+驗證結果：
+
+- 接線聚焦回歸 **54 項／5 suites** 通過（`/tmp/filicon-memory-relevance-wiring.log`）；其後新增的獨立 snapshot／生命週期測試也納入下列完整回歸。
+- 完整 `swift test --no-parallel` **134 XCTest、888 Swift Testing／101 suites** 通過（`/tmp/filicon-memory-relevance-full.log`），兩項 opt-in live Codex 測試未啟用。
+- 原生 `Filicon App` **clean build 與 deep strict codesign 通過**，包含兩個 helper 與 XPC（`/tmp/filicon-memory-relevance-native.log`）；既有 AppIntents metadata／ad-hoc 提示仍在。僅建置／驗簽，不啟動使用者 App。
+- 本批無 UI 或字串 catalog 變更；七語言各 **1,542 keys、零缺漏**，`git diff --check` 通過。沒有重新宣稱全 UI 視覺或 live 模型驗收。
+
+本批尚未提交；未 push、未啟動／重啟使用者 App、未更動真實聊天／群組／記憶或呼叫 live 模型。`AGENT-01` 維持 partial：仍缺 project 記憶、自動抽取、任意 archive search、其他執行入口及完整原版 persona/runtime。
+
+## 已提交增量：通用連接器事件篩選的安全比對與手動編輯（2026-09-20）
 
 上一批提交為 `fd0a334`（`feat: add validated GitHub and Slack routine editors`），提交前 60 項／7 suites 回歸通過。本批是 Filicon-native generic connector 的安全補強；不把它稱作 reconstructed 雲端能力還原，不增加 Teams 身分或外部帳號接線。
 
@@ -18,7 +36,7 @@
 - NSHostingView 產生 generic 有效／空條件／重複鍵三態 × 七語言 × 明暗 **42 張**，完整 editor sheet 七態 **98 張**，另重跑既有預覽；驗證 fitting size，人工抽查七語言代表畫面與完整可編輯／唯讀 sheet。長表單可捲動，底部取消／儲存固定；產物 `/tmp/filicon-connector-previews/`，不是使用者 App 的 live UI 驗收。
 - 預覽抓到舊選單 `Connector event` 在所有 catalog 皆未登錄，已補鍵與翻譯並納入斷言，JSON 欄位增加固定標籤；也修正本表單既有法／西／韓／繁中標籤。這說明僅 catalog key 對齊不代表全 UI 已翻譯。最終七語言各 **1,542 keys、零缺漏**，`git diff --check` 通過。
 
-本批尚未提交；未 push、未啟動／重啟使用者 App、未更動真實聊天／群組／排程／連線。`AUTO-03` 維持 partial：Teams 身分／主文／Graph／同步回覆與條件編輯、GitHub checks 彙整、Slack 名稱／人類身分映射及 live 帳號驗收仍未齊備。
+本批已在下一輪提交為 `3fc0d91`；未 push、未啟動／重啟使用者 App、未更動真實聊天／群組／排程／連線。`AUTO-03` 維持 partial：Teams 身分／主文／Graph／同步回覆與條件編輯、GitHub checks 彙整、Slack 名稱／人類身分映射及 live 帳號驗收仍未齊備。
 
 ## 已提交增量：GitHub／Slack 排程條件的安全新增與編輯（2026-09-20）
 

@@ -109,8 +109,8 @@ public actor AgentMessagingSession {
         SendToAgentTool(session: self, senderID: senderID, replyTo: nil, groupUserMessageID: groupUserMessageID)
     }
 
-    public nonisolated func tools(for senderID: UUID, groupUserMessageID: UUID? = nil) -> [any ToolExecutor] {
-        [tool(for: senderID, groupUserMessageID: groupUserMessageID)] + (management?.tools(for: senderID) ?? [])
+    public nonisolated func tools(for senderID: UUID, groupUserMessageID: UUID? = nil, memoryQuery: String = "") -> [any ToolExecutor] {
+        [tool(for: senderID, groupUserMessageID: groupUserMessageID)] + (management?.tools(for: senderID, memoryQuery: memoryQuery) ?? [])
     }
 
     public func groupPublisher(for senderID: UUID, userMessageID: UUID,
@@ -430,7 +430,7 @@ public actor AgentMessagingSession {
                 let request = InferenceRequest(conversationID: conversationID, modelID: agent.modelID, messages: transportMessages, attachmentsByMessageID: attachments)
                 let tool = SendToAgentTool(session: self, senderID: agent.id, replyTo: inbound)
                 try await coordinator.send(request: request, providerID: agent.providerID,
-                    additionalTools: [tool, publisher] + (management?.tools(for: agent.id) ?? []), toolContext: ToolContext(conversationID: originConversationID),
+                    additionalTools: [tool, publisher] + (management?.tools(for: agent.id, memoryQuery: inbound.text) ?? []), toolContext: ToolContext(conversationID: originConversationID),
                     agentID: agent.id, agentLane: inbound.id == userMessageID ? .user : .background,
                     priority: inbound.priority == .priority, executionTimeout: turnTimeout, onStart: { [messenger, onChange] in
                         try await self.checkOpen()

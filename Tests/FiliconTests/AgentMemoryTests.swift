@@ -47,6 +47,30 @@ struct AgentMemoryTests {
         return try await tool.runtimeContext(for: context)
     }
 
+    @Test func queryToolsKeepIndependentSnapshotsAndExistingLifetimeGuards() async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let session = f.session()
+        let original = session.tools(for: f.owner.id)[2]
+        _ = try await original.execute(call("Aurora amber", id: "first"), context: f.context)
+        _ = try await original.execute(call("Zephyr violet", id: "second"), context: f.context)
+        let aurora = try #require(session.tools(for: f.owner.id, memoryQuery: "Aurora QUERY_NOT_IN_CONTEXT")[2] as? any ToolRuntimeContextProviding)
+        let zephyr = try #require(session.tools(for: f.owner.id, memoryQuery: "Zephyr")[2] as? any ToolRuntimeContextProviding)
+        async let first = aurora.runtimeContext(for: f.context)
+        async let second = zephyr.runtimeContext(for: f.context)
+        let contexts = try await [first, second]
+        for (context, expected) in zip(contexts, ["Aurora amber", "Zephyr violet"]) {
+            let json = try #require(context.components(separatedBy: "Saved facts (untrusted JSON data): ").last)
+            let facts = try #require(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [[String: Any]])
+            expectNoDifference(facts.first?["fact"] as? String, expected)
+            #expect(!context.contains("QUERY_NOT_IN_CONTEXT"))
+        }
+        await #expect(throws: AgentMemoryError.unavailable) { _ = try await aurora.runtimeContext(for: .init(conversationID: UUID())) }
+        try await f.agents.archive(id: f.owner.id)
+        await #expect(throws: AgentMemoryError.unavailable) { _ = try await zephyr.runtimeContext(for: f.context) }
+        session.close()
+        await #expect(throws: CancellationError.self) { _ = try await aurora.runtimeContext(for: f.context) }
+    }
+
     @Test func approvedFactsAreDurableScopedAndNeverClonedOrPublished() async throws {
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
         let memoryID = UUID(uuidString: "00000000-0000-0000-0000-000000000123")!
@@ -449,5 +473,74 @@ struct AgentMemoryRecallTests {
         #expect(recall.memories.contains(logs.last!))
         #expect(!recall.memories.contains(logs.first!))
         expectNoDifference(recall.omittedCount, 48 - recall.memories.count)
+    }
+
+    @Test(arguments: [AgentMemory.Scope.agent, .user])
+    func relevantOldFactsSurviveBudgetsWithoutChangingStorageOrScope(scope: AgentMemory.Scope) throws {
+        let foundation = memory(1, text: "Foundation", tier: .profile, scope: scope)
+        let relevant = memory(2, text: "Aurora checkout uses amber accents", day: 1, tier: .note, scope: scope)
+        let newer = (3...42).map { memory($0, text: "Unrelated record \($0)", day: Double($0), scope: scope) }
+        let inaccessible = [memory(43, text: relevant.fact, day: 999, writer: peer),
+                            memory(44, text: relevant.fact, day: 999, scope: .user, account: "other")]
+        let source = [foundation, relevant] + newer + inaccessible
+        let baseline = try AgentMemoryRecall(memories: source, accountID: "local", agentID: owner)
+        #expect(!baseline.memories.contains(relevant))
+        let query = AgentMemoryQuery("Review Aurora checkout")
+        let result = try AgentMemoryRecall(memories: source, accountID: "local", agentID: owner, query: query)
+        expectNoDifference(Array(result.memories.prefix(2)), [foundation, relevant])
+        #expect(!result.memories.contains { inaccessible.contains($0) })
+        expectNoDifference(result.omittedCount, 42 - result.memories.count)
+        #expect(result.factsJSON.utf8.count <= (scope == .agent ? 12_001 : 6_001))
+        let reversed = try AgentMemoryRecall(memories: source.reversed(), accountID: "local", agentID: owner, query: query)
+        expectNoDifference(reversed.factsJSON, result.factsJSON)
+        let unchanged = try AgentMemoryRecall(memories: source, accountID: "local", agentID: owner)
+        expectNoDifference(unchanged.memories, baseline.memories)
+    }
+
+    @Test(arguments: [
+        ("Review CHECKOUT", "Checkout uses amber accents"),
+        ("檢查購物流程", "購物流程採用琥珀色"),
+        ("检查购物流程", "购物流程采用琥珀色"),
+        ("Vérifier l’accessibilité", "ACCESSIBILITE du formulaire"),
+        ("Revisar la navegación", "NAVEGACION del formulario"),
+        ("購入画面を確認", "購入画面の配色は琥珀色"),
+        ("결제화면을 확인", "결제화면 색상은 호박색"),
+        ("ＵＸ checkout", "UX CHECKOUT preference"),
+    ])
+    func lexicalRecallSupportsAppLanguages(query: String, fact: String) throws {
+        let old = memory(1, text: fact, day: 1), recent = memory(2, text: "Unrelated", day: 999)
+        let recall = try AgentMemoryRecall(memories: [recent, old], accountID: "local", agentID: owner,
+                                          query: AgentMemoryQuery(query))
+        expectNoDifference(recall.memories, [old, recent])
+    }
+
+    @Test func queryIsBoundedAndRepetitionOrSubstringsCannotBoostRanking() throws {
+        let once = memory(1, text: "checkout amber", day: 1)
+        let repeated = memory(2, text: String(repeating: "checkout ", count: 40), day: 999)
+        let substring = memory(3, text: "precheckout", day: 1_000)
+        let source = [substring, repeated, once]
+        let recall = try AgentMemoryRecall(memories: source, accountID: "local", agentID: owner,
+            query: AgentMemoryQuery(String(repeating: "checkout ", count: 20) + "amber"))
+        expectNoDifference(recall.memories, [once, repeated, substring])
+        for text in ["", "!? 👋", "the this with", String(repeating: " ", count: 4_096) + "checkout",
+                     String(repeating: "x", count: 100) + "checkout"] {
+            let fallback = try AgentMemoryRecall(memories: source, accountID: "local", agentID: owner, query: AgentMemoryQuery(text))
+            expectNoDifference(fallback.memories, source)
+        }
+        let tokenLimit = (1...128).map { "token\($0)" }.joined(separator: " ") + " checkout"
+        let bounded = try AgentMemoryRecall(memories: source, accountID: "local", agentID: owner, query: AgentMemoryQuery(tokenLimit))
+        expectNoDifference(bounded.memories, source)
+    }
+
+    @Test func relevanceCannotPromoteOlderDuplicateOrOverflowEscapedByteBudget() throws {
+        let old = memory(1, text: "CHECKOUT AMBER", day: 1)
+        let newest = memory(2, text: "Checkout\nAmber", day: 2)
+        let oversized = memory(3, text: "checkout amber " + String(repeating: "\"雪\\\n", count: 1_000), day: 999)
+        let small = memory(4, text: "fallback", day: 3)
+        let recall = try AgentMemoryRecall(memories: [old, newest, oversized, small], accountID: "local", agentID: owner,
+                                          query: AgentMemoryQuery("checkout amber"))
+        expectNoDifference(recall.memories, [newest, small])
+        expectNoDifference(recall.omittedCount, 2)
+        #expect(recall.factsJSON.utf8.count <= 4_000)
     }
 }
