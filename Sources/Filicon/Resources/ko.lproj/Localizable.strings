@@ -1544,3 +1544,6 @@
 "Filters must be a JSON object of at most 16 KiB, without duplicate keys. Maximum depth is 16 and maximum values is 4,096. Numbers allow up to 256 characters and exponent magnitude 10,000." = "필터는 중복 키가 없는 16 KiB 이하의 JSON 객체여야 합니다. 최대 깊이는 16, 값은 최대 4,096개입니다. 숫자는 최대 256자이며 지수의 절댓값은 10,000 이하여야 합니다.";
 "Uses the exact connector UUID and event kind; no connection is created. All top-level JSON filters must match. Nested objects and arrays match exactly; value types are not converted. An empty object matches any valid object payload from this connector and kind." = "정확한 커넥터 UUID와 이벤트 종류로 비교하며, 연결을 생성하지 않습니다. 최상위 JSON 조건이 모두 일치해야 합니다. 중첩 객체와 배열은 완전히 일치해야 하며 값의 형식은 변환하지 않습니다. 빈 객체는 해당 커넥터와 이벤트 종류의 모든 유효한 객체 데이터와 일치합니다.";
 "Connector event" = "커넥터 이벤트";
+"Memory search accepts only query (up to 256 Unicode scalars), scope all/agent/user, or a continuation cursor by itself." = "메모리 검색에는 query(Unicode 스칼라 값 최대 256개), scope all/agent/user 또는 이어보기 커서만 단독으로 지정할 수 있습니다.";
+"This memory search cursor is invalid or the saved facts changed. Start a new search." = "메모리 검색 커서가 유효하지 않거나 저장된 정보가 변경되었습니다. 새로 검색하세요.";
+"This request reached its 32 memory-search limit. Report the results already available." = "이 요청은 메모리 검색 한도인 32회에 도달했습니다. 이미 확인한 결과를 보고하세요.";

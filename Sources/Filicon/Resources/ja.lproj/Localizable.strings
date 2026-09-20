@@ -1544,3 +1544,6 @@
 "Filters must be a JSON object of at most 16 KiB, without duplicate keys. Maximum depth is 16 and maximum values is 4,096. Numbers allow up to 256 characters and exponent magnitude 10,000." = "フィルターは重複キーのない 16 KiB 以下の JSON オブジェクトにしてください。深さは最大 16、値は最大 4,096 個です。数値は最大 256 文字、指数の絶対値は最大 10,000 です。";
 "Uses the exact connector UUID and event kind; no connection is created. All top-level JSON filters must match. Nested objects and arrays match exactly; value types are not converted. An empty object matches any valid object payload from this connector and kind." = "正確なコネクター UUID とイベントの種類で照合します。接続は作成しません。最上位の JSON 条件はすべて一致する必要があります。入れ子のオブジェクトや配列は完全一致とし、型を変換しません。空のオブジェクトは、このコネクターと種類の有効なオブジェクトデータすべてに一致します。";
 "Connector event" = "コネクターイベント";
+"Memory search accepts only query (up to 256 Unicode scalars), scope all/agent/user, or a continuation cursor by itself." = "メモリ検索では query（Unicode スカラー値 256 個まで）、scope all/agent/user、または継続カーソル単独のみを指定できます。";
+"This memory search cursor is invalid or the saved facts changed. Start a new search." = "メモリ検索カーソルが無効か、保存済みの情報が変更されています。新しく検索してください。";
+"This request reached its 32 memory-search limit. Report the results already available." = "このリクエストはメモリ検索の上限（32 回）に達しました。取得済みの結果を報告してください。";

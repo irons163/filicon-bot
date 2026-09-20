@@ -127,18 +127,7 @@ public struct AgentMemoryRecall: Sendable {
         let visible = source.filter { $0.accountID == accountID && ($0.scope == .user || $0.agentID == agentID) }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-        struct Fact: Encodable {
-            let fact: String
-            let tier: AgentMemory.Tier
-            let scope: AgentMemory.Scope
-            let recordedBy: UUID
-            let canForget: Bool
-            let recordedAt: String
-        }
-        func fact(_ memory: AgentMemory) -> Fact {
-            Fact(fact: memory.fact, tier: memory.tier, scope: memory.scope, recordedBy: memory.agentID,
-                 canForget: memory.agentID == agentID, recordedAt: memory.createdAt.ISO8601Format())
-        }
+        func fact(_ memory: AgentMemory) -> AgentMemoryFact { AgentMemoryFact(memory, readerID: agentID) }
         func newestFirst(_ left: AgentMemory, _ right: AgentMemory) -> Bool {
             if left.createdAt != right.createdAt { return left.createdAt > right.createdAt }
             return left.id.uuidString < right.id.uuidString

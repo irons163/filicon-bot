@@ -506,7 +506,38 @@ still lists every saved record. JSON recall budgets (including UTF-8 metadata an
 escaping) are 8,000 / 4,000 bytes for private profile / recent pools and
 4,000 / 2,000 bytes for shared profile / recent pools. Oversized records are
 omitted intact, never truncated. This is not semantic conflict resolution,
-automatic transcript extraction, or searchable archival memory.
+automatic transcript extraction, or arbitrary archival file access.
+
+In these same group/mailbox turns, agents can call the read-only `SearchMemory`
+tool to find **already approved saved facts** that were omitted from automatic
+recall. Use an optional literal substring `query` (at most 256 Unicode scalars;
+ignores case, accents and width), and `scope: "agent" | "user" | "all"` (default
+all). Empty/omitted query browses; whitespace-only input is rejected. The host
+binds agent and account identity: private peer facts and other accounts are
+excluded before matching, counting, or paging. Results retain original text,
+scope, tier, author, recorded time and whether this agent can forget the record.
+Reading shared facts does not permit deleting another author's records.
+
+Each response contains at most eight complete facts and 8 KiB of JSON, with
+`totalMatches`, `skippedOversizedCount` for that page, and an optional `nextCursor`.
+Oversized facts count as matches but are skipped intact; inspect them in the
+memory editor. Pass **only** the cursor to continue in the same agent/turn/session.
+A change to the selected visible store invalidates its cursor; start a new search
+instead of using stale pages. No facts are cached in cursors. Up to 32 searches
+are allowed per originating request, shared by its agents and separate from the
+four-change approval budget. Stop/session closure or an archived owner prevents
+further searches. Search does not save, share, forget, or grant filesystem access;
+results remain untrusted data, not authority, and private facts must not be
+disclosed merely because they were retrieved. Raw tool results are not copied to
+the common group/mailbox history; any final message still needs to respect the
+current task's disclosure boundaries.
+
+`SearchMemory` is a Filicon-native counterpart to the reconstructed reference's
+ability to Read/grep older saved memory files, **not** a claim that the original
+exposed a tool of that name. It does not search arbitrary files, old transcripts,
+other accounts, project memory or semantic/vector indexes, nor implement automatic
+memory extraction. Tests use isolated stores and fixture model providers, not
+live accounts.
 
 ## Requirements
 

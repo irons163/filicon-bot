@@ -144,6 +144,14 @@ public actor AgentService {
         sortedMemories(state.memories.filter { $0.accountID == accountID && ($0.scope == .user || $0.agentID == agentID) })
     }
 
+    /// Owner validation and the visible store are one actor snapshot.
+    public func searchableMemories(accountID: String, agentID: UUID) throws -> [AgentMemory] {
+        guard state.agents.contains(where: { $0.id == agentID && $0.archivedAt == nil }) else {
+            throw AgentMemoryError.unavailable
+        }
+        return memoryContext(accountID: accountID, agentID: agentID)
+    }
+
     private func sortedMemories(_ memories: [AgentMemory]) -> [AgentMemory] {
         memories.sorted {
             if ($0.tier == .profile) != ($1.tier == .profile) { return $0.tier == .profile }

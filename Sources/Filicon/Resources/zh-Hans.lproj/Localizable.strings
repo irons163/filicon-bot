@@ -1544,3 +1544,6 @@
 "Filters must be a JSON object of at most 16 KiB, without duplicate keys. Maximum depth is 16 and maximum values is 4,096. Numbers allow up to 256 characters and exponent magnitude 10,000." = "筛选条件必须是最多 16 KiB、没有重复键的 JSON 对象。最大深度为 16，最多 4,096 个值。数字最多 256 个字符，指数绝对值上限为 10,000。";
 "Uses the exact connector UUID and event kind; no connection is created. All top-level JSON filters must match. Nested objects and arrays match exactly; value types are not converted. An empty object matches any valid object payload from this connector and kind." = "按准确的连接器 UUID 和事件类型匹配，不会创建连接。所有顶层 JSON 条件都必须匹配；嵌套对象与数组必须完全相同，不转换值的类型。空对象会匹配此连接器与事件类型的任何有效对象数据。";
 "Connector event" = "连接器事件";
+"Memory search accepts only query (up to 256 Unicode scalars), scope all/agent/user, or a continuation cursor by itself." = "记忆搜索只接受 query（最多 256 个 Unicode 标量值）、scope all/agent/user，或单独的续页游标。";
+"This memory search cursor is invalid or the saved facts changed. Start a new search." = "记忆搜索游标无效，或已保存的事实已有变更。请重新搜索。";
+"This request reached its 32 memory-search limit. Report the results already available." = "此请求已达 32 次记忆搜索上限。请报告目前已有的结果。";

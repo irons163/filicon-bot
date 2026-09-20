@@ -1,6 +1,27 @@
-# 協作能力核對紀錄（更新至 2026-09-20）
+# 協作能力核對紀錄（更新至 2026-09-21）
 
-## 本輪增量：依當前訊息召回已核准的相關記憶（2026-09-20）
+## 本輪增量：只讀搜尋未注入的已核准記憶（2026-09-21）
+
+先提交上一批為 `7814a77`（`feat: recall relevant approved memories for current agent messages`），提交前 **55 項／5 suites** 回歸通過。本輪核對本機非官方 reconstructed 的 `host/runner/sand-memory.ts`：提示明確允許以 Read／Shell grep `profile.md` 與 `log/` 找未列出的舊事實。本輪提供 **Filicon-native `SearchMemory` 對應**，不是宣稱原版有同名工具，也不向模型開放 App 內部儲存檔案。
+
+- 群組／mailbox 模型可主動搜尋目前帳號、自身私人與已明確核准的帳號共享事實。帳號和代理人由 host 綁定，先隔離再計算匹配、數量與分頁，不能傳入其他 agent/account/path。讀取不要求新的寫入核准，但不擴大既有分享；寫入／忘記仍走原核准流程。原文、scope、tier、日期、作者及 canForget 完整保留，搜尋不去重或修改記錄；讀到別人共享的事實不代表能刪除。
+- `query` 最多 256 Unicode scalars，使用忽略大小寫／重音／全半形的字串子串比對；不是 regex、詞項相關性或語意搜尋。空／省略 query 可瀏覽，只有空白的 query 拒絕。scope 只接受 agent/user/all；每頁最多八筆完整事實，包含 metadata 的 JSON 不超過 8 KiB。過大事實整筆略過並回報本頁省略數，totalMatches 包含它們；游標仍前進，可從 editor 檢視，不截斷成錯誤事實。
+- 續頁只接受 opaque cursor，綁目前 owner／run／session、原查詢／範圍及可見資料 fingerprint。選取範圍新增／刪除／變更即拒絕舊頁；其他帳號、私人 peer 或不在選取範圍的變更不影響游標。cursor 不快取事實。每次原始請求的代理人共用 32 次讀取額度，與四次修改核准額度分離；actor hop 前保留讀取額度，資料 actor 內驗 owner，回傳後重驗 Stop／session lifetime。封存或關閉後拒絕搜尋。
+- 沿用 group/mailbox 的工具 metadata 投影：共用歷史只保留工具名稱／狀態，不加入原始私人搜尋結果。系統描述及結果仍將事實標示為不可信資料，禁止把事實當權限或擅自轉寄；這不代表模型最終文字已被自動隱私審查。三種錯誤補七語言 catalog；未變動 UI 版面。
+
+依 Swift 測試技能使用隔離儲存、固定排序日期／ID、fixture model 與 CustomDump。先以未接線版本重現四項缺少 SearchMemory 的紅測試（`/tmp/filicon-memory-search-red.log`）；新增九項核心／工具測試及一項兩路徑 App 測試，涵蓋七語言、字串／scope 邊界、escaped UTF-8 預算、超大記憶、分頁／重播／失效／身份隔離、唯讀存檔 bytes、關閉／封存、32 次上限與獨立修改核准。App fixture 實際呼叫工具找出未注入的舊事實，並確認另一成員的請求與群組／mailbox 共用歷史沒有收到私人原文。不是 live 模型或跨平台帳號驗收。
+
+驗證結果：
+
+- 聚焦 **95 項／7 suites 通過**，包含記憶／核准／跨對話／App 整合及 LocalTools（`/tmp/filicon-memory-search-regression.log`）。最後將 cursor fixture 改為實際含有 query，確認「新事實不匹配查詢、但同 scope 仍使游標失效」；九項記憶搜尋測試再次全過（`/tmp/filicon-memory-search-scope-final.log`），產品碼未變。
+- 首次完整回歸 134 XCTest 通過，897 Swift Testing 中既有 `stdinCanBeSentAndIsRejectedAfterExit` 一項失敗：預期 14 bytes 卻收到 0 bytes（`/tmp/filicon-memory-search-full.log`）。檢查 `ProcessSupervisor` 發現輸出以非同步 Task 入列，而 didExit 可先移除讀取 handler 並公布結束；這是尚未修正的輸出收尾時序風險，不能以稍後重跑通過宣稱根治。本批沒有修改該元件或放寬測試。
+- 加入選取範圍／共享作者 cursor 測試後，非並行完整重跑 **134 XCTest、898 Swift Testing／102 suites 全數通過**（`/tmp/filicon-memory-search-full-final.log`）。兩項 opt-in live Codex 測試仍未啟用；既有 CoreData NSXPC 診斷仍在。
+- 原生 `Filicon App` **clean build 及 deep strict codesign 通過**，包含兩個 helper 與 XPC（`/tmp/filicon-memory-search-native.log`）。既有 AppIntents metadata／ad-hoc runtime 提示仍在；未啟動 App。
+- 七語言各 **1,545 keys、零缺漏**，localization audit 與 `git diff --check` 通過。沒有 UI 版面變更，也未宣稱全產品逐頁視覺驗收。
+
+本批尚未提交。`AGENT-01` 維持 partial：仍缺 project 記憶、自動抽取、任意 archive／檔案／語意檢索、其他執行入口及完整原版 persona/runtime；本輪未 push、未啟動／重啟使用者 App、未更動真實資料。
+
+## 已提交增量：依當前訊息召回已核准的相關記憶（2026-09-20）
 
 先提交上一批為 `3fc0d91`（`fix: validate connector event filters and enable safe editing`），提交前 **59 項／7 suites** 回歸通過。本輪核對本機非官方 reconstructed 的 `host/runner/sand-memory.ts`：`selectRelevantMemories` 以關鍵字重疊排序，`gatherExtractionMemories` 把相關 archive facts 加入記憶抽取輸入；`turn-memory.ts` 接上抽取，而 `memory-service.ts` 的一般 recall 仍以近期為主。因此這輪是 **Filicon-native 召回增強**，不是宣稱已完整還原原版的自動抽取或語意搜尋。
 
@@ -16,7 +37,7 @@
 - 原生 `Filicon App` **clean build 與 deep strict codesign 通過**，包含兩個 helper 與 XPC（`/tmp/filicon-memory-relevance-native.log`）；既有 AppIntents metadata／ad-hoc 提示仍在。僅建置／驗簽，不啟動使用者 App。
 - 本批無 UI 或字串 catalog 變更；七語言各 **1,542 keys、零缺漏**，`git diff --check` 通過。沒有重新宣稱全 UI 視覺或 live 模型驗收。
 
-本批尚未提交；未 push、未啟動／重啟使用者 App、未更動真實聊天／群組／記憶或呼叫 live 模型。`AGENT-01` 維持 partial：仍缺 project 記憶、自動抽取、任意 archive search、其他執行入口及完整原版 persona/runtime。
+本批已在下一輪提交為 `7814a77`；未 push、未啟動／重啟使用者 App、未更動真實聊天／群組／記憶或呼叫 live 模型。`AGENT-01` 維持 partial：仍缺 project 記憶、自動抽取、任意 archive search、其他執行入口及完整原版 persona/runtime。
 
 ## 已提交增量：通用連接器事件篩選的安全比對與手動編輯（2026-09-20）
 

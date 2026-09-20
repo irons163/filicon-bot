@@ -835,6 +835,57 @@ private actor ManagementWakeProbe {
         }
     }
 
+    @Test(arguments: [false, true])
+    func searchReadsUninjectedFactsOnlyForOwnerWithoutLeakingIntoRoomOrMailbox(manualMailbox: Bool) async throws {
+        let (root, _, _, owner, peer) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let secret = "HISTORIC_PRIVATE_FACT"
+        let service = try AgentService(storeURL: root.appending(path: "agents.json"))
+        for number in 0..<32 {
+            let memory = AgentMemory(accountID: "local", agentID: owner.id,
+                fact: number == 0 ? secret : "GENERAL \(number) " + String(repeating: "x", count: 200),
+                createdAt: Date(timeIntervalSince1970: Double(number)))
+            try await service.applyMemoryChange(.init(operation: .write, memory: memory), lifetime: .init())
+        }
+        let before = try Data(contentsOf: root.appending(path: "agents.json"))
+        let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+        await model.reloadWorkspaceData()
+        #expect(await model.createGroup(name: "Search room", summary: "", memberIDs: [owner.id, peer.id]))
+        let group = try #require(model.groups.first { $0.name == "Search room" })
+        let probe = ManagementWakeProbe()
+        await model.registry.register(ManagingAgentProvider { request, execute in
+            await probe.record(request)
+            #expect(request.tools.contains { $0.name == "SearchMemory" })
+            #expect(!request.messages.map(\.text).joined().contains(secret)) // Omitted from recall AND earlier tool metadata.
+            let result = try await execute(.init(id: "search", name: "SearchMemory",
+                argumentsJSON: JSONEncoder().encode(["query": secret])))
+            #expect(!result.isError)
+            let json = try #require(JSONSerialization.jsonObject(with: Data(result.wireText.utf8)) as? [String: Any])
+            let facts = try #require(json["facts"] as? [[String: Any]])
+            let ownsMemory = request.messages[0].text.contains(owner.id.uuidString)
+            expectNoDifference(facts.compactMap { $0["fact"] as? String }, ownsMemory ? [secret] : [])
+            #expect(result.wireText.utf8.count <= 8_192)
+            return "PASS"
+        })
+        if manualMailbox {
+            #expect(await model.sendAgentMessage(senderID: peer.id, recipientID: owner.id, text: "Find older information"))
+            try await waitForMailbox(model)
+            #expect(await model.sendAgentMessage(senderID: owner.id, recipientID: peer.id, text: "Find older information"))
+            try await waitForMailbox(model)
+        } else {
+            await model.sendGroupMessage(groupID: group.id, text: "Find older information")
+        }
+        let requests = await probe.requests
+        #expect(requests.contains { $0.messages[0].text.contains(owner.id.uuidString) })
+        #expect(requests.contains { $0.messages[0].text.contains(peer.id.uuidString) })
+        #expect(model.pendingAutoReviewApprovals.isEmpty && model.runningGroups.isEmpty && model.runningAgentMessageScopes.isEmpty)
+        let messages = model.groupMessages[group.id] ?? []
+        #expect(!String(decoding: try JSONEncoder().encode(messages), as: UTF8.self).contains(secret))
+        #expect(!String(decoding: try JSONEncoder().encode(model.agentMessages), as: UTF8.self).contains(secret))
+        let after = try Data(contentsOf: root.appending(path: "agents.json"))
+        expectNoDifference(after, before)
+    }
+
     @Test func creationAndSubsequentDelegationRequireSeparateApproval() async throws {
         let (root, model, groupID, sender, _) = try await fixture()
         defer { try? FileManager.default.removeItem(at: root) }
