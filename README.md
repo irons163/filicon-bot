@@ -364,6 +364,32 @@ explain these limits. This does not add Teams model routine proposals, a user
 authentication control, account login, Graph polling/subscriptions or a public
 webhook, and has not been validated against a live Teams account.
 
+All native webhook providers share the same admission boundary. After secret
+lookup, the listener rechecks the route revision and listener generation, then
+validates timestamp freshness where the provider supplies it. Disabled, removed,
+replaced or disable/re-enabled routes cannot admit an older waiting request;
+stopped/rebound listeners also reject buffered requests from their old connections.
+Failed route saves leave the previous runtime definition intact.
+
+A replay nonce is persisted before queue handoff and remains reserved while the
+handoff is pending. A confirmed full-queue rejection returns HTTP 503 and releases
+the nonce for a still-valid signed retry. If releasing that marker cannot be
+persisted, the request instead returns 500 and retains bounded replay protection.
+An accepted event keeps its marker even if a later state/audit write fails; its
+in-memory replay window is refreshed at handoff completion. A failed initial
+reservation never calls the queue. Stop/revocation after handoff does not retract
+already admitted work.
+
+Queued event identity includes both connector ID and external event ID, so two
+connectors with the same delivery ID cannot suppress one another. A verified,
+re-signed copy already waiting in the same queue is acknowledged without a second
+entry, even at capacity. Signature, rate, payload and replay checks still apply.
+Acknowledgement means queue admission, **not** routine completion. The queue is
+in memory: this is not crash-safe delivery, permanent deduplication or exactly-once
+execution. A crash between reservation and handoff remains an uncertain outcome;
+the retained bounded marker is not automatically released. Tests use isolated
+queues and secrets, not live external accounts.
+
 In group and mailbox turns, agents can propose remembering or forgetting a short
 fact using `update_state(target:"memory", action:"write"|"forget", fact:...)`.
 Each change needs explicit approval. Omitted scope (or `scope:"agent"`) remains

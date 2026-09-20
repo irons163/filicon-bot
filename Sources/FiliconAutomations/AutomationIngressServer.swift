@@ -23,6 +23,8 @@ struct AutomationHTTPResponse: Sendable {
 }
 
 public actor AutomationIngressController {
+    /// True means retained (including an already queued copy). Return false only
+    /// when the event was not retained or delivered: the sender may then retry.
     public typealias EventSink = @Sendable (AutomationEvent) async -> Bool
     public static let maximumAuditEntries = 1_000
 
@@ -38,6 +40,9 @@ public actor AutomationIngressController {
     private var runtime = AutomationIngressStatus()
     private var activeRequests = 0
     private var rateBuckets: [UUID: [Date]] = [:]
+    private var routeRevisions: [UUID: UInt64] = [:]
+    private var listenerGeneration: UInt64 = 0
+    private var pendingNonces: Set<String> = []
     private let queue = DispatchQueue(label: "com.filicon.automations.ingress", qos: .utility)
 
     public init(stateURL: URL, auditURL: URL, secrets: any AutomationIngressSecretProvider,
@@ -70,20 +75,29 @@ public actor AutomationIngressController {
     public func saveRoute(_ proposed: AutomationIngressRoute) throws -> AutomationIngressRoute {
         guard !proposed.name.isEmpty, !proposed.secretReference.isEmpty,
               proposed.secretReference.count <= 300 else { throw AutomationIngressError.invalidRoute }
+        let previous = persistent.routes
         if let index = persistent.routes.firstIndex(where: { $0.id == proposed.id }) { persistent.routes[index] = proposed }
         else { persistent.routes.append(proposed) }
-        try saveState(); return proposed
+        do { try saveState() }
+        catch { persistent.routes = previous; throw error }
+        routeRevisions[proposed.id, default: 0] &+= 1
+        return proposed
     }
 
     public func removeRoute(id: UUID) throws {
+        let previous = persistent.routes
         persistent.routes.removeAll { $0.id == id }
+        do { try saveState() }
+        catch { persistent.routes = previous; throw error }
+        routeRevisions[id, default: 0] &+= 1
         rateBuckets[id] = nil
-        try saveState()
     }
 
     public func start(bindMode: AutomationIngressBindMode = .loopback, port: UInt16 = 0,
                       localNetworkOptIn: Bool = false) throws {
         if bindMode == .localNetwork, !localNetworkOptIn { throw AutomationIngressError.localNetworkRequiresOptIn }
+        listenerGeneration &+= 1
+        let generation = listenerGeneration
         listener?.cancel(); listener = nil
         runtime = .init(state: .starting, bindMode: bindMode)
         let parameters = NWParameters.tcp
@@ -93,12 +107,12 @@ public actor AutomationIngressController {
         do {
             let newListener = try NWListener(using: parameters)
             newListener.stateUpdateHandler = { [weak self, weak newListener] state in
-                Task { await self?.listenerChanged(state, port: newListener?.port?.rawValue) }
+                Task { await self?.listenerChanged(state, port: newListener?.port?.rawValue, generation: generation) }
             }
             newListener.newConnectionHandler = { [weak self] connection in
                 guard let self else { connection.cancel(); return }
                 ConnectionReader(connection: connection, limits: limits) { request in
-                    await self.process(request)
+                    await self.process(request, expectedGeneration: generation)
                 }.start(on: self.queue)
             }
             listener = newListener
@@ -112,6 +126,7 @@ public actor AutomationIngressController {
     }
 
     public func stop() throws {
+        listenerGeneration &+= 1
         listener?.cancel(); listener = nil
         runtime = .init(state: .stopped, bindMode: persistent.bindMode)
         persistent.shouldRun = false
@@ -137,7 +152,8 @@ public actor AutomationIngressController {
 
     private static var localHostName: String { ProcessInfo.processInfo.hostName }
 
-    private func listenerChanged(_ state: NWListener.State, port: UInt16?) {
+    private func listenerChanged(_ state: NWListener.State, port: UInt16?, generation: UInt64) {
+        guard generation == listenerGeneration else { return }
         switch state {
         case .ready: runtime = .init(state: .running, bindMode: persistent.bindMode, port: port)
         case .failed(let error): runtime = .init(state: .failed, bindMode: persistent.bindMode, error: error.localizedDescription); listener = nil
@@ -146,12 +162,16 @@ public actor AutomationIngressController {
         }
     }
 
-    func process(_ request: AutomationHTTPRequest) async -> AutomationHTTPResponse {
+    func process(_ request: AutomationHTTPRequest, expectedGeneration: UInt64? = nil) async -> AutomationHTTPResponse {
+        // Also reject buffered requests from a connection accepted by an old listener.
+        if let expectedGeneration, expectedGeneration != listenerGeneration { return response(for: .invalidRoute) }
         guard activeRequests < limits.maximumConcurrentRequests else { return response(for: .busy) }
         activeRequests += 1; defer { activeRequests -= 1 }
         let now = self.now()
+        let generation = listenerGeneration
         let routeID = Self.routeID(from: request.path)
         let route = routeID.flatMap { id in persistent.routes.first { $0.id == id && $0.enabled } }
+        let revision = routeID.map { routeRevisions[$0, default: 0] }
         do {
             guard request.method == "POST" else { throw AutomationIngressError.unsupportedMethod }
             guard request.headers["transfer-encoding"] == nil else { throw AutomationIngressError.invalidRequest }
@@ -163,19 +183,36 @@ public actor AutomationIngressController {
             let secret: Data
             do { secret = try await secrets.secret(for: route.secretReference) }
             catch { throw AutomationIngressError.missingSecret }
+            // Keychain may suspend. Revocation, replacement, or disable/re-enable must
+            // invalidate the old admission even if the route's values look identical again.
+            guard generation == listenerGeneration, revision == routeRevisions[route.id, default: 0],
+                  persistent.routes.contains(route), route.enabled else { throw AutomationIngressError.invalidRoute }
             guard !secret.isEmpty else { throw AutomationIngressError.missingSecret }
+            let admissionTime = self.now()
             let auth = try AutomationIngressSignatureVerifier.verify(provider: route.provider, request: request,
-                                                                      secret: secret, now: now,
+                                                                      secret: secret, now: admissionTime,
                                                                       replayWindow: limits.replayWindow)
             let nonceKey = "\(route.id.uuidString.lowercased()):\(auth.nonce)"
-            pruneNonces(now: now)
+            pruneNonces(now: admissionTime)
             guard persistent.usedNonces[nonceKey] == nil else { throw AutomationIngressError.replay }
             let event = try AutomationIngressEventNormalizer.event(route: route, request: request,
-                                                                    nonce: auth.nonce, now: now)
-            persistent.usedNonces[nonceKey] = now
-            try saveState()
+                                                                    nonce: auth.nonce, now: admissionTime)
+            persistent.usedNonces[nonceKey] = admissionTime
+            do { try saveState() }
+            catch { persistent.usedNonces[nonceKey] = nil; throw error }
+            pendingNonces.insert(nonceKey)
+            defer { pendingNonces.remove(nonceKey) }
             let queued = await sink(event)
-            guard queued else { throw AutomationIngressError.busy }
+            if !queued {
+                // Only a confirmed rejection is safe to release. Unknown outcomes or
+                // failures after acceptance must retain their durable replay marker.
+                persistent.usedNonces[nonceKey] = nil
+                do { try saveState() }
+                catch { persistent.usedNonces[nonceKey] = admissionTime; throw error }
+                throw AutomationIngressError.busy
+            }
+            persistent.usedNonces[nonceKey] = max(admissionTime, self.now())
+            try saveState()
             try record(.init(routeID: route.id, provider: route.provider, receivedAt: now,
                              disposition: .accepted, reason: "queued", externalEventID: event.externalEventID))
             return route.provider == .linear
@@ -199,7 +236,9 @@ public actor AutomationIngressController {
         bucket.append(now); rateBuckets[id] = bucket; return true
     }
     private func pruneNonces(now: Date) {
-        persistent.usedNonces = persistent.usedNonces.filter { now.timeIntervalSince($0.value) <= limits.replayWindow }
+        persistent.usedNonces = persistent.usedNonces.filter {
+            pendingNonces.contains($0.key) || now.timeIntervalSince($0.value) <= limits.replayWindow
+        }
     }
     private func record(_ entry: AutomationIngressAuditEntry) throws {
         let previous = auditEntries

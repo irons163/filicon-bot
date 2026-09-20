@@ -2,6 +2,7 @@ import Foundation
 
 public actor AutomationEventBatcher {
     public typealias Sink = @Sendable (_ automationID: UUID, _ events: [AutomationEvent]) async -> Void
+    enum EnqueueResult: Sendable { case queued, duplicate, full }
 
     private let debounce: Duration
     private let sink: Sink
@@ -21,9 +22,15 @@ public actor AutomationEventBatcher {
 
     @discardableResult
     public func enqueue(_ event: AutomationEvent, automationID: UUID) -> Bool {
+        enqueueResult(event, automationID: automationID) == .queued
+    }
+
+    func enqueueResult(_ event: AutomationEvent, automationID: UUID) -> EnqueueResult {
         var values = pending[automationID] ?? []
-        guard !values.contains(where: { $0.externalEventID == event.externalEventID }) else { return false }
-        guard values.count < AutomationService.maximumQueuedEvents else { return false }
+        guard !values.contains(where: {
+            $0.connectorID == event.connectorID && $0.externalEventID == event.externalEventID
+        }) else { return .duplicate }
+        guard values.count < AutomationService.maximumQueuedEvents else { return .full }
         values.append(event)
         pending[automationID] = values
         timers[automationID]?.task.cancel()
@@ -34,7 +41,7 @@ public actor AutomationEventBatcher {
             await self?.timerFired(automationID: automationID, generation: generation)
         }
         timers[automationID] = Timer(generation: generation, task: task)
-        return true
+        return .queued
     }
 
     public func flush(automationID: UUID) async {

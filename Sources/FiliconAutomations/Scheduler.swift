@@ -105,7 +105,9 @@ public actor AutomationTriggerHub {
 
     @discardableResult
     public func ingest(_ event: AutomationEvent) async -> Bool {
-        await batcher.enqueue(event, automationID: Self.queueIdentifier)
+        // A re-signed delivery already waiting in this connector's queue is admitted,
+        // not a capacity failure. Keep the batcher's public "newly queued" contract.
+        await batcher.enqueueResult(event, automationID: Self.queueIdentifier) != .full
     }
 
     public func queuedCount() async -> Int {

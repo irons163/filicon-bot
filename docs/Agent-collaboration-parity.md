@@ -1,6 +1,23 @@
 # 協作能力核對紀錄（更新至 2026-09-20）
 
-## 本輪增量：Teams 傳出事件安全判定與去重（2026-09-20）
+## 本輪增量：共用事件入口的安全重試與接收生命週期（2026-09-20）
+
+上一批 Teams 入口修正已提交 `dbd8505`，提交前再次通過 156 項聚焦回歸（`/tmp/filicon-teams-events-precommit.log`）。本批檢查共用 ingress → TriggerHub → EventBatcher 接線，補上入列拒絕、停用／移除路由及 listener 重建時的處理，不擴充外部帳號權限或 Teams 雲端功能。
+
+- sink 明確拒收時，原先已寫入的 nonce 會被安全釋放，HTTP 503 後仍可在簽章有效期間重試；初次 nonce 儲存失敗不呼叫 sink，並回復記憶體。若釋放 nonce 寫入失敗，保留標記並回 500，維持有界防重放。已接受事件即使後續 state／audit 寫入失敗也不釋放，不能誤認為未交付再跑一次。
+- 入列交接中的 nonce 不因時間窗到期而被其他請求清掉；接受後從完成時間更新 replay window。保留入列前落盤的保守邊界，但佇列仍在記憶體，崩潰在保留標記與交接之間是未知結果，不自動重播，也不保證 crash-safe／exactly-once／永久去重。
+- 金鑰查詢返回後，以當下時間驗證適用的簽章時間戳，並重驗 route revision 和 listener generation。停用、移除、換 provider／secret reference，甚至停用再啟用／移除再加入相同定義，都使舊待處理請求失效；其他路由的修改不受影響。route 儲存失敗回復舊定義。Stop／rebind 也拒收舊 connection 尚未交付的請求、忽略舊 listener callbacks；已開始交接的工作不宣稱撤回。
+- 佇列身份採 connector ID＋external event ID，不再讓不同連線同名事件互相擋掉。已驗證且重新簽署、同連線同事件的待處理副本回成功，不再混同容量不足；滿 500 筆時副本仍可確認但不增加筆數。batcher 原有公開 enqueue 回傳「是否新增」的契約保留，由 hub 區分 duplicate 與 full；既有簽章、防重放、流量、payload 限制及 25 筆分批不變。成功回應僅表示入列，不代表排程或模型已完成。
+
+依 Swift 測試技能使用固定時間、精確 fixture IDs、隔離目錄、受控 secret／sink 與 continuation handshake，沒有依靠 sleep 猜測競態。新增 `IngressAdmissionTests` 13 項／21 個參數展開案例，先重現原有 39 個斷言失敗（`/tmp/filicon-ingress-admission-red.log`）。包含初次保留／釋放／audit 儲存失敗、重開、防重播、延遲金鑰與 timestamp 過期、跨時間窗的 pending nonce、八種路由／listener 變更、無關路由、舊 connection、Stop 在 handoff 後的界線，以及真實 hub 滿佇列重試。
+
+原有增量建置產物曾在測試 helper 發生 SIGILL／SIGBUS，堆疊位於變更後的 actor 介面；未以略過測試處理。新建隔離 scratch 目錄 `/tmp/filicon-ingress-admission-build.lShcvK` 完整重建後，28 項／3 suites 聚焦回歸通過（`/tmp/filicon-ingress-admission-clean.log`）；其後包含七種平台與混合事件的並行回歸 **87 項／10 suites 通過**（`/tmp/filicon-ingress-admission-regression.log`），未再出現崩潰。此結果支持舊增量產物相關，不宣稱已根治 SwiftPM 快取問題，也未清除使用者既有建置目錄。
+
+完整 `swift test --no-parallel` 為 **134 XCTest、835 Swift Testing／95 suites 通過**（`/tmp/filicon-ingress-admission-full.log`）；兩項 opt-in live Codex 測試未執行。原生 `Filicon App` Debug build 與 `codesign --verify --deep --strict` 通過（`/tmp/filicon-ingress-admission-native.log`），七語言各 1,490 keys、零缺漏，`git diff --check` 通過。仍有既有 normalizer 的 optional-to-Any 編譯警告、CoreData XPC 診斷與原生 AppIntents／ad-hoc 提示；不宣稱修復所有並行時序問題。本批未變更 UI，未宣稱全產品逐頁語言或 live 平台驗收。
+
+本批尚未提交；未 push、未啟動或重啟使用者 App、未更動真實群組／聊天／資料／排程／連線。`AUTO-03` 維持 partial：Teams 可信使用者／主文判定／Graph 接線與同步回覆、GitHub checks 彙整、Slack 身分／名稱映射等仍未完整還原。
+
+## 已提交增量：Teams 傳出事件安全判定與去重（2026-09-20）
 
 上一批 Linear 週期提案已提交 `054d8d3`。此輪核對 reconstructed 的 `sand-state-tool.ts`（Graph team IDs）、`automation-trigger.ts`（登入條件需要 platformMatched；未設文字篩選時排除 rootMessageId 回覆）、`sand-automation-cloud-trigger.ts` 及 `sand-automation-fire-consumer.ts`（雲端已分類的通知與有界欄位）。現有 macOS HMAC 傳出 webhook 不能冒充該雲端服務。
 
@@ -18,7 +35,7 @@
 
 驗證：156 項 Swift Testing／13 suites 聚焦回歸通過（`/tmp/filicon-teams-events-regression.log`）；`swift test --no-parallel` 完整回歸為 **134 XCTest、822 Swift Testing／94 suites 通過**（`/tmp/filicon-teams-events-full.log`），兩項 opt-in live Codex 測試未執行。原生 `Filicon App` Debug build（`/tmp/filicon-teams-events-native.log`）與 `codesign --verify --deep --strict` 通過；七語言各 1,490 keys、零缺漏，`git diff --check` 通過。新元件的並行警告已消除；仍有既有 CoreData XPC 診斷及原生 AppIntents metadata／ad-hoc runtime 提示，未宣稱修好先前並行測試時序問題。此為隔離 fixture／原生建置驗證，不是 live Teams 或 release 公證驗收。
 
-本批尚未提交；未 push、未啟動或重啟使用者 App、未改實際聊天／群組／資料／排程／連線。`AUTO-03` 維持 partial，仍缺 Teams 身分映射／主文判定／Graph subscription／模型提案與 outgoing webhook 同步回覆的帳號端到端驗收，以及既有 GitHub checks 彙整、Slack 名稱／人類身分映射等差異。
+本批已在下一輪提交為 `dbd8505`；未 push、未啟動或重啟使用者 App、未改實際聊天／群組／資料／排程／連線。`AUTO-03` 維持 partial，仍缺 Teams 身分映射／主文判定／Graph subscription／模型提案與 outgoing webhook 同步回覆的帳號端到端驗收，以及既有 GitHub checks 彙整、Slack 名稱／人類身分映射等差異。
 
 
 ## 已提交增量：Linear 週期完成的自身排程提案與完整核准（2026-09-20）
