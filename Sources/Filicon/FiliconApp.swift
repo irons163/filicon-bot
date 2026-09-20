@@ -1933,7 +1933,7 @@ struct RoutineEditDraft: Equatable {
     var name: String
     var prompt: String
     var listeners: [AutomationListenerDraft]
-    static let editableKinds: [AutomationListenerKind] = [.schedule, .linear, .sentry, .pagerDuty]
+    static let editableKinds: [AutomationListenerKind] = [.schedule, .github, .slack, .linear, .sentry, .pagerDuty]
 
     init(_ automation: Automation) {
         original = automation; name = automation.name; prompt = automation.prompt
@@ -1981,6 +1981,18 @@ struct RoutineEditDraft: Equatable {
         switch trigger {
         case .cron(let expression, let zone):
             draft.kind = .schedule; draft.primary = expression; draft.secondary = zone ?? ""
+        case .platform(.github(let value)):
+            draft.kind = .github; draft.primary = value.repo
+            draft.secondary = value.events.sorted().joined(separator: ", ")
+            draft.tertiary = value.ciBranch ?? ""; draft.quaternary = value.userAllowlist.joined(separator: ", ")
+        case .platform(.slack(let value)):
+            draft.kind = .slack; draft.primary = value.channel
+            switch value.match {
+            case .mention: draft.secondary = "mention"
+            case .message: draft.secondary = "message"
+            case .keyword(let keyword): draft.secondary = "keyword"; draft.tertiary = keyword
+            case .reaction(let emoji, _): draft.secondary = "reaction"; draft.slackEmoji = emoji.joined(separator: ", ")
+            }
         case .platform(.linear(let value)):
             draft.kind = .linear; draft.primary = value.event
             draft.secondary = value.primaryIDs.sorted().joined(separator: ", ")
@@ -2150,6 +2162,34 @@ enum AutomationListenerEvent: String, CaseIterable, Identifiable {
     }
 }
 
+enum GitHubRoutineEvent: String, CaseIterable, Identifiable {
+    case prOpened = "pr-opened", prPushed = "pr-pushed", prMerged = "pr-merged"
+    case reviewRequested = "review-requested", reviewApproved = "review-approved"
+    case reviewChangesRequested = "review-changes-requested", reviewCommented = "review-commented"
+    case prComment = "pr-comment", inlineReviewComment = "inline-review-comment"
+    case reviewThreadResolved = "review-thread-resolved", reviewThreadUnresolved = "review-thread-unresolved"
+    case issueAssigned = "issue-assigned", ciPassed = "ci-passed", ciFailed = "ci-failed"
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .prOpened: "Pull request opened"
+        case .prPushed: "Pull request updated"
+        case .prMerged: "Pull request merged"
+        case .reviewRequested: "Review requested"
+        case .reviewApproved: "Review approved"
+        case .reviewChangesRequested: "Review changes requested"
+        case .reviewCommented: "Review submitted with comments"
+        case .prComment: "Pull request comment"
+        case .inlineReviewComment: "Inline review comment"
+        case .reviewThreadResolved: "Review thread resolved"
+        case .reviewThreadUnresolved: "Review thread reopened"
+        case .issueAssigned: "GitHub issue assigned"
+        case .ciPassed: "CI passed"
+        case .ciFailed: "CI failed"
+        }
+    }
+}
+
 struct AutomationListenerDraft: Identifiable, Equatable {
     var id = UUID()
     var kind: AutomationListenerKind = .schedule
@@ -2160,6 +2200,19 @@ struct AutomationListenerDraft: Identifiable, Equatable {
     var filtersJSON = "{}"
     var statusIDs = ""
     var cycleIDs = ""
+    var slackEmoji = ""
+
+    // Binding's dynamic-member lookup reaches this value subscript. Keep raw
+    // unknown tokens so a checkbox cannot silently repair a malformed draft.
+    subscript(gitHubEvent event: GitHubRoutineEvent) -> Bool {
+        get { secondary.split(separator: ",").contains { $0.trimmingCharacters(in: .whitespacesAndNewlines) == event.rawValue } }
+        set {
+            var tokens = secondary.isEmpty ? [] : secondary.components(separatedBy: ",")
+            tokens.removeAll { $0.trimmingCharacters(in: .whitespacesAndNewlines) == event.rawValue }
+            if newValue { tokens.append(event.rawValue) }
+            secondary = tokens.joined(separator: ",")
+        }
+    }
 
     static func defaults(for kind: AutomationListenerKind, id: UUID) -> Self {
         var value = Self(id: id, kind: kind)
@@ -2175,18 +2228,18 @@ struct AutomationListenerDraft: Identifiable, Equatable {
     }
 
     var validationMessage: String? {
-        guard !kind.events.isEmpty else { return nil }
+        guard !kind.events.isEmpty || kind == .github || kind == .slack else { return nil }
         do { _ = try trigger; return nil }
         catch { return error.localizedDescription }
     }
 
     // Validate the raw list before deduplication. Empty comma segments must not
     // quietly erase a restriction, and duplicate IDs still count toward 50.
-    private func ids(_ text: String, error: AutomationStateChangeError,
+    private func ids(_ text: String, limit: Int = 50, error: AutomationStateChangeError,
                      normalize: (String) -> String?) throws -> Set<String> {
         if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return [] }
         let parts = text.split(separator: ",", omittingEmptySubsequences: false)
-        guard parts.count <= 50 else { throw error }
+        guard parts.count <= limit else { throw error }
         return try Set(parts.map { part in
             let token = part.trimmingCharacters(in: .whitespacesAndNewlines)
             guard let value = normalize(token) else { throw error }
@@ -2199,6 +2252,54 @@ struct AutomationListenerDraft: Identifiable, Equatable {
             guard token.count == 36, let id = UUID(uuidString: token) else { return nil }
             return id.uuidString.lowercased()
         }
+    }
+
+    private func githubTrigger() throws -> AutomationTrigger {
+        let error = AutomationStateChangeError.invalidGitHubTrigger
+        let events = try ids(secondary, limit: 14, error: error) { GitHubAutomationTrigger.knownEvents.contains($0) ? $0 : nil }
+        let users = try ids(quaternary, error: error) { token in
+            let login = token.drop(while: { $0 == "@" }).lowercased()
+            return login.isEmpty ? nil : login
+        }.sorted()
+        let repo = primary.trimmingCharacters(in: .whitespacesAndNewlines)
+        let branch = tertiary.trimmingCharacters(in: .whitespacesAndNewlines)
+        let value: GitHubAutomationTrigger
+        do { value = try .init(repo: repo, events: events.sorted(), ciBranch: branch.isEmpty ? nil : branch, userAllowlist: users) }
+        catch { throw AutomationStateChangeError.invalidGitHubTrigger }
+        guard value.events == events, value.userAllowlist == users,
+              value.ciBranch == (branch.isEmpty ? nil : branch) else { throw error }
+        try value.validateForAgentWrite()
+        return .platform(.github(value))
+    }
+
+    private func slackTrigger() throws -> AutomationTrigger {
+        let error = AutomationStateChangeError.invalidSlackTrigger
+        let channel = primary.trimmingCharacters(in: .whitespacesAndNewlines)
+        let keyword = tertiary.trimmingCharacters(in: .whitespacesAndNewlines)
+        let emojiText = slackEmoji.trimmingCharacters(in: .whitespacesAndNewlines)
+        let match: SlackMatch
+        switch secondary {
+        case "mention", "message":
+            guard keyword.isEmpty, emojiText.isEmpty else { throw error }
+            match = secondary == "mention" ? .mention : .message
+        case "keyword":
+            guard emojiText.isEmpty else { throw error }
+            match = .keyword(keyword)
+        case "reaction":
+            guard keyword.isEmpty else { throw error }
+            let emoji = try ids(emojiText, limit: 8, error: error) { token in
+                let bare = token.trimmingCharacters(in: CharacterSet(charactersIn: ":")).lowercased()
+                guard token.count <= 80, SlackAutomationTrigger.normalizeEmoji(token) == bare else { return nil }
+                return bare
+            }
+            match = .reaction(emoji: emoji.sorted(), bySelf: false)
+        default: throw error
+        }
+        let value: SlackAutomationTrigger
+        do { value = try .init(channel: channel, match: match) } catch { throw AutomationStateChangeError.invalidSlackTrigger }
+        guard value.channel == channel, value.match == match else { throw error }
+        try value.validateForAgentWrite()
+        return .platform(.slack(value))
     }
 
     var trigger: AutomationTrigger {
@@ -2214,20 +2315,9 @@ struct AutomationListenerDraft: Identifiable, Equatable {
                 }
                 return .event(.init(connectorID: connectorID, kind: secondary, filtersJSON: data))
             case .slack:
-                let match: SlackMatch = switch secondary.lowercased() {
-                case "mention": .mention
-                case "keyword": .keyword(tertiary)
-                case "reaction": .reaction(emoji: tertiary.split(separator: ",").map(String.init), bySelf: false)
-                default: .message
-                }
-                return .platform(.slack(try SlackAutomationTrigger(channel: primary, match: match)))
+                return try slackTrigger()
             case .github:
-                return .platform(.github(try GitHubAutomationTrigger(
-                    repo: primary,
-                    events: secondary.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) },
-                    ciBranch: tertiary.isEmpty ? nil : tertiary,
-                    userAllowlist: quaternary.split(separator: ",").map(String.init)
-                )))
+                return try githubTrigger()
             case .teams:
                 return .platform(.microsoftTeams(try TeamsAutomationTrigger(
                     tenantID: primary,
@@ -2307,16 +2397,30 @@ struct AutomationListenerEditor: View {
             TextField(l10n("Event kind"), text: $listener.secondary)
             TextField(l10n("JSON filters"), text: $listener.filtersJSON, axis: .vertical).font(.system(.body, design: .monospaced))
         case .slack:
-            TextField(l10n("Channel name or *"), text: $listener.primary)
-            Picker(l10n("Match"), selection: $listener.secondary) {
-                Text(l10n("Message")).tag("message"); Text(l10n("Mention")).tag("mention"); Text(l10n("Keyword")).tag("keyword"); Text(l10n("Reaction")).tag("reaction")
+            idField("Slack conversation ID or *", text: $listener.primary)
+            Picker(FiliconLocalization.string("Match", language: uiLocale.identifier), selection: $listener.secondary) {
+                ForEach(["message", "mention", "keyword", "reaction"], id: \.self) { match in
+                    Text(FiliconLocalization.string(match.capitalized, language: uiLocale.identifier)).tag(match)
+                }
             }
-            if ["keyword", "reaction"].contains(listener.secondary) { TextField(listener.secondary == "keyword" ? l10n("Keyword") : l10n("Emoji names, comma-separated"), text: $listener.tertiary) }
+            if listener.secondary == "keyword" || !listener.tertiary.isEmpty { idField("Keyword", text: $listener.tertiary) }
+            if listener.secondary == "reaction" || !listener.slackEmoji.isEmpty { idField("Emoji names, comma-separated", text: $listener.slackEmoji) }
+            notice(Self.slackNotice)
+            notice(Self.ingressNotice)
         case .github:
-            TextField(l10n("owner/repository"), text: $listener.primary)
-            TextField(l10n("Events, comma-separated"), text: $listener.secondary)
-            TextField(l10n("CI branch (required for CI events)"), text: $listener.tertiary)
-            TextField(l10n("Allowed users, comma-separated (optional)"), text: $listener.quaternary)
+            idField("owner/repository", text: $listener.primary)
+            LazyVGrid(columns: [GridItem(.flexible(), alignment: .leading), GridItem(.flexible(), alignment: .leading)], alignment: .leading, spacing: 8) {
+                ForEach(GitHubRoutineEvent.allCases) { event in
+                    Toggle(isOn: $listener[gitHubEvent: event]) {
+                        Text(FiliconLocalization.string(event.label, language: uiLocale.identifier))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }.toggleStyle(.checkbox)
+                }
+            }
+            idField("CI branch (required for CI events)", text: $listener.tertiary)
+            idField("Allowed users, comma-separated (optional)", text: $listener.quaternary)
+            notice(Self.githubNotice)
+            notice(Self.ingressNotice)
         case .teams:
             TextField(l10n("Tenant ID"), text: $listener.primary)
             TextField(l10n("Team IDs, comma-separated"), text: $listener.secondary)
@@ -2352,6 +2456,8 @@ struct AutomationListenerEditor: View {
     static let filterNotice = "Optional filters: enter up to 50 IDs per field, separated by commas. Empty means any. Use IDs, not names or wildcards."
     static let ingressNotice = "Requires an existing verified event connection. Creating a routine does not connect an account or start a webhook. Future matching events may incur model costs."
     static let linearNotice = "Status filters apply only to status changes. Cycle completion uses team/cycle IDs, not projects, and requires an explicit completion event, not just an elapsed date. Clear incompatible filters when switching events."
+    static let slackNotice = "Use a conversation ID (C/G/D...), not a channel or user name. * covers connected conversations only. Mention means the connected app or bot. Keyword: up to 120 characters. Reactions: up to 8 emoji names; empty means any. Self-only matching is unavailable. Clear incompatible filters when switching matches."
+    static let githubNotice = "Select at least one event. CI requires one exact branch and ignores allowed users; each completed push workflow is separate, not an all-checks summary. Optional users: up to 50 logins, comma-separated. They filter PR owners, review actors and PR owners together, or the actor assigning an issue (not the assignee). Empty means any."
 
     private func idField(_ key: String, text: Binding<String>) -> some View {
         let label = FiliconLocalization.string(key, language: uiLocale.identifier)

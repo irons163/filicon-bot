@@ -220,9 +220,22 @@ brand names. They do not install accounts/webhooks or migrate existing routines.
 Authenticated fixture matching, isolated persistence/OR tests and native rendering
 are verified, not live external-account end-to-end behavior.
 
+GitHub now uses checkboxes for its 14 supported events, with a concrete
+`owner/repository`, exact CI branch and optional user logins. Slack uses
+conversation IDs (`C/G/D...`) or `*`, with separate keyword and emoji fields.
+Both creation and editing reject unknown cases, truncation, empty comma segments,
+missing CI branches and incompatible retained Slack filters. Limits apply before
+deduplication (14 events, 50 logins, eight emoji names); no invalid restriction is
+silently discarded. Slack channel/user names and self-only reactions are not
+supported. A Slack app mention is not a mention of the signed-in human. GitHub
+CI observes each completed push workflow separately, not aggregate checks; its
+user filter is ignored for CI. Other GitHub events filter PR owners, both review
+actors and PR owners, or the actor assigning an issue, not the assignee. These
+controls disclose their existing-ingress requirements and do not connect accounts.
+
 In **Automations → Edit**, change a saved routine's name and instruction, plus
-cron/interval, canonical Linear/Sentry/PagerDuty conditions or a flat OR of up to
-eight of those conditions. Other platforms, legacy and unknown formats expose
+cron/interval, supported GitHub/Slack/Linear/Sentry/PagerDuty conditions or a flat
+OR of up to eight of those conditions. Other platforms, legacy and unknown formats expose
 their original trigger as read-only; name/instruction edits preserve it without
 migration. Untouched members keep their original IDs and time-zone representation.
 Saving preserves the owner, enabled state, spend protection, history and in-flight
@@ -232,7 +245,9 @@ time condition. Already queued events may match new conditions and incur model
 costs. A stale definition, deleted routine, cancelled editor, archived owner or
 account change blocks an uncommitted save. Failed storage keeps the draft and
 the last persisted definition. These controls have seven-language coverage;
-GitHub/Slack/Teams/generic trigger editing and live platform parity remain open.
+Teams/generic condition editing, identity/name lookup, aggregate GitHub checks
+and live platform parity remain open. Existing Slack name-based or self-only
+conditions remain read-only, not silently changed into unrestricted conditions.
 
 Linear ingress: verified Issue/create
 webhooks expose `issueCreated`; Issue/update exposes `statusChanged` only when

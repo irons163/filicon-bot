@@ -70,6 +70,8 @@ extension AutomationTrigger {
             } else {
                 _ = try AutomationSchedule.compile(expression, defaultTimeZone: zoneID.flatMap(TimeZone.init(identifier:)))
             }
+        case .platform(.github(let value)): try value.validateForAgentWrite()
+        case .platform(.slack(let value)): try value.validateForAgentWrite()
         case .platform(.linear(let value)): try value.validateForAgentWrite()
         case .platform(.sentry(let value)): try value.validateForSentryAgentWrite()
         case .platform(.pagerDuty(let value)): try value.validateForPagerDutyAgentWrite()

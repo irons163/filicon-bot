@@ -1,6 +1,25 @@
 # 協作能力核對紀錄（更新至 2026-09-20）
 
-## 本輪增量：既有排程的手動編輯與儲存生命週期（2026-09-20）
+## 本輪增量：GitHub／Slack 排程條件的安全新增與編輯（2026-09-20）
+
+上一批已提交 `aa29b36`（`feat: safely edit existing routine definitions`），提交前再次通過 52 項／6 suites 聚焦回歸。本輪核對本機非官方 reconstructed 的 `sand-state-tool.ts` 與現行平台 matcher／ingress，補上既有 GitHub／Slack 排程的手動條件編輯，也收緊共用新增表單。
+
+- GitHub 改為 14 種事件勾選、具體 owner/repo、單一精確 CI 分支及最多 50 個登入名稱。拒絕未知事件、空逗號項、無效分支／使用者、缺少分支的 CI，原始清單限制在去重前套用。不再依賴會丟掉條件的舊 initializer。說明明示個別 push workflow 完成不是 checks 彙整，CI 不套用使用者篩選；議題指派事件依目前 native 實作篩選操作人，不宣稱是受指派者。
+- Slack 只接受 C/G/D 對話 ID 或 `*`，四種比對模式不再將未知值退回 message。關鍵字與表情使用獨立欄位，切換後保留並顯示不適用的篩選，要求明確清除；拒絕過長關鍵字、截斷對話 ID、無效／超過八個表情、空逗號項與會被有損轉換的 `::` 表情後綴。七語言說明明示 bot/app mention、既有連線與費用、不支援名稱／bySelf。
+- 既有支援格式可編輯，並可與 cron／Linear／Sentry／PagerDuty 組成最多八項平面 OR。未改動的成員保留原值；名稱型 Slack、bySelf true、未知事件或不支援格式維持 trigger 唯讀，只能改名稱／任務，不放寬限制。沿用上一批原子 revision／lifetime 儲存，不新增外部授權或立即執行。
+- 依 SwiftUI／測試技能，checkbox 使用 value subscript 的衍生 binding，邏輯留在可測草稿；以隔離目錄、固定事件時間／ID、fixture executor 和 HMAC 驗證資料測試，不呼叫真實模型。新增 12 項測試，包含 14 種 GitHub／四種 Slack 比對、原始輸入邊界、完整 round-trip、OR／history／時間錨點／重播、App 儲存／取消／stale／磁碟失敗與舊格式保留。先以三項紅測試重現 42 個失敗斷言，再修正；開發中另修正錯誤分類，並依 store 的 millisecondsSince1970 編碼邊界比較持久化日期，避免測試誤判次微秒往返差異。
+
+驗證：
+
+- 聚焦回歸 **60 項／7 suites 通過**：`/tmp/filicon-github-slack-focused-final.log`。
+- 非並行完整回歸 **134 XCTest + 873 Swift Testing／99 suites 通過**；兩項 opt-in live Codex 測試仍未啟用：`/tmp/filicon-github-slack-full.log`；測試程序仍有 CoreData NSXPC 診斷訊息，未造成測試失敗。
+- 原生 `Filicon App` **clean build 通過**，`codesign --verify --deep --strict` 驗證 App、兩個 helpers 與 XPC 通過：`/tmp/filicon-github-slack-native.log`。既有 AppIntents metadata／ad-hoc runtime 提示仍在。
+- NSHostingView 產生 GitHub／Slack／不相容條件三態 × 七語言 × 明暗共 **42 張**，完整 editor sheet 五態共 **70 張**，另外重跑既有平台 84 張；驗證 fitting size，人工抽查各語言和唯讀狀態、修正後再渲染。表單可捲動，取消／儲存固定於底部。產物：`/tmp/filicon-github-slack-previews/`，不是使用者 App 的 live UI 驗收。
+- 七語言各 **1,537 keys、零缺漏**。視覺檢查發現並修正舊有法文 CI 分支、韓文比對／關鍵字／提及／表情，以及相關六語言欄位標籤。新增明確翻譯回歸斷言。`git diff --check` 通過。
+
+本批尚未提交；未 push、未啟動／重啟 App、未更動真實群組／聊天／排程／連線。`AUTO-03` 維持 partial：Teams／generic 條件專用編輯、Teams 可信身分／主文／Graph／同步回覆、GitHub checks 彙整、Slack 名稱／人類身分映射及 live 帳號驗收仍有差異。
+
+## 已提交增量：既有排程的手動編輯與儲存生命週期（2026-09-20）
 
 上一批已提交 `f874dcd`（`fix: add validated platform event menus for new routines`），提交前再次通過 59 項／6 suites 聚焦回歸。本批補自動化清單的「編輯」入口，不更動外部連線或立即執行排程。
 
@@ -15,7 +34,7 @@
 
 原生驗證：最初 Debug build 與嚴格簽章通過；最終三語言標籤更新後，增量 build 成功但 `codesign --verify --deep --strict` 回報 ko／es／fr 資源與舊 seal 不一致。同一隔離 DerivedData 執行完整 `clean build` 後，**原生 Debug build 及嚴格 deep／strict 簽章皆通過**（`/tmp/filicon-routine-edit-native-clean.log`）。未修改使用者 Xcode 產物或宣稱增量簽章問題已根治；既有 AppIntents／ad-hoc 提示仍在，未執行 release 公證。
 
-本批尚未提交；未 push、未啟動／重啟 App、未更動真實群組／聊天／排程／連線。`AUTO-03` 維持 partial：GitHub／Slack／Teams／generic 條件專用編輯、Teams 可信身分／主文／Graph／同步回覆、GitHub checks 彙整、Slack 名稱／人類身分映射及 live 帳號驗收仍有差異。
+本批已在下一輪提交為 `aa29b36`；未 push、未啟動／重啟 App、未更動真實群組／聊天／排程／連線。當時 `AUTO-03` 維持 partial：GitHub／Slack／Teams／generic 條件專用編輯、Teams 可信身分／主文／Graph／同步回覆、GitHub checks 彙整、Slack 名稱／人類身分映射及 live 帳號驗收仍有差異。
 
 ## 已提交增量：手動新增 Linear／Sentry／PagerDuty 排程（2026-09-20）
 

@@ -4,6 +4,23 @@
 "Sentry supports issueCreated, issueResolved, issueAssigned, issueArchived, issueUnresolved or issueAny, with optional projectIds (up to 50 exact decimal ID strings, 1 to 200 digits each). Empty means any project. Names, unknown fields and invalid filters are rejected." = "Sentry는 issueCreated, issueResolved, issueAssigned, issueArchived, issueUnresolved 또는 issueAny를 지원합니다. projectIds는 선택 사항이며 정확한 십진수 ID 문자열을 최대 50개 지정할 수 있습니다(각 1~200자리). 비어 있으면 모든 프로젝트가 대상입니다. 이름, 알 수 없는 필드, 잘못된 필터는 거부됩니다.";
 "Sentry requires existing authenticated ingress; no webhook or connection is installed or started. Supports issue creation, resolution, assignment, archiving and reopening; issueAny matches these five cases, not all events. Project filters use exact decimal IDs, not names; empty means any project. Replay protection is bounded and signatures do not prove freshness. Queued events may trigger after approval and incur model costs." = "Sentry에는 기존의 인증된 이벤트 연결이 필요하며 webhook이나 연결을 설치하거나 시작하지 않습니다. 이슈 생성, 해결, 할당, 보관, 다시 열기를 지원하며 issueAny는 이 다섯 경우만 포함하고 모든 이벤트를 포함하지는 않습니다. 프로젝트 필터는 이름이 아닌 정확한 십진수 ID를 사용하며 비어 있으면 모든 프로젝트가 대상입니다. 재전송 방지는 범위가 제한되며 서명은 이벤트의 최신성을 증명하지 않습니다. 승인 후 대기 중인 이벤트가 실행을 유발하고 모델 비용이 발생할 수 있습니다.";
 "" = "";
+"Pull request opened" = "풀 리퀘스트 생성";
+"Pull request updated" = "풀 리퀘스트에 푸시";
+"Pull request merged" = "풀 리퀘스트 병합";
+"Review requested" = "리뷰 요청";
+"Review approved" = "리뷰 승인";
+"Review changes requested" = "리뷰에서 변경 요청";
+"Review submitted with comments" = "댓글이 포함된 리뷰 제출";
+"Pull request comment" = "풀 리퀘스트 댓글";
+"Inline review comment" = "코드 줄 리뷰 댓글";
+"Review thread resolved" = "리뷰 스레드 해결";
+"Review thread reopened" = "리뷰 스레드 다시 열기";
+"GitHub issue assigned" = "GitHub 이슈 할당";
+"CI passed" = "CI 성공";
+"CI failed" = "CI 실패";
+"Slack conversation ID or *" = "Slack 대화 ID 또는 *";
+"Use a conversation ID (C/G/D...), not a channel or user name. * covers connected conversations only. Mention means the connected app or bot. Keyword: up to 120 characters. Reactions: up to 8 emoji names; empty means any. Self-only matching is unavailable. Clear incompatible filters when switching matches." = "채널명이나 사용자명 대신 대화 ID(C/G/D…)를 사용하세요. *는 연결된 대화만 포함합니다. 멘션은 연결된 앱 또는 봇을 뜻합니다. 키워드는 최대 120자, 반응은 이모지 이름 최대 8개이며 비워 두면 모두 허용합니다. 본인만 일치시키는 기능은 지원하지 않습니다. 모드 변경 시 호환되지 않는 필터를 지우세요.";
+"Select at least one event. CI requires one exact branch and ignores allowed users; each completed push workflow is separate, not an all-checks summary. Optional users: up to 50 logins, comma-separated. They filter PR owners, review actors and PR owners together, or the actor assigning an issue (not the assignee). Empty means any." = "이벤트를 하나 이상 선택하세요. CI에는 정확한 브랜치 하나가 필요하며 허용 사용자 필터를 무시합니다. 완료된 push 워크플로마다 개별 판정하며 전체 검사 집계가 아닙니다. 사용자 지정은 선택 사항으로 로그인 이름 최대 50개를 쉼표로 구분합니다. PR 작성자, 리뷰 수행자와 PR 작성자 모두, 또는 이슈를 할당한 사람(담당자가 아님)을 필터링합니다. 비워 두면 모두 허용합니다.";
 "Use 1 to 8 flat cron, GitHub, Slack, Linear, Sentry or PagerDuty conditions. Any one can trigger the same task. Nested groups and other platforms are not supported. No invalid condition is ignored." = "중첩 없이 cron, GitHub, Slack, Linear, Sentry 또는 PagerDuty 조건을 1~8개 사용하세요. 어느 조건이든 같은 작업을 실행할 수 있습니다. 중첩 그룹과 다른 플랫폼은 지원하지 않습니다. 잘못된 조건을 무시하지 않습니다.";
 "Time conditions use the earliest next run; simultaneous time matches run once without catch-up. Event and manual runs also reset interval timers. Each approved time zone stays fixed. More conditions may cause more runs and model costs." = "시간 조건 중 가장 이른 다음 실행 시각을 사용합니다. 동시에 일치하는 시간 조건은 한 번만 실행하며 누락된 실행을 보충하지 않습니다. 이벤트와 수동 실행도 간격 타이머를 초기화합니다. 승인된 각 시간대는 고정됩니다. 조건이 많아지면 실행 횟수와 모델 비용이 늘어날 수 있습니다.";
 "Any one condition can trigger this same task (OR, not AND). A delivery matching several conditions is included once. Different deliveries may cause additional runs and model costs. Each condition keeps its own filters; no new connections or permissions are granted." = "조건 중 하나만 일치해도 같은 작업을 실행합니다(AND가 아닌 OR). 여러 조건에 일치하는 동일 이벤트는 한 번만 포함됩니다. 서로 다른 이벤트는 추가 실행과 모델 비용을 발생시킬 수 있습니다. 각 조건의 필터는 유지되며 새 연결이나 권한은 부여되지 않습니다.";
@@ -88,7 +105,7 @@
 "Allow a remote Filicon computer to use a hardware security key connected to this Mac. Every request shows its origin and relying-party ID for one-time approval." = "이 Mac에 연결된 하드웨어 보안 키를 사용하는 원격 Filicon 컴퓨터를 허용하십시오. 모든 요청은 한 번 승인을위한 원산지 및 재혼자 ID를 보여줍니다.";
 "Allow rules" = "규칙을 허용";
 "Allow this local action?" = "이 로컬 작업을 허용합니까?";
-"Allowed users, comma-separated (optional)" = "허용된 사용자, comma-separated (선택 사항)";
+"Allowed users, comma-separated (optional)" = "허용 사용자 (쉼표로 구분, 선택 사항)";
 "Always" = "(주)";
 "Always Allow" = "항상 허용";
 "Always Exact Arguments" = "항상 정확한 Arguments";
@@ -188,7 +205,7 @@
 "Built-in catalog" = "내장 카탈로그";
 "Built-in fallback" = "내장 대체 카탈로그";
 "Built-in fallback — {0}" = "내장 대체 카탈로그 — {0}";
-"CI branch (required for CI events)" = "CI 지점 (CI 행사에 필요한)";
+"CI branch (required for CI events)" = "CI 브랜치 (CI 이벤트에 필수)";
 "CPU cap" = "CPU 한도";
 "Cache: {0} read · {1} write" = "캐시: 읽기 {0} · 쓰기 {1}";
 "Canary" = "수의사";
@@ -353,7 +370,7 @@
 "Edit…" = "편집…";
 "Email" = "이름 *";
 "Emoji" = "이모지";
-"Emoji names, comma-separated" = "Emoji 이름, 기념식";
+"Emoji names, comma-separated" = "이모지 이름 (쉼표로 구분)";
 "Empty message" = "빈 메시지";
 "Empty workbook" = "빈 workbook";
 "Enable" = "지원하다";
@@ -512,7 +529,7 @@
 "Keychain reference" = "키 체인 참조";
 "Keys are stored only in the macOS Keychain. Filicon never reads another app's credentials." = "열쇠는 macOS Keychain에서만 저장됩니다. Filicon는 다른 app의 credentials를 결코 읽지 않습니다.";
 "Keys stay in macOS Keychain, and local mode does not require a Filicon account." = "키는 macOS 키 체인에 머물며 로컬 모드는 Filicon 계정이 필요하지 않습니다.";
-"Keyword" = "이름 *";
+"Keyword" = "키워드";
 "Kind" = "종류";
 "Korean" = "한국어";
 "Language" = "언어";
@@ -568,7 +585,7 @@
 "Mark Inbox Read" = "받은 편지함을 읽음으로 표시";
 "Mark Read" = "읽음으로 표시";
 "Marketplace" = "팟캐스트";
-"Match" = "팟캐스트";
+"Match" = "일치 조건";
 "Math fallback: {0}" = "수학 내리기: {0}";
 "Math: {0}" = "수학: {0}";
 "Maximum sessions" = "최대 세션 수";
@@ -576,7 +593,7 @@
 "Meet your AI workspace" = "AI 업무공간을 만나보세요";
 "Members" = "구성원";
 "Memory cap" = "메모리 한도";
-"Mention" = "이름 *";
+"Mention" = "멘션";
 "Message" = "이름 *";
 "Message contains (required)" = "메시지 포함 내용(필수)";
 "Message not sent: {0}" = "메시지가 전송되지 않습니다 : {0}";
@@ -766,7 +783,7 @@
 "Queued" = "대기열에 있음";
 "Quick Look remains available for unsupported system spreadsheet formats." = "Quick Look은 지원되지 않는 시스템 스프레드 시트 형식을 사용할 수 있습니다.";
 "React" = "퀵메뉴";
-"Reaction" = "이름 *";
+"Reaction" = "반응";
 "Read" = "...에서";
 "Read file" = "파일 보기";
 "Read files" = "파일 보기";

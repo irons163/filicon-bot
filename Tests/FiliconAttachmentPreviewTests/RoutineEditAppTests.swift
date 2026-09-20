@@ -152,7 +152,9 @@ struct RoutineEditAppTests {
         let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
         let output = ProcessInfo.processInfo.environment["FILICON_UI_REVIEW_OUTPUT"].map { URL(fileURLWithPath: $0) }
         let definitions = [routine(try statusTrigger), routine(.unknown(kind: "future", payloadJSON: Data(#"{"untouched":true}"#.utf8))),
-            routine(.cron(expression: "@daily", timeZoneIdentifier: nil))]
+            routine(.cron(expression: "@daily", timeZoneIdentifier: nil)),
+            routine(.platform(.github(try .init(repo: "example/repo", events: ["pr-opened", "ci-failed"], ciBranch: "main", userAllowlist: ["alice"])))),
+            routine(.platform(.slack(try .init(channel: "C123", match: .reaction(emoji: ["eyes"], bySelf: true)))))]
         for language in ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"] {
             for dark in [false, true] {
                 for (index, definition) in definitions.enumerated() {
