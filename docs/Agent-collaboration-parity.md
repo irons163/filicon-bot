@@ -1,6 +1,22 @@
 # 協作能力核對紀錄（更新至 2026-09-20）
 
-## 本輪增量：共用事件入口的安全重試與接收生命週期（2026-09-20）
+## 本輪增量：手動新增 Linear／Sentry／PagerDuty 排程（2026-09-20）
+
+上一批已提交 `4222c64`（`fix: preserve safe retries and revoke stale webhook admissions`），提交前再次通過 87 項／10 suites 聚焦回歸。接著核對本機非官方 reconstructed 參考 `source/host/runner/tools/sand-state-tool.ts` 與現行 `PlatformTriggers.swift`：手動建立表單仍接受任意 Event，預設 issue-updated／issue-created／incident-triggered 與受支援的 canonical case 不一致，且缺少新狀態／週期篩選欄。
+
+- 自動化 → 新增排程：三種平台改用事件選單，Linear 三種、Sentry 六種、PagerDuty 五種選項。預設改為 issueCreated／issueCreated／incidentTriggered，實際傳入的 case 與 ingress 相同，不再讓 arbitrary allowedEvents 自我驗證。
+- Linear 明確區分 team/project/new-status/cycle UUID；Sentry 使用精確十進位 project ID；PagerDuty 使用精確且區分大小寫的 service ID。每欄原始清單最多 50 筆、先驗證再去重；UUID 正規化大小寫，但十進位前導零和服務 ID 大小寫保留。空白欄表示不限，逗號空項、未知 case、無效／超限／不適用的篩選拒絕建立，畫面顯示本地化錯誤。Linear 切換事件時保留現有篩選欄，讓使用者清除不相容條件，不暗中放大範圍。
+- 依 SwiftUI 技能將驗證留在可測草稿層，事件欄位依狀態呈現；沒有自造 Binding。七語言新增 22 個文字項目；品牌名稱保留 Linear／Sentry／PagerDuty，修正表單內西文／韓文 Trigger 翻譯。說明明示現有驗證入口、ID 不是名稱、空欄不限、週期完成不等於日期到期，以及未來模型費用；不安裝帳號／webhook、不授予工具權限。
+
+依 Swift 測試技能使用固定時間／識別、隔離檔案及受控 executor。新增 `RoutineListenerEditorTests` 八項測試，涵蓋所有選項的真實 HMAC fixture → normalizer → 草稿 matching、精確反例、0/50/51 原始筆數、空項、UUID／數字／opaque ID 邊界、不適用欄位保留、JSON round-trip、儲存／重開／混合 OR 一次執行／重試去重、legacy 定義不被遷移。首次測試確認缺少 132 項非英文翻譯斷言，加入 catalog 後通過；此為新增翻譯的紅燈證據，不宣稱已對舊表單跑完整 red suite。
+
+聚焦回歸 **59 項／6 suites** 通過（`/tmp/filicon-case-editor-focused.log`）。最終完整 `swift test --no-parallel` **134 XCTest、843 Swift Testing／96 suites** 通過（`/tmp/filicon-case-editor-full-final.log`），兩項 opt-in live Codex 測試未執行。原生 `Filicon App` Debug build 與 `codesign --verify --deep --strict` 通過（`/tmp/filicon-case-editor-native-final.log`）；既有 CoreData/XPC 診斷及 AppIntents/ad-hoc signing 提示仍在，沒有測試失敗。
+
+NSHostingView 以 440 pt 寬渲染六種表單狀態 × 七語言 × 明暗兩種外觀，共 84 張；包含保留不相容篩選的錯誤態，驗證 fitting size，人工抽查各語言的代表畫面並修正品牌翻譯。產物在 `/tmp/filicon-case-editor-previews/`，不是操作使用者 App 的 live UI 驗收。七語言各 **1,512 keys、零缺漏**，`git diff --check` 通過。
+
+本批尚未提交；未 push、未啟動／重啟使用者 App、未更動真實群組／聊天／排程／連線。`AUTO-03` 維持 partial：尚無既有儲存排程的專用手動編輯表單；Teams 可信使用者／主文／Graph／同步回覆、GitHub checks 彙整、Slack 名稱／人類身分映射及實際帳號端到端驗收仍有差異。
+
+## 已提交增量：共用事件入口的安全重試與接收生命週期（2026-09-20）
 
 上一批 Teams 入口修正已提交 `dbd8505`，提交前再次通過 156 項聚焦回歸（`/tmp/filicon-teams-events-precommit.log`）。本批檢查共用 ingress → TriggerHub → EventBatcher 接線，補上入列拒絕、停用／移除路由及 listener 重建時的處理，不擴充外部帳號權限或 Teams 雲端功能。
 
@@ -15,7 +31,7 @@
 
 完整 `swift test --no-parallel` 為 **134 XCTest、835 Swift Testing／95 suites 通過**（`/tmp/filicon-ingress-admission-full.log`）；兩項 opt-in live Codex 測試未執行。原生 `Filicon App` Debug build 與 `codesign --verify --deep --strict` 通過（`/tmp/filicon-ingress-admission-native.log`），七語言各 1,490 keys、零缺漏，`git diff --check` 通過。仍有既有 normalizer 的 optional-to-Any 編譯警告、CoreData XPC 診斷與原生 AppIntents／ad-hoc 提示；不宣稱修復所有並行時序問題。本批未變更 UI，未宣稱全產品逐頁語言或 live 平台驗收。
 
-本批尚未提交；未 push、未啟動或重啟使用者 App、未更動真實群組／聊天／資料／排程／連線。`AUTO-03` 維持 partial：Teams 可信使用者／主文判定／Graph 接線與同步回覆、GitHub checks 彙整、Slack 身分／名稱映射等仍未完整還原。
+本批已在下一輪提交為 `4222c64`；未 push、未啟動或重啟使用者 App、未更動真實群組／聊天／資料／排程／連線。`AUTO-03` 維持 partial：Teams 可信使用者／主文判定／Graph 接線與同步回覆、GitHub checks 彙整、Slack 身分／名稱映射等仍未完整還原。
 
 ## 已提交增量：Teams 傳出事件安全判定與去重（2026-09-20）
 

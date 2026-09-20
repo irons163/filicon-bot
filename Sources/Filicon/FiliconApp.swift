@@ -1817,7 +1817,7 @@ struct RoutineAutomationWorkspaceView: View {
                         .font(.caption).foregroundStyle(.secondary)
                     Spacer()
                     Button(l10n("Create"), action: create)
-                        .disabled(agentID == nil || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .disabled(agentID == nil || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || listeners.contains { $0.validationMessage != nil })
                 }
                 Text(l10n("Multiple listeners are OR-combined. Schedules support five-field cron, aliases, @every, and IANA time zones; connector filters must be a JSON object."))
                     .font(.caption).foregroundStyle(.secondary)
@@ -1925,7 +1925,7 @@ struct TeamsRoutineAvailabilityNotice: View {
     }
 }
 
-private enum AutomationListenerKind: String, CaseIterable, Identifiable {
+enum AutomationListenerKind: String, CaseIterable, Identifiable {
     case schedule = "Schedule"
     case connector = "Connector event"
     case slack = "Slack"
@@ -1935,9 +1935,49 @@ private enum AutomationListenerKind: String, CaseIterable, Identifiable {
     case sentry = "Sentry"
     case pagerDuty = "PagerDuty"
     var id: String { rawValue }
+
+    func label(language: String) -> String {
+        switch self {
+        case .schedule, .connector: FiliconLocalization.string(rawValue, language: language)
+        default: rawValue // Platform names are brands, e.g. Linear, not "linear" geometry.
+        }
+    }
+
+    var events: [AutomationListenerEvent] {
+        switch self {
+        case .linear: [.issueCreated, .statusChanged, .endOfCycle]
+        case .sentry: [.issueCreated, .issueResolved, .issueAssigned, .issueArchived, .issueUnresolved, .issueAny]
+        case .pagerDuty: [.incidentTriggered, .incidentAcknowledged, .incidentResolved, .incidentEscalated, .incidentAny]
+        default: []
+        }
+    }
 }
 
-private struct AutomationListenerDraft: Identifiable {
+enum AutomationListenerEvent: String, CaseIterable, Identifiable {
+    case issueCreated, statusChanged, endOfCycle
+    case issueResolved, issueAssigned, issueArchived, issueUnresolved, issueAny
+    case incidentTriggered, incidentAcknowledged, incidentResolved, incidentEscalated, incidentAny
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .issueCreated: "Issue created"
+        case .statusChanged: "Issue status changed"
+        case .endOfCycle: "Cycle completed"
+        case .issueResolved: "Issue resolved"
+        case .issueAssigned: "Issue assigned"
+        case .issueArchived: "Issue archived"
+        case .issueUnresolved: "Issue reopened"
+        case .issueAny: "Any supported issue event"
+        case .incidentTriggered: "Incident triggered"
+        case .incidentAcknowledged: "Incident acknowledged"
+        case .incidentResolved: "Incident resolved"
+        case .incidentEscalated: "Incident escalated"
+        case .incidentAny: "Any supported incident event"
+        }
+    }
+}
+
+struct AutomationListenerDraft: Identifiable, Equatable {
     var id = UUID()
     var kind: AutomationListenerKind = .schedule
     var primary = "@daily"
@@ -1945,6 +1985,48 @@ private struct AutomationListenerDraft: Identifiable {
     var tertiary = ""
     var quaternary = ""
     var filtersJSON = "{}"
+    var statusIDs = ""
+    var cycleIDs = ""
+
+    static func defaults(for kind: AutomationListenerKind, id: UUID) -> Self {
+        var value = Self(id: id, kind: kind)
+        switch kind {
+        case .schedule: value.primary = "@daily"
+        case .connector, .teams: value.primary = ""
+        case .slack: value.primary = "*"; value.secondary = "mention"
+        case .github: value.primary = ""; value.secondary = "pr-opened,pr-pushed"
+        case .linear, .sentry: value.primary = "issueCreated"
+        case .pagerDuty: value.primary = "incidentTriggered"
+        }
+        return value
+    }
+
+    var validationMessage: String? {
+        guard !kind.events.isEmpty else { return nil }
+        do { _ = try trigger; return nil }
+        catch { return error.localizedDescription }
+    }
+
+    // Validate the raw list before deduplication. Empty comma segments must not
+    // quietly erase a restriction, and duplicate IDs still count toward 50.
+    private func ids(_ text: String, error: AutomationStateChangeError,
+                     normalize: (String) -> String?) throws -> Set<String> {
+        if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return [] }
+        let parts = text.split(separator: ",", omittingEmptySubsequences: false)
+        guard parts.count <= 50 else { throw error }
+        return try Set(parts.map { part in
+            let token = part.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let value = normalize(token) else { throw error }
+            return value
+        })
+    }
+
+    private func linearIDs(_ text: String) throws -> Set<String> {
+        try ids(text, error: .invalidLinearTrigger) { token in
+            guard token.count == 36, let id = UUID(uuidString: token) else { return nil }
+            return id.uuidString.lowercased()
+        }
+    }
 
     var trigger: AutomationTrigger {
         get throws {
@@ -1980,27 +2062,38 @@ private struct AutomationListenerDraft: Identifiable {
                     channelIDs: Set(tertiary.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }),
                     messageContains: quaternary.isEmpty ? nil : quaternary
                 )))
-            case .linear, .sentry, .pagerDuty:
-                let value = try CaseAutomationTrigger(
-                    event: primary,
-                    allowedEvents: [primary],
-                    primaryIDs: Set(secondary.split(separator: ",").map(String.init)),
-                    secondaryIDs: Set(tertiary.split(separator: ",").map(String.init))
-                )
-                let platform: PlatformAutomationTrigger
-                switch kind {
-                case .linear: platform = .linear(try .init(event: value.event, allowedEvents: [value.event],
-                    primaryIDs: value.primaryIDs, secondaryIDs: value.secondaryIDs))
-                case .sentry: platform = .sentry(value)
-                default: platform = .pagerDuty(value)
+            case .linear:
+                guard kind.events.contains(where: { $0.rawValue == primary }) else {
+                    throw AutomationStateChangeError.invalidLinearTrigger
                 }
-                return .platform(platform)
+                let value = try LinearAutomationTrigger(event: primary, allowedEvents: Set(kind.events.map(\.rawValue)),
+                    primaryIDs: linearIDs(secondary), secondaryIDs: linearIDs(tertiary),
+                    statusIDs: linearIDs(statusIDs), cycleIDs: linearIDs(cycleIDs))
+                try value.validateForAgentWrite()
+                return .platform(.linear(value))
+            case .sentry, .pagerDuty:
+                let error: AutomationStateChangeError = kind == .sentry ? .invalidSentryTrigger : .invalidPagerDutyTrigger
+                guard kind.events.contains(where: { $0.rawValue == primary }),
+                      [tertiary, statusIDs, cycleIDs].allSatisfy({ $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else {
+                    throw error
+                }
+                let values = try ids(secondary, error: error) { token in
+                    let valid = kind == .sentry ? CaseAutomationTrigger.isSentryProjectID(token) : CaseAutomationTrigger.isPagerDutyServiceID(token)
+                    return valid ? token : nil
+                }
+                let value = try CaseAutomationTrigger(event: primary, allowedEvents: Set(kind.events.map(\.rawValue)), primaryIDs: values)
+                if kind == .sentry {
+                    try value.validateForSentryAgentWrite()
+                    return .platform(.sentry(value))
+                }
+                try value.validateForPagerDutyAgentWrite()
+                return .platform(.pagerDuty(value))
             }
         }
     }
 }
 
-private struct AutomationListenerEditor: View {
+struct AutomationListenerEditor: View {
     @Environment(\.locale) private var uiLocale
     @Binding var listener: AutomationListenerDraft
     let canRemove: Bool
@@ -2011,15 +2104,20 @@ private struct AutomationListenerEditor: View {
         GroupBox {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
-                    Picker(l10n("Trigger"), selection: $listener.kind) {
-                        ForEach(AutomationListenerKind.allCases) { Text(FiliconLocalization.string($0.rawValue)).tag($0) }
+                    Picker(FiliconLocalization.string("Trigger", language: uiLocale.identifier), selection: $listener.kind) {
+                        ForEach(AutomationListenerKind.allCases) { Text($0.label(language: uiLocale.identifier)).tag($0) }
                     }
-                    if canRemove { Button(l10n("Remove"), role: .destructive, action: remove) }
+                    if canRemove { Button(FiliconLocalization.string("Remove", language: uiLocale.identifier), role: .destructive, action: remove) }
                 }
                 fields
+                if let message = listener.validationMessage {
+                    Text(FiliconLocalization.string(message, language: uiLocale.identifier))
+                        .font(.caption).foregroundStyle(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }.padding(4)
         }
-        .onChange(of: listener.kind) { _, kind in listener = Self.defaults(for: kind, id: listener.id) }
+        .onChange(of: listener.kind) { _, kind in changeKind(kind) }
     }
 
     @ViewBuilder private var fields: some View {
@@ -2052,25 +2150,52 @@ private struct AutomationListenerEditor: View {
             TextField(l10n("Message contains (required)"), text: $listener.quaternary)
             TeamsRoutineAvailabilityNotice()
         case .linear, .sentry, .pagerDuty:
-            TextField(l10n("Event"), text: $listener.primary)
-            TextField(l10n("Primary IDs, comma-separated (optional)"), text: $listener.secondary)
-            TextField(l10n("Secondary IDs, comma-separated (optional)"), text: $listener.tertiary)
+            Picker(FiliconLocalization.string("Event", language: uiLocale.identifier), selection: $listener.primary) {
+                ForEach(listener.kind.events) { event in
+                    Text(FiliconLocalization.string(event.label, language: uiLocale.identifier)).tag(event.rawValue)
+                }
+            }
+            if listener.kind == .linear {
+                idField("Team UUIDs", text: $listener.secondary)
+                if listener.primary != "endOfCycle" || !listener.tertiary.isEmpty {
+                    idField("Project UUIDs", text: $listener.tertiary)
+                }
+                if listener.primary == "statusChanged" || !listener.statusIDs.isEmpty {
+                    idField("New status UUIDs", text: $listener.statusIDs)
+                }
+                if listener.primary == "endOfCycle" || !listener.cycleIDs.isEmpty {
+                    idField("Cycle UUIDs", text: $listener.cycleIDs)
+                }
+                notice(Self.linearNotice)
+            } else {
+                idField(listener.kind == .sentry ? "Project IDs (digits only)" : "Service IDs (case-sensitive)", text: $listener.secondary)
+            }
+            notice(Self.filterNotice)
+            notice(Self.ingressNotice)
         }
     }
 
-    private static func defaults(for kind: AutomationListenerKind, id: UUID) -> AutomationListenerDraft {
-        var value = AutomationListenerDraft(id: id, kind: kind)
-        switch kind {
-        case .schedule: value.primary = "@daily"
-        case .connector: value.primary = ""; value.secondary = ""
-        case .slack: value.primary = "*"; value.secondary = "mention"
-        case .github: value.primary = ""; value.secondary = "pr-opened,pr-pushed"
-        case .teams: value.primary = ""; value.secondary = ""
-        case .linear: value.primary = "issue-updated"
-        case .sentry: value.primary = "issue-created"
-        case .pagerDuty: value.primary = "incident-triggered"
+    static let filterNotice = "Optional filters: enter up to 50 IDs per field, separated by commas. Empty means any. Use IDs, not names or wildcards."
+    static let ingressNotice = "Requires an existing verified event connection. Creating a routine does not connect an account or start a webhook. Future matching events may incur model costs."
+    static let linearNotice = "Status filters apply only to status changes. Cycle completion uses team/cycle IDs, not projects, and requires an explicit completion event, not just an elapsed date. Clear incompatible filters when switching events."
+
+    private func idField(_ key: String, text: Binding<String>) -> some View {
+        let label = FiliconLocalization.string(key, language: uiLocale.identifier)
+        return VStack(alignment: .leading, spacing: 4) {
+            Text(label).font(.caption).fixedSize(horizontal: false, vertical: true)
+            TextField("", text: text).accessibilityLabel(label)
+                .textFieldStyle(.roundedBorder)
         }
-        return value
+    }
+
+    private func notice(_ key: String) -> some View {
+        Text(FiliconLocalization.string(key, language: uiLocale.identifier))
+            .font(.caption).foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func changeKind(_ kind: AutomationListenerKind) {
+        listener = AutomationListenerDraft.defaults(for: kind, id: listener.id)
     }
 }
 

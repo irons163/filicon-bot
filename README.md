@@ -191,8 +191,8 @@ does not install/start webhooks, log in to an external service or grant new tool
 events can match after approval. Updates may switch between time, GitHub, Slack, Linear, Sentry, PagerDuty and mixed OR
 triggers, while an omitted trigger is preserved. Unknown events, malformed filters,
 other platforms and generic events are rejected. A top-level `schedule` cannot
-accompany `trigger`. The
-existing Automations UI is unchanged. This is not full reference parity.
+accompany `trigger`. The manual new-routine controls are described below.
+This is not full reference parity.
 
 Flat `anyOf` definitions select the
 earliest cron/interval member alongside event members. Coincident time members
@@ -200,7 +200,25 @@ produce one run; all members share the last-run anchor, so an event or manual ru
 also resets interval timing. Pause/resume does not backfill. Loading a legacy
 definition with no next-run date does not silently arm it. Mixed proposals show
 the full before/after definitions and time-zone, interval-reset and model-cost
-disclosures for explicit approval; they do not add a manual mixed-trigger editor.
+disclosures for explicit approval. The manual new-routine form also supports
+flat OR listeners; editing an existing saved definition still uses an approved
+agent proposal rather than a dedicated manual edit form.
+
+In **Automations → New routine**, Linear, Sentry and PagerDuty now have event
+menus instead of free-text event names. Linear offers issue creation, status
+changes and cycle completion with explicit team/project/new-status/cycle UUID
+fields as applicable. Sentry offers five issue actions plus any supported issue
+event, filtered by exact decimal project IDs. PagerDuty offers four incident
+actions plus any supported incident event, filtered by case-sensitive service IDs.
+Defaults use the same case names as verified ingress events. Each optional comma
+list accepts at most 50 raw entries before deduplication; blank means any. Empty
+comma segments, invalid IDs, unsupported events and incompatible filters block
+creation with a localized explanation. Switching Linear events retains entered
+filters so the user can clear incompatibilities; no restriction is silently dropped.
+These controls and notices cover all seven UI languages and preserve platform
+brand names. They do not install accounts/webhooks or migrate existing routines.
+Authenticated fixture matching, isolated persistence/OR tests and native rendering
+are verified, not live external-account end-to-end behavior.
 
 Linear ingress: verified Issue/create
 webhooks expose `issueCreated`; Issue/update exposes `statusChanged` only when
@@ -211,8 +229,8 @@ IDs and `secondaryIDs` filter project IDs, never the issue ID as a missing-team
 fallback. A dedicated Linear trigger keeps those legacy storage keys; old definitions
 without `statusIDs` retain their original meaning. Model-written definitions
 support new-status filters and the explicit cycle-completion conditions below.
-No legacy definition is silently converted or enabled, and the manual editor is
-not expanded by this model-proposal work.
+No legacy definition is silently converted or enabled. The manual new-routine
+form uses the same supported event cases and strict filter validation.
 
 Linear issue and legacy events use `Linear-Delivery` as their delivery ID, falling back to a signed-body
 digest when omitted; `webhookId` identifies the configured webhook, not an event.
@@ -257,8 +275,8 @@ trigger, enabled state, pinned time zones and seven-language disclosures require
 explicit approval. Existing ownership, cancellation, spend guard, capacity and
 durable-receipt protections remain in place; changing a definition retains its
 run history. Approval does not request an immediate run or grant tools/permissions.
-This does **not** add a manual cycle editor, polling, name/project lookup or the
-reference backend's cloud project relationships.
+The manual new-routine form also offers cycle completion. It does not add polling,
+name/project lookup or the reference backend's cloud project relationships.
 
 Sentry ingress now distinguishes the documented issue actions (`created`,
 `resolved`, `assigned`, `archived`, `unresolved`) as `issueCreated`,
@@ -287,8 +305,9 @@ and [issue payload](https://docs.sentry.io/integrations/integration-platform/web
 Sentry own-routine proposals now use the same full approval, ownership, spend,
 cancellation and persistence checks in group/mailbox turns, including mixed OR
 conditions. Seven-language approval previews disclose project scope, supported
-cases, bounded replay protection and future costs. A specialized manual editor
-and live-account validation remain unsupported/unverified. This does not
+cases, bounded replay protection and future costs. A specialized new-routine form
+is available; manual editing of saved definitions and live-account validation
+remain unsupported/unverified. This does not
 install/start connections or expose an endpoint.
 
 PagerDuty V3 ingress maps `incident.triggered`, `incident.acknowledged`,
@@ -319,8 +338,9 @@ PagerDuty own-routine create/update proposals now use the same full approval,
 ownership, spend, cancellation and persistence checks in group/mailbox turns,
 including mixed OR conditions. Seven-language approval previews disclose the
 exact service scope, four incident cases, bounded replay protection, event-time
-limitation and future costs. A specialized manual editor and live-account
-validation remain unsupported/unverified. Verification uses isolated signed
+limitation and future costs. A specialized new-routine form is available; manual
+editing of saved definitions and live-account validation remain unsupported/unverified.
+Verification uses isolated signed
 fixtures; it does not create a connection or public listener.
 
 Teams outgoing-webhook ingress now distinguishes transport authenticity from
