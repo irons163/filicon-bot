@@ -517,6 +517,7 @@
 				177BFF8BEFF78247EB72E350BA2D24B5 /* Sources */,
 				EBE03EA2A4F76A2D765C64065ADE56E8 /* Frameworks */,
 				0F04B62457FAB7904E92EE2860FEF3AB /* Resources */,
+				AB9020100011000022000050 /* Track Resource Signing */,
 				D2F7266BEA00322E22B40AC98A489A80 /* Embed XPC Services */,
 				3AD55FDB73A8FB9766A61C9D4F8C95E2 /* Embed Helpers */,
 			);
@@ -659,6 +660,27 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		AB9020100011000022000050 /* Track Resource Signing */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/scripts/resource-signing-digest.sh",
+				"$(SRCROOT)/Sources/Filicon/Resources",
+			);
+			name = "Track Resource Signing";
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/FiliconResources.sha256",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/zsh;
+			shellScript = "/bin/zsh \"${SRCROOT}/scripts/resource-signing-digest.sh\" \"${SRCROOT}/Sources/Filicon/Resources\" \"${SCRIPT_OUTPUT_FILE_0}\"";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		177BFF8BEFF78247EB72E350BA2D24B5 /* Sources */ = {

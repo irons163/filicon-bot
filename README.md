@@ -727,6 +727,25 @@ is not the same as **Filicon App**; it launches only a bare executable.
 If Xcode reports "already opened from another project or workspace" or missing
 package products, close the old package window before reopening this workspace.
 
+The **Track Resource Signing** build phase records a deterministic resource
+digest as a declared bundle output. This makes localization/asset-only changes
+participate in Xcode's normal CodeSign task; it does not re-sign manually or
+disable signature checks. It checks file membership on every build, leaves an
+unchanged digest untouched, and runs with script sandboxing enabled.
+
+To regression-test resource-only incremental builds without editing this
+checkout or launching an app:
+
+```sh
+ruby scripts/test-resource-signing.rb
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer zsh scripts/smoke-xcode-resource-signing.sh
+```
+
+The smoke script retains an isolated source snapshot, build products and logs
+under a printed temporary path. It checks all seven localizations, asset
+addition/removal, and no-op builds with deep/strict signature verification.
+This is Debug ad-hoc validation, not a production release or notarization check.
+
 Debug uses ad-hoc signing by default. Rebuilding or switching launch methods
 can change the app's signing identity and invalidate saved folder grants.
 Filicon validates grants before reporting them as authorized: an invalid grant

@@ -1,6 +1,26 @@
 # 協作能力核對紀錄（更新至 2026-09-22）
 
-## 本輪增量：受核准的 Teams 排程定義提案（2026-09-22）
+## 本輪增量：Xcode 資源增量建置的簽章依賴（2026-09-22）
+
+先提交上一批為 `e00bab1`（`feat: approve restricted Teams routine proposals`），提交前 **70 Swift Testing／3 suites 通過**（`/tmp/filicon-teams-proposal-precommit.log`），七語言 audit 與 diff check 通過。原始參考 `hidden_from_sidebar` 作用於代理人側欄項目；Filicon 現行側欄列群組／一般聊天，尚無一對一對應，因此沒有假接設定或把隱藏改成封存。本輪先修正過往兩次已記錄的原生建置簽章缺陷，parity 功能狀態不提高。
+
+- 在隔離來源副本先完成原生 Debug build 與嚴格驗簽，再連續修改翻譯。第一次碰上 Info.plist／embedded-product 工作而有 CodeSign；第二次僅複製 es／ko 翻譯後顯示 BUILD SUCCEEDED，卻沒有 CodeSign，deep strict 驗證失敗（`/tmp/filicon-signing-repro2.log`）。單獨設置 `ENABLE_ADDITIONAL_CODESIGN_INPUT_TRACKING=YES` 也未解決，故未加入此旗標。
+- 新增 `Track Resource Signing` phase，明確宣告唯讀來源資源樹／腳本與 bundle 輸出 `FiliconResources.sha256`。每次建置掃描檔案成員與內容，穩定排序、相對路徑、SHA-256；變更才更新摘要，不在來源樹產生檔案，拒絕 symlink 資源／輸出，包含 Unicode、空白、換行與 dotfiles。每次掃描是為了納入新增／移除資源；unchanged 摘要保留 mtime。
+- 簽署仍由 Xcode 原有 CodeSign 執行，保持既有 identity／entitlements／helpers／XPC 與 script sandbox；沒有事後手動補簽、放寬權限或關閉驗證。此設計依據 [Swift Build 的 declared script outputs 追蹤](https://github.com/swiftlang/swift-build/blob/main/Sources/SWBTaskConstruction/TaskProducers/BuildPhaseTaskProducers/ShellScriptTaskProducer.swift) 與本機實測，而非假設每個 Xcode 版本都有相同缺陷。
+- 依 SPM／Xcode 技能同步 checked-in project 與 Ruby generator，隔離副本重新產生後 phase 設定一致。未修改 Package.swift 或新增依賴；不改應用程式 UI／執行邏輯。本輪先使用 Swift 測試技能驗證前批；腳本本身使用獨立 Ruby fixtures 與實際 xcodebuild 回歸，沒有新增 SwiftUI 修改。
+
+驗證：
+
+- Ruby fixtures **7 tests／80 assertions** 通過；shell／Ruby 語法與 diff check 通過。七語言各 **1,624 keys，零缺漏**。
+- 完整隔離 smoke **13 次原生 Debug build＋deep strict codesign 通過**，包含穩定後的七語言逐一變更、built strings 內容比對、資源新增／移除與無變更建置。資源變更均有原生 CodeSign；兩次無變更建置沒有 CodeSign，摘要亦保留。來源／DerivedData 路徑含空白，helpers／XPC 由 deep strict 一併驗證。紀錄：`/tmp/filicon-resource-signing-smoke-final.log`；產物與逐步紀錄：`/var/folders/34/yb_61rwx2kd7pc6f1xd7l80w0000gn/T/filicon-resource-signing.Z1uvB0/`。
+- 首次 smoke 的 PlistBuddy fixture key 含空白卻未加引號，誤讀既有 `Filicon` key；確認 source／built resource 均正確後修正測試查詢，重新完整跑過，沒有刪掉內容斷言。
+- 額外嘗試完整 package verifier 時發現既有 Debug 路徑比對限制：Xcode 簽入 `/var/folders/…/Filicon.app/`，verifier 將相同位置解析成 `/private/var/folders/…/Filicon.app/` 後以字串比較而拒絕。即使輸入 canonical 路徑，Xcode 仍產生 `/var` 形式（`/tmp/filicon-resource-signing-smoke-verified.log` 與 `filicon-resource-signing.SPNMkj/package-verification.log`）。本輪未放寬該驗證器或 entitlement；完整 package verifier 不算通過，smoke 的驗收邊界保持原生建置／內容／嚴格簽章，不宣稱 release／公證驗收。此路徑正規化問題留待後續修正。
+- 初次未明確傳入 `--no-parallel` 的完整測試出現 coordinator／subagent 時序失敗、大量 60 秒 App approval 逾時，並觸發既有測試索引越界（`/tmp/filicon-resource-signing-swift-tests.log`）。沒有 Cocoa 257 或鎖定證據，不歸因為檔案保護，也未修改應用程式邏輯來掩蓋。
+- 明確 `swift test --no-parallel` 重跑，**135 XCTest、1,007 Swift Testing／112 suites 全數通過**（`/tmp/filicon-resource-signing-swift-serial.log`）。兩項 opt-in live Codex 測試未啟用；CoreData NSXPC 診斷仍在。非並行通過不代表先前並行時序風險已根治。
+
+新修正尚未提交；未 push、未啟動／重啟使用者 App／Xcode，未操作聊天／群組／外部帳號或憑證。整體仍 **43 complete／4 partial／1 NA**，不是「原版全部都有」。
+
+## 已提交增量：受核准的 Teams 排程定義提案（2026-09-22）
 
 先提交上一批為 `a217e93`（`feat: add approved project-scoped shared memory`），提交前 **23 Swift Testing／3 suites 通過**（`/tmp/filicon-project-memory-precommit.log`）。本輪核對本機非官方 reconstructed 的 `source/host/runner/tools/sand-state-tool.ts`：Microsoft Teams trigger 支援 tenantId、teamId／teamIds、channelIds 與文字／政策欄位。原生入口沒有可信應用程式使用者身分，故只補受限的模型定義路由，不宣稱 Teams 雲端 runtime 已完成。
 
@@ -17,7 +37,7 @@
 
 原生增量 build 成功，但最後三語言資源更新未重新執行 CodeSign，嚴格驗簽發現 ja／es／ko 與舊 seal 不一致（`/tmp/filicon-teams-model-native-verified.log`）。改用全新隔離 DerivedData `/tmp/filicon-teams-model-native.vOK7XS` 完整建置，**原生 Debug build 與 deep strict codesign 通過**，包含 helpers／XPC（`/tmp/filicon-teams-model-native-clean.log`）。沒有手動補簽、修改使用者 Xcode 產物或宣稱增量簽章問題已根治。既有 optional-to-Any、weak capture、AppIntents metadata／ad-hoc runtime 提示仍在；不是 release 簽署／公證驗收。
 
-本批新修改尚未提交；未 push、未啟動／重啟使用者 App／Xcode、未操作真實聊天／群組／排程／外部帳號或憑證。`AGENT-01`／`AUTO-03` 維持 partial，整體仍 **43 complete／4 partial／1 NA**。
+本批已於下一輪提交為 `e00bab1`；未 push、未啟動／重啟使用者 App／Xcode、未操作真實聊天／群組／排程／外部帳號或憑證。`AGENT-01`／`AUTO-03` 維持 partial，整體仍 **43 complete／4 partial／1 NA**。
 
 ## 已提交增量：受核准的專案共享記憶（2026-09-22）
 

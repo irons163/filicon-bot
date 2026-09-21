@@ -80,6 +80,15 @@ app.resources_build_phase.add_file_reference(strings)
 avatars = resources.new_file('PetAvatars')
 avatars.last_known_file_type = 'folder'
 app.resources_build_phase.add_file_reference(avatars)
+# Xcode can omit CodeSign after a localized-resource-only incremental build.
+# Declare a changing bundle output so normal signing tracks the resource tree.
+# Always inspect membership, but preserve the output on unchanged builds.
+resource_signing = app.new_shell_script_build_phase('Track Resource Signing')
+resource_signing.shell_path = '/bin/zsh'
+resource_signing.shell_script = '/bin/zsh "${SRCROOT}/scripts/resource-signing-digest.sh" "${SRCROOT}/Sources/Filicon/Resources" "${SCRIPT_OUTPUT_FILE_0}"'
+resource_signing.input_paths = ['$(SRCROOT)/scripts/resource-signing-digest.sh', '$(SRCROOT)/Sources/Filicon/Resources']
+resource_signing.output_paths = ['$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/FiliconResources.sha256']
+resource_signing.always_out_of_date = '1'
 app.build_configurations.each do |config|
   config.build_settings.merge!({
     'INFOPLIST_FILE' => 'Support/Info.plist',
