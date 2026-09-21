@@ -129,6 +129,29 @@ public struct TeamsAutomationTrigger: Codable, Hashable, Sendable {
         self.messageContainsIsRegex = messageContainsIsRegex; self.blockUnauthenticatedUsers = blockUnauthenticatedUsers
     }
 
+    /// The manual editor cannot relax the authentication policy or introduce
+    /// regex execution. Old definitions keep their original runtime semantics.
+    public func validateForManualEditing() throws {
+        guard blockUnauthenticatedUsers, !messageContainsIsRegex else {
+            throw AutomationEditError.unsupportedTeamsPolicy
+        }
+        guard Self.canonicalUUID(tenantID) != nil, (1...50).contains(teamIDs.count), channelIDs.count <= 50,
+              teamIDs.allSatisfy(Self.isManualScopeID), channelIDs.allSatisfy(Self.isManualScopeID) else {
+            throw AutomationEditError.invalidTeamsScope
+        }
+        guard let text = messageContains, (1...120).contains(text.count),
+              text == text.trimmingCharacters(in: .whitespacesAndNewlines),
+              text.rangeOfCharacter(from: .controlCharacters) == nil else {
+            throw AutomationEditError.invalidTeamsText
+        }
+    }
+
+    public static func isManualScopeID(_ value: String) -> Bool {
+        (1...200).contains(value.utf8.count)
+            && value.rangeOfCharacter(from: .whitespacesAndNewlines.union(.controlCharacters)
+                .union(CharacterSet(charactersIn: ",*"))) == nil
+    }
+
     static func identifier(_ value: Any?, limit: Int = 200) -> String? {
         guard let text = value as? String, !text.isEmpty, text.count <= limit,
               text.rangeOfCharacter(from: .whitespacesAndNewlines.union(.controlCharacters)) == nil else { return nil }

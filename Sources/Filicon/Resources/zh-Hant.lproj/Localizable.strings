@@ -1593,3 +1593,11 @@
 "No channel connection owned by this agent is available for that platform." = "此平台沒有屬於這位代理人的可用頻道連線。";
 "This agent has multiple connections on that platform. Choose the exact connection in Channels instead." = "此代理人在該平台有多個連線，請到「頻道」選擇要斷開的確切連線。";
 "Channel data changed while awaiting approval. Request approval again." = "等候核准期間頻道資料已變更，請重新請求核准。";
+"Teams event execution unavailable" = "Teams 事件執行目前無法使用";
+"Tenant UUID" = "租用戶 UUID";
+"Graph UUIDs or exact Bot team IDs, comma-separated" = "Graph UUID 或精確的 Bot 團隊 ID，以逗號分隔";
+"Literal message filter (required, up to 120 characters)" = "訊息文字篩選（必填，最多 120 字元）";
+"Each ID list accepts up to 50 entries before removing duplicates. Empty channel IDs means every channel in the selected teams. UUIDs ignore case; Bot and channel IDs are exact. Text matches a case-insensitive substring, including replies, not regex. Saving does not enable Teams event execution." = "每個 ID 清單在去除重複前最多 50 筆。頻道 ID 留空表示所選團隊的所有頻道。UUID 不區分大小寫；Bot 與頻道 ID 需精確相符。文字以不區分大小寫的子字串比對，也包含回覆，不支援正規表示式。儲存不會啟用 Teams 事件執行。";
+"Teams needs one tenant UUID and 1 to 50 team IDs. Channel IDs are optional (up to 50). Use Graph team UUIDs or exact Bot team IDs; no name lookup. IDs must be 1 to 200 UTF-8 bytes, without whitespace, control characters, commas or wildcards. Empty comma items are invalid." = "Teams 需要一個租用戶 UUID 與 1 到 50 個團隊 ID。頻道 ID 可留空，最多 50 個。請用 Graph 團隊 UUID 或精確的 Bot 團隊 ID，不會查詢名稱。ID 長度須為 1 到 200 個 UTF-8 位元組，不可包含空白、控制字元、逗號或萬用字元。逗號之間不可有空項目。";
+"Enter a literal Teams message filter of 1 to 120 characters, without control characters. Empty filters and regular expressions cannot be edited here." = "請輸入 1 到 120 字元的 Teams 訊息文字篩選，不可含控制字元。此處無法編輯空白篩選或正規表示式。";
+"This editor preserves the Teams signed-in-user restriction and supports literal text only. Existing conditions with a different policy or regex remain read-only; name and instruction edits preserve them." = "此編輯器保留 Teams 已登入使用者限制，且只支援文字比對。採用不同政策或正規表示式的既有條件維持唯讀；修改名稱與指示時會原樣保留。";

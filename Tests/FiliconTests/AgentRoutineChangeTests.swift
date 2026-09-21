@@ -1305,6 +1305,28 @@ struct AgentRoutineChangeTests {
         session.close()
     }
 
+    @Test func manualTeamsEditingDoesNotEnableModelTeamsProposals() async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let session = f.session(authorize: { _, _, _, _ in Issue.record("Teams model writes must not reach approval") })
+        defer { session.close() }
+        let tool = session.tools(for: f.owner.id)[2]
+        for blocked in [false, true] {
+            let teams: [String: Any] = ["type": "microsoftTeams", "tenantId": "aaaaaaaa-0000-0000-0000-000000000001",
+                "teamIds": ["bbbbbbbb-0000-0000-0000-000000000001"], "messageContains": "deploy",
+                "messageContainsIsRegex": false, "blockUnauthenticatedTeamsUsers": blocked]
+            for trigger: Any in [teams, [teams, ["type": "cron", "schedule": "@daily"]]] {
+                for action in ["create", "update"] {
+                    var fields: [String: Any] = ["target": "routine", "action": action, "trigger": trigger]
+                    if action == "create" { fields["name"] = "Teams"; fields["prompt"] = "Fixture only" }
+                    else { fields["id"] = f.routine.id.uuidString }
+                    await #expect(throws: (any Error).self) { _ = try await tool.execute(writeCall(fields), context: f.context) }
+                }
+            }
+        }
+        let after = await f.automations.list()
+        expectNoDifference(after, [f.routine, f.peerRoutine])
+    }
+
     @Test func routineWriteRejectsInvalidArgumentsWithoutApproval() async throws {
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
         let session = f.session(authorize: { _, _, _, _ in Issue.record("Invalid proposals must not reach approval") })

@@ -1933,7 +1933,7 @@ struct RoutineEditDraft: Equatable {
     var name: String
     var prompt: String
     var listeners: [AutomationListenerDraft]
-    static let editableKinds: [AutomationListenerKind] = [.schedule, .connector, .github, .slack, .linear, .sentry, .pagerDuty]
+    static let editableKinds: [AutomationListenerKind] = [.schedule, .connector, .github, .slack, .teams, .linear, .sentry, .pagerDuty]
 
     init(_ automation: Automation) {
         original = automation; name = automation.name; prompt = automation.prompt
@@ -2003,6 +2003,11 @@ struct RoutineEditDraft: Equatable {
             draft.tertiary = value.secondaryIDs.sorted().joined(separator: ", ")
             draft.statusIDs = value.statusIDs.sorted().joined(separator: ", ")
             draft.cycleIDs = value.cycleIDs.sorted().joined(separator: ", ")
+        case .platform(.microsoftTeams(let value)):
+            draft.kind = .teams; draft.primary = value.tenantID
+            draft.secondary = value.teamIDs.sorted().joined(separator: ", ")
+            draft.tertiary = value.channelIDs.sorted().joined(separator: ", ")
+            draft.quaternary = value.messageContains ?? ""
         case .platform(.sentry(let value)), .platform(.pagerDuty(let value)):
             if case .platform(.sentry) = trigger { draft.kind = .sentry } else { draft.kind = .pagerDuty }
             draft.primary = value.event; draft.secondary = value.primaryIDs.sorted().joined(separator: ", ")
@@ -2232,14 +2237,14 @@ struct AutomationListenerDraft: Identifiable, Equatable {
     }
 
     var validationMessage: String? {
-        guard !kind.events.isEmpty || kind == .github || kind == .slack || kind == .connector else { return nil }
+        guard !kind.events.isEmpty || [.github, .slack, .connector, .teams].contains(kind) else { return nil }
         do { _ = try trigger; return nil }
         catch { return error.localizedDescription }
     }
 
     // Validate the raw list before deduplication. Empty comma segments must not
     // quietly erase a restriction, and duplicate IDs still count toward 50.
-    private func ids(_ text: String, limit: Int = 50, error: AutomationStateChangeError,
+    private func ids(_ text: String, limit: Int = 50, error: any Error,
                      normalize: (String) -> String?) throws -> Set<String> {
         if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return [] }
         let parts = text.split(separator: ",", omittingEmptySubsequences: false)
@@ -2252,7 +2257,7 @@ struct AutomationListenerDraft: Identifiable, Equatable {
     }
 
     private func linearIDs(_ text: String) throws -> Set<String> {
-        try ids(text, error: .invalidLinearTrigger) { token in
+        try ids(text, error: AutomationStateChangeError.invalidLinearTrigger) { token in
             guard token.count == 36, let id = UUID(uuidString: token) else { return nil }
             return id.uuidString.lowercased()
         }
@@ -2306,6 +2311,29 @@ struct AutomationListenerDraft: Identifiable, Equatable {
         return .platform(.slack(value))
     }
 
+    private func teamsTrigger() throws -> AutomationTrigger {
+        let error = AutomationEditError.invalidTeamsScope
+        let tenant = primary.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard tenant.count == 36, let tenantUUID = UUID(uuidString: tenant) else { throw error }
+        let teams = try ids(secondary, error: error) { token in
+            guard TeamsAutomationTrigger.isManualScopeID(token) else { return nil }
+            if token.count == 36, let uuid = UUID(uuidString: token) { return uuid.uuidString.lowercased() }
+            return token
+        }
+        let channels = try ids(tertiary, error: error) { TeamsAutomationTrigger.isManualScopeID($0) ? $0 : nil }
+        // Validate before constructing: the legacy initializer trims empty text
+        // to nil, which must not silently turn a filter into an unrestricted one.
+        let text = quaternary.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard (1...120).contains(text.count), quaternary.rangeOfCharacter(from: .controlCharacters) == nil else {
+            throw AutomationEditError.invalidTeamsText
+        }
+        guard !teams.isEmpty else { throw error }
+        let value = try TeamsAutomationTrigger(tenantID: tenantUUID.uuidString.lowercased(), teamIDs: teams,
+            channelIDs: channels, messageContains: text)
+        try value.validateForManualEditing()
+        return .platform(.microsoftTeams(value))
+    }
+
     var trigger: AutomationTrigger {
         get throws {
             switch kind {
@@ -2323,12 +2351,7 @@ struct AutomationListenerDraft: Identifiable, Equatable {
             case .github:
                 return try githubTrigger()
             case .teams:
-                return .platform(.microsoftTeams(try TeamsAutomationTrigger(
-                    tenantID: primary,
-                    teamIDs: Set(secondary.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }),
-                    channelIDs: Set(tertiary.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }),
-                    messageContains: quaternary.isEmpty ? nil : quaternary
-                )))
+                return try teamsTrigger()
             case .linear:
                 guard kind.events.contains(where: { $0.rawValue == primary }) else {
                     throw AutomationStateChangeError.invalidLinearTrigger
@@ -2433,10 +2456,13 @@ struct AutomationListenerEditor: View {
             notice(Self.githubNotice)
             notice(Self.ingressNotice)
         case .teams:
-            TextField(l10n("Tenant ID"), text: $listener.primary)
-            TextField(l10n("Team IDs, comma-separated"), text: $listener.secondary)
-            TextField(l10n("Channel IDs, comma-separated (optional)"), text: $listener.tertiary)
-            TextField(l10n("Message contains (required)"), text: $listener.quaternary)
+            Label(FiliconLocalization.string("Teams event execution unavailable", language: uiLocale.identifier), systemImage: "exclamationmark.shield")
+                .font(.callout.bold()).fixedSize(horizontal: false, vertical: true)
+            teamsField("Tenant UUID", text: $listener.primary)
+            teamsField("Graph UUIDs or exact Bot team IDs, comma-separated", text: $listener.secondary)
+            teamsField("Channel IDs, comma-separated (optional)", text: $listener.tertiary)
+            teamsField("Literal message filter (required, up to 120 characters)", text: $listener.quaternary)
+            notice(Self.teamsFilterNotice)
             TeamsRoutineAvailabilityNotice()
         case .linear, .sentry, .pagerDuty:
             Picker(FiliconLocalization.string("Event", language: uiLocale.identifier), selection: $listener.primary) {
@@ -2469,6 +2495,7 @@ struct AutomationListenerEditor: View {
     static let linearNotice = "Status filters apply only to status changes. Cycle completion uses team/cycle IDs, not projects, and requires an explicit completion event, not just an elapsed date. Clear incompatible filters when switching events."
     static let slackNotice = "Use a conversation ID (C/G/D...), not a channel or user name. * covers connected conversations only. Mention means the connected app or bot. Keyword: up to 120 characters. Reactions: up to 8 emoji names; empty means any. Self-only matching is unavailable. Clear incompatible filters when switching matches."
     static let githubNotice = "Select at least one event. CI requires one exact branch and ignores allowed users; each completed push workflow is separate, not an all-checks summary. Optional users: up to 50 logins, comma-separated. They filter PR owners, review actors and PR owners together, or the actor assigning an issue (not the assignee). Empty means any."
+    static let teamsFilterNotice = "Each ID list accepts up to 50 entries before removing duplicates. Empty channel IDs means every channel in the selected teams. UUIDs ignore case; Bot and channel IDs are exact. Text matches a case-insensitive substring, including replies, not regex. Saving does not enable Teams event execution."
 
     private func idField(_ key: String, text: Binding<String>) -> some View {
         let label = FiliconLocalization.string(key, language: uiLocale.identifier)
@@ -2483,6 +2510,15 @@ struct AutomationListenerEditor: View {
         Text(FiliconLocalization.string(key, language: uiLocale.identifier))
             .font(.caption).foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func teamsField(_ key: String, text: Binding<String>) -> some View {
+        let label = FiliconLocalization.string(key, language: uiLocale.identifier)
+        return VStack(alignment: .leading, spacing: 4) {
+            Text(label).font(.caption).fixedSize(horizontal: false, vertical: true)
+            TextField("", text: text, axis: .vertical).accessibilityLabel(label)
+                .labelsHidden().textFieldStyle(.roundedBorder).multilineTextAlignment(.leading).lineLimit(1...4)
+        }
     }
 
     private func changeKind(_ kind: AutomationListenerKind) {

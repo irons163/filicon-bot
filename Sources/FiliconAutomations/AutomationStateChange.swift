@@ -50,6 +50,9 @@ public enum AutomationEditError: String, LocalizedError, Sendable {
     case stale = "This routine changed or was deleted while editing. Close the editor and reopen the latest version. Your draft has not been saved."
     case unsupportedTrigger = "This trigger cannot be edited here. Its original definition is preserved; you can still edit the name and instruction."
     case unavailable = "This editor is no longer active, or its agent is unavailable. Close it and reopen the routine."
+    case invalidTeamsScope = "Teams needs one tenant UUID and 1 to 50 team IDs. Channel IDs are optional (up to 50). Use Graph team UUIDs or exact Bot team IDs; no name lookup. IDs must be 1 to 200 UTF-8 bytes, without whitespace, control characters, commas or wildcards. Empty comma items are invalid."
+    case invalidTeamsText = "Enter a literal Teams message filter of 1 to 120 characters, without control characters. Empty filters and regular expressions cannot be edited here."
+    case unsupportedTeamsPolicy = "This editor preserves the Teams signed-in-user restriction and supports literal text only. Existing conditions with a different policy or regex remain read-only; name and instruction edits preserve them."
     public var errorDescription: String? { rawValue }
 }
 
@@ -73,6 +76,7 @@ extension AutomationTrigger {
         case .event(let value): try value.validateFilters()
         case .platform(.github(let value)): try value.validateForAgentWrite()
         case .platform(.slack(let value)): try value.validateForAgentWrite()
+        case .platform(.microsoftTeams(let value)): try value.validateForManualEditing()
         case .platform(.linear(let value)): try value.validateForAgentWrite()
         case .platform(.sentry(let value)): try value.validateForSentryAgentWrite()
         case .platform(.pagerDuty(let value)): try value.validateForPagerDutyAgentWrite()

@@ -311,8 +311,9 @@ actors and PR owners, or the actor assigning an issue, not the assignee. These
 controls disclose their existing-ingress requirements and do not connect accounts.
 
 In **Automations → Edit**, change a saved routine's name and instruction, plus
-cron/interval, generic connector events, supported GitHub/Slack/Linear/Sentry/PagerDuty conditions or a flat
-OR of up to eight of those conditions. Other platforms, legacy and unknown formats expose
+cron/interval, generic connector events, supported GitHub/Slack/Linear/Sentry/PagerDuty conditions,
+the restricted Teams conditions described below, or a flat OR of up to eight of
+those conditions. Other platforms, legacy and unknown formats expose
 their original trigger as read-only; name/instruction edits preserve it without
 migration. Untouched members keep their original IDs and time-zone representation.
 Saving preserves the owner, enabled state, spend protection, history and in-flight
@@ -322,7 +323,7 @@ time condition. Already queued events may match new conditions and incur model
 costs. A stale definition, deleted routine, cancelled editor, archived owner or
 account change blocks an uncommitted save. Failed storage keeps the draft and
 the last persisted definition. These controls have seven-language coverage;
-Teams condition editing, identity/name lookup, aggregate GitHub checks
+Full Teams runtime/identity support, identity/name lookup, aggregate GitHub checks
 and live platform parity remain open. Existing Slack name-based or self-only
 conditions remain read-only, not silently changed into unrestricted conditions.
 
@@ -467,8 +468,8 @@ PagerDuty own-routine create/update proposals now use the same full approval,
 ownership, spend, cancellation and persistence checks in group/mailbox turns,
 including mixed OR conditions. Seven-language approval previews disclose the
 exact service scope, four incident cases, bounded replay protection, event-time
-limitation and future costs. A specialized new-routine form is available; manual
-editing of saved definitions and live-account validation remain unsupported/unverified.
+limitation and future costs. Specialized manual creation and editing forms are
+available; live-account validation remains unverified.
 Verification uses isolated signed
 fixtures; it does not create a connection or public listener.
 
@@ -478,8 +479,24 @@ that a sender is signed in to Filicon. Conditions with
 `blockUnauthenticatedUsers: true` therefore fail closed, including previously
 queued payloads claiming `authenticated: true`. Existing definitions are not
 rewritten or relaxed. **The manual Teams editor retains this default, so its
-Teams event conditions currently cannot run**; the editor now discloses this.
+Teams event conditions currently cannot run**; the editor prominently discloses this.
 Other listeners in an OR routine and explicit manual runs are not disabled.
+
+Manual creation and **Automations → Edit** share strict Teams scope validation:
+one tenant UUID, 1–50 Graph UUIDs or exact opaque Bot team IDs, and optionally
+up to 50 exact channel IDs. Empty channels means all channels of the selected
+teams. Limits apply before deduplication; empty comma items, wildcard `*`,
+whitespace/control characters within IDs, or IDs over 200 UTF-8 bytes are rejected.
+Tenant/Graph UUIDs are normalized only when a condition is changed; opaque IDs
+retain case. A literal, nonempty message filter of at most 120 characters is
+required, with no control characters. Newlines are not silently rewritten or
+truncated. Long fields wrap in the seven-language editor.
+Conditions using regex, allowing unauthenticated users, empty filters or invalid
+scope remain read-only, including their containing OR group. Name/instruction
+edits preserve the original trigger. Unchanged members stay intact; changed
+conditions are checked again at the atomic manual-save boundary. This adds no
+policy-relaxation switch, model Teams proposals, account connection or event
+execution capability, and does not migrate existing definitions.
 
 The native adapter only classifies bounded `message` activities from `msteams`
 channel conversations with tenant, team, channel, conversation, sender and

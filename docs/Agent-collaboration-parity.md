@@ -1,6 +1,25 @@
 # 協作能力核對紀錄（更新至 2026-09-21）
 
-## 本輪增量：受核准的自身頻道斷線（2026-09-21）
+## 本輪增量：受限制的 Teams 手動條件編輯（2026-09-21）
+
+先提交上一批為 `4a434f2`（`feat: approve disconnection of agent-owned channels`），提交前頻道／管理聚焦 64 項再次通過。此輪核對本機非官方 reconstructed 的 `sand-state-tool.ts` Microsoft Teams schema、`automation-trigger.ts` scope／filter 判定，以及 Filicon 既有原生 Teams 安全邊界；不以表單完成宣稱原版 Teams 雲端能力已還原。
+
+- Teams 新增／既有條件編輯共用嚴格驗證：一個 tenant UUID、1–50 個 Graph UUID 或精確 Bot team ID、可留空的最多 50 個 channel ID。清單在去重前計數，空逗號項、`*`、ID 中空白／控制字元／逗號及超過 200 UTF-8 bytes 直接拒絕，不靜默丟棄。修改時只正規化 UUID；opaque ID 保留大小寫，不查名稱、不安裝連線。
+- 必填 literal substring 篩選，最多 120 字元、拒絕控制字元，不把 regex 語法當成 regex 執行。原生 substring 比對仍不分大小寫且包含回覆；沒有新增主文判定。舊 regex／blockUnauthenticatedUsers=false／空篩選／無效 scope 維持 metadata-only，含其 OR 群組；完整原始 trigger 保留。未改動的 OR 分支也維持原值。
+- 新增與可編輯的 Teams 條件固定保留 blockUnauthenticatedUsers=true，原生入口缺乏可信登入身分，因此 Teams 分支仍不執行；畫面新增醒目狀態並保留詳細說明。其他 OR 分支及 Run Now 不變。後端 manual-save 再驗證相同邊界，不能繞過表單放寬政策；模型 Teams create/update（單一／OR、政策兩方向）仍拒絕。
+- 沿用原子手動保存、revision／lifetime／account／owner 封存及儲存失敗保護；保留 enabled、費用防護、history 與未變動的時間基準。不操作真實資料或服務。
+
+依 Swift 測試／CustomDump 技能先重現兩項紅測試（不可編輯、空逗號被丟棄；2 tests／4 issues），以隔離 store／App fixture、固定時間檢查完整值。依 SwiftUI 技能沿用直接 state binding，Teams 欄位改為可換行、靠左的文字輸入，標籤／狀態／錯誤／限制說明補齊七語言。擴充測試時修正 async autoclosure 編譯用法；重開比較改用完整毫秒 Codable 表示，避免把 Date 次毫秒往返差異當產品錯誤，未忽略時間欄位。
+
+驗證：聚焦 **91 Swift Testing／5 suites 通過**（`/tmp/filicon-teams-editor-verified.log`）。Teams 新增九項測試函式（含六種 App 保存結果參數）及一項模型路由拒絕測試；涵蓋 ID 原始清單／空項／UTF-8 上限、UUID 與 opaque 大小寫、文字上限／控制字元、正規表示式不轉譯、政策不放寬、舊條件不遷移、OR 分支保留、時間基準／history／持久化、表單繞過、取消／帳號／封存／stale／保存失敗、群組模型提案仍拒絕。
+
+產生 **56 張 Teams 專用預覽**（欄位有效／無效、完整 sheet 可編輯／唯讀 × 七語言 × 明暗；`/tmp/filicon-teams-editor-previews/teams-fields-*` 及 `teams-sheet-*`），每種語言至少檢視一張。檢視後修正沿用的韓文標籤中的英文殘留、以及 macOS Form 對輸入欄的右側配置，重新渲染確認韓文與日文完整 sheet；長清單可軟換行。sheet 內容可捲動，並非全產品逐頁或真實 Teams 帳號驗收。
+
+最後完整 `swift test --no-parallel` **135 XCTest、975 Swift Testing／110 suites 全數通過**（`/tmp/filicon-teams-editor-full-final.log`），兩項 opt-in live Codex 測試未啟用；既有 CoreData NSXPC 診斷仍在。原生 `Filicon App` Debug 增量 build（`/tmp/filicon-teams-editor-native-verified.log`）及 deep strict codesign 通過，含 helpers／XPC；七語言各 **1,594 keys、零缺漏**，`git diff --check` 通過。未 push、未啟動／重啟使用者 App／Xcode、未改真實聊天／群組／排程／連線／憑證。新一批修改尚未提交。
+
+`AUTO-03` 仍為 partial：Teams 可信登入／主文／Graph／同步回覆／regex 與模型提案、GitHub checks 彙整、Slack 名稱／人類身分及 live 帳號驗收尚有缺口。整體維持 **43 complete／4 partial／1 NA**。
+
+## 已提交增量：受核准的自身頻道斷線（2026-09-21）
 
 開始時工作區乾淨，上批已提交為 `65a9352`（`fix: preserve channel state across failed writes and stale callbacks`），未重複建立空提交。Xcode 更新後 Swift 6.4 已可執行；使用新的隔離 scratch／DerivedData，先補跑上批最終驗證：**135 XCTest、953 Swift Testing／108 suites 全部通過**（`/tmp/filicon-swift64-channel-baseline.log`），原生 Debug build 與 deep strict codesign 通過（`/tmp/filicon-swift64-native.log`）。兩項 opt-in live Codex 測試未啟用；保留既有 CoreData XPC 診斷。沒有代為接受條款、變更全機 xcode-select 或啟動／重啟使用者 App。
 
