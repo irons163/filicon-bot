@@ -170,7 +170,7 @@ struct AgentMemorySearchTests {
     @Test func invalidToolFieldsDoNotBroadenScopeOrImpersonateAgents() async throws {
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
         let tool = try f.tool(f.session())
-        for fields in [["agent_id": f.peer.id.uuidString], ["accountID": "other"], ["scope": "project"],
+        for fields in [["agent_id": f.peer.id.uuidString], ["accountID": "other"], ["scope": "Project"], ["scope": "all", "project": "site"],
                        ["path": "/"], ["scope": "USER"], ["query": " "], ["query": String(repeating: "x", count: 257)],
                        ["offset": "8"], ["cursor": "unknown"], ["cursor": UUID().uuidString, "query": "Aurora"]] {
             await #expect(throws: (any Error).self) { _ = try await tool.execute(call(fields), context: f.context) }

@@ -1614,3 +1614,15 @@
 "This agent already has the requested project membership. Nothing changed." = "此代理人的專案成員資格已符合要求，未做變更。";
 "This account already has 50 collaboration projects. No project was created." = "此帳號已有 50 個協作專案，未建立新專案。";
 "Project membership changed while approval was pending. Request approval again." = "等待核准時專案成員資格已變更，請重新要求核准。";
+"Project memory" = "專案記憶";
+"Save project memory" = "儲存專案記憶";
+"Forget project memory" = "忘記專案記憶";
+"Forget this fact for all project members?" = "要為所有專案成員忘記這項事實嗎？";
+"This editor lists all project facts in this account, including departed writers. Agents can read only projects they currently belong to." = "此編輯器列出此帳號所有專案事實，包括已離開的記錄者。代理人只能讀取目前所屬專案。";
+"Project facts are shared with current and future members of that project in this account and their configured models, including members outside this chat. Leaving stops future recall, not saved facts or already-sent messages. Rejoining restores access. Private memories and tool permissions stay unchanged." = "專案事實會與此帳號中該專案現有及未來的成員和其設定的模型分享，包括此聊天以外的成員。離開後停止後續召回，但不刪除已存事實或已傳送訊息；重新加入會恢復存取。私人記憶及工具權限不變。";
+"Project memory requires an active member of an existing project in this account. Use an exact project slug with scope project only." = "專案記憶需要此帳號既有專案的有效成員資格。精確專案識別碼只能搭配 project 範圍。";
+"This fact is already saved in this project's shared memory." = "這項事實已儲存在此專案的共享記憶。";
+"Each project's shared memory is limited to 48 facts, including 8 foundational facts, and 12,000 characters across all writers in this account." = "每個專案在此帳號的所有記錄者合計最多 48 項事實，其中基礎事實最多 8 項，總計 12,000 字元。";
+"Use memory write/forget with one fact of at most 1,000 characters, scope agent/user/project, and tier profile/log/note. Project scope requires an exact joined project slug. Forget requires exact recorded text, the same scope/project, and no tier." = "記憶寫入／忘記限一項不超過 1,000 字元的事實，範圍為 agent/user/project，層級為 profile/log/note。專案範圍需精確指定已加入的專案；忘記時須使用原文、相同範圍與專案，不指定層級。";
+"Memory search accepts query (up to 256 Unicode scalars), scope all/agent/user/project, and an optional exact project slug with scope project only, or a continuation cursor by itself." = "記憶搜尋接受查詢（最多 256 個 Unicode 純量）、all/agent/user/project 範圍；僅 project 範圍可加精確專案識別碼。或單獨提供接續游標。";
+"Project names and descriptions are shared across this account. Joining also permits recall of approved project facts from current and departed writers; future members receive the same access. Leaving preserves those facts but stops future recall; rejoining restores access. Already-sent messages are not erased. Private memories, chats, files and tool permissions stay unchanged." = "專案名稱與說明在此帳號內共享。加入也可召回現有及已離開記錄者所儲存、經核准的專案事實，未來成員享有相同存取。離開會保留事實但停止後續召回；重新加入會恢復存取。已傳送訊息不會刪除。私人記憶、聊天、檔案及工具權限不變。";

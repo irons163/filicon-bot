@@ -3,20 +3,21 @@ import Foundation
 /// Explicitly approved facts, not transcripts, instructions or permission grants.
 public struct AgentMemory: Identifiable, Codable, Hashable, Sendable {
     public enum Tier: String, Codable, Sendable { case profile, log, note }
-    public enum Scope: String, Codable, Sendable { case agent, user }
+    public enum Scope: String, Codable, Sendable { case agent, user, project }
     public let id: UUID
     public let accountID: String
     public let agentID: UUID
     public let fact: String
     public let tier: Tier
     public let scope: Scope
+    public let project: String?
     public let createdAt: Date
     public init(id: UUID = UUID(), accountID: String, agentID: UUID, fact: String, tier: Tier = .log,
-                scope: Scope = .agent, createdAt: Date = Date()) {
+                scope: Scope = .agent, project: String? = nil, createdAt: Date = Date()) {
         self.id = id; self.accountID = accountID; self.agentID = agentID
-        self.fact = fact; self.tier = tier; self.scope = scope; self.createdAt = createdAt
+        self.fact = fact; self.tier = tier; self.scope = scope; self.project = project; self.createdAt = createdAt
     }
-    private enum CodingKeys: String, CodingKey { case id, accountID, agentID, fact, tier, scope, createdAt }
+    private enum CodingKeys: String, CodingKey { case id, accountID, agentID, fact, tier, scope, project, createdAt }
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         id = try values.decode(UUID.self, forKey: .id)
@@ -26,7 +27,20 @@ public struct AgentMemory: Identifiable, Codable, Hashable, Sendable {
         tier = try values.decode(Tier.self, forKey: .tier)
         // Older approvals never consented to sharing. A missing scope stays private.
         scope = try values.decodeIfPresent(Scope.self, forKey: .scope) ?? .agent
+        project = try values.decodeIfPresent(String.self, forKey: .project)
+        guard scope == .project ? project.map(AgentProject.isValidSlug) == true : project == nil else {
+            throw DecodingError.dataCorruptedError(forKey: .project, in: values, debugDescription: "Invalid memory project scope")
+        }
         createdAt = try values.decode(Date.self, forKey: .createdAt)
+    }
+
+    public func isVisible(accountID: String, agentID: UUID, joinedProjects: Set<String> = []) -> Bool {
+        guard self.accountID == accountID else { return false }
+        switch scope {
+        case .agent: return project == nil && self.agentID == agentID
+        case .user: return project == nil
+        case .project: return project.map { AgentProject.isValidSlug($0) && joinedProjects.contains($0) } ?? false
+        }
     }
 }
 
@@ -34,17 +48,23 @@ public struct AgentMemoryChange: Equatable, Sendable {
     public enum Operation: String, Sendable { case write, forget }
     public let operation: Operation
     public let memory: AgentMemory
-    public init(operation: Operation, memory: AgentMemory) { self.operation = operation; self.memory = memory }
+    public let project: AgentProject?
+    public init(operation: Operation, memory: AgentMemory, project: AgentProject? = nil) {
+        self.operation = operation; self.memory = memory; self.project = project
+    }
 }
 
 public enum AgentMemoryError: String, LocalizedError, Sendable {
-    case invalid = "Use memory write/forget with one fact of at most 1,000 characters, scope agent or user, and tier profile, log or note. Forget requires exact recorded text, the same scope, and no tier."
+    case invalid = "Use memory write/forget with one fact of at most 1,000 characters, scope agent/user/project, and tier profile/log/note. Project scope requires an exact joined project slug. Forget requires exact recorded text, the same scope/project, and no tier."
     case stale = "This memory changed or no longer exists. Refresh the memories and request approval again."
     case duplicate = "This fact is already saved for this agent."
     case limit = "Agent memory is limited to 48 facts, including 8 profile facts, and 12,000 characters per account and agent."
     case sharedDuplicate = "This fact is already saved in shared user memory."
     case sharedLimit = "Shared user memory is limited to 48 facts, including 8 profile facts, and 12,000 characters per account across all agents."
     case unavailable = "The memory owner is unavailable."
+    case projectUnavailable = "Project memory requires an active member of an existing project in this account. Use an exact project slug with scope project only."
+    case projectDuplicate = "This fact is already saved in this project's shared memory."
+    case projectLimit = "Each project's shared memory is limited to 48 facts, including 8 foundational facts, and 12,000 characters across all writers in this account."
     public var errorDescription: String? { rawValue }
 }
 
@@ -123,8 +143,8 @@ public struct AgentMemoryRecall: Sendable {
     public let omittedCount: Int
     public let factsJSON: String
 
-    public init(memories source: [AgentMemory], accountID: String, agentID: UUID, query: AgentMemoryQuery = .init("")) throws {
-        let visible = source.filter { $0.accountID == accountID && ($0.scope == .user || $0.agentID == agentID) }
+    public init(memories source: [AgentMemory], accountID: String, agentID: UUID, query: AgentMemoryQuery = .init(""), joinedProjects: Set<String> = []) throws {
+        let visible = source.filter { $0.isVisible(accountID: accountID, agentID: agentID, joinedProjects: joinedProjects) }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         func fact(_ memory: AgentMemory) -> AgentMemoryFact { AgentMemoryFact(memory, readerID: agentID) }
@@ -137,11 +157,12 @@ public struct AgentMemoryRecall: Sendable {
         for (scope, profile, limit, bytes) in [
             (AgentMemory.Scope.agent, true, 8, 8_000), (.agent, false, 30, 4_000),
             (.user, true, 8, 4_000), (.user, false, 15, 2_000),
+            (.project, true, 8, 4_000), (.project, false, 15, 2_000),
         ] {
             var seen: Set<String> = []
             let distinct = visible.filter { $0.scope == scope && ($0.tier == .profile) == profile }
                 .sorted(by: newestFirst).filter {
-                    let key = $0.fact.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ").lowercased()
+                    let key = ($0.project ?? "") + "\u{1f}" + $0.fact.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ").lowercased()
                     return seen.insert(key).inserted
                 }
             let ranked = distinct.map { (memory: $0, relevance: query.relevance(of: $0.fact)) }.sorted { left, right in

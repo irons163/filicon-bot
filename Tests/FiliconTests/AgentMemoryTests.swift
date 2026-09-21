@@ -113,11 +113,14 @@ struct AgentMemoryTests {
     @Test func invalidFieldsAndDefaultDenialNeverWriteMemory() async throws {
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
         let tool = f.session().tools(for: f.owner.id)[2]
-        let invalid = [["scope": "USER"], ["scope": "project"], ["project": "secret"], ["tier": "episode"],
+        let invalid = [["scope": "USER"], ["tier": "episode"],
                        ["agent_id": f.peer.id.uuidString], ["accountID": "other"], ["name": "Spoof"], ["action": "set"],
                        ["fact": "  "], ["fact": String(repeating: "x", count: 1_001)], ["action": "forget", "tier": "log"]]
         for fields in invalid {
             await #expect(throws: AgentMemoryError.invalid) { _ = try await tool.execute(call(extra: fields), context: f.context) }
+        }
+        for fields in [["scope": "project"], ["project": "secret"]] {
+            await #expect(throws: AgentMemoryError.projectUnavailable) { _ = try await tool.execute(call(extra: fields), context: f.context) }
         }
         for json in [#"{"target":"memory","action":"write","fact":42}"#, #"{"target":"memory","action":"write","fact":"x","tier":null}"#] {
             await #expect(throws: AgentMemoryError.invalid) { _ = try await tool.execute(.init(id: "bad", name: "update_state", argumentsJSON: Data(json.utf8)), context: f.context) }

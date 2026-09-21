@@ -552,7 +552,7 @@ struct GroupToolApprovalPanel: View {
 
 struct AgentProjectApprovalDetails: View {
     let metadata: [String: String]
-    static let notice = "Project names and descriptions are shared with current and future agents in this account and their models. Only this agent's membership changes; other members and existing metadata stay unchanged. Leaving preserves the project. This does not create a chat or folder, grant file access, start work or share private memories. Project memory is not available yet."
+    static let notice = "Project names and descriptions are shared across this account. Joining also permits recall of approved project facts from current and departed writers; future members receive the same access. Leaving preserves those facts but stops future recall; rejoining restores access. Already-sent messages are not erased. Private memories, chats, files and tool permissions stay unchanged."
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(l10n("Collaboration project membership")).font(.callout.weight(.semibold))
@@ -643,6 +643,7 @@ struct AgentMemoryApprovalDetails: View {
     let metadata: [String: String]
     private var scope: AgentMemory.Scope { AgentMemory.Scope(rawValue: metadata["agentMemoryScope"] ?? "agent") ?? .agent }
     private var title: LocalizedText {
+        if scope == .project { return metadata["agentMemoryAction"] == "forget" ? "Forget project memory" : "Save project memory" }
         if scope == .user { return metadata["agentMemoryAction"] == "forget" ? "Forget shared user memory" : "Save shared user memory" }
         return metadata["agentMemoryAction"] == "forget" ? "Forget agent memory" : "Save agent memory"
     }
@@ -651,6 +652,11 @@ struct AgentMemoryApprovalDetails: View {
             Text(l10n(title)).font(.headline)
             Text(verbatim: metadata["agentMemoryOwner"] ?? "").font(.callout.weight(.semibold))
             Text(l10n(scope.memoryTitleKey)).font(.callout.weight(.semibold))
+            if scope == .project {
+                Text(verbatim: metadata["agentMemoryProjectName"] ?? "")
+                Text(verbatim: metadata["agentMemoryProject"] ?? "").font(.caption.monospaced())
+                LabeledContent(l10n("Project member count"), value: metadata["agentMemoryProjectMembers"] ?? "0")
+            }
             Text(l10n((AgentMemory.Tier(rawValue: metadata["agentMemoryTier"] ?? "log") ?? .log).memoryTitleKey)).font(.caption)
             Text(verbatim: metadata["agentMemoryFact"] ?? "").fixedSize(horizontal: false, vertical: true)
             Text(l10n(scope.memoryDisclosureKey))
@@ -676,9 +682,11 @@ extension AgentMemory.Tier {
 }
 
 extension AgentMemory.Scope {
-    var memoryTitleKey: LocalizedText { self == .user ? "Shared user memory" : "Agent memory" }
+    var memoryTitleKey: LocalizedText { self == .project ? "Project memory" : self == .user ? "Shared user memory" : "Agent memory" }
     var memoryDisclosureKey: LocalizedText {
-        self == .user
+        self == .project
+            ? "Project facts are shared with current and future members of that project in this account and their configured models, including members outside this chat. Leaving stops future recall, not saved facts or already-sent messages. Rejoining restores access. Private memories and tool permissions stay unchanged."
+            : self == .user
             ? "Shared facts are sent to every current and future agent's configured model in this account during group and mailbox turns, including agents outside this group. Sharing does not grant tool permissions."
             : "Saved facts are sent to this agent's configured model in future group and mailbox turns in this account. They are not shared with other agents or used as tool permissions."
     }

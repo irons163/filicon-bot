@@ -2,6 +2,9 @@ import Foundation
 
 /// Account-local collaboration metadata, NOT a filesystem grant or chat group.
 public struct AgentProject: Identifiable, Codable, Equatable, Sendable {
+    public static func isValidSlug(_ slug: String) -> Bool {
+        (1...64).contains(slug.utf8.count) && slug.wholeMatch(of: /^[a-z0-9]+(?:-[a-z0-9]+)*$/) != nil
+    }
     public var id: String { slug }
     public let accountID: String
     public let slug: String

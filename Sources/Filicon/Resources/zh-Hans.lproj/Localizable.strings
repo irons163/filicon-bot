@@ -1614,3 +1614,15 @@
 "This agent already has the requested project membership. Nothing changed." = "此代理的项目成员资格已符合要求，未作更改。";
 "This account already has 50 collaboration projects. No project was created." = "此账号已有 50 个协作项目，未创建新项目。";
 "Project membership changed while approval was pending. Request approval again." = "等待批准时项目成员资格已更改，请重新请求批准。";
+"Project memory" = "项目记忆";
+"Save project memory" = "保存项目记忆";
+"Forget project memory" = "忘记项目记忆";
+"Forget this fact for all project members?" = "要为所有项目成员忘记此事实吗？";
+"This editor lists all project facts in this account, including departed writers. Agents can read only projects they currently belong to." = "此编辑器列出此账号所有项目事实，包括已离开的记录者。代理只能读取目前所属项目。";
+"Project facts are shared with current and future members of that project in this account and their configured models, including members outside this chat. Leaving stops future recall, not saved facts or already-sent messages. Rejoining restores access. Private memories and tool permissions stay unchanged." = "项目事实会与此账号中该项目现有及未来的成员和其配置的模型分享，包括此聊天以外的成员。离开后停止后续召回，但不删除已存事实或已发送消息；重新加入会恢复访问。私人记忆及工具权限不变。";
+"Project memory requires an active member of an existing project in this account. Use an exact project slug with scope project only." = "项目记忆需要此账号现有项目的有效成员资格。精确项目标识只能搭配 project 范围。";
+"This fact is already saved in this project's shared memory." = "此事实已保存在此项目的共享记忆中。";
+"Each project's shared memory is limited to 48 facts, including 8 foundational facts, and 12,000 characters across all writers in this account." = "每个项目在此账号的所有记录者合计最多 48 个事实，其中基础事实最多 8 个，总计 12,000 字符。";
+"Use memory write/forget with one fact of at most 1,000 characters, scope agent/user/project, and tier profile/log/note. Project scope requires an exact joined project slug. Forget requires exact recorded text, the same scope/project, and no tier." = "记忆写入／忘记限一个不超过 1,000 字符的事实，范围为 agent/user/project，层级为 profile/log/note。项目范围需精确指定已加入的项目；忘记时须使用原文、相同范围与项目，不指定层级。";
+"Memory search accepts query (up to 256 Unicode scalars), scope all/agent/user/project, and an optional exact project slug with scope project only, or a continuation cursor by itself." = "记忆搜索接受查询（最多 256 个 Unicode 标量）、all/agent/user/project 范围；仅 project 范围可加精确项目标识。或单独提供继续游标。";
+"Project names and descriptions are shared across this account. Joining also permits recall of approved project facts from current and departed writers; future members receive the same access. Leaving preserves those facts but stops future recall; rejoining restores access. Already-sent messages are not erased. Private memories, chats, files and tool permissions stay unchanged." = "项目名称与说明在此账号内共享。加入也可召回现有及已离开记录者所保存、经批准的项目事实，未来成员享有相同访问权。离开会保留事实但停止后续召回；重新加入会恢复访问。已发送消息不会删除。私人记忆、聊天、文件及工具权限不变。";

@@ -1,13 +1,20 @@
 import Foundation
 
-/// Read-only views of already approved facts; no project or arbitrary agent scope.
+/// One actor snapshot of visible records and the membership that authorizes them.
+public struct AgentMemoryAccess: Sendable {
+    public let memories: [AgentMemory]
+    public let projects: [AgentProject]
+    public var joinedProjects: Set<String> { Set(projects.map(\.slug)) }
+}
+
+/// Read-only views of already approved facts; never arbitrary agent scope.
 public enum AgentMemorySearchScope: String, Codable, Sendable {
-    case all, agent, user
+    case all, agent, user, project
     public func includes(_ scope: AgentMemory.Scope) -> Bool { self == .all || rawValue == scope.rawValue }
 }
 
 public enum AgentMemorySearchError: String, LocalizedError, Sendable {
-    case invalid = "Memory search accepts only query (up to 256 Unicode scalars), scope all/agent/user, or a continuation cursor by itself."
+    case invalid = "Memory search accepts query (up to 256 Unicode scalars), scope all/agent/user/project, and an optional exact project slug with scope project only, or a continuation cursor by itself."
     case stale = "This memory search cursor is invalid or the saved facts changed. Start a new search."
     case limit = "This request reached its 32 memory-search limit. Report the results already available."
     public var errorDescription: String? { rawValue }
@@ -18,12 +25,13 @@ public struct AgentMemoryFact: Encodable, Sendable {
     public let fact: String
     public let tier: AgentMemory.Tier
     public let scope: AgentMemory.Scope
+    public let project: String?
     public let recordedBy: UUID
     public let canForget: Bool
     public let recordedAt: String
 
     public init(_ memory: AgentMemory, readerID: UUID) {
-        fact = memory.fact; tier = memory.tier; scope = memory.scope
+        fact = memory.fact; tier = memory.tier; scope = memory.scope; project = memory.project
         recordedBy = memory.agentID; canForget = memory.agentID == readerID
         recordedAt = memory.createdAt.ISO8601Format()
     }
@@ -38,17 +46,18 @@ public struct AgentMemorySearchPage: Sendable {
     public let nextOffset: Int?
 
     public init(memories: [AgentMemory], accountID: String, agentID: UUID,
-                query: String = "", scope: AgentMemorySearchScope = .all, offset: Int = 0) throws {
+                query: String = "", scope: AgentMemorySearchScope = .all, offset: Int = 0, joinedProjects: Set<String> = []) throws {
         guard query.unicodeScalars.prefix(257).count <= 256,
               query.isEmpty || !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw AgentMemorySearchError.invalid
         }
         let matches = memories.filter {
-            $0.accountID == accountID && ($0.scope == .user || $0.agentID == agentID) && scope.includes($0.scope)
+            $0.isVisible(accountID: accountID, agentID: agentID, joinedProjects: joinedProjects) && scope.includes($0.scope)
                 && (query.isEmpty || $0.fact.range(of: query, options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive],
                                                  locale: Locale(identifier: "en_US_POSIX")) != nil)
         }.sorted {
-            if $0.scope != $1.scope { return $0.scope == .agent }
+            if $0.scope != $1.scope { return $0.scope.rawValue < $1.scope.rawValue }
+            if $0.project != $1.project { return ($0.project ?? "") < ($1.project ?? "") }
             if ($0.tier == .profile) != ($1.tier == .profile) { return $0.tier == .profile }
             if $0.createdAt != $1.createdAt { return $0.createdAt > $1.createdAt }
             return $0.id.uuidString < $1.id.uuidString

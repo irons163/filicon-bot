@@ -71,12 +71,13 @@ struct AgentProjectChangeTests {
         let profiles = await migrated.list(); expectNoDifference(profiles, [f.owner, f.peer])
         let files = try FileManager.default.contentsOfDirectory(atPath: f.root.path)
         expectNoDifference(files, ["agents.json"])
-        let session = AgentManagementSession(originID: f.context.conversationID, agents: migrated,
-            authorizeMemory: { _, _, _, _ in Issue.record("Unsupported project memory reached approval") })
+        let session = AgentManagementSession(originID: f.context.conversationID, agents: migrated)
         defer { session.close() }
-        await #expect(throws: (any Error).self) {
+        await #expect(throws: AgentMessagingError.approvalRequired) {
             _ = try await session.tools(for: f.peer.id)[2].execute(call(["target": "memory", "action": "write", "scope": "project", "project": "a", "fact": "UNSHARED"]), context: f.context)
         }
+        let stillPrivate = await migrated.memoryContext(accountID: "local", agentID: f.owner.id)
+        expectNoDifference(stillPrivate, [memory])
         let restored = try AgentService(storeURL: f.file)
         let after = await restored.projects(accountID: "local")
         expectNoDifference(after, [change.proposed])

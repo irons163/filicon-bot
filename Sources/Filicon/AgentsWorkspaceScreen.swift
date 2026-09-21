@@ -340,6 +340,7 @@ struct AgentEditorView: View {
             if !isNew {
                 AgentMemorySection(agentID: profile.id, scope: .agent)
                 AgentMemorySection(agentID: profile.id, scope: .user)
+                AgentMemorySection(agentID: profile.id, scope: .project)
             }
             HStack {
                 Button(agentString("Cancel")) { dismiss() }.keyboardShortcut(.cancelAction)
@@ -423,6 +424,10 @@ private struct AgentMemorySection: View {
         Section(l10n(scope.memoryTitleKey)) {
             Text(l10n(scope.memoryDisclosureKey))
                 .font(.caption).foregroundStyle(.secondary)
+            if scope == .project {
+                Text(l10n("This editor lists all project facts in this account, including departed writers. Agents can read only projects they currently belong to."))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             Text(l10n("Only a ranked selection is sent each turn. Low-importance notes rank below equally recent dated facts. Omitted facts remain saved until you forget them."))
                 .font(.caption).foregroundStyle(.secondary)
             if memories.isEmpty { Text(l10n("No saved facts.")).foregroundStyle(.secondary) }
@@ -430,7 +435,8 @@ private struct AgentMemorySection: View {
                 HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(l10n(memory.tier.memoryTitleKey)).font(.caption).foregroundStyle(.secondary)
-                        if scope == .user {
+                        if let project = memory.project { Text(verbatim: project).font(.caption.monospaced()) }
+                        if scope != .agent {
                             Text(String(format: l10n("Recorded by %@"), model.agents.first { $0.id == memory.agentID }?.name ?? memory.agentID.uuidString))
                                 .font(.caption).foregroundStyle(.secondary)
                         }
@@ -446,7 +452,7 @@ private struct AgentMemorySection: View {
         }
         .disabled(busy)
         .task(id: model.settings.accountScope ?? "local") { await accountChanged() }
-        .confirmationDialog(l10n(scope == .user ? "Forget this shared fact for all agents?" : "Forget this fact?"), isPresented: $confirmsRemoval, titleVisibility: .visible) {
+        .confirmationDialog(l10n(scope == .project ? "Forget this fact for all project members?" : scope == .user ? "Forget this shared fact for all agents?" : "Forget this fact?"), isPresented: $confirmsRemoval, titleVisibility: .visible) {
             Button(l10n("Forget"), role: .destructive) { Task { await confirmForgetButtonTapped() } }
             Button(l10n("Cancel"), role: .cancel) { pendingRemoval = nil }
         } message: {

@@ -148,7 +148,7 @@ public actor AgentService {
                                      slug: String, name: String? = nil, summary: String? = nil,
                                      at: Date = Date()) throws -> AgentProjectChange {
         guard !accountID.isEmpty, accountID.utf8.count <= 256,
-              (1...64).contains(slug.utf8.count), slug.wholeMatch(of: /^[a-z0-9]+(?:-[a-z0-9]+)*$/) != nil,
+              AgentProject.isValidSlug(slug),
               action == .create || (name == nil && summary == nil) else { throw AgentProjectError.invalid }
         func text(_ value: String, limit: Int, allowEmpty: Bool) -> Bool {
             (allowEmpty || !value.isEmpty) && value.utf8.count <= limit
@@ -195,17 +195,49 @@ public actor AgentService {
     }
 
     /// Only the specified writer's records; models cannot forget another writer's shard.
-    public func memories(accountID: String, agentID: UUID, scope: AgentMemory.Scope = .agent) -> [AgentMemory] {
-        sortedMemories(state.memories.filter { $0.accountID == accountID && $0.agentID == agentID && $0.scope == scope })
+    public func memories(accountID: String, agentID: UUID, scope: AgentMemory.Scope = .agent, project: String? = nil) -> [AgentMemory] {
+        sortedMemories(state.memories.filter { $0.accountID == accountID && $0.agentID == agentID && $0.scope == scope && $0.project == project })
     }
 
     public func sharedUserMemories(accountID: String) -> [AgentMemory] {
         sortedMemories(state.memories.filter { $0.accountID == accountID && $0.scope == .user })
     }
 
+    /// User-facing account library, not a model read API. Includes departed writers.
+    public func projectMemoriesForEditor(accountID: String) -> [AgentMemory] {
+        sortedMemories(state.memories.filter { $0.accountID == accountID && $0.scope == .project })
+    }
+
+    public func memoryAccess(accountID: String, agentID: UUID) throws -> AgentMemoryAccess {
+        guard state.agents.contains(where: { $0.id == agentID && $0.archivedAt == nil }) else { throw AgentMemoryError.unavailable }
+        let joined = projects(accountID: accountID).filter { $0.memberIDs.contains(agentID) }
+        return .init(memories: memoryContext(accountID: accountID, agentID: agentID), projects: joined)
+    }
+
+    public func proposeProjectMemoryChange(accountID: String, agentID: UUID, slug: String, operation: AgentMemoryChange.Operation,
+                                           fact: String, tier: AgentMemory.Tier = .log, id: UUID = UUID(), at: Date = Date()) throws -> AgentMemoryChange {
+        guard AgentProject.isValidSlug(slug), let project = projects(accountID: accountID).first(where: { $0.slug == slug }),
+              project.memberIDs.contains(agentID), state.agents.contains(where: { $0.id == agentID && $0.archivedAt == nil }) else {
+            throw AgentMemoryError.projectUnavailable
+        }
+        let memory: AgentMemory
+        if operation == .write {
+            memory = .init(id: id, accountID: accountID, agentID: agentID, fact: fact, tier: tier, scope: .project, project: slug, createdAt: at)
+        } else {
+            guard let existing = memories(accountID: accountID, agentID: agentID, scope: .project, project: slug).first(where: { $0.fact == fact }) else {
+                throw AgentMemoryError.stale
+            }
+            memory = existing
+        }
+        guard !fact.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, fact.count <= 1_000 else { throw AgentMemoryError.invalid }
+        return .init(operation: operation, memory: memory, project: project)
+    }
+
     /// One actor snapshot: own private facts plus explicitly shared facts in this account.
     public func memoryContext(accountID: String, agentID: UUID) -> [AgentMemory] {
-        sortedMemories(state.memories.filter { $0.accountID == accountID && ($0.scope == .user || $0.agentID == agentID) })
+        let active = state.agents.contains { $0.id == agentID && $0.archivedAt == nil }
+        let joined = Set(projects(accountID: accountID).filter { active && $0.memberIDs.contains(agentID) }.map(\.slug))
+        return sortedMemories(state.memories.filter { $0.isVisible(accountID: accountID, agentID: agentID, joinedProjects: joined) })
     }
 
     /// Owner validation and the visible store are one actor snapshot.
@@ -225,6 +257,16 @@ public actor AgentService {
     }
 
     public func applyMemoryChange(_ change: AgentMemoryChange, lifetime: AgentMemoryChangeLifetime) throws {
+        try applyMemoryChange(change, lifetime: lifetime, fromEditor: false)
+    }
+
+    /// Explicit human editor deletion can remove departed/archived writers' facts.
+    /// This path is not exposed as a model tool and cannot write new facts.
+    public func forgetMemoryFromEditor(_ memory: AgentMemory, lifetime: AgentMemoryChangeLifetime) throws {
+        try applyMemoryChange(.init(operation: .forget, memory: memory), lifetime: lifetime, fromEditor: true)
+    }
+
+    private func applyMemoryChange(_ change: AgentMemoryChange, lifetime: AgentMemoryChangeLifetime, fromEditor: Bool) throws {
         try lifetime.commit(change) {
             let memory = change.memory
             guard !memory.accountID.isEmpty, memory.accountID.count <= 512,
@@ -234,16 +276,30 @@ public actor AgentService {
                   change.operation == .forget || owner.archivedAt == nil else {
                 throw AgentMemoryError.unavailable
             }
+            if memory.scope == .project {
+                guard let slug = memory.project, AgentProject.isValidSlug(slug) else { throw AgentMemoryError.projectUnavailable }
+                if !fromEditor {
+                    guard owner.archivedAt == nil, let project = change.project,
+                          project.accountID == memory.accountID, project.slug == slug, project.memberIDs.contains(memory.agentID),
+                          state.projects.first(where: { $0.accountID == memory.accountID && $0.slug == slug }) == project else {
+                        throw AgentMemoryError.stale
+                    }
+                }
+            } else if memory.project != nil || change.project != nil { throw AgentMemoryError.invalid }
             switch change.operation {
             case .write:
-                let current = memory.scope == .user ? sharedUserMemories(accountID: memory.accountID)
-                    : memories(accountID: memory.accountID, agentID: memory.agentID)
+                let current: [AgentMemory]
+                switch memory.scope {
+                case .user: current = sharedUserMemories(accountID: memory.accountID)
+                case .agent: current = memories(accountID: memory.accountID, agentID: memory.agentID)
+                case .project: current = state.memories.filter { $0.accountID == memory.accountID && $0.scope == .project && $0.project == memory.project }
+                }
                 guard !current.contains(where: { $0.fact == memory.fact }), !state.memories.contains(where: { $0.id == memory.id }) else {
-                    throw memory.scope == .user ? AgentMemoryError.sharedDuplicate : AgentMemoryError.duplicate
+                    throw memory.scope == .project ? AgentMemoryError.projectDuplicate : memory.scope == .user ? AgentMemoryError.sharedDuplicate : AgentMemoryError.duplicate
                 }
                 guard current.count < 48, current.reduce(0, { $0 + $1.fact.count }) + memory.fact.count <= 12_000,
                       memory.tier != .profile || current.filter({ $0.tier == .profile }).count < 8 else {
-                    throw memory.scope == .user ? AgentMemoryError.sharedLimit : AgentMemoryError.limit
+                    throw memory.scope == .project ? AgentMemoryError.projectLimit : memory.scope == .user ? AgentMemoryError.sharedLimit : AgentMemoryError.limit
                 }
                 state.memories.append(memory)
             case .forget:
@@ -251,7 +307,7 @@ public actor AgentService {
                 // floating-point round trip is not an edit or a new record.
                 guard let index = state.memories.firstIndex(where: {
                     $0.id == memory.id && $0.accountID == memory.accountID && $0.agentID == memory.agentID
-                        && $0.fact == memory.fact && $0.tier == memory.tier && $0.scope == memory.scope
+                        && $0.fact == memory.fact && $0.tier == memory.tier && $0.scope == memory.scope && $0.project == memory.project
                 }) else { throw AgentMemoryError.stale }
                 state.memories.remove(at: index)
             }

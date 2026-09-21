@@ -577,10 +577,12 @@ including leave/rejoin cycles. Stop, account changes and agent archival revoke
 uncommitted changes; failed writes roll back, and successful call replays do not
 write again. These operations share the existing four-change turn budget.
 
-This is **membership metadata only** in the agent store, not filesystem-backed
-reference project folders. It does not create a chat, grant folder access,
-start work or share private memory. Project memory remains unsupported, with no
-project rename/delete or dedicated manual project editor yet. Existing stores
+These are account-scoped records in the agent store, not filesystem-backed
+reference project folders. Joining permits recall/search of approved project
+facts from current and departed writers. Leaving preserves those facts but
+stops future access; rejoining restores access. Already-sent messages remain.
+Membership does not create a chat, grant folder access, start work or share
+private memory. There is no project rename/delete or dedicated manual project editor yet. Existing stores
 load with an empty project list; old groups, memories and permissions are not
 migrated. Revision checks protect the running service, not concurrent external
 edits to its JSON file. This is a bounded native adaptation, not full project
@@ -594,13 +596,27 @@ sharing with **all current and future agents in this account**, including agents
 outside the current group, through their configured models during group/mailbox
 turns. The approval shows this wider audience; existing facts are not migrated
 to shared memory. Models can forget only facts they recorded, using the exact
-text and original scope. **Agents → Edit → Agent memory / Shared user memory**
+text and original scope. **Agents → Edit → Agent memory / Shared user memory / Project memory**
 lets the user inspect and forget records, including shared facts from another
 agent. Forgetting stops future injection, not already-sent messages or in-flight
 requests. Each private agent store and the entire shared account store have
 separate limits of 48 facts / 8 foundational facts / 12,000 characters. This is
-bounded `profile`/`log`/`note` memory, not project memory, automatic transcript capture,
+bounded `profile`/`log`/`note` memory, not automatic transcript capture,
 memory in other execution entry points, or full parity with the reference runtime.
+
+Explicit `scope:"project"` additionally requires `project:"exact-slug"` and
+current membership. Facts are shared only with current and future members of
+that project in the same account and their configured models, including agents
+outside the chat. The card shows the project, author, member count and full fact;
+writing and forgetting each require fresh approval, even when auto-review allows
+the tool. Models can forget only their own project records while joined. The
+human editor lists all account project facts, labels the project and author,
+and can forget a record even after its author leaves or is archived. The same
+48-fact / 8-foundational / 12,000-character storage limits apply **per project
+across all writers**, with at most 1,000 characters per fact. Private facts are
+never automatically promoted to shared facts. Project membership changes,
+including leave/rejoin cycles, invalidate pending memory approvals. Stop,
+account changes, archival and failed storage cannot publish uncommitted facts.
 
 Recall is read-only and bounded separately from storage. Within each private/shared
 and foundational/recent pool, literal keyword overlap with the **current user or
@@ -624,29 +640,36 @@ cross-language synonym matching. Relevance is not proof of truth or permission
 to share, and cannot bypass the current task's approval gates.
 
 Case/whitespace-equivalent facts collapse within each scope and profile/recent
-pool, preserving the newest original text and author. Nothing is automatically
+pool (and within the same project), preserving the newest original text and author. Nothing is automatically
 deleted or expired. The runtime reports how many records were omitted; the editor
 still lists every saved record. JSON recall budgets (including UTF-8 metadata and
 escaping) are 8,000 / 4,000 bytes for private profile / recent pools and
-4,000 / 2,000 bytes for shared profile / recent pools. Oversized records are
+4,000 / 2,000 bytes for shared user profile / recent pools. Joined projects have
+an additional aggregate pool: at most 8 foundational / 15 recent facts and
+4,000 / 2,000 JSON bytes **across all joined projects**, not per project.
+Oversized records are
 omitted intact, never truncated. This is not semantic conflict resolution,
 automatic transcript extraction, or arbitrary archival file access.
 
 In these same group/mailbox turns, agents can call the read-only `SearchMemory`
 tool to find **already approved saved facts** that were omitted from automatic
 recall. Use an optional literal substring `query` (at most 256 Unicode scalars;
-ignores case, accents and width), and `scope: "agent" | "user" | "all"` (default
-all). Empty/omitted query browses; whitespace-only input is rejected. The host
+ignores case, accents and width), and `scope: "agent" | "user" | "project" | "all"`
+(default all). Project scope covers joined projects; optional `project:"exact-slug"`
+narrows it to one joined project and is rejected with any other scope.
+Empty/omitted query browses; whitespace-only input is rejected. The host
 binds agent and account identity: private peer facts and other accounts are
-excluded before matching, counting, or paging. Results retain original text,
-scope, tier, author, recorded time and whether this agent can forget the record.
+excluded before matching, counting, or paging, as are unjoined projects.
+Results retain original text, scope, project slug when applicable, tier, author,
+recorded time and whether this agent can forget the record.
 Reading shared facts does not permit deleting another author's records.
 
 Each response contains at most eight complete facts and 8 KiB of JSON, with
 `totalMatches`, `skippedOversizedCount` for that page, and an optional `nextCursor`.
 Oversized facts count as matches but are skipped intact; inspect them in the
 memory editor. Pass **only** the cursor to continue in the same agent/turn/session.
-A change to the selected visible store invalidates its cursor; start a new search
+A change to the selected visible store or relevant project membership (including
+leave/rejoin cycles) invalidates its cursor; start a new search
 instead of using stale pages. No facts are cached in cursors. Up to 32 searches
 are allowed per originating request, shared by its agents and separate from the
 four-change approval budget. Stop/session closure or an archived owner prevents
@@ -659,7 +682,7 @@ current task's disclosure boundaries.
 `SearchMemory` is a Filicon-native counterpart to the reconstructed reference's
 ability to Read/grep older saved memory files, **not** a claim that the original
 exposed a tool of that name. It does not search arbitrary files, old transcripts,
-other accounts, project memory or semantic/vector indexes, nor implement automatic
+other accounts, unjoined projects or semantic/vector indexes, nor implement automatic
 memory extraction. Tests use isolated stores and fixture model providers, not
 live accounts.
 

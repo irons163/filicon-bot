@@ -1614,3 +1614,15 @@
 "This agent already has the requested project membership. Nothing changed." = "このエージェントの参加状態はすでに指定どおりです。変更はありません。";
 "This account already has 50 collaboration projects. No project was created." = "このアカウントにはすでに50個の共同プロジェクトがあります。作成されませんでした。";
 "Project membership changed while approval was pending. Request approval again." = "承認待ちの間に参加状態が変更されました。再度承認を依頼してください。";
+"Project memory" = "プロジェクト記憶";
+"Save project memory" = "プロジェクト記憶を保存";
+"Forget project memory" = "プロジェクト記憶を削除";
+"Forget this fact for all project members?" = "全プロジェクトメンバーからこの事実を削除しますか？";
+"This editor lists all project facts in this account, including departed writers. Agents can read only projects they currently belong to." = "この編集画面は、退会した記録者を含むアカウント内の全プロジェクトの事実を表示します。エージェントは現在参加中のプロジェクトのみ読み取れます。";
+"Project facts are shared with current and future members of that project in this account and their configured models, including members outside this chat. Leaving stops future recall, not saved facts or already-sent messages. Rejoining restores access. Private memories and tool permissions stay unchanged." = "事実は、このチャット外を含むアカウント内の現在および今後のプロジェクトメンバーと設定済みモデルに共有されます。退会後の参照は停止しますが、保存済みの事実や送信済みメッセージは消えません。再参加でアクセスが戻ります。個人記憶とツール権限は変わりません。";
+"Project memory requires an active member of an existing project in this account. Use an exact project slug with scope project only." = "このアカウントに存在するプロジェクトの有効なメンバーである必要があります。正確な識別子は project 範囲でのみ指定できます。";
+"This fact is already saved in this project's shared memory." = "この事実はプロジェクトの共有記憶に保存済みです。";
+"Each project's shared memory is limited to 48 facts, including 8 foundational facts, and 12,000 characters across all writers in this account." = "各プロジェクトの共有記憶は、アカウント内の全記録者の合計で基礎情報8件を含む事実48件、12,000文字までです。";
+"Use memory write/forget with one fact of at most 1,000 characters, scope agent/user/project, and tier profile/log/note. Project scope requires an exact joined project slug. Forget requires exact recorded text, the same scope/project, and no tier." = "write/forget は1,000文字以内の事実1件、範囲 agent/user/project、階層 profile/log/note を指定します。project には参加済みプロジェクトの正確な識別子が必要です。forget は原文と同じ範囲・プロジェクトを指定し、階層は指定しません。";
+"Memory search accepts query (up to 256 Unicode scalars), scope all/agent/user/project, and an optional exact project slug with scope project only, or a continuation cursor by itself." = "検索はクエリ（Unicodeスカラー256個まで）、範囲 all/agent/user/project、および project 範囲のみで任意の正確なプロジェクト識別子を指定できます。または続行カーソルだけを指定してください。";
+"Project names and descriptions are shared across this account. Joining also permits recall of approved project facts from current and departed writers; future members receive the same access. Leaving preserves those facts but stops future recall; rejoining restores access. Already-sent messages are not erased. Private memories, chats, files and tool permissions stay unchanged." = "名前と説明はアカウント内で共有されます。参加すると、退会した記録者を含む承認済みの事実を参照でき、今後のメンバーにも同じアクセスが付与されます。退会後は事実を保持して参照を停止し、再参加でアクセスが戻ります。送信済みメッセージは消えません。個人記憶、チャット、ファイル、ツール権限は変わりません。";

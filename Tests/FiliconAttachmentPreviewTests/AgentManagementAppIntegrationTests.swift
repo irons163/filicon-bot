@@ -87,6 +87,126 @@ private actor ManagementWakeProbe {
         return try decoder.decode(Saved.self, from: Data(contentsOf: root.appending(path: "agents.json"))).projects ?? []
     }
 
+    private func projectMemoryFixture() async throws -> (URL, AppModel, UUID, AgentProfile, AgentProfile) {
+        let (root, _, group, owner, peer) = try await fixture()
+        let agents = try AgentService(storeURL: root.appending(path: "agents.json"))
+        for agent in [owner, peer] {
+            let change = try await agents.proposeProjectChange(accountID: "local", agentID: agent.id, action: .create,
+                slug: "website", name: "Public website")
+            try await agents.applyProjectChange(change, lifetime: .init())
+        }
+        let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+        await model.reloadWorkspaceData()
+        await model.setAutoReviewEnabled(true)
+        await model.setAutoReviewRules(allow: ["update_state"], ask: [])
+        return (root, model, group, owner, peer)
+    }
+
+    @Test(arguments: ["approve", "deny", "stop", "account", "archive", "save-failure"])
+    func projectMemoryRequiresExplicitApprovalAndKeepsPrivateScopes(mode: String) async throws {
+        let (root, model, group, owner, peer) = try await projectMemoryFixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        await model.registry.register(ManagingAgentProvider { _, execute in
+            let result = try await execute(.init(id: "project-fact", name: "update_state",
+                argumentsJSON: Data(#"{"target":"memory","action":"write","fact":"Use accessible layouts","scope":"project","project":"website"}"#.utf8)))
+            expectNoDifference(result.isError, mode != "approve"); return "PASS"
+        })
+        let run = Task { await model.sendGroupMessage(groupID: group, text: "Remember for the website project") }
+        let approval = try await pending(model, tool: "update_state")
+        expectNoDifference(approval.action.target, .resource(kind: "project-memory", identifier: "website"))
+        expectNoDifference(approval.action.context.metadata["agentMemoryScope"], "project")
+        expectNoDifference(approval.action.context.metadata["agentMemoryProjectName"], "Public website")
+        expectNoDifference(approval.action.context.metadata["agentMemoryProjectMembers"], "2")
+        let empty = try await model.savedAgentMemories(agentID: owner.id, scope: .project); expectNoDifference(empty, [])
+        if mode == "stop" { await model.stopGroup(id: group) }
+        if mode == "account" { await model.cancelAutoReviewApprovals(nextAccountID: "other") }
+        if mode == "archive" { await model.archiveAgent(id: owner.id) }
+        let file = root.appending(path: "agents.json"), backup = root.appending(path: "backup-agents.json")
+        if mode == "save-failure" {
+            try FileManager.default.moveItem(at: file, to: backup)
+            try FileManager.default.createDirectory(at: file, withIntermediateDirectories: false)
+        }
+        await model.resolveGroupApproval(approval, groupID: group, approve: mode != "deny")
+        await run.value
+        if mode == "save-failure" {
+            try FileManager.default.removeItem(at: file); try FileManager.default.moveItem(at: backup, to: file)
+        }
+        let agents = try AgentService(storeURL: file)
+        let saved = await agents.projectMemoriesForEditor(accountID: "local")
+        expectNoDifference(saved.count, mode == "approve" ? 1 : 0)
+        if mode == "approve" {
+            let record = try #require(saved.first)
+            expectNoDifference(record.fact, "Use accessible layouts"); expectNoDifference(record.agentID, owner.id)
+            let editor = try await model.savedAgentMemories(agentID: peer.id, scope: .project)
+            // Compare the complete records at the persisted date precision.
+            let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .millisecondsSince1970
+            let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .millisecondsSince1970
+            expectNoDifference(try decoder.decode([AgentMemory].self, from: encoder.encode(editor)), saved)
+            let privateFacts = try await model.savedAgentMemories(agentID: owner.id)
+            let userFacts = try await model.savedAgentMemories(agentID: owner.id, scope: .user)
+            expectNoDifference(privateFacts, []); expectNoDifference(userFacts, [])
+            try await model.forgetAgentMemory(record)
+            let forgotten = try await model.savedAgentMemories(agentID: peer.id, scope: .project)
+            expectNoDifference(forgotten, [])
+        }
+        #expect(model.runningGroups.isEmpty && model.pendingAutoReviewApprovals.isEmpty)
+    }
+
+    @Test func mailboxProjectMemoryUsesRecipientIdentityAndHumanCanForgetArchivedAuthor() async throws {
+        let (root, model, _, sender, recipient) = try await projectMemoryFixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        await model.registry.register(ManagingAgentProvider { _, execute in
+            let result = try await execute(.init(id: "project-fact", name: "update_state",
+                argumentsJSON: Data(#"{"target":"memory","action":"write","fact":"Visual review uses amber","scope":"project","project":"website"}"#.utf8)))
+            #expect(!result.isError); return "PASS"
+        })
+        #expect(await model.sendAgentMessage(senderID: sender.id, recipientID: recipient.id, text: "Remember for the website project"))
+        let approval = try await pending(model, tool: "update_state")
+        expectNoDifference(approval.action.context.metadata["agentMemoryOwner"], recipient.name)
+        await model.resolveGroupApproval(approval, groupID: approval.action.context.conversationID, approve: true)
+        try await waitForMailbox(model)
+        let saved = try await model.savedAgentMemories(agentID: sender.id, scope: .project)
+        let fact = try #require(saved.first); expectNoDifference(fact.agentID, recipient.id)
+        await model.archiveAgent(id: recipient.id)
+        try await model.forgetAgentMemory(fact)
+        let empty = try await model.savedAgentMemories(agentID: sender.id, scope: .project); expectNoDifference(empty, [])
+    }
+
+    @Test func projectMemoryApprovalRendersInSevenLanguagesAndBothAppearances() throws {
+        let output = ProcessInfo.processInfo.environment["FILICON_UI_REVIEW_OUTPUT"].map { URL(fileURLWithPath: $0) }
+        for language in ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"] {
+            for dark in [false, true] {
+                try FiliconLocalization.$languageOverride.withValue(language) {
+                    if language != "en" {
+                        for key in ["Project memory", "Save project memory", "Forget project memory", "Forget this fact for all project members?",
+                                    AgentMemoryError.projectUnavailable.rawValue, AgentMemoryError.projectDuplicate.rawValue,
+                                    AgentMemoryError.projectLimit.rawValue, AgentMemoryError.invalid.rawValue, AgentMemorySearchError.invalid.rawValue] {
+                            #expect(FiliconLocalization.string(key) != key)
+                        }
+                    }
+                    for action in ["write", "forget"] {
+                        let host = NSHostingView(rootView: AgentMemoryApprovalDetails(metadata: [
+                            "agentMemoryScope": "project", "agentMemoryAction": action, "agentMemoryOwner": "Designer",
+                            "agentMemoryProject": "website", "agentMemoryProjectName": "Public website", "agentMemoryProjectMembers": "2",
+                            "agentMemoryFact": "Use accessible amber buttons and readable contrast.", "agentMemoryTier": "profile"])
+                            .padding(20).frame(width: 380).background(FiliconTheme.canvas)
+                            .environment(\.locale, Locale(identifier: language)).environment(\.colorScheme, dark ? .dark : .light))
+                        host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+                        host.frame = .init(x: 0, y: 0, width: 380, height: 1_000); host.layoutSubtreeIfNeeded()
+                        #expect(host.fittingSize.height <= 1_000)
+                        let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                        host.cacheDisplay(in: host.bounds, to: bitmap)
+                        let data = try #require(bitmap.representation(using: .png, properties: [:]))
+                        if let output {
+                            try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+                            try data.write(to: output.appending(path: "project-memory-\(action)-\(language)-\(dark ? "dark" : "light").png"))
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     @Test func projectQuotaIdentityIncludesAccountAndFitsLedgerLimit() {
         let accounts = ["local", "other", "a:b", "a\u{1f}b", String(repeating: "a", count: 256)]
         let keys = accounts.map { AppModel.projectQuotaKey(accountID: $0, slug: String(repeating: "s", count: 64)) }

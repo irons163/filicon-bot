@@ -1614,3 +1614,15 @@
 "This agent already has the requested project membership. Nothing changed." = "이 에이전트는 이미 요청한 참여 상태입니다. 변경된 내용이 없습니다.";
 "This account already has 50 collaboration projects. No project was created." = "이 계정에는 이미 협업 프로젝트가 50개 있습니다. 프로젝트를 생성하지 않았습니다.";
 "Project membership changed while approval was pending. Request approval again." = "승인 대기 중 프로젝트 참여 상태가 변경되었습니다. 승인을 다시 요청하세요.";
+"Project memory" = "프로젝트 기억";
+"Save project memory" = "프로젝트 기억 저장";
+"Forget project memory" = "프로젝트 기억 삭제";
+"Forget this fact for all project members?" = "모든 프로젝트 멤버에 대해 이 사실을 삭제할까요?";
+"This editor lists all project facts in this account, including departed writers. Agents can read only projects they currently belong to." = "이 편집기는 탈퇴한 작성자의 기록을 포함하여 계정 내 모든 프로젝트 사실을 표시합니다. 에이전트는 현재 참여 중인 프로젝트만 읽을 수 있습니다.";
+"Project facts are shared with current and future members of that project in this account and their configured models, including members outside this chat. Leaving stops future recall, not saved facts or already-sent messages. Rejoining restores access. Private memories and tool permissions stay unchanged." = "사실은 이 채팅 외 멤버를 포함하여 계정 내 현재 및 향후 프로젝트 멤버와 설정된 모델에 공유됩니다. 탈퇴하면 이후 회상이 중단되지만 저장된 사실이나 보낸 메시지는 삭제되지 않습니다. 재참여하면 접근이 복구됩니다. 개인 기억과 도구 권한은 변경되지 않습니다.";
+"Project memory requires an active member of an existing project in this account. Use an exact project slug with scope project only." = "이 계정에 존재하는 프로젝트의 활성 멤버여야 합니다. 정확한 프로젝트 식별자는 project 범위에서만 사용할 수 있습니다.";
+"This fact is already saved in this project's shared memory." = "이 사실은 프로젝트 공유 기억에 이미 저장되어 있습니다.";
+"Each project's shared memory is limited to 48 facts, including 8 foundational facts, and 12,000 characters across all writers in this account." = "각 프로젝트의 공유 기억은 이 계정의 모든 작성자를 합쳐 기본 사실 8개를 포함한 사실 48개, 총 12,000자로 제한됩니다.";
+"Use memory write/forget with one fact of at most 1,000 characters, scope agent/user/project, and tier profile/log/note. Project scope requires an exact joined project slug. Forget requires exact recorded text, the same scope/project, and no tier." = "write/forget에는 1,000자 이하의 사실 하나, agent/user/project 범위, profile/log/note 계층을 사용하세요. project에는 참여한 프로젝트의 정확한 식별자가 필요합니다. forget은 원문과 같은 범위 및 프로젝트를 사용하며 계층은 지정하지 않습니다.";
+"Memory search accepts query (up to 256 Unicode scalars), scope all/agent/user/project, and an optional exact project slug with scope project only, or a continuation cursor by itself." = "검색에는 query(최대 Unicode 스칼라 256개), all/agent/user/project 범위를 사용하며 project 범위에서만 정확한 프로젝트 식별자를 추가할 수 있습니다. 또는 이어받기 커서만 사용하세요.";
+"Project names and descriptions are shared across this account. Joining also permits recall of approved project facts from current and departed writers; future members receive the same access. Leaving preserves those facts but stops future recall; rejoining restores access. Already-sent messages are not erased. Private memories, chats, files and tool permissions stay unchanged." = "이름과 설명은 계정 내에서 공유됩니다. 참여하면 탈퇴한 작성자를 포함한 승인된 프로젝트 사실을 회상할 수 있으며 향후 멤버도 같은 접근 권한을 얻습니다. 탈퇴 시 사실은 유지되지만 회상이 중단되고 재참여하면 복구됩니다. 보낸 메시지는 삭제되지 않습니다. 개인 기억, 채팅, 파일, 도구 권한은 변경되지 않습니다.";

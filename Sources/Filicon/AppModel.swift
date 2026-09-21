@@ -2754,6 +2754,7 @@ final class AppModel: ObservableObject {
         guard let agentService, !agentMessagingAccountTransition else { throw CancellationError() }
         let values: [AgentMemory]
         if scope == .user { values = await agentService.sharedUserMemories(accountID: settings.accountScope ?? "local") }
+        else if scope == .project { values = await agentService.projectMemoriesForEditor(accountID: settings.accountScope ?? "local") }
         else { values = await agentService.memories(accountID: settings.accountScope ?? "local", agentID: agentID) }
         guard generation == autoReviewAccountGeneration else { throw CancellationError() }
         return values
@@ -2761,7 +2762,16 @@ final class AppModel: ObservableObject {
 
     func forgetAgentMemory(_ memory: AgentMemory) async throws {
         guard memory.accountID == settings.accountScope ?? "local", !agentMessagingAccountTransition else { throw CancellationError() }
-        try await commitAgentMemoryChange(.init(operation: .forget, memory: memory), lifetime: agentMemoryUILifetime)
+        guard let agentService else { throw CancellationError() }
+        let lifetime = agentMemoryUILifetime
+        do {
+            try await quotaWrite(scope: "workflow", key: "agent-memory-\(memory.id)", data: Data()) {
+                try await agentService.forgetMemoryFromEditor(memory, lifetime: lifetime)
+            }
+        } catch {
+            guard lifetime.committed(.init(operation: .forget, memory: memory)) else { throw error }
+            errorMessage = Self.quotaMessage(error)
+        }
     }
 
     private func commitAgentMemoryChange(_ change: AgentMemoryChange, lifetime: AgentMemoryChangeLifetime,
@@ -2791,15 +2801,20 @@ final class AppModel: ObservableObject {
                                   runID: context.runID, generation: generation)
         await autoReviewBroker.activate(fence)
         let shared = change.memory.scope == .user
-        let title: LocalizedText = shared ? (change.operation == .write ? "Save shared user memory" : "Forget shared user memory")
+        let project = change.project
+        let title: LocalizedText = project != nil ? (change.operation == .write ? "Save project memory" : "Forget project memory")
+            : shared ? (change.operation == .write ? "Save shared user memory" : "Forget shared user memory")
             : (change.operation == .write ? "Save agent memory" : "Forget agent memory")
         let action = AutoReviewAction(summary: "\(sender.name) → \(l10n(title))",
-            target: shared ? .resource(kind: "shared-user-memory", identifier: change.memory.accountID)
+            target: project != nil ? .resource(kind: "project-memory", identifier: change.memory.project ?? "")
+                : shared ? .resource(kind: "shared-user-memory", identifier: change.memory.accountID)
                 : .resource(kind: "agent", identifier: sender.id.uuidString), risks: [.sensitive],
             context: .init(fence: fence, conversationID: context.conversationID, toolCallID: call.id.rawValue,
                 metadata: ["tool": "update_state", "agentStateTarget": "memory", "agentMemoryAction": change.operation.rawValue,
                            "agentMemoryFact": change.memory.fact, "agentMemoryTier": change.memory.tier.rawValue,
-                           "agentMemoryOwner": sender.name, "agentMemoryScope": change.memory.scope.rawValue]))
+                           "agentMemoryOwner": sender.name, "agentMemoryScope": change.memory.scope.rawValue,
+                           "agentMemoryProject": project?.slug ?? "", "agentMemoryProjectName": project?.name ?? "",
+                           "agentMemoryProjectMembers": String(project?.memberIDs.count ?? 0)]))
         let pending = PendingApproval(action: action, reason: "Approval required", expiresAt: Date().addingTimeInterval(300))
         try await autoReviewBroker.waitForApprovalToExecute(pending) { [weak self] in await self?.registerAutoReviewApproval($0) }
         try Task.checkCancellation()
