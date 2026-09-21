@@ -1566,3 +1566,14 @@
 "This permanently removes the shared workflow definition. There is no undo. Existing run history remains visible by workflow ID. Runs that already captured its content are not cancelled. Other workflows and routines stay unchanged, including their schedules; future references may fail or omit this content. Files, sources, connections and permissions are not removed or changed." = "這會永久移除共用工作流程定義，無法復原。現有執行歷史仍可依工作流程 ID 查看。已取得流程內容的執行不會被取消。其他工作流程、自動化及其排程均維持不變；未來引用可能失敗或略過此內容。不會移除或變更檔案、來源、連線或權限。";
 "Workflow deletion requires only target, action and an exact workflow ID." = "刪除工作流程僅接受 target、action 及精確的工作流程 ID。";
 "Only your own local manual single-prompt workflows within the review limit can be deleted here. Source-linked, managed and other agents' workflows are protected." = "此處僅能刪除你自己的本機手動、單一提示工作流程，且內容須在審閱上限內。連結來源、受管理及其他代理人的工作流程均受保護。";
+
+/* Per-agent update notifications. */
+"Agent update notifications" = "代理人更新通知";
+"Notify when this agent finishes or needs input" = "此代理人完成工作或需要輸入時通知";
+"Update notifications on" = "更新通知已開啟";
+"Update notifications off" = "更新通知已關閉";
+"Controls this local agent's completion and needs-input system alerts. Applies across groups and accounts using this profile. Does not mute conversation alerts or hide approval cards, unread counts or Dock badges. Tasks, visibility and permissions stay unchanged. System alerts require macOS notification permission. Past alerts are not replayed." = "控制此本機代理人完成工作與等待輸入的系統通知，適用於使用此代理人資料的所有群組與帳號。不會靜音對話通知，也不會隱藏核准卡片、未讀數或 Dock 標記。工作、顯示狀態與權限均不變。系統通知仍需 macOS 通知權限，且不會補送過去的通知。";
+"Settings changes require only target settings, action set and a boolean notify_on_updates. Sidebar visibility and other settings are not supported." = "設定變更僅接受 target settings、action set 與布林值 notify_on_updates。不支援側欄顯示狀態或其他設定。";
+"Agent notification settings changed. Reopen the editor or request approval again." = "代理人的通知設定已變更。請重新開啟編輯器或再次要求核准。";
+"Before" = "變更前";
+"After" = "變更後";

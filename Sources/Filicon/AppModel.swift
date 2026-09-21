@@ -2364,12 +2364,12 @@ final class AppModel: ObservableObject {
     }
 
     @discardableResult
-    func createAgent(name: String, title: String = "", summary: String, instructions: String, providerID: ProviderID, modelID: ModelID, avatar: AgentAvatar? = nil) async -> AgentProfile? {
+    func createAgent(name: String, title: String = "", summary: String, instructions: String, providerID: ProviderID, modelID: ModelID, avatar: AgentAvatar? = nil, notifyOnAgentUpdates: Bool = true) async -> AgentProfile? {
         guard let agentService else { errorMessage = l10n("Agent storage is unavailable."); return nil }
         do {
             let payload = try JSONEncoder().encode(["name": name, "title": title, "summary": summary, "instructions": instructions, "provider": providerID.rawValue, "model": modelID.rawValue])
             let profile = try await quotaWrite(scope: "workflow", key: "agent-\(name)", data: payload) { [agentService, name, summary, instructions, providerID, modelID, title, avatar] in
-                try await agentService.create(name: name, summary: summary, instructions: instructions, providerID: providerID, modelID: modelID, title: title, avatar: avatar)
+                try await agentService.create(name: name, summary: summary, instructions: instructions, providerID: providerID, modelID: modelID, title: title, avatar: avatar, notifyOnAgentUpdates: notifyOnAgentUpdates)
             }
             agents = await agentService.list(includeArchived: true)
             return profile
@@ -2382,8 +2382,9 @@ final class AppModel: ObservableObject {
         do {
             try await agentService.update(profile)
             agents = await agentService.list(includeArchived: true)
+            await projectAgentNotifications()
             return true
-        } catch { errorMessage = error.localizedDescription; return false }
+        } catch { errorMessage = FiliconLocalization.string(error.localizedDescription); return false }
     }
 
     func archiveAgent(id: UUID) async {
@@ -2596,6 +2597,12 @@ final class AppModel: ObservableObject {
             }, commitWorkflowDeletion: { [weak self] change, lifetime in
                 guard let self else { throw CancellationError() }
                 try await self.commitAgentWorkflowDeletion(change, lifetime: lifetime, originID: originID, generation: generation)
+            }, authorizeSettings: { [weak self] sender, change, call, context in
+                guard let self else { throw CancellationError() }
+                try await self.authorizeAgentSettingsChange(sender: sender, change: change, call: call, context: context)
+            }, commitSettings: { [weak self] change, lifetime in
+                guard let self else { throw CancellationError() }
+                return try await self.commitAgentSettingsChange(change, lifetime: lifetime, originID: originID, generation: generation)
             })
         return AgentMessagingSession(
             originConversationID: originID, agents: agentService, messenger: agentMessenger,
@@ -2959,6 +2966,48 @@ final class AppModel: ObservableObject {
         try await autoReviewBroker.waitForApprovalToExecute(pending) { [weak self] in await self?.registerAutoReviewApproval($0) }
         try Task.checkCancellation()
         guard generation == autoReviewAccountGeneration, isAgentMessagingScopeActive(context.conversationID) else { throw CancellationError() }
+    }
+
+    private func authorizeAgentSettingsChange(sender: AgentProfile, change: AgentSettingsChange,
+                                              call: NormalizedToolCall, context: ToolContext) async throws {
+        guard isAgentMessagingScopeActive(context.conversationID) else { throw CancellationError() }
+        let generation = autoReviewAccountGeneration
+        let fence = ApprovalFence(accountID: settings.accountScope ?? "local", agentID: context.conversationID.uuidString.lowercased(),
+                                  runID: context.runID, generation: generation)
+        await autoReviewBroker.activate(fence)
+        let metadata = ["tool": "update_state", "agentStateTarget": "settings", "agentName": sender.name,
+                        "agentNotifyOnUpdates": String(change.notifyOnUpdates), "previousAgentNotifyOnUpdates": String(change.previousValue)]
+        let action = AutoReviewAction(summary: sender.name + " → " + l10n("Agent update notifications"),
+            target: .resource(kind: "agent", identifier: change.agentID.uuidString), risks: [.sensitive],
+            context: .init(fence: fence, conversationID: context.conversationID, toolCallID: call.id.rawValue, metadata: metadata))
+        let pending = PendingApproval(action: action, reason: "Approval required", expiresAt: Date().addingTimeInterval(300))
+        // Muting must never inherit a general update_state allow rule.
+        try await autoReviewBroker.waitForApprovalToExecute(pending) { [weak self] in await self?.registerAutoReviewApproval($0) }
+        try Task.checkCancellation()
+        guard generation == autoReviewAccountGeneration, isAgentMessagingScopeActive(context.conversationID) else { throw CancellationError() }
+    }
+
+    private func commitAgentSettingsChange(_ change: AgentSettingsChange, lifetime: AgentSettingsChangeLifetime,
+                                           originID: UUID, generation: UInt64) async throws -> AgentProfile {
+        guard let agentService, isAgentMessagingScopeActive(originID), generation == autoReviewAccountGeneration,
+              var proposed = await agentService.profile(id: change.agentID) else { throw CancellationError() }
+        proposed.notifyOnAgentUpdates = change.notifyOnUpdates
+        let payload = try JSONEncoder().encode(proposed)
+        let profile: AgentProfile
+        do {
+            profile = try await quotaWrite(scope: "workflow", key: "agent-\(change.agentID)", data: payload) {
+                try await agentService.applySettingsChange(change, lifetime: lifetime)
+            }
+        } catch {
+            guard let saved = lifetime.committedProfile(for: change) else { throw error }
+            errorMessage = Self.quotaMessage(error)
+            profile = saved
+        }
+        let current = await agentService.list(includeArchived: true)
+        guard generation == autoReviewAccountGeneration else { return profile }
+        agents = current
+        await projectAgentNotifications()
+        return profile
     }
 
     private func authorizeAgentAvatarChange(sender: AgentProfile, change: AgentAvatarChange,

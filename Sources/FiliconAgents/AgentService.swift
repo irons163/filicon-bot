@@ -64,23 +64,32 @@ public actor AgentService {
     @discardableResult
     public func create(name: String, summary: String = "", instructions: String = "",
                        providerID: ProviderID = "fake", modelID: ModelID = "fake-stream",
-                       title: String = "", avatar: AgentAvatar? = nil, at: Date = Date()) async throws -> AgentProfile {
+                       title: String = "", avatar: AgentAvatar? = nil, notifyOnAgentUpdates: Bool = true, at: Date = Date()) async throws -> AgentProfile {
         guard state.agents.count < Self.maximumAgents else { throw AgentServiceError.limitExceeded(Self.maximumAgents) }
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { throw AgentServiceError.invalidName }
         let profile = AgentProfile(
             name: String(name.prefix(120)), summary: String(summary.prefix(2_000)),
             instructions: String(instructions.prefix(32_000)), providerID: providerID,
-            modelID: modelID, createdAt: at, title: String(title.prefix(160)), avatar: avatar
+            modelID: modelID, createdAt: at, title: String(title.prefix(160)), avatar: avatar,
+            notifyOnAgentUpdates: notifyOnAgentUpdates
         )
         state.agents.append(profile); try persist(); return profile
     }
 
     public func update(_ profile: AgentProfile) async throws {
         guard let index = state.agents.firstIndex(where: { $0.id == profile.id }) else { throw AgentServiceError.unknownAgent(profile.id) }
+        // An editor opened before an approved change must not silently undo it,
+        // including when the preference was toggled away and back (ABA).
+        guard profile.notificationSettingsRevision == state.agents[index].notificationSettingsRevision else {
+            throw AgentSettingsChangeError.stale
+        }
         let name = profile.name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { throw AgentServiceError.invalidName }
         var safe = profile
+        if safe.notifyOnAgentUpdates != state.agents[index].notifyOnAgentUpdates {
+            safe.notificationSettingsRevision = UUID()
+        }
         safe.name = String(name.prefix(120))
         safe.title = String(profile.title.trimmingCharacters(in: .whitespacesAndNewlines).prefix(160))
         safe.summary = String(profile.summary.prefix(2_000))
@@ -249,6 +258,25 @@ public actor AgentService {
             let result = state.agents[index]
             try persist()
             return result
+        }
+    }
+
+    public func applySettingsChange(_ change: AgentSettingsChange, lifetime: AgentSettingsChangeLifetime,
+                                    at: Date = Date()) throws -> AgentProfile {
+        try lifetime.commit(change) {
+            guard let index = state.agents.firstIndex(where: { $0.id == change.agentID }),
+                  state.agents[index].archivedAt == nil else { throw AgentProfileChangeError.unavailable }
+            guard state.agents[index].notifyOnAgentUpdates == change.previousValue,
+                  state.agents[index].notificationSettingsRevision == change.previousRevision else {
+                throw AgentSettingsChangeError.stale
+            }
+            if change.notifyOnUpdates != change.previousValue {
+                state.agents[index].notifyOnAgentUpdates = change.notifyOnUpdates
+                state.agents[index].notificationSettingsRevision = UUID()
+                state.agents[index].updatedAt = at
+                try persist()
+            }
+            return state.agents[index]
         }
     }
 

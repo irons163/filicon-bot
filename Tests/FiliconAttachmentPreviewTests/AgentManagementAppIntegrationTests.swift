@@ -64,6 +64,109 @@ private actor ManagementWakeProbe {
         }
         throw PendingApprovalError.stale("Mailbox execution did not finish")
     }
+    @Test(arguments: ["approve", "deny", "stop", "account", "aba", "archive"], [false, true])
+    func ownNotificationSettingsAlwaysAskAndRespectLifecycle(mode: String, enabled: Bool) async throws {
+        let (root, model, groupID, owner, peer) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        var initial = owner; initial.notifyOnAgentUpdates = !enabled
+        #expect(await model.updateAgent(initial))
+        await model.registry.register(ManagingAgentProvider { request, execute in
+            let instructions = request.messages.filter { $0.role == .system }.map(\.text).joined()
+            #expect(instructions.contains("Own notify_on_updates: \(!enabled)"))
+            let result = try await execute(.init(id: "settings", name: "update_state",
+                argumentsJSON: Data("{\"target\":\"settings\",\"action\":\"set\",\"notify_on_updates\":\(enabled)}".utf8)))
+            expectNoDifference(result.isError, mode != "approve")
+            return "PASS"
+        })
+        let run = Task { await model.sendGroupMessage(groupID: groupID, text: "Change your update notification preference") }
+        let approval = try await pending(model, tool: "update_state")
+        expectNoDifference(approval.action.target, .resource(kind: "agent", identifier: owner.id.uuidString))
+        expectNoDifference(approval.action.context.metadata["agentStateTarget"], "settings")
+        expectNoDifference(approval.action.context.metadata["previousAgentNotifyOnUpdates"], String(!enabled))
+        expectNoDifference(approval.action.context.metadata["agentNotifyOnUpdates"], String(enabled))
+        expectNoDifference(model.agents.first { $0.id == owner.id }?.notifyOnAgentUpdates, !enabled)
+        #expect(!approval.action.context.metadata.values.joined().contains("PRIVATE"))
+        if mode == "stop" { await model.stopGroup(id: groupID) }
+        if mode == "account" { await model.cancelAutoReviewApprovals(nextAccountID: "other") }
+        if mode == "archive" { await model.archiveAgent(id: owner.id) }
+        if mode == "aba" {
+            for value in [enabled, !enabled] {
+                var changed = try #require(model.agents.first { $0.id == owner.id })
+                changed.notifyOnAgentUpdates = value
+                #expect(await model.updateAgent(changed))
+            }
+        }
+        await model.resolveGroupApproval(approval, groupID: groupID, approve: mode != "deny")
+        await run.value
+        await model.resolveGroupApproval(approval, groupID: groupID, approve: true)
+        let expected = mode == "approve" ? enabled : !enabled
+        expectNoDifference(model.agents.first { $0.id == owner.id }?.notifyOnAgentUpdates, expected)
+        expectNoDifference(model.agents.first { $0.id == peer.id }?.notifyOnAgentUpdates, true)
+        expectNoDifference(model.groups.first { $0.id == groupID }?.memberIDs, [owner.id])
+        #expect(model.pendingAutoReviewApprovals.isEmpty && model.runningGroups.isEmpty)
+        let restored = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+        await restored.reloadWorkspaceData()
+        expectNoDifference(restored.agents.first { $0.id == owner.id }?.notifyOnAgentUpdates, expected)
+        let projected = AgentNotificationProjection.notificationSnapshots(profiles: restored.agents, tasks: [])
+        expectNoDifference(projected.first { $0.id == owner.id.uuidString.lowercased() }?.notifyEnabled, expected)
+    }
+
+    @Test func mailboxSettingsBelongToRecipientAndManualEditsPersist() async throws {
+        let (root, model, _, sender, recipient) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        await model.registry.register(ManagingAgentProvider { _, execute in
+            let result = try await execute(.init(id: "settings", name: "update_state",
+                argumentsJSON: Data(#"{"target":"settings","action":"set","notify_on_updates":false}"#.utf8)))
+            #expect(!result.isError)
+            return "PASS"
+        })
+        #expect(await model.sendAgentMessage(senderID: sender.id, recipientID: recipient.id, text: "Mute your own update alerts"))
+        let approval = try await pending(model, tool: "update_state")
+        expectNoDifference(approval.action.target, .resource(kind: "agent", identifier: recipient.id.uuidString))
+        await model.resolveGroupApproval(approval, groupID: approval.action.context.conversationID, approve: true)
+        try await waitForMailbox(model)
+        expectNoDifference(model.agents.first { $0.id == sender.id }?.notifyOnAgentUpdates, true)
+        let muted = try #require(model.agents.first { $0.id == recipient.id })
+        expectNoDifference(muted.notifyOnAgentUpdates, false)
+        #expect(await model.updateAgent(recipient) == false)
+        var fresh = muted; fresh.notifyOnAgentUpdates = true
+        #expect(await model.updateAgent(fresh))
+        let newAgent = try #require(await model.createAgent(name: "Quiet", summary: "", instructions: "",
+            providerID: "management-fixture", modelID: "test", notifyOnAgentUpdates: false))
+        let restored = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+        await restored.reloadWorkspaceData()
+        expectNoDifference(restored.agents.first { $0.id == recipient.id }?.notifyOnAgentUpdates, true)
+        expectNoDifference(restored.agents.first { $0.id == newAgent.id }?.notifyOnAgentUpdates, false)
+    }
+
+    @Test func notificationApprovalRendersInSevenLanguagesAndBothAppearances() throws {
+        let output = ProcessInfo.processInfo.environment["FILICON_UI_REVIEW_OUTPUT"].map { URL(fileURLWithPath: $0) }
+        for language in ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"] {
+            for enabled in [false, true] {
+                for dark in [false, true] {
+                    try FiliconLocalization.$languageOverride.withValue(language) {
+                        if language != "en" { #expect(FiliconLocalization.string("Agent update notifications") != "Agent update notifications") }
+                        let metadata = ["agentName": "Designer", "previousAgentNotifyOnUpdates": String(!enabled), "agentNotifyOnUpdates": String(enabled)]
+                        let host = NSHostingView(rootView: AgentSettingsApprovalDetails(metadata: metadata)
+                            .padding(20).frame(width: 380).background(FiliconTheme.canvas)
+                            .environment(\.locale, Locale(identifier: language)).environment(\.colorScheme, dark ? .dark : .light))
+                        host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+                        host.frame = .init(x: 0, y: 0, width: 380, height: 440)
+                        host.layoutSubtreeIfNeeded()
+                        #expect(host.fittingSize.height <= 440)
+                        let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                        host.cacheDisplay(in: host.bounds, to: bitmap)
+                        let data = try #require(bitmap.representation(using: .png, properties: [:]))
+                        if let output {
+                            try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+                            try data.write(to: output.appending(path: "settings-\(enabled)-\(language)-\(dark ? "dark" : "light").png"))
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     private func persistedRoutine(_ value: Automation?) throws -> Automation? {
         let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .millisecondsSince1970
         let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .millisecondsSince1970

@@ -1566,3 +1566,14 @@
 "This permanently removes the shared workflow definition. There is no undo. Existing run history remains visible by workflow ID. Runs that already captured its content are not cancelled. Other workflows and routines stay unchanged, including their schedules; future references may fail or omit this content. Files, sources, connections and permissions are not removed or changed." = "共有ワークフローの定義を完全に削除します。元に戻せません。既存の実行履歴はワークフロー ID で引き続き確認できます。内容を取得済みの実行はキャンセルされません。他のワークフローやルーチン、そのスケジュールは変更されませんが、今後の参照は失敗するか、この内容を省略する場合があります。ファイル、ソース、接続、権限の削除や変更は行いません。";
 "Workflow deletion requires only target, action and an exact workflow ID." = "ワークフローの削除には target、action、正確なワークフロー ID のみを指定してください。";
 "Only your own local manual single-prompt workflows within the review limit can be deleted here. Source-linked, managed and other agents' workflows are protected." = "ここで削除できるのは、確認可能な上限内に収まる、自分のローカル手動・単一プロンプトのワークフローのみです。ソースにリンクされたもの、管理対象、他のエージェントのワークフローは保護されています。";
+
+/* Per-agent update notifications. */
+"Agent update notifications" = "エージェントの更新通知";
+"Notify when this agent finishes or needs input" = "このエージェントが完了または入力待ちになったときに通知";
+"Update notifications on" = "更新通知オン";
+"Update notifications off" = "更新通知オフ";
+"Controls this local agent's completion and needs-input system alerts. Applies across groups and accounts using this profile. Does not mute conversation alerts or hide approval cards, unread counts or Dock badges. Tasks, visibility and permissions stay unchanged. System alerts require macOS notification permission. Past alerts are not replayed." = "このローカルエージェントの完了・入力待ちのシステム通知を制御します。このプロフィールを使うすべてのグループとアカウントに適用されます。会話の通知はミュートされず、承認カード、未読数、Dock バッジも非表示になりません。タスク、表示状態、権限は変わりません。システム通知には macOS の通知許可が必要です。過去の通知は再送されません。";
+"Settings changes require only target settings, action set and a boolean notify_on_updates. Sidebar visibility and other settings are not supported." = "設定変更には target settings、action set、真偽値の notify_on_updates のみを指定してください。サイドバーの表示や他の設定は未対応です。";
+"Agent notification settings changed. Reopen the editor or request approval again." = "エージェントの通知設定が変更されました。エディタを開き直すか、承認を再度リクエストしてください。";
+"Before" = "変更前";
+"After" = "変更後";

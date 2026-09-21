@@ -15,6 +15,8 @@ public struct AgentProfile: Identifiable, Codable, Hashable, Sendable {
     public var status: AgentAvailabilityStatus
     public var unreadCount: Int
     public var avatar: AgentAvatar?
+    public var notifyOnAgentUpdates: Bool
+    public var notificationSettingsRevision: UUID?
 
     public init(
         id: UUID = UUID(),
@@ -29,7 +31,9 @@ public struct AgentProfile: Identifiable, Codable, Hashable, Sendable {
         updatedAt: Date? = nil,
         status: AgentAvailabilityStatus = .idle,
         unreadCount: Int = 0,
-        avatar: AgentAvatar? = nil
+        avatar: AgentAvatar? = nil,
+        notifyOnAgentUpdates: Bool = true,
+        notificationSettingsRevision: UUID? = nil
     ) {
         self.id = id
         self.name = name
@@ -44,11 +48,14 @@ public struct AgentProfile: Identifiable, Codable, Hashable, Sendable {
         self.status = status
         self.unreadCount = max(0, unreadCount)
         self.avatar = avatar
+        self.notifyOnAgentUpdates = notifyOnAgentUpdates
+        self.notificationSettingsRevision = notificationSettingsRevision
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, name, summary, instructions, providerID, modelID, createdAt, archivedAt
         case title, updatedAt, status, unreadCount, avatar
+        case notifyOnAgentUpdates, notificationSettingsRevision
     }
 
     public init(from decoder: Decoder) throws {
@@ -66,6 +73,8 @@ public struct AgentProfile: Identifiable, Codable, Hashable, Sendable {
         status = try values.decodeIfPresent(AgentAvailabilityStatus.self, forKey: .status) ?? .idle
         unreadCount = max(0, try values.decodeIfPresent(Int.self, forKey: .unreadCount) ?? 0)
         avatar = try values.decodeIfPresent(AgentAvatar.self, forKey: .avatar)
+        notifyOnAgentUpdates = try values.decodeIfPresent(Bool.self, forKey: .notifyOnAgentUpdates) ?? true
+        notificationSettingsRevision = try values.decodeIfPresent(UUID.self, forKey: .notificationSettingsRevision)
     }
 }
 

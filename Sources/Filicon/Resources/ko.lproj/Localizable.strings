@@ -1566,3 +1566,14 @@
 "This permanently removes the shared workflow definition. There is no undo. Existing run history remains visible by workflow ID. Runs that already captured its content are not cancelled. Other workflows and routines stay unchanged, including their schedules; future references may fail or omit this content. Files, sources, connections and permissions are not removed or changed." = "공유 워크플로 정의를 영구적으로 삭제합니다. 실행 취소할 수 없습니다. 기존 실행 기록은 워크플로 ID로 계속 확인할 수 있습니다. 이미 내용을 가져온 실행은 취소되지 않습니다. 다른 워크플로와 루틴 및 일정은 변경되지 않으며, 이후 참조가 실패하거나 이 내용을 생략할 수 있습니다. 파일, 소스, 연결 및 권한은 삭제되거나 변경되지 않습니다.";
 "Workflow deletion requires only target, action and an exact workflow ID." = "워크플로 삭제에는 target, action 및 정확한 워크플로 ID만 허용됩니다.";
 "Only your own local manual single-prompt workflows within the review limit can be deleted here. Source-linked, managed and other agents' workflows are protected." = "검토 한도 이내인 본인 소유의 로컬 수동 단일 프롬프트 워크플로만 여기서 삭제할 수 있습니다. 소스에 연결되거나 관리 대상이거나 다른 에이전트 소유인 워크플로는 보호됩니다.";
+
+/* Per-agent update notifications. */
+"Agent update notifications" = "에이전트 업데이트 알림";
+"Notify when this agent finishes or needs input" = "이 에이전트가 완료하거나 입력이 필요할 때 알림";
+"Update notifications on" = "업데이트 알림 켜짐";
+"Update notifications off" = "업데이트 알림 꺼짐";
+"Controls this local agent's completion and needs-input system alerts. Applies across groups and accounts using this profile. Does not mute conversation alerts or hide approval cards, unread counts or Dock badges. Tasks, visibility and permissions stay unchanged. System alerts require macOS notification permission. Past alerts are not replayed." = "이 로컬 에이전트의 완료 및 입력 대기 시스템 알림을 제어합니다. 이 프로필을 사용하는 모든 그룹과 계정에 적용됩니다. 대화 알림을 끄거나 승인 카드, 읽지 않은 수, Dock 배지를 숨기지 않습니다. 작업, 표시 상태, 권한은 변경되지 않습니다. 시스템 알림에는 macOS 알림 권한이 필요하며 과거 알림은 다시 보내지 않습니다.";
+"Settings changes require only target settings, action set and a boolean notify_on_updates. Sidebar visibility and other settings are not supported." = "설정 변경에는 target settings, action set, 불리언 notify_on_updates만 사용할 수 있습니다. 사이드바 표시 상태 및 다른 설정은 지원하지 않습니다.";
+"Agent notification settings changed. Reopen the editor or request approval again." = "에이전트 알림 설정이 변경되었습니다. 편집기를 다시 열거나 승인을 다시 요청하세요.";
+"Before" = "변경 전";
+"After" = "변경 후";

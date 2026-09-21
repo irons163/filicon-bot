@@ -328,6 +328,11 @@ struct AgentEditorView: View {
                 TextField(agentString("Instructions"), text: $profile.instructions, axis: .vertical).lineLimit(6...14)
                     .accessibilityIdentifier("agent-editor-instructions")
             }
+            Section(l10n("Agent update notifications")) {
+                Toggle(l10n("Notify when this agent finishes or needs input"), isOn: $profile.notifyOnAgentUpdates)
+                    .accessibilityIdentifier("agent-editor-notify-updates")
+                AgentNotificationSettingsNotice()
+            }
             if let saveError {
                 Text(saveError).font(.callout).foregroundStyle(.red)
                     .accessibilityIdentifier("agent-editor-error")
@@ -392,7 +397,8 @@ struct AgentEditorView: View {
         let saved: AgentProfile?
         if isNew {
             saved = await model.createAgent(name: value.name, title: value.title, summary: value.summary, instructions: value.instructions,
-                                            providerID: value.providerID, modelID: value.modelID, avatar: value.avatar)
+                                            providerID: value.providerID, modelID: value.modelID, avatar: value.avatar,
+                                            notifyOnAgentUpdates: value.notifyOnAgentUpdates)
         } else if await model.updateAgent(value) {
             saved = model.agents.first { $0.id == value.id }
         } else {

@@ -290,7 +290,7 @@ struct AgentManagementSessionTests {
             ["action": "set", "name": "New name"], ["target": "profile", "name": "New name"],
             ["target": "profile", "action": "set", "name": "  "],
             ["target": "profile", "action": "set", "description": String(repeating: "x", count: 2_001)]]
-        for target in ["settings", "channel", "project", "PROFILE"] {
+        for target in ["channel", "project", "PROFILE"] {
             var fields = base; fields["target"] = target; invalid.append(fields)
         }
         for action in ["write", "delete", "archive", "create", "SET"] {
@@ -303,6 +303,10 @@ struct AgentManagementSessionTests {
             await #expect(throws: AgentProfileChangeError.invalidFields) {
                 _ = try await tool.execute(call(fields, operation: "update_state"), context: f.context)
             }
+        }
+        // Settings now has its own validation, but cannot accept profile fields.
+        await #expect(throws: AgentSettingsChangeError.invalid) {
+            _ = try await tool.execute(call(["target": "settings", "action": "set", "name": "New name"], operation: "update_state"), context: f.context)
         }
         // Workflow has its own validated route now, but profile.set fields
         // must still never be accepted as a workflow mutation.

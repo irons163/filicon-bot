@@ -29,7 +29,7 @@ enum AgentNotificationProjection {
                 name: profile.name,
                 isRunning: isRunning,
                 awaitingReason: awaitingReason,
-                notifyEnabled: true,
+                notifyEnabled: profile.notifyOnAgentUpdates,
                 isHidden: profile.archivedAt != nil,
                 lastMessageID: terminalMessageID,
                 lastMessagePreview: terminalPreview

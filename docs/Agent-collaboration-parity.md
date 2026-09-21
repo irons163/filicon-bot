@@ -1,6 +1,31 @@
 # 協作能力核對紀錄（更新至 2026-09-21）
 
-## 本輪增量：受核准的自身工作流程刪除（2026-09-21）
+## 本輪增量：受核准的自身更新通知設定（2026-09-21）
+
+先提交上一批為 `4a994a4`（`feat: approve deletion of agent-owned reusable workflows`），提交前 **26 Swift Testing／3 suites 通過**（`/tmp/filicon-workflow-delete-precommit.log`）。本輪對照本機非官方 reconstructed 的 `source/host/runner/tools/sand-state-tool.ts` settings/set 與 `source/host/extensions/memory/agent-state.ts` updateSettings，只補有原生對應的 `notify_on_updates`，不宣稱整個 settings/state 已對等。
+
+- 群組／mailbox 可用 `update_state(target:"settings",action:"set",notify_on_updates:Bool)` 提案。只接受這三個欄位、4,096-byte JSON 上限，嚴格驗證 JSON boolean，拒絕 0/1、字串、null、owner／permission 與其他欄位。`hidden_from_sidebar` 沒有相同原生側欄對象，單獨或混合提案均拒絕，不偷偷改成 archive。
+- host 綁定自身 agent，獨立 authorizer 預設拒絕；即使 auto-review allow 也必須逐次明確核准。卡片顯示成員、原值／新值與影響範圍。不讓 profile／workflow 等核准授權靜音，沿用共用四次額度、精確重播回執、取消／帳號切換至最終同步保存的 lifetime 防護。
+- `AgentProfile.notifyOnAgentUpdates` 持久化，舊資料預設 true；新建預設開啟，建立頁可選關閉，clone 維持新 agent 的開啟預設。專用可持久化 revision 在實際開關變更時更新，防止提案期間關閉再開啟（ABA）與舊編輯器覆寫。核准只合併該設定，保留其他最新欄位；disk save 失敗回滾，save 成功後晚到記帳失敗保留 durable receipt。同值設定不產生假變更。不是跨程序／外部檔案編輯的 CAS。
+- 由原先固定 true 的 `AgentNotificationProjection` 接到實際 preference，只控制 agent roster 完成／等待輸入的系統通知。不是整個 App 或所有對話的靜音；不隱藏 approval cards、未讀數、Dock badges，不改工作／成員／可見性／權限，也不移除既有通知。開啟不補送已觀察的過去通知，實際 delivery 仍受 macOS 授權、focus 與 throttle 約束。設定屬本機共用 profile，跨使用該 profile 的群組／帳號，不是帳號隔離的 memory。
+- 依 SwiftUI 技能加上 Agents → Edit →「代理人更新通知」切換並儲存，使用直接 state binding；核准細節／影響說明抽為可重用元件，補齊七語言。舊 editor 若設定已變更會顯示可翻譯錯誤，要求重新開啟，不靜默覆蓋。
+
+測試先重現缺少 route：第一次 fixture 缺少 `try`，修正可編譯後確實收到 `.invalidFields` 而非預期的 `.approvalRequired`（`/tmp/filicon-settings-red.log`）。產品補齊後，初版 private-marker 斷言誤把系統說明的通用詞 PRIVATE 當資料外洩；改為精確 fixture 值／路徑比對，沒有刪除隔離斷言。
+
+驗證狀態：
+
+- 聚焦 **22 Swift Testing／4 suites、3 XCTest 通過**（`/tmp/filicon-settings-focused-final.log`），包含新設定路徑、現有頭像、通知 policy／projection，群組批准／拒絕／Stop／帳號／ABA／封存 × 開關兩方向、mailbox recipient、手動新建／編輯與重開、資料遷移、寫檔回滾、延遲 commit 撤銷、同 call id 重播與共用預算。範圍均為隔離 fixture，非真實付費模型或帳號。
+- 原生 `Filicon App` **clean build 與 deep strict codesign 通過**（`/tmp/filicon-settings-native.log`），含 helpers／XPC；既有 AppIntents metadata／ad-hoc runtime 提示保留。後續釐清通知權限文字（設定可開啟，delivery 才受系統授權控制），呈現／policy 回歸 **6 Swift Testing／2 suites、3 XCTest 通過**（`/tmp/filicon-settings-presentation-final.log`），原生增量 build／deep strict codesign 再次通過（`/tmp/filicon-settings-native-final.log`）。
+- 七語言各 **1,571 keys、零缺漏**；28 張 380 點寬核准 fixture 預覽（開／關 × 七語言 × 明暗）在 `/tmp/filicon-settings-previews/`，每種語言至少檢視一張，未見裁切。不是全產品逐頁或 live App 驗收。
+- 完整 `swift test --no-parallel` **135 XCTest 通過，但 939 Swift Testing／107 suites 回報 75 issues，未通過**（`/tmp/filicon-settings-full.log`）。執行中 Mac 鎖定，已確認 `CGSSessionScreenIsLocked=Yes`；多個既有與新測試重開 protected agents/workflows/channels/MCP/image 檔案回報 Code 257／EPERM，另有 state 為空／malformed 等衍生斷言。不能在未解鎖重跑前把所有失敗一概判為環境問題或宣稱全套成功。已請使用者解鎖，未移除檔案保護或忽略失敗。
+
+- 偵測到鎖定旗標解除後重跑，**135 XCTest 通過；939 Swift Testing／107 suites 剩 1 issue**（`/tmp/filicon-settings-full-final.log`），不再有 protected-file 重開失敗。剩餘項是舊 `ownProfileRejectsOtherStateRoutesFieldsAndIdentitySpoofing` 對 settings 非法 profile 欄位預期通用 `.invalidFields`；新增 route 改回傳精確 `.invalid`。改為獨立驗證 `AgentSettingsChangeError.invalid`，仍要求該非法提案被拒絕，不移除範圍保護。
+
+- 最後完整 `swift test --no-parallel` **135 XCTest、939 Swift Testing／107 suites 全數通過**（`/tmp/filicon-settings-full-verified.log`）。兩項 opt-in live Codex 測試未啟用，既有 CoreData NSXPC 診斷仍在；沒有跳過失敗測試或降低檔案保護。這是隔離回歸，非真實 macOS 通知投遞／帳號驗收。
+
+本批尚未提交；未 push、未啟動／重啟使用者 App／Xcode，未操作真實群組、排程或外部服務。`AGENT-01` 與其餘 partial 項目保留，不以本輪通知開關宣稱原版完整對等。
+
+## 已提交增量：受核准的自身工作流程刪除（2026-09-21）
 
 先提交上一批為 `a4e5d4c`（`feat: approve agent-owned workflow creation and rewriting`）；提交前 **32 Swift Testing／5 suites 與 14 XCTest 通過**。本輪核對本機非官方 reconstructed 的 `source/host/runner/tools/sand-state-tool.ts`（workflow/delete）及 `source/host/extensions/memory/agent-state.ts`（deleteWorkflow）。補 Filicon-native 受限對應，不宣稱完整原版 workflow/state parity。
 
@@ -20,7 +45,7 @@
 - 原生 `Filicon App` clean build 通過（`/tmp/filicon-workflow-delete-native.log`），最後 schema 說明更新後再 build／deep strict codesign 通過（`/tmp/filicon-workflow-delete-native-final.log`），包含 helpers／XPC。僅 ad-hoc Debug 驗證，既有 AppIntents metadata／hardened runtime 提示仍在，未做 release 公證。
 - 七語言各 **1,562 keys、零缺漏**；localization audit／`git diff --check` 通過。依 SwiftUI 技能調整共用核准元件，create/update/delete × 七語言 × 明暗共 **42 張** 420 點寬 fixture 預覽（`/tmp/filicon-workflow-delete-previews/`），刪除畫面每種語言至少檢視一張，未見裁切；不是全產品逐頁或 live App 驗收。
 
-本批尚未提交，未 push、未啟動／重啟使用者 App 或 Xcode 工作程序，未操作真實資料／模型／外部帳號。`AGENT-01` 及其他 partial 保留。
+本批已在下一輪提交為 `4a994a4`，未 push、未啟動／重啟使用者 App 或 Xcode 工作程序，未操作真實資料／模型／外部帳號。`AGENT-01` 及其他 partial 保留。
 
 ## 已提交增量：受核准的自身工作流程建立／全文改寫（2026-09-21）
 
@@ -245,7 +270,8 @@ NSHostingView 以 440 pt 寬渲染六種表單狀態 × 七語言 × 明暗兩�
 | 圖片訊息 | `loadAgentInboundImages`／`selectedImages`、`agents/agent-messaging.ts` 的 images；`shared-rooms.ts` 的四張限制與 `send-pipeline.ts` 的選圖路徑 | **已接線受限版本**：代理人 → 訊息及一般群組輸入均可手動選擇 PNG/JPEG，實際位元組傳入支援看圖的收件模型。群組預覽揭露保存／模型收件範圍，依本輪使用者 @mention 選擇成員；全部指定模型通過驗證才貼文，失敗保留草稿。`SendToAgent(images:[id])` 只能轉交本次收到的 peer 圖片，或 host 指定且使用者本輪點名給自己的群組圖片；每次顯示收件人、文字與圖片重新預覽核准，回信及同群組成員也不豁免。`SendMessage` 可將這些圖片另行審批後發布到來源對話，群組核准卡揭露房間與完整成員，不擴大模型收件者。拒絕任意路徑、網址、base64 與其他訊息的 ID。最多四張／單張 5 MB／合計 12 MB，存為雜湊驗證的獨立 blobs。**尚缺**：參考的 file/HTTPS 圖片來源、模型新產生的圖片、歷史圖片自動重播。`SendToAgent` 群組目標附圖仍明確拒絕；不支援看圖的模型明確失敗，不默默丟棄圖片。`AgentImageMessagingTests`、`AgentImageAppIntegrationTests`、`GroupImageAppTests`；本輪群組發布的驗證狀態見文末 |
 | 優先訊息中斷非使用者工作 | `steerRecipientForPriorityPeer`，先檢查 active lane != user | **已接線受限版本**：單一 peer 的 `priority:true` 每次須核准（回信也不豁免），manual Priority 也接上排程。來源回合結束並 drain 後，可取消收件者正在執行的背景 peer／委派群組回覆／排程自動化，等 host 工具清理完才啟動優先工作。排隊中的使用者工作及較早優先訊息不被插隊；前景群組、手動 mailbox 首回合、手動 Run Now、channel／workflow／subtask 均受保護。不自動重播被中斷工作；群組 priority 拒絕。**差異**：不是參考的 enqueue 當下立即中斷，保護範圍更保守。`AgentExecutionSchedulerTests`、`AgentMessagingSessionTests`、`AgentBackgroundExecutionTests` |
 | 模型建立／編輯代理人 | `source/host/agents/agent-messaging.ts`: CreateAgent、UpdateAgent | **已接線受限版本**：群組、手動 mailbox 與 peer wake 提供 `CreateAgent(name, description?)`／`UpdateAgent(agent_id, name?, description?)`。每次完整顯示變更並明確核准；每個來源請求共用四次上限。新代理人沿用發起者 provider/model，description 成為公開摘要與初始指令；Update 只合併名稱與公開摘要，不修改私人指令。`AgentManagementSessionTests`、`AgentManagementAppIntegrationTests`。不替未綁定 agent 的一般 DM 加上管理權限 |
-| 模型修改自身公開資料 | `source/host/runner/tools/sand-state-tool.ts` 的 `update_state` profile/set；`source/host/extensions/memory/agent-state.ts` 的 `updateProfile` | **已接線受限版本**：`update_state(target:"profile", action:"set", name?, description?)`。身分由 host 固定；不得傳入別人的 ID。可明確清空公開 description，省略欄位保留原值；私人 persona 不變。每次仍需使用者核准，與 CreateAgent／UpdateAgent、memory、avatar 及 routine 變更共用四次上限。下一個群組回合重新載入 profile，原請求參與成員不擴大。memory／avatar 支援範圍見其他列；routine 支援下列有限 create/update/pause/resume/delete；workflow 已補下列受限 write/delete；settings／channel／project 路由仍缺 |
+| 模型修改自身公開資料 | `source/host/runner/tools/sand-state-tool.ts` 的 `update_state` profile/set；`source/host/extensions/memory/agent-state.ts` 的 `updateProfile` | **已接線受限版本**：`update_state(target:"profile", action:"set", name?, description?)`。身分由 host 固定；不得傳入別人的 ID。可明確清空公開 description，省略欄位保留原值；私人 persona 不變。每次仍需使用者核准，與 CreateAgent／UpdateAgent、memory、avatar 及 routine 變更共用四次上限。下一個群組回合重新載入 profile，原請求參與成員不擴大。memory／avatar 支援範圍見其他列；routine 支援下列有限 create/update/pause/resume/delete；workflow 已補下列受限 write/delete；settings 已補下列受限通知開關；側欄顯示／channel／project 路由仍缺 |
+| 模型修改自身通知設定 | `sand-state-tool.ts` 的 settings/set；`agent-state.ts` 的 updateSettings | **已接線受限版本**：只接受 `target:settings,action:set,notify_on_updates:boolean`，host 固定自身 ID。逐次明確 before/after 核准，與其他修改共用四次上限；專用持久化 revision 防 ABA 與舊 editor 覆蓋，Stop／帳號切換同步撤銷。UI Agents → Edit 可手動開關並儲存。僅控制 agent roster 完成／等待輸入系統通知，不關對話通知、核准卡、未讀／Dock，也不影響任務與權限；舊資料預設開啟、不補送通知，macOS delivery 權限仍必要。本機共用 profile，非 account-scoped。**未還原 hidden_from_sidebar**；其他欄位／混合提案一律拒絕，不混用封存。不是跨程序 CAS。 |
 | 模型建立／改寫／刪除自身工作流程 | `sand-state-tool.ts` 的 workflow/write/delete；`agent-state.ts` 的 writeWorkflow/deleteWorkflow | **已接線受限版本**：own local manual single-prompt 的 create/full rewrite，名稱／說明／全文必填，body 最多 8 KiB 以下的 8,000 UTF-8 bytes；逐次全文核准、共享引用影響揭露、同 store revision／取消防護。無來源且經使用者指派 owner 的匯入副本視為本機定義；來源連結／learning／peer／多步驟／action／scheduled 拒絕。儲存不執行、不授予權限；delete 另走同樣 own/local/manual/single-prompt 上限、精確 ID 與獨立 destructive 核准，保留 run history 與已取得內容的執行，不連帶刪除其他流程／排程／檔案；引用可能失敗或省略內容。其他 workflow 操作仍未全面還原，不能視為帳號隔離記憶。 |
 | 模型修改自身頭像 | `source/host/runner/tools/sand-state-tool.ts` 的 avatar set/clear；`source/host/extensions/memory/agent-state.ts` 的 setAvatar/clearAvatar | **部分接線，來源不同**：群組／mailbox 可呼叫 `update_state(target:"avatar", action:"set", pet_id:...)` 選九種內建小寵物，或 `action:"clear"`（不得附 pet_id）恢復 Codex。每次顯示新頭像與原頭像類型並核准；只可改 host 固定的自身 ID。與 profile／memory 共用四次上限，Stop／帳號切換撤銷、核准期間頭像被改則拒絕舊提案；只合併頭像，不覆蓋其他欄位、不刪舊圖片檔案。**未還原參考的任意 host/box path 圖片安裝**，不接受路徑、URL、base64 或模型生成圖；不能視為完整 avatar parity。`AgentAvatarChangeTests`、`AgentManagementAppIntegrationTests` |
 | 明確保存／忘記自身事實 | `source/host/runner/tools/sand-state-tool.ts` 的 memory write/forget；`source/host/extensions/memory/agent-state.ts` 的 memory shards | **已接線受限版本**：群組／mailbox 的 `update_state(target:"memory", action:"write"或"forget", fact:...)` 預設為私人 `scope:"agent"`，共享 scope 見下一列。write 的 tier 接受 profile／log／note（預設 log），forget 使用記錄原文且不得傳 tier。帳號＋代理人由 host 固定，跨 origin、重啟後同一代理人的 group/mailbox runtime 會取得已核准事實，其他代理人／帳號不注入私人事實。每次增刪都顯示全文並核准；UI「代理人 → 編輯 → 代理人記憶」可重新整理、檢視及確認忘記。每事實 1,000 字元；每帳號／代理人 48 項（含最多 8 項 profile）、合計 12,000 字元；不自動淘汰。**尚缺**：project scope、DM／自動化等其他入口統一記憶、完整私人歷史 session。不是自動捕捉整段聊天。`AgentMemoryTests`、`AgentManagementAppIntegrationTests` |

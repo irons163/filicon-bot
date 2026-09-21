@@ -1,9 +1,42 @@
 import XCTest
 import FiliconAgents
 import FiliconDomain
+import FiliconAppServices
 @testable import Filicon
 
 final class AgentNotificationProjectionTests: XCTestCase {
+    func testMuteSuppressesUpdatesWithoutHidingBadgeOrReplayingAfterUnmute() throws {
+        var profile = AgentProfile(name: "Quiet", updatedAt: Date(timeIntervalSince1970: 10), unreadCount: 3,
+                                   notifyOnAgentUpdates: false)
+        let running = task(id: UUID(), agentID: profile.id, status: .running, startedAt: 20, result: nil)
+        let done = task(id: running.id, agentID: profile.id, status: .succeeded, startedAt: 20, result: "done")
+        var policy = AgentNotificationDecider()
+        policy.seedBaseline(AgentNotificationProjection.notificationSnapshots(profiles: [profile], tasks: [running]))
+        let muted = AgentNotificationProjection.notificationSnapshots(profiles: [profile], tasks: [done])
+        XCTAssertEqual(muted.first?.notifyEnabled, false)
+        XCTAssertEqual(policy.decide(agents: muted, isWindowFocused: false), [])
+        let badgeBefore = AgentNotificationProjection.dockSnapshots(profiles: [profile], tasks: [done])
+        XCTAssertEqual(badgeBefore.first?.unreadCount, 3); XCTAssertEqual(badgeBefore.first?.isHidden, false)
+        profile.notifyOnAgentUpdates = true
+        XCTAssertEqual(AgentNotificationProjection.dockSnapshots(profiles: [profile], tasks: [done]), badgeBefore)
+        XCTAssertEqual(policy.decide(agents: AgentNotificationProjection.notificationSnapshots(profiles: [profile], tasks: [done]), isWindowFocused: false), [])
+        profile.notifyOnAgentUpdates = false; profile.status = .awaitingInput
+        XCTAssertEqual(policy.decide(agents: AgentNotificationProjection.notificationSnapshots(profiles: [profile], tasks: []), isWindowFocused: false), [])
+        profile.notifyOnAgentUpdates = true
+        XCTAssertEqual(policy.decide(agents: AgentNotificationProjection.notificationSnapshots(profiles: [profile], tasks: []), isWindowFocused: false), [])
+        profile.status = .running
+        _ = policy.decide(agents: AgentNotificationProjection.notificationSnapshots(profiles: [profile], tasks: []), isWindowFocused: false)
+        profile.status = .awaitingInput
+        let newInput = policy.decide(agents: AgentNotificationProjection.notificationSnapshots(profiles: [profile], tasks: []), isWindowFocused: false)
+        XCTAssertEqual(newInput.map(\.kind), [.needsInput])
+        profile.status = .idle
+        let next = task(id: UUID(), agentID: profile.id, status: .running, startedAt: 30, result: nil)
+        _ = policy.decide(agents: AgentNotificationProjection.notificationSnapshots(profiles: [profile], tasks: [next]), isWindowFocused: false)
+        let nextDone = task(id: next.id, agentID: profile.id, status: .succeeded, startedAt: 30, result: "new")
+        let newDone = policy.decide(agents: AgentNotificationProjection.notificationSnapshots(profiles: [profile], tasks: [nextDone]), isWindowFocused: false)
+        XCTAssertEqual(newDone.map(\.kind), [.done])
+    }
+
     func testProjectionUsesLatestTerminalTaskAndHidesArchivedAgents() {
         let agentID = UUID()
         let profile = AgentProfile(

@@ -63,6 +63,31 @@ resetting does not delete custom image files. Stop/account changes revoke pendin
 proposals, and an intervening manual avatar edit invalidates the old proposal.
 Avatar, profile, memory, routine and workflow changes share the four-change limit per request.
 
+Group and mailbox agents can propose **changing their own update notifications**:
+
+```json
+{"target":"settings","action":"set","notify_on_updates":false}
+```
+
+Only those three fields are accepted, and `notify_on_updates` must be a JSON boolean
+(not 0/1 or a string). Every request needs explicit before/after approval, even with
+an auto-review allow rule. The host selects the owner; models cannot mute peers.
+This controls only the agent roster's completion/needs-input system alerts. It does
+not mute conversation alerts, hide approval cards, change unread counts/Dock badges,
+stop work, hide agents or grant permissions. macOS notification permission is still
+required for delivery; enabling does not replay past alerts or remove existing ones.
+This is a **local shared agent profile** preference, not an account-scoped setting.
+
+Manual entry: **Agents → Edit → Agent update notifications → Save** (also available
+when creating an agent). Existing records without the preference default to on.
+New agents and clones default to on unless explicitly configured at creation.
+Changes persist across reopening. Settings proposals share the four-change request
+budget, Stop/account fences and durable receipts. A dedicated persisted revision
+rejects stale proposals and old editors, even after toggling away and back; unrelated
+profile changes are preserved. The fence applies within the current service, not
+external file edits or multiple app processes. `hidden_from_sidebar` and all other
+settings fields remain unsupported and are rejected, including mixed proposals.
+
 Group and mailbox agents can propose **saving or rewriting their own reusable workflow**:
 
 ```json

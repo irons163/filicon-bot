@@ -517,6 +517,8 @@ struct GroupToolApprovalPanel: View {
                 }
                 if approval.action.context.metadata["agentStateTarget"] == "memory" {
                     AgentMemoryApprovalDetails(metadata: approval.action.context.metadata)
+                } else if approval.action.context.metadata["agentStateTarget"] == "settings" {
+                    AgentSettingsApprovalDetails(metadata: approval.action.context.metadata)
                 } else if approval.action.context.metadata["agentStateTarget"] == "avatar" {
                     AgentAvatarApprovalDetails(metadata: approval.action.context.metadata)
                 } else if approval.action.context.metadata["agentStateTarget"] == "routine" {
@@ -541,6 +543,28 @@ struct GroupToolApprovalPanel: View {
 
     private func resolve(_ approval: PendingApproval, approve: Bool) async {
         await model.resolveGroupApproval(approval, groupID: groupID, approve: approve)
+    }
+}
+
+struct AgentNotificationSettingsNotice: View {
+    var body: some View {
+        Text(l10n("Controls this local agent's completion and needs-input system alerts. Applies across groups and accounts using this profile. Does not mute conversation alerts or hide approval cards, unread counts or Dock badges. Tasks, visibility and permissions stay unchanged. System alerts require macOS notification permission. Past alerts are not replayed."))
+            .font(.caption).foregroundStyle(FiliconTheme.textSecondary)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+struct AgentSettingsApprovalDetails: View {
+    let metadata: [String: String]
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(l10n("Agent update notifications")).font(.callout.weight(.semibold))
+            Text(verbatim: metadata["agentName"] ?? "").textSelection(.enabled)
+            LabeledContent(l10n("Before"), value: l10n(metadata["previousAgentNotifyOnUpdates"] == "true" ? "Update notifications on" : "Update notifications off"))
+            LabeledContent(l10n("After"), value: l10n(metadata["agentNotifyOnUpdates"] == "true" ? "Update notifications on" : "Update notifications off"))
+            AgentNotificationSettingsNotice()
+        }
+        .fixedSize(horizontal: false, vertical: true)
     }
 }
 

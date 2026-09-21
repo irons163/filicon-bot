@@ -1566,3 +1566,14 @@
 "This permanently removes the shared workflow definition. There is no undo. Existing run history remains visible by workflow ID. Runs that already captured its content are not cancelled. Other workflows and routines stay unchanged, including their schedules; future references may fail or omit this content. Files, sources, connections and permissions are not removed or changed." = "This permanently removes the shared workflow definition. There is no undo. Existing run history remains visible by workflow ID. Runs that already captured its content are not cancelled. Other workflows and routines stay unchanged, including their schedules; future references may fail or omit this content. Files, sources, connections and permissions are not removed or changed.";
 "Workflow deletion requires only target, action and an exact workflow ID." = "Workflow deletion requires only target, action and an exact workflow ID.";
 "Only your own local manual single-prompt workflows within the review limit can be deleted here. Source-linked, managed and other agents' workflows are protected." = "Only your own local manual single-prompt workflows within the review limit can be deleted here. Source-linked, managed and other agents' workflows are protected.";
+
+/* Per-agent update notifications. */
+"Agent update notifications" = "Agent update notifications";
+"Notify when this agent finishes or needs input" = "Notify when this agent finishes or needs input";
+"Update notifications on" = "Update notifications on";
+"Update notifications off" = "Update notifications off";
+"Controls this local agent's completion and needs-input system alerts. Applies across groups and accounts using this profile. Does not mute conversation alerts or hide approval cards, unread counts or Dock badges. Tasks, visibility and permissions stay unchanged. System alerts require macOS notification permission. Past alerts are not replayed." = "Controls this local agent's completion and needs-input system alerts. Applies across groups and accounts using this profile. Does not mute conversation alerts or hide approval cards, unread counts or Dock badges. Tasks, visibility and permissions stay unchanged. System alerts require macOS notification permission. Past alerts are not replayed.";
+"Settings changes require only target settings, action set and a boolean notify_on_updates. Sidebar visibility and other settings are not supported." = "Settings changes require only target settings, action set and a boolean notify_on_updates. Sidebar visibility and other settings are not supported.";
+"Agent notification settings changed. Reopen the editor or request approval again." = "Agent notification settings changed. Reopen the editor or request approval again.";
+"Before" = "Before";
+"After" = "After";
