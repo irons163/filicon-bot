@@ -738,12 +738,14 @@ checkout or launching an app:
 
 ```sh
 ruby scripts/test-resource-signing.rb
+python3 -B scripts/test-package-entitlements.py
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer zsh scripts/smoke-xcode-resource-signing.sh
 ```
 
 The smoke script retains an isolated source snapshot, build products and logs
 under a printed temporary path. It checks all seven localizations, asset
-addition/removal, and no-op builds with deep/strict signature verification.
+addition/removal, and no-op builds with deep/strict signature verification and
+the full Debug package verifier (metadata, helpers, XPC and entitlement policy).
 This is Debug ad-hoc validation, not a production release or notarization check.
 
 Debug uses ad-hoc signing by default. Rebuilding or switching launch methods
@@ -760,6 +762,11 @@ The Debug XPC entitlement grants **read-only access to the exact built
 inside DerivedData. It does not grant access to the checkout or user documents.
 The sandbox, signature check, folder grants, and per-operation approval gates
 remain enabled. Release builds do not include this development-only exception.
+The verifier accepts the canonical bundle path or its `/var` / `/tmp` spelling
+only when the corresponding root-owned macOS symlink has the expected target.
+It does not resolve arbitrary signed exception paths; user-created symlinks,
+parent/child directories, extra paths, and read-write exceptions remain rejected.
+Shipping verification still rejects all such exceptions and debugger rights.
 Keep **Debug XPC services used by app** off in the scheme (the checked-in default):
 attaching the debugger to the service makes Xcode re-sign it with broader
 diagnostic entitlements. App debugging still works. XCTest itself also modifies

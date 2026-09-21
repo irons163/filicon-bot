@@ -16,6 +16,8 @@ app_bundle="$derived_dir/Build/Products/Debug/Filicon.app"
 source_resources="$fixture_dir/Sources/Filicon/Resources"
 built_resources="$app_bundle/Contents/Resources"
 manifest="$built_resources/FiliconResources.sha256"
+expected_version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$fixture_dir/Support/Info.plist")
+expected_build=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$fixture_dir/Support/Info.plist")
 
 build_and_verify() {
   local step=$1
@@ -30,8 +32,14 @@ build_and_verify() {
     print -u2 -- "SIGNATURE FAILED: $step; see $review_dir/$step-signature.log"
     return 1
   fi
+  if ! /bin/zsh "$fixture_dir/scripts/verify-package.sh" --app "$app_bundle" \
+      --version "$expected_version" --build "$expected_build" --xcode-debug \
+      > "$review_dir/$step-package.log" 2>&1; then
+    print -u2 -- "PACKAGE FAILED: $step; see $review_dir/$step-package.log"
+    return 1
+  fi
   [[ -f "$manifest" ]] || { print -u2 'Missing resource signing manifest'; return 1; }
-  print -r -- "PASS: $step (build + deep strict signature)"
+  print -r -- "PASS: $step (build + deep strict signature + package policy)"
 }
 
 build_and_verify baseline

@@ -1,6 +1,25 @@
 # 協作能力核對紀錄（更新至 2026-09-22）
 
-## 本輪增量：Xcode 資源增量建置的簽章依賴（2026-09-22）
+## 本輪增量：Debug 封裝驗證的系統路徑別名（2026-09-22）
+
+先提交上一批為 `7cfd698`（`fix: track resource-only Xcode signing inputs`），提交前 Ruby **7 tests／80 assertions**、七語言 audit 與 diff check 通過。本輪接續修正上一輪完整封裝檢查的 `/var`／`/private/var` 路徑誤判，不提高功能 parity 狀態。
+
+- 將既有 signed entitlement 的額外政策檢查抽成 `scripts/verify-package-entitlements.py`，供 shell verifier 與獨立 fixtures 共用；metadata、app／XPC 必要 entitlements、helper 組裝及最後 deep strict codesign 仍由原 wrapper 驗證。
+- Debug 仍要求唯一一個 read-only 例外，且指向本次被驗證的完整 `Filicon.app/` 目錄。只增加 macOS `/var`→`/private/var`、`/tmp`→`/private/tmp` 的等價字串候選，先用 lstat／readlink 確認系統別名是 root-owned symlink 且目標完全符合白名單。參考 [Python readlink 文件](https://docs.python.org/3/library/os.html#os.readlink)；不對簽入的 exception 路徑呼叫 realpath，避免把可重新導向的任意 symlink 當成授權依據。
+- 拒絕父／子／同前綴目錄、`..`、多餘斜線、錯誤型別、多個路徑、read-write／其他 exception、App 自身 exception；Release 仍拒絕全部 development exception 與 debugger rights。未修改任何 entitlements、簽署身分、App runtime 或使用者權限。
+- 10 項政策測試先以舊字串比對重現兩個系統別名失敗，修正後全過（`/tmp/filicon-package-alias-red.log`、`/tmp/filicon-package-alias-tests.log`）。涵蓋真實 `/var`／`/tmp` fixture、Unicode／空白、任意 symlink（含父層 alias）、錯誤系統 alias／owner／型別、CLI XML／binary plist 及不合法輸入。
+- 同一個未修改、未重簽的隔離 Debug App，修正前完整 verifier 拒絕、修正後包含 helpers／XPC 與 deep strict 全部通過（`/tmp/filicon-package-alias-native-before.log`、`/tmp/filicon-package-alias-native-after.log`）。未帶 `--xcode-debug` 時仍正確拒絕該 Debug App（`/tmp/filicon-package-alias-shipping-rejection.log`）。
+- 資源 smoke 每次建置現在都使用副本內的完整 package verifier，版本／build 從該副本 Support/Info.plist 讀取，不硬編碼；驗證失敗保留個別 package log 並中止。仍不啟動 App。
+
+最終驗證：
+
+- 補上同前綴非目錄邊界與絕對 system-link target 後，Python **11 項政策測試**全過（`/tmp/filicon-package-alias-tests-final.log`）；既有 Ruby **7 tests／80 assertions**、shell 語法、七語言 **1,624 keys／零缺漏**及 diff check 通過。
+- **13 次原生 Debug build／deep strict／完整 package verifier 全過**，包含七語言更新後的 built strings 內容、資源新增／移除與 no-op。fixture 位於 `/var/folders/…/filicon-resource-signing.TGyLa6/`，來源與 DerivedData 名稱含空白，逐步 package log 隨同保留（總紀錄：`/tmp/filicon-package-alias-smoke.log`）。
+- 同一隔離副本的 **Release arm64＋x86_64 原生 build 與 shipping 模式完整 verifier 全過**（`/tmp/filicon-package-alias-release-build.log`、`/tmp/filicon-package-alias-release-verify.log`）。Release 不含開發例外；錯用 Debug 模式也會被拒絕（`/tmp/filicon-package-alias-debug-mode-rejection.log`），與前述 Debug 不得通過 shipping 檢查形成雙向回歸。僅 ad-hoc 簽章 fixture，未用 Developer ID／notary、未產生可發布版本或執行 App。
+
+本輪只有打包／驗證腳本與文件變更，不宣稱修復既有並行測試時序問題；未重跑 Swift 套件，上一輪非並行完整結果保留為歷史證據。新修改尚未提交，未 push、未啟動／重啟使用者 App／Xcode、未操作真實群組／排程／連線／憑證。整體仍 **43 complete／4 partial／1 NA**。
+
+## 已提交增量：Xcode 資源增量建置的簽章依賴（2026-09-22）
 
 先提交上一批為 `e00bab1`（`feat: approve restricted Teams routine proposals`），提交前 **70 Swift Testing／3 suites 通過**（`/tmp/filicon-teams-proposal-precommit.log`），七語言 audit 與 diff check 通過。原始參考 `hidden_from_sidebar` 作用於代理人側欄項目；Filicon 現行側欄列群組／一般聊天，尚無一對一對應，因此沒有假接設定或把隱藏改成封存。本輪先修正過往兩次已記錄的原生建置簽章缺陷，parity 功能狀態不提高。
 
@@ -18,7 +37,7 @@
 - 初次未明確傳入 `--no-parallel` 的完整測試出現 coordinator／subagent 時序失敗、大量 60 秒 App approval 逾時，並觸發既有測試索引越界（`/tmp/filicon-resource-signing-swift-tests.log`）。沒有 Cocoa 257 或鎖定證據，不歸因為檔案保護，也未修改應用程式邏輯來掩蓋。
 - 明確 `swift test --no-parallel` 重跑，**135 XCTest、1,007 Swift Testing／112 suites 全數通過**（`/tmp/filicon-resource-signing-swift-serial.log`）。兩項 opt-in live Codex 測試未啟用；CoreData NSXPC 診斷仍在。非並行通過不代表先前並行時序風險已根治。
 
-新修正尚未提交；未 push、未啟動／重啟使用者 App／Xcode，未操作聊天／群組／外部帳號或憑證。整體仍 **43 complete／4 partial／1 NA**，不是「原版全部都有」。
+本批已於下一輪提交為 `7cfd698`；未 push、未啟動／重啟使用者 App／Xcode，未操作聊天／群組／外部帳號或憑證。整體仍 **43 complete／4 partial／1 NA**，不是「原版全部都有」。
 
 ## 已提交增量：受核准的 Teams 排程定義提案（2026-09-22）
 
