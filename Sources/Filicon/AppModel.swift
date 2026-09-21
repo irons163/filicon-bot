@@ -2603,6 +2603,12 @@ final class AppModel: ObservableObject {
             }, commitSettings: { [weak self] change, lifetime in
                 guard let self else { throw CancellationError() }
                 return try await self.commitAgentSettingsChange(change, lifetime: lifetime, originID: originID, generation: generation)
+            }, channels: channelService, authorizeChannel: { [weak self] sender, change, call, context in
+                guard let self else { throw CancellationError() }
+                try await self.authorizeAgentChannelDisconnection(sender: sender, change: change, call: call, context: context)
+            }, commitChannel: { [weak self] change, lifetime in
+                guard let self else { throw CancellationError() }
+                try await self.commitAgentChannelDisconnection(change, lifetime: lifetime, originID: originID, generation: generation)
             })
         return AgentMessagingSession(
             originConversationID: originID, agents: agentService, messenger: agentMessenger,
@@ -2966,6 +2972,42 @@ final class AppModel: ObservableObject {
         try await autoReviewBroker.waitForApprovalToExecute(pending) { [weak self] in await self?.registerAutoReviewApproval($0) }
         try Task.checkCancellation()
         guard generation == autoReviewAccountGeneration, isAgentMessagingScopeActive(context.conversationID) else { throw CancellationError() }
+    }
+
+    private func authorizeAgentChannelDisconnection(sender: AgentProfile, change: ChannelDisconnection,
+                                                    call: NormalizedToolCall, context: ToolContext) async throws {
+        guard isAgentMessagingScopeActive(context.conversationID) else { throw CancellationError() }
+        let generation = autoReviewAccountGeneration
+        let fence = ApprovalFence(accountID: settings.accountScope ?? "local", agentID: context.conversationID.uuidString.lowercased(),
+                                  runID: context.runID, generation: generation)
+        await autoReviewBroker.activate(fence)
+        let metadata = ["tool": "update_state", "agentStateTarget": "channel", "agentName": sender.name,
+            "channelID": change.connectionID.uuidString, "channelPlatform": change.platform,
+            "channelName": change.displayName, "channelAccountLabel": change.accountLabel,
+            "channelEnabled": String(change.enabled), "channelInboundCount": String(change.inboundCount),
+            "channelDeliveryCount": String(change.deliveryCount), "channelPendingCount": String(change.pendingDeliveryCount),
+            "channelFailureCount": String(change.failureCount)]
+        let action = AutoReviewAction(summary: sender.name + " → " + l10n("Disconnect agent channel"),
+            target: .resource(kind: "channel", identifier: change.connectionID.uuidString), risks: [.sensitive, .destructive],
+            context: .init(fence: fence, conversationID: context.conversationID, toolCallID: call.id.rawValue, metadata: metadata))
+        let pending = PendingApproval(action: action, reason: "Approval required", expiresAt: Date().addingTimeInterval(300))
+        // Destructive channel changes never inherit generic tool allow rules.
+        try await autoReviewBroker.waitForApprovalToExecute(pending) { [weak self] in await self?.registerAutoReviewApproval($0) }
+        try Task.checkCancellation()
+        guard generation == autoReviewAccountGeneration, isAgentMessagingScopeActive(context.conversationID) else { throw CancellationError() }
+    }
+
+    private func commitAgentChannelDisconnection(_ change: ChannelDisconnection, lifetime: ChannelDisconnectionLifetime,
+                                                  originID: UUID, generation: UInt64) async throws {
+        guard let channelService, let agentService, generation == autoReviewAccountGeneration,
+              isAgentMessagingScopeActive(originID),
+              let owner = await agentService.profile(id: change.agentID), owner.archivedAt == nil else { throw CancellationError() }
+        try lifetime.check()
+        guard generation == autoReviewAccountGeneration, isAgentMessagingScopeActive(originID) else { throw CancellationError() }
+        try await channelService.applyDisconnection(change, lifetime: lifetime)
+        // Credentials can be shared with other connections. Retain them, as
+        // disclosed before approval; local deletion is not remote revocation.
+        if generation == autoReviewAccountGeneration { await reloadChannelState() }
     }
 
     private func authorizeAgentSettingsChange(sender: AgentProfile, change: AgentSettingsChange,

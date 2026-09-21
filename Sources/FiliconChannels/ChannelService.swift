@@ -51,6 +51,9 @@ public actor ChannelService {
     private var connectionRevisions: [UUID: UUID] = [:]
     private var profileRequests: [UUID: UUID] = [:]
     private var sendingDeliveryIDs: Set<UUID> = []
+    // Approval snapshots cover counts as well as configuration, including ABA
+    // edits. This is a process-local fence, not cross-process compare-and-swap.
+    private var storageRevision = UUID()
 
     public init(storeURL: URL) throws {
         self.storeURL = storeURL
@@ -102,6 +105,28 @@ public actor ChannelService {
 
     public func connections() -> [ChannelConnection] {
         state.connections.sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
+    }
+
+    public func proposeDisconnection(agentID: UUID, platform: String) throws -> ChannelDisconnection {
+        guard ["slack", "discord"].contains(platform) else { throw ChannelDisconnectionError.invalid }
+        let matches = state.connections.filter { $0.agentID == agentID && $0.connectorID == platform }
+        guard let connection = matches.first else { throw ChannelDisconnectionError.unavailable }
+        guard matches.count == 1 else { throw ChannelDisconnectionError.ambiguous }
+        let deliveries = state.deliveries.filter { $0.connectionID == connection.id }
+        return .init(agentID: agentID, connection: connection, revision: storageRevision,
+            inboundCount: state.inbound.filter { $0.connectionID == connection.id }.count,
+            deliveryCount: deliveries.count,
+            pendingDeliveryCount: deliveries.filter { [.queued, .retrying, .sending].contains($0.status) }.count,
+            failureCount: state.failureWakes.filter { $0.connectionID == connection.id }.count)
+    }
+
+    public func applyDisconnection(_ change: ChannelDisconnection, lifetime: ChannelDisconnectionLifetime) throws {
+        try lifetime.commit(change) {
+            guard storageRevision == change.revision,
+                  state.connections.first(where: { $0.id == change.connectionID }) == change.connection,
+                  change.connection.agentID == change.agentID else { throw ChannelDisconnectionError.stale }
+            _ = try removeConnection(id: change.connectionID)
+        }
     }
 
     @discardableResult
@@ -356,6 +381,7 @@ public actor ChannelService {
         do {
             try Self.save(state, to: storeURL)
             persistedState = state
+            storageRevision = UUID()
         } catch {
             state = persistedState
             throw error

@@ -517,6 +517,8 @@ struct GroupToolApprovalPanel: View {
                 }
                 if approval.action.context.metadata["agentStateTarget"] == "memory" {
                     AgentMemoryApprovalDetails(metadata: approval.action.context.metadata)
+                } else if approval.action.context.metadata["agentStateTarget"] == "channel" {
+                    AgentChannelDisconnectionDetails(metadata: approval.action.context.metadata)
                 } else if approval.action.context.metadata["agentStateTarget"] == "settings" {
                     AgentSettingsApprovalDetails(metadata: approval.action.context.metadata)
                 } else if approval.action.context.metadata["agentStateTarget"] == "avatar" {
@@ -543,6 +545,28 @@ struct GroupToolApprovalPanel: View {
 
     private func resolve(_ approval: PendingApproval, approve: Bool) async {
         await model.resolveGroupApproval(approval, groupID: groupID, approve: approve)
+    }
+}
+
+struct AgentChannelDisconnectionDetails: View {
+    let metadata: [String: String]
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(l10n("Disconnect agent channel")).font(.callout.weight(.semibold))
+            Text(verbatim: metadata["agentName"] ?? "").textSelection(.enabled)
+            LabeledContent(l10n("Connection")) { Text(verbatim: metadata["channelName"] ?? "") }
+            LabeledContent(l10n("Platform")) { Text(verbatim: metadata["channelPlatform"] ?? "") }
+            LabeledContent(l10n("Account / channels")) { Text(verbatim: metadata["channelAccountLabel"] ?? "") }
+            Text(verbatim: metadata["channelID"] ?? "").font(.caption.monospaced()).textSelection(.enabled)
+            LabeledContent(l10n("Status"), value: l10n(metadata["channelEnabled"] == "true" ? "Connection enabled" : "Connection disabled"))
+            LabeledContent(l10n("Inbound records to remove"), value: metadata["channelInboundCount"] ?? "0")
+            LabeledContent(l10n("Delivery records to remove"), value: metadata["channelDeliveryCount"] ?? "0")
+            LabeledContent(l10n("Pending / in-flight sends"), value: metadata["channelPendingCount"] ?? "0")
+            LabeledContent(l10n("Failure records to remove"), value: metadata["channelFailureCount"] ?? "0")
+            Text(l10n("Removes this local connection and its inbound, delivery and failure records. Pending sends are removed; already accepted callbacks or sends may finish. No undo. Chat history and attachment files remain. Other connections and routines are unchanged. Keychain credentials are retained because they may be shared. Remote messages and OAuth grants are not revoked. Channel data changes require fresh approval."))
+                .font(.caption).foregroundStyle(FiliconTheme.textSecondary)
+        }
+        .fixedSize(horizontal: false, vertical: true)
     }
 }
 

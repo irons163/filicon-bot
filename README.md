@@ -746,9 +746,27 @@ connection or a newer profile request. Overlapping flushes reserve deliveries,
 and a failed sending checkpoint prevents the network send. Already-started
 sends/accepted callbacks cannot be recalled. If saving a send result fails, the
 last durable `sending` state remains; existing restart recovery retries it with
-the same idempotency key, not an exactly-once guarantee. This is lifecycle
-hardening, **not** the agent `update_state(channel.disconnect)` approval route;
-that route remains unsupported. See the latest parity log for verification gaps.
+the same idempotency key, not an exactly-once guarantee.
+
+Group/mailbox agents can now propose disconnecting **their own single connection**:
+`update_state(target:"channel", action:"disconnect", platform:"slack"|"discord")`.
+Only those three fields are accepted (4 KiB maximum). Peer-owned or unassigned
+connections cannot be removed. Multiple own connections on a platform are
+ambiguous: choose manually in **Channels** instead; the tool never bulk-deletes.
+Every proposal needs separate explicit approval, even with auto-review allow
+rules. The card shows the exact connection, account/channel label, enabled state
+and counts of local inbound, delivery, pending/in-flight and failure records.
+Approval removes that connection and those records and stops its listener.
+There is no undo; chat history and attachment files remain. Other connections
+and routines are unchanged, and already accepted callbacks/sends may finish.
+**Keychain credentials are retained**, since references may be shared; this does
+not revoke remote OAuth grants or recall remote messages. Any successful channel
+store write while awaiting approval invalidates the snapshot, including ABA
+changes; this is a process-local fence, not cross-process file coordination.
+Stop/account changes revoke pending proposals. Saving must succeed before a
+durable receipt is recorded; failures roll back. Replay protection and the
+four-change budget are shared with other agent state changes. Other channel
+operations and platforms remain unsupported by this model route.
 
 Codex CLI now uses its interactive **app-server dynamic-tool protocol** for
 Filicon tool turns (verified with Codex CLI 0.144.4). It retains the selected

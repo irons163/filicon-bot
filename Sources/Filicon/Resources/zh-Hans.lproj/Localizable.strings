@@ -1577,3 +1577,19 @@
 "Agent notification settings changed. Reopen the editor or request approval again." = "代理人的通知设置已变更。请重新打开编辑器或再次请求批准。";
 "Before" = "变更前";
 "After" = "变更后";
+// Own-channel disconnection approval
+"Connection enabled" = "已启用";
+"Connection disabled" = "已停用";
+"Disconnect agent channel" = "断开代理人频道";
+"Platform" = "平台";
+"Account / channels" = "账号／频道";
+"Status" = "状态";
+"Inbound records to remove" = "将移除的接收记录";
+"Delivery records to remove" = "将移除的发送记录";
+"Pending / in-flight sends" = "待发送／发送中";
+"Failure records to remove" = "将移除的失败记录";
+"Removes this local connection and its inbound, delivery and failure records. Pending sends are removed; already accepted callbacks or sends may finish. No undo. Chat history and attachment files remain. Other connections and routines are unchanged. Keychain credentials are retained because they may be shared. Remote messages and OAuth grants are not revoked. Channel data changes require fresh approval." = "移除此本机连接及其接收、发送和失败记录。待发送项目会移除；已接受的回调或发送仍可能完成。无法撤销。聊天记录与附件文件保留，其他连接与计划不变。钥匙串凭据可能共享，因此保留；不撤回远程消息或 OAuth 授权。频道数据变更后须重新批准。";
+"Channel disconnection requires only target channel, action disconnect and platform slack or discord." = "频道断开只能使用 target channel、action disconnect，以及 platform slack 或 discord。";
+"No channel connection owned by this agent is available for that platform." = "此平台没有属于这位代理人的可用频道连接。";
+"This agent has multiple connections on that platform. Choose the exact connection in Channels instead." = "此代理人在该平台有多个连接，请到“频道”选择要断开的确切连接。";
+"Channel data changed while awaiting approval. Request approval again." = "等待批准期间频道数据已变更，请重新请求批准。";

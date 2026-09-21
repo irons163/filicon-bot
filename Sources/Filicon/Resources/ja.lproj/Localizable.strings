@@ -1577,3 +1577,19 @@
 "Agent notification settings changed. Reopen the editor or request approval again." = "エージェントの通知設定が変更されました。エディタを開き直すか、承認を再度リクエストしてください。";
 "Before" = "変更前";
 "After" = "変更後";
+// Own-channel disconnection approval
+"Connection enabled" = "有効";
+"Connection disabled" = "無効";
+"Disconnect agent channel" = "エージェントのチャンネルを切断";
+"Platform" = "プラットフォーム";
+"Account / channels" = "アカウント／チャンネル";
+"Status" = "状態";
+"Inbound records to remove" = "削除する受信記録";
+"Delivery records to remove" = "削除する送信記録";
+"Pending / in-flight sends" = "待機中／送信中";
+"Failure records to remove" = "削除する失敗記録";
+"Removes this local connection and its inbound, delivery and failure records. Pending sends are removed; already accepted callbacks or sends may finish. No undo. Chat history and attachment files remain. Other connections and routines are unchanged. Keychain credentials are retained because they may be shared. Remote messages and OAuth grants are not revoked. Channel data changes require fresh approval." = "このローカル接続と受信・送信・失敗の記録を削除します。待機中の送信は削除しますが、受付済みのコールバックや送信は完了する場合があります。取り消せません。チャット履歴と添付ファイルは保持し、他の接続やルーチンは変更しません。キーチェーンの認証情報は共有されている可能性があるため保持します。リモートのメッセージや OAuth 授権は取り消しません。チャンネルデータが変わった場合は再承認が必要です。";
+"Channel disconnection requires only target channel, action disconnect and platform slack or discord." = "切断には target channel、action disconnect、platform slack または discord のみ指定できます。";
+"No channel connection owned by this agent is available for that platform." = "このプラットフォームには、このエージェントが所有する利用可能なチャンネル接続がありません。";
+"This agent has multiple connections on that platform. Choose the exact connection in Channels instead." = "このエージェントは同じプラットフォームに複数の接続を持っています。「チャンネル」で対象の接続を選択してください。";
+"Channel data changed while awaiting approval. Request approval again." = "承認待ちの間にチャンネルデータが変更されました。承認を再度リクエストしてください。";

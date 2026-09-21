@@ -11,12 +11,12 @@
       }
     },
     {
-      "identity" : "xctest-dynamic-overlay",
+      "identity" : "swift-issue-reporting",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/pointfreeco/xctest-dynamic-overlay",
+      "location" : "https://github.com/pointfreeco/swift-issue-reporting",
       "state" : {
-        "revision" : "d9308ad679143c26a30dec52daefe82f54af2b82",
-        "version" : "1.13.1"
+        "revision" : "71c7c9a761d1ca6ed4ccb6ced040fe1c1a39e8e7",
+        "version" : "2.1.0"
       }
     }
   ],

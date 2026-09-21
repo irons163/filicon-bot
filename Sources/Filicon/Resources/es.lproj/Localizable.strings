@@ -1577,3 +1577,19 @@
 "Agent notification settings changed. Reopen the editor or request approval again." = "Los ajustes de notificaciones del agente han cambiado. Vuelva a abrir el editor o solicite aprobación de nuevo.";
 "Before" = "Antes";
 "After" = "Después";
+// Own-channel disconnection approval
+"Connection enabled" = "Activada";
+"Connection disabled" = "Desactivada";
+"Disconnect agent channel" = "Desconectar el canal del agente";
+"Platform" = "Plataforma";
+"Account / channels" = "Cuenta / canales";
+"Status" = "Estado";
+"Inbound records to remove" = "Registros recibidos a eliminar";
+"Delivery records to remove" = "Registros de envío a eliminar";
+"Pending / in-flight sends" = "Envíos pendientes / en curso";
+"Failure records to remove" = "Registros de error a eliminar";
+"Removes this local connection and its inbound, delivery and failure records. Pending sends are removed; already accepted callbacks or sends may finish. No undo. Chat history and attachment files remain. Other connections and routines are unchanged. Keychain credentials are retained because they may be shared. Remote messages and OAuth grants are not revoked. Channel data changes require fresh approval." = "Elimina esta conexión local y sus registros de recepción, envío y error. Se eliminan los envíos pendientes; las devoluciones de llamada o envíos ya aceptados pueden finalizar. No se puede deshacer. Se conservan las conversaciones y archivos adjuntos. Las demás conexiones y rutinas no cambian. Las credenciales del Llavero se conservan porque pueden ser compartidas. No se revocan mensajes remotos ni permisos OAuth. Los cambios en los datos de canales requieren una nueva aprobación.";
+"Channel disconnection requires only target channel, action disconnect and platform slack or discord." = "La desconexión requiere únicamente target channel, action disconnect y platform slack o discord.";
+"No channel connection owned by this agent is available for that platform." = "No hay ninguna conexión de canal de este agente disponible en esa plataforma.";
+"This agent has multiple connections on that platform. Choose the exact connection in Channels instead." = "Este agente tiene varias conexiones en esa plataforma. Seleccione la conexión exacta en Canales.";
+"Channel data changed while awaiting approval. Request approval again." = "Los datos de canales cambiaron durante la espera. Solicite una nueva aprobación.";

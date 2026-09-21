@@ -1577,3 +1577,19 @@
 "Agent notification settings changed. Reopen the editor or request approval again." = "Agent notification settings changed. Reopen the editor or request approval again.";
 "Before" = "Before";
 "After" = "After";
+// Own-channel disconnection approval
+"Connection enabled" = "Enabled";
+"Connection disabled" = "Disabled";
+"Disconnect agent channel" = "Disconnect agent channel";
+"Platform" = "Platform";
+"Account / channels" = "Account / channels";
+"Status" = "Status";
+"Inbound records to remove" = "Inbound records to remove";
+"Delivery records to remove" = "Delivery records to remove";
+"Pending / in-flight sends" = "Pending / in-flight sends";
+"Failure records to remove" = "Failure records to remove";
+"Removes this local connection and its inbound, delivery and failure records. Pending sends are removed; already accepted callbacks or sends may finish. No undo. Chat history and attachment files remain. Other connections and routines are unchanged. Keychain credentials are retained because they may be shared. Remote messages and OAuth grants are not revoked. Channel data changes require fresh approval." = "Removes this local connection and its inbound, delivery and failure records. Pending sends are removed; already accepted callbacks or sends may finish. No undo. Chat history and attachment files remain. Other connections and routines are unchanged. Keychain credentials are retained because they may be shared. Remote messages and OAuth grants are not revoked. Channel data changes require fresh approval.";
+"Channel disconnection requires only target channel, action disconnect and platform slack or discord." = "Channel disconnection requires only target channel, action disconnect and platform slack or discord.";
+"No channel connection owned by this agent is available for that platform." = "No channel connection owned by this agent is available for that platform.";
+"This agent has multiple connections on that platform. Choose the exact connection in Channels instead." = "This agent has multiple connections on that platform. Choose the exact connection in Channels instead.";
+"Channel data changed while awaiting approval. Request approval again." = "Channel data changed while awaiting approval. Request approval again.";

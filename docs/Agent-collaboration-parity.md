@@ -1,5 +1,25 @@
 # 協作能力核對紀錄（更新至 2026-09-21）
 
+## 本輪增量：受核准的自身頻道斷線（2026-09-21）
+
+開始時工作區乾淨，上批已提交為 `65a9352`（`fix: preserve channel state across failed writes and stale callbacks`），未重複建立空提交。Xcode 更新後 Swift 6.4 已可執行；使用新的隔離 scratch／DerivedData，先補跑上批最終驗證：**135 XCTest、953 Swift Testing／108 suites 全部通過**（`/tmp/filicon-swift64-channel-baseline.log`），原生 Debug build 與 deep strict codesign 通過（`/tmp/filicon-swift64-native.log`）。兩項 opt-in live Codex 測試未啟用；保留既有 CoreData XPC 診斷。沒有代為接受條款、變更全機 xcode-select 或啟動／重啟使用者 App。
+
+再次核對本機非官方 reconstructed `sand-state-tool.ts` 的 channel.disconnect 路由與 `agent-state.ts` 的 disconnectChannel。Filicon 的連線庫可同平台多連線，不能照搬按平台直接刪除：
+
+- 群組／mailbox 的 `update_state(target:"channel",action:"disconnect",platform:"slack"|"discord")` 僅接受這三個字串欄位及 4,096-byte 上限。host 固定代理人身分，只選該代理人在該平台的單一連線，停用連線也可移除；peer、未指定 owner 的 receive-only 連線不可選。多條自身連線即拒絕，要求使用者到「頻道」精確選擇，不猜測、不批次移除。沒有新增其他平台、連線建立或遠端撤權。
+- 每次必須經獨立 destructive 核准，不沿用 auto-review 的工具 allow 規則。卡片顯示代理人、平台、連線名稱／ID、帳號／頻道標籤、啟用狀態，以及接收、傳送、待傳送／傳送中、失敗紀錄數量。模型結果不回傳憑證、帳號標籤、訊息內容或 peer 資料。
+- 確認後刪除選中連線的本機 connection／inbound／delivery／failure wake 並停止 listener；沒有 undo。聊天紀錄、附件檔案、其他連線及 routine 保留。已接受回呼或已開始送出仍可能完成，不召回遠端訊息，也不撤銷遠端 OAuth。**鑰匙圈憑證保留**，避免刪除可能共用的 reference；核准與結果均明示，不冒充已完成遠端登出或憑證清理。
+- proposal 只能由 ChannelService 的真實快照產生，process-local store revision 覆蓋全庫成功寫入，包括入站／佇列變動及相同值 ABA；資料改變即要求重新核准。不是跨程序直接改檔的 CAS，也不保證活躍高流量頻道能使用舊核准。Stop／帳號切換／取消透過同步 lifetime fence 撤銷尚未保存的提案，批准後重新檢查 owner 是否封存。持久化失敗完整回滾；只有保存成功才記 receipt，後續 UI 刷新失敗不把已完成刪除說成沒做。
+- 共享既有四次修改額度，包含已保留的 pending request；重播同 call 返回原成功結果，不重複刪除；同 call 換參數、同義重複 pending／成功請求拒絕，拒絕後可重新提案。原生 AppServices 加入既有 FiliconChannels target 依賴，沒有新增套件。
+
+依 Swift 測試／CustomDump 技能使用隔離 store、固定時間、受控 gate 與完整值差異；SwiftUI 技能用共用群組／mailbox 核准卡、不引入自訂 binding。新增 9 項核心／session 測試函式及 3 項 App 測試函式（含多組參數）；涵蓋 Slack／Discord、owner／receive-only 隔離、歧義、取消／封存／帳號／Stop、配置與資料 ABA、保存失敗回滾、延遲 commit、重播與並行重複、四次額度、durable receipt、mailbox recipient。首次測試有新 fixture 的 throws／protocol 欄位編譯問題，以及誤把已進 dead-letter 的項目算 pending；修正 fixture 為同時保留失敗紀錄與另一筆待傳送，沒有改產品狀態判定來配合測試。
+
+聚焦 **64 Swift Testing／4 suites 通過**（`/tmp/filicon-channel-approval-focused-final.log`）。七語言卡片產生 14 張 380 點寬的明暗預覽（`/tmp/filicon-channel-approval-previews/`），逐語言檢視後修正沿用的西班牙文／韓文 enabled 標籤，改用專屬已啟用／停用鍵，並重新檢視修正後的西／韓深色預覽。不是全產品逐頁或真實 Slack／Discord 帳號驗收。
+
+最終 **135 XCTest、965 Swift Testing／109 suites 全數通過**（明確 `--no-parallel`，`/tmp/filicon-channel-approval-full.log`）。兩項 opt-in live Codex 測試未啟用，既有 CoreData NSXPC 診斷仍在；未弱化檔案保護或跳過失敗案例。原生 `Filicon App` Debug 增量 build（`/tmp/filicon-channel-approval-native-final.log`）與產物 deep strict codesign 通過，含 helpers／XPC；本輪開始時已以新的 DerivedData 完成基準建置。七語言各 **1,586 keys、零缺漏**，`git diff --check` 通過。未 push、未啟動／重啟使用者 App／Xcode、未改實際聊天／群組／頻道／憑證；這不是正式 release 簽署或公證驗收。
+
+工具鏈說明：CustomDump 保持 1.7.3／同 revision；Swift 6.4 改選其主要 manifest，傳遞依賴為 `swift-issue-reporting 2.1.0`，舊 Swift 6.1 manifest 則使用 `xctest-dynamic-overlay 1.13.1`。兩個 resolver lockfile 已同步反映工具鏈選擇，未將測試套件加入 App 執行期依賴，也不宣稱驗證了所有舊版 Swift。`AGENT-01` 維持 partial，整體仍 **43 complete／4 partial／1 NA**。
+
 ## 已提交增量：頻道斷線與非同步資料一致性（2026-09-21）
 
 先提交通知設定為 `49ea201`（`feat: approve per-agent update notification settings`），提交範圍沿用上輪已驗證結果，`git diff --check` 通過。本輪核對本機非官方 reconstructed `source/host/extensions/memory/agent-state.ts` 的 disconnectChannel 與 `sand-state-tool.ts` 的 channel/disconnect，發現 native 手動斷線流程已有必須先修的競爭與寫檔失敗問題；本批是安全前提，**沒有新增模型斷線路由或核准 UI**。

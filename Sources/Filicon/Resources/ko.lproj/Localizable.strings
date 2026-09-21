@@ -1577,3 +1577,19 @@
 "Agent notification settings changed. Reopen the editor or request approval again." = "에이전트 알림 설정이 변경되었습니다. 편집기를 다시 열거나 승인을 다시 요청하세요.";
 "Before" = "변경 전";
 "After" = "변경 후";
+// Own-channel disconnection approval
+"Connection enabled" = "활성화됨";
+"Connection disabled" = "비활성화됨";
+"Disconnect agent channel" = "에이전트 채널 연결 해제";
+"Platform" = "플랫폼";
+"Account / channels" = "계정 / 채널";
+"Status" = "상태";
+"Inbound records to remove" = "삭제할 수신 기록";
+"Delivery records to remove" = "삭제할 전송 기록";
+"Pending / in-flight sends" = "대기 중 / 전송 중";
+"Failure records to remove" = "삭제할 실패 기록";
+"Removes this local connection and its inbound, delivery and failure records. Pending sends are removed; already accepted callbacks or sends may finish. No undo. Chat history and attachment files remain. Other connections and routines are unchanged. Keychain credentials are retained because they may be shared. Remote messages and OAuth grants are not revoked. Channel data changes require fresh approval." = "이 로컬 연결과 수신, 전송, 실패 기록을 삭제합니다. 대기 중인 전송은 삭제되지만 이미 수락된 콜백이나 전송은 완료될 수 있습니다. 되돌릴 수 없습니다. 채팅 기록과 첨부 파일은 유지되며 다른 연결과 루틴은 변경되지 않습니다. 키체인 자격 증명은 공유될 수 있어 유지합니다. 원격 메시지와 OAuth 승인은 철회하지 않습니다. 채널 데이터가 변경되면 새 승인이 필요합니다.";
+"Channel disconnection requires only target channel, action disconnect and platform slack or discord." = "연결 해제에는 target channel, action disconnect, platform slack 또는 discord만 지정할 수 있습니다.";
+"No channel connection owned by this agent is available for that platform." = "해당 플랫폼에 이 에이전트가 소유한 사용 가능한 채널 연결이 없습니다.";
+"This agent has multiple connections on that platform. Choose the exact connection in Channels instead." = "이 에이전트는 해당 플랫폼에 여러 연결이 있습니다. 채널에서 정확한 연결을 선택하세요.";
+"Channel data changed while awaiting approval. Request approval again." = "승인을 기다리는 동안 채널 데이터가 변경되었습니다. 다시 승인을 요청하세요.";

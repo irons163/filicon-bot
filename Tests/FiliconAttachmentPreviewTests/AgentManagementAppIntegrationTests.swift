@@ -9,6 +9,7 @@ import FiliconDomain
 import FiliconProviderKit
 import FiliconAutoReview
 import FiliconAutomations
+import FiliconChannels
 
 private struct ManagingAgentProvider: InteractiveToolProvider {
     let descriptor = ProviderDescriptor(id: "management-fixture", displayName: "Profile fixture", requiresAPIKey: false)
@@ -64,6 +65,122 @@ private actor ManagementWakeProbe {
         }
         throw PendingApprovalError.stale("Mailbox execution did not finish")
     }
+    private func channelFixture(mailbox: Bool = false) async throws -> (URL, AppModel, UUID, AgentProfile, AgentProfile, ChannelConnection, ChannelConnection) {
+        let (root, _, groupID, sender, recipient) = try await fixture()
+        let owner = mailbox ? recipient : sender
+        let peer = mailbox ? sender : recipient
+        let service = try ChannelService(storeURL: root.appending(path: "channels.json"))
+        let own = ChannelConnection(connectorID: "slack", displayName: "Workspace connection", accountLabel: "C_FIXTURE",
+            secretReference: "keychain://channels/SECRET_MARKER", enabled: false, agentID: owner.id)
+        let other = ChannelConnection(connectorID: "slack", displayName: "PEER_CHANNEL_MARKER",
+            secretReference: own.secretReference, enabled: false, agentID: peer.id)
+        try await service.saveConnection(own); try await service.saveConnection(other)
+        let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+        await model.reloadWorkspaceData()
+        return (root, model, groupID, sender, recipient, own, other)
+    }
+
+    @Test(arguments: ["approve", "deny", "stop", "account", "stale", "archive", "save-failure"])
+    func channelDisconnectRequiresExplicitApprovalAndPreservesPeers(mode: String) async throws {
+        let (root, model, groupID, owner, _, own, other) = try await channelFixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        await model.registry.register(ManagingAgentProvider { _, execute in
+            let result = try await execute(.init(id: "channel", name: "update_state",
+                argumentsJSON: Data(#"{"target":"channel","action":"disconnect","platform":"slack"}"#.utf8)))
+            expectNoDifference(result.isError, mode != "approve")
+            #expect(!result.wireText.contains("SECRET_MARKER") && !result.wireText.contains("PEER_CHANNEL_MARKER"))
+            return "PASS"
+        })
+        let before = model.channelConnections
+        let run = Task { await model.sendGroupMessage(groupID: groupID, text: "Disconnect your Slack connection") }
+        let approval = try await pending(model, tool: "update_state")
+        expectNoDifference(approval.action.target, .resource(kind: "channel", identifier: own.id.uuidString))
+        expectNoDifference(approval.action.context.metadata["agentStateTarget"], "channel")
+        expectNoDifference(approval.action.context.metadata["channelName"], own.displayName)
+        expectNoDifference(approval.action.context.metadata["channelAccountLabel"], own.accountLabel)
+        #expect(approval.action.risks.contains(.destructive))
+        #expect(!approval.action.context.metadata.values.joined().contains("SECRET_MARKER"))
+        #expect(!approval.action.context.metadata.values.joined().contains("PEER_CHANNEL_MARKER"))
+        expectNoDifference(model.channelConnections, before)
+        if mode == "stop" { await model.stopGroup(id: groupID) }
+        if mode == "account" { await model.cancelAutoReviewApprovals(nextAccountID: "other") }
+        if mode == "stale" { await model.setChannelConnectionEnabled(id: own.id, enabled: false) }
+        if mode == "archive" { await model.archiveAgent(id: owner.id) }
+        let file = root.appending(path: "channels.json"), backup = root.appending(path: "channels-backup.json")
+        if mode == "save-failure" {
+            try FileManager.default.moveItem(at: file, to: backup)
+            try FileManager.default.createDirectory(at: file, withIntermediateDirectories: false)
+        }
+        await model.resolveGroupApproval(approval, groupID: groupID, approve: mode != "deny")
+        await run.value
+        await model.resolveGroupApproval(approval, groupID: groupID, approve: true)
+        let expected = mode == "approve" ? before.filter { $0.id != own.id } : before
+        expectNoDifference(model.channelConnections, expected)
+        expectNoDifference(model.channelConnections.first { $0.id == other.id }, other)
+        #expect(model.pendingAutoReviewApprovals.isEmpty && model.runningGroups.isEmpty)
+        if mode == "save-failure" {
+            try FileManager.default.removeItem(at: file)
+            try FileManager.default.moveItem(at: backup, to: file)
+        }
+        let restored = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+        await restored.reloadWorkspaceData()
+        expectNoDifference(restored.channelConnections, expected)
+        expectNoDifference(restored.groups.first { $0.id == groupID }?.memberIDs, [owner.id])
+    }
+
+    @Test func mailboxDisconnectTargetsRecipientNotSender() async throws {
+        let (root, model, _, sender, recipient, own, other) = try await channelFixture(mailbox: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        await model.registry.register(ManagingAgentProvider { _, execute in
+            let result = try await execute(.init(id: "channel", name: "update_state",
+                argumentsJSON: Data(#"{"target":"channel","action":"disconnect","platform":"slack"}"#.utf8)))
+            #expect(!result.isError)
+            return "PASS"
+        })
+        #expect(await model.sendAgentMessage(senderID: sender.id, recipientID: recipient.id, text: "Disconnect your Slack connection"))
+        let approval = try await pending(model, tool: "update_state")
+        expectNoDifference(approval.action.target, .resource(kind: "channel", identifier: own.id.uuidString))
+        expectNoDifference(approval.action.context.metadata["agentName"], recipient.name)
+        await model.resolveGroupApproval(approval, groupID: approval.action.context.conversationID, approve: true)
+        try await waitForMailbox(model)
+        expectNoDifference(model.channelConnections, [other])
+    }
+
+    @Test func channelApprovalRendersInSevenLanguagesAndBothAppearances() throws {
+        let output = ProcessInfo.processInfo.environment["FILICON_UI_REVIEW_OUTPUT"].map { URL(fileURLWithPath: $0) }
+        for language in ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"] {
+            for dark in [false, true] {
+                try FiliconLocalization.$languageOverride.withValue(language) {
+                    if language != "en" {
+                        for key in ["Disconnect agent channel", "Connection enabled", "Connection disabled",
+                                    ChannelDisconnectionError.invalid.rawValue, ChannelDisconnectionError.unavailable.rawValue,
+                                    ChannelDisconnectionError.ambiguous.rawValue, ChannelDisconnectionError.stale.rawValue] {
+                            #expect(FiliconLocalization.string(key) != key)
+                        }
+                    }
+                    let metadata = ["agentName": "Designer", "channelName": "Product workspace", "channelPlatform": "slack",
+                        "channelAccountLabel": "C0123456789, C9876543210", "channelID": "00000000-0000-0000-0000-000000000001",
+                        "channelEnabled": "true", "channelInboundCount": "10000", "channelDeliveryCount": "1500",
+                        "channelPendingCount": "500", "channelFailureCount": "20"]
+                    let host = NSHostingView(rootView: AgentChannelDisconnectionDetails(metadata: metadata)
+                        .padding(20).frame(width: 380).background(FiliconTheme.canvas)
+                        .environment(\.locale, Locale(identifier: language)).environment(\.colorScheme, dark ? .dark : .light))
+                    host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+                    host.frame = .init(x: 0, y: 0, width: 380, height: 800)
+                    host.layoutSubtreeIfNeeded()
+                    #expect(host.fittingSize.height <= 800)
+                    let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                    host.cacheDisplay(in: host.bounds, to: bitmap)
+                    let data = try #require(bitmap.representation(using: .png, properties: [:]))
+                    if let output {
+                        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+                        try data.write(to: output.appending(path: "channel-\(language)-\(dark ? "dark" : "light").png"))
+                    }
+                }
+            }
+        }
+    }
+
     @Test(arguments: ["approve", "deny", "stop", "account", "aba", "archive"], [false, true])
     func ownNotificationSettingsAlwaysAskAndRespectLifecycle(mode: String, enabled: Bool) async throws {
         let (root, model, groupID, owner, peer) = try await fixture()
