@@ -1,6 +1,28 @@
 # 協作能力核對紀錄（更新至 2026-09-21）
 
-## 本輪增量：受核准的自身更新通知設定（2026-09-21）
+## 已提交增量：頻道斷線與非同步資料一致性（2026-09-21）
+
+先提交通知設定為 `49ea201`（`feat: approve per-agent update notification settings`），提交範圍沿用上輪已驗證結果，`git diff --check` 通過。本輪核對本機非官方 reconstructed `source/host/extensions/memory/agent-state.ts` 的 disconnectChannel 與 `sand-state-tool.ts` 的 channel/disconnect，發現 native 手動斷線流程已有必須先修的競爭與寫檔失敗問題；本批是安全前提，**沒有新增模型斷線路由或核准 UI**。
+
+- `ChannelService.persist` 維持上次成功保存的完整狀態。connection、inbound、delivery、failure wake 任一保存失敗均回滾，避免稍後無關操作將失敗變更一起寫入。remove／disable 成功持久化後才取消 listener；失敗不使仍存在的連線悄悄停止接收。
+- refreshProfile 不再把陣列 index 帶過 await。回傳時依精確 ID、process-local 配置世代與最新 request ID 重驗，移除／同 ID 重建、配置重設、停用再啟用、較新 refresh 或取消均使舊結果失效。只合併 profile/accountID，保留等候期間已接受的 cursor／activity。不新增跨程序／外部直接改檔的 CAS。
+- listener 具有每次 start 的 token，接收時核對 token、enabled、固定 connection ID 與平台，舊 listener 不能把另一條連線的 envelope 寫入；晚到錯誤亦核對存活身分。配置 save 成功會停止捕捉舊配置／憑證的 listener，由 caller 明確 start 新配置，既有 App 新增連線路徑本來就會 start。已接受的回呼不會被撤回。
+- flush 於每筆開始時重驗狀態／到期時間並保留 process-local in-flight ID，避免重疊 flush 的舊清單把已完成項目再次送出。sending checkpoint 無法持久化即不呼叫 connector。傳送中刪除不復活紀錄；不宣稱能取消已開始的外部送出。結果保存失敗保留 durable sending，當前程序不立即重送；沿用重啟時改 retrying 並使用同一 idempotency key 的復原行為，不是 exactly-once，仍取決於 connector／遠端服務。
+- 依 Swift testing／dependencies／CustomDump 技能使用隔離 store、固定時間、受控 continuation gates 與完整值快照。依 SPM 技能只把現有 CustomDump product 加入頻道 test target，不新增 package 或產品執行期依賴。沒有 UI／字串修改。
+
+驗證紀錄：
+
+- 先用兩項紅測試重現：failed removal 導致記憶體資料遺失，移除第一條連線後 profile 回傳污染原本第二條連線。**2 tests／4 issues**（`/tmp/filicon-channel-lifecycle-red.log`），不是僅推測風險。
+- 修正後 **11 tests／2 suites 通過**（`/tmp/filicon-channel-lifecycle-focused.log`）。擴充 fixture 最初漏 return，修正編譯並移除多餘 try 後，**20 tests／2 suites 通過**（`/tmp/filicon-channel-lifecycle-extended.log`）；涵蓋同 ID 重建、停用 ABA、取消、較新 refresh、activity 合併、六種保存失敗、失敗斷線仍可接收、listener 跨連線／平台隔離、重疊 flush、sending checkpoint 失敗、late success/failure 不復活，以及既有頻道回歸。
+- 原生 `Filicon App` Debug build 通過（`/tmp/filicon-channel-lifecycle-native.log`），`codesign --verify --deep --strict` 通過，包含 helpers／XPC；這次非 clean build，保留 ad-hoc／AppIntents 的既有提示。
+- 又加三項測試函式（四種 case）：成功刪除僅影響選中連線、send result 保存失敗不誤報成功／重啟沿用 key、失敗配置寫入不撤銷既有 profile request。**最後版本已編譯，但沒有完成執行**（`/tmp/filicon-channel-lifecycle-focused-final.log`）：SwiftPM helper dlopen 找不到 Testing.framework 並 signal 5。之後唯讀檢查本機 Xcode Info.plist 為 **27.0**、app 時間為本輪 20:21，Xcode／xcrun 指令要求同意授權條款。已請使用者自行開啟 Xcode 完成條款及初始化，未代為接受、未更改全機 xcode-select 或繞過工具鏈要求。
+- 七語言各 **1,571 keys、零缺漏**，`git diff --check` 通過。最終聚焦回歸與完整測試尚待 Xcode 初始化後重跑，不能援引先前通過數字宣稱本輪全套成功；沒有啟動 live 模型／外部帳號／平台測試。
+
+使用者再次要求 commit 後繼續；提交前重新確認 Xcode **27.0（27A266a）**，`xcodebuild -checkFirstLaunchStatus` 回傳 69，`xcrun swift --version` 仍明確回報未同意授權條款。因此依使用者要求提交現有變更，但不把追加測試或完整套件標示通過。提交前 `git diff --check` 通過；未代為接受條款、未繞過初始化。
+
+未 push、未啟動／重啟使用者 App／Xcode，未操作實際群組／頻道／憑證。下一步先完成驗證，再接上受核准的自身 channel.disconnect：需限制 owner／精確目標與歧義拒絕，完整揭露本機歷史／佇列移除、金鑰處理和已開始送出的限制。`AGENT-01` 與其餘 partial 保留。
+
+## 已提交增量：受核准的自身更新通知設定（2026-09-21）
 
 先提交上一批為 `4a994a4`（`feat: approve deletion of agent-owned reusable workflows`），提交前 **26 Swift Testing／3 suites 通過**（`/tmp/filicon-workflow-delete-precommit.log`）。本輪對照本機非官方 reconstructed 的 `source/host/runner/tools/sand-state-tool.ts` settings/set 與 `source/host/extensions/memory/agent-state.ts` updateSettings，只補有原生對應的 `notify_on_updates`，不宣稱整個 settings/state 已對等。
 
@@ -23,7 +45,7 @@
 
 - 最後完整 `swift test --no-parallel` **135 XCTest、939 Swift Testing／107 suites 全數通過**（`/tmp/filicon-settings-full-verified.log`）。兩項 opt-in live Codex 測試未啟用，既有 CoreData NSXPC 診斷仍在；沒有跳過失敗測試或降低檔案保護。這是隔離回歸，非真實 macOS 通知投遞／帳號驗收。
 
-本批尚未提交；未 push、未啟動／重啟使用者 App／Xcode，未操作真實群組、排程或外部服務。`AGENT-01` 與其餘 partial 項目保留，不以本輪通知開關宣稱原版完整對等。
+本批已於下一輪提交為 `49ea201`；未 push、未啟動／重啟使用者 App／Xcode，未操作真實群組、排程或外部服務。`AGENT-01` 與其餘 partial 項目保留，不以本輪通知開關宣稱原版完整對等。
 
 ## 已提交增量：受核准的自身工作流程刪除（2026-09-21）
 

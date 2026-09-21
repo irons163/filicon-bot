@@ -738,6 +738,18 @@ proof that an action ran. Text-only providers cannot use Filicon tools. Gmail
 installation/connect cards are not implemented; configure integrations through
 MCP Servers or Plugins instead of asking the model to emit an installation card.
 
+Channel storage now rolls back failed writes before reporting success. Removing
+or disabling a connection stops its listener only after persistence succeeds;
+saving a replacement configuration stops the old listener until explicitly
+started again. Suspended profile requests cannot overwrite a removed/recreated
+connection or a newer profile request. Overlapping flushes reserve deliveries,
+and a failed sending checkpoint prevents the network send. Already-started
+sends/accepted callbacks cannot be recalled. If saving a send result fails, the
+last durable `sending` state remains; existing restart recovery retries it with
+the same idempotency key, not an exactly-once guarantee. This is lifecycle
+hardening, **not** the agent `update_state(channel.disconnect)` approval route;
+that route remains unsupported. See the latest parity log for verification gaps.
+
 Codex CLI now uses its interactive **app-server dynamic-tool protocol** for
 Filicon tool turns (verified with Codex CLI 0.144.4). It retains the selected
 model and CLI-owned sign-in. Existing groups work without recreation. Only

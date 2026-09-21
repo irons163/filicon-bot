@@ -39,8 +39,18 @@ public actor ChannelService {
 
     private let storeURL: URL
     private var state: ChannelPersistentState
+    private var persistedState: ChannelPersistentState
     private var connectors: [String: any ChannelConnector] = [:]
-    private var listeners: [UUID: Task<Void, Never>] = [:]
+    private struct Listener {
+        let token: UUID
+        let task: Task<Void, Never>
+    }
+    private var listeners: [UUID: Listener] = [:]
+    // Process-local fences: replacing a configuration, including remove/recreate
+    // with the same ID, must invalidate suspended profile requests.
+    private var connectionRevisions: [UUID: UUID] = [:]
+    private var profileRequests: [UUID: UUID] = [:]
+    private var sendingDeliveryIDs: Set<UUID> = []
 
     public init(storeURL: URL) throws {
         self.storeURL = storeURL
@@ -55,9 +65,10 @@ public actor ChannelService {
         } else {
             state = .init()
         }
+        persistedState = state
     }
 
-    deinit { for task in listeners.values { task.cancel() } }
+    deinit { for listener in listeners.values { listener.task.cancel() } }
 
     public func register(_ connector: any ChannelConnector) {
         connectors[connector.descriptor.id] = connector
@@ -82,6 +93,10 @@ public actor ChannelService {
             state.connections.append(connection)
         }
         try persist()
+        connectionRevisions[connection.id] = UUID()
+        // A listener captured the old credentials/configuration. The caller can
+        // explicitly start the saved configuration after this durable write.
+        stop(connectionID: connection.id)
         return connection
     }
 
@@ -91,9 +106,22 @@ public actor ChannelService {
 
     @discardableResult
     public func refreshProfile(connectionID: UUID) async throws -> ChannelProfile? {
-        guard let index = state.connections.firstIndex(where: { $0.id == connectionID }) else { throw ChannelServiceError.unknownConnection(connectionID) }
-        guard let connector = connectors[state.connections[index].connectorID] else { throw ChannelServiceError.unknownConnector(state.connections[index].connectorID) }
-        let value = try await connector.profile(connection: state.connections[index])
+        guard let connection = state.connections.first(where: { $0.id == connectionID }) else { throw ChannelServiceError.unknownConnection(connectionID) }
+        guard let connector = connectors[connection.connectorID] else { throw ChannelServiceError.unknownConnector(connection.connectorID) }
+        let revision = connectionRevisions[connectionID]
+        let request = UUID()
+        profileRequests[connectionID] = request
+        defer { if profileRequests[connectionID] == request { profileRequests[connectionID] = nil } }
+        let value = try await connector.profile(connection: connection)
+        try Task.checkCancellation()
+        guard let index = state.connections.firstIndex(where: { $0.id == connectionID }) else {
+            throw ChannelServiceError.unknownConnection(connectionID)
+        }
+        guard connectionRevisions[connectionID] == revision, profileRequests[connectionID] == request else {
+            throw CancellationError()
+        }
+        // Merge only the remote profile; retain cursor/activity updates accepted
+        // while the remote call was in flight. Never retain an index across await.
         state.connections[index].profile = value
         state.connections[index].accountID = value?.workspaceID ?? value?.id
         try persist()
@@ -110,19 +138,23 @@ public actor ChannelService {
     public func setConnectionEnabled(id: UUID, enabled: Bool) throws {
         guard let index = state.connections.firstIndex(where: { $0.id == id }) else { throw ChannelServiceError.unknownConnection(id) }
         state.connections[index].enabled = enabled
-        if !enabled { listeners.removeValue(forKey: id)?.cancel() }
         try persist()
+        connectionRevisions[id] = UUID()
+        if !enabled { stop(connectionID: id) }
     }
 
     @discardableResult
     public func removeConnection(id: UUID) throws -> ChannelConnection {
         guard let value = state.connections.first(where: { $0.id == id }) else { throw ChannelServiceError.unknownConnection(id) }
-        listeners.removeValue(forKey: id)?.cancel()
         state.connections.removeAll { $0.id == id }
         state.inbound.removeAll { $0.connectionID == id }
         state.deliveries.removeAll { $0.connectionID == id }
         state.failureWakes.removeAll { $0.connectionID == id }
         try persist()
+        // Do not tear down the live connection if the deletion failed to save.
+        connectionRevisions[id] = nil
+        profileRequests[id] = nil
+        stop(connectionID: id)
         return value
     }
 
@@ -137,21 +169,26 @@ public actor ChannelService {
         guard let connector = connectors[connection.connectorID] else {
             throw ChannelServiceError.unknownConnector(connection.connectorID)
         }
-        listeners[connectionID]?.cancel()
-        listeners[connectionID] = Task { [weak self] in
+        stop(connectionID: connectionID)
+        let token = UUID()
+        let task = Task { [weak self] in
             do {
                 for try await envelope in connector.inbound(connection: connection) {
                     guard !Task.isCancelled else { return }
-                    if await self?.ingestFromListener(envelope) == true { await onInbound(envelope) }
+                    if await self?.ingestFromListener(envelope, connectionID: connectionID, token: token) == true {
+                        await onInbound(envelope)
+                    }
                 }
             } catch {
-                await self?.recordListenerFailure(connectionID: connectionID, error: error)
+                await self?.recordListenerFailure(connectionID: connectionID, token: token, error: error)
             }
+            await self?.listenerFinished(connectionID: connectionID, token: token)
         }
+        listeners[connectionID] = Listener(token: token, task: task)
     }
 
     public func stop(connectionID: UUID) {
-        listeners.removeValue(forKey: connectionID)?.cancel()
+        listeners.removeValue(forKey: connectionID)?.task.cancel()
     }
 
     @discardableResult
@@ -237,6 +274,11 @@ public actor ChannelService {
     private func attempt(id: UUID, now: Date) async {
         guard let index = state.deliveries.firstIndex(where: { $0.id == id }) else { return }
         let delivery = state.deliveries[index]
+        // Another flush may have processed this ID while we awaited a previous
+        // delivery. Reserve and recheck before any external side effect.
+        guard (delivery.status == .queued || delivery.status == .retrying), delivery.nextAttemptAt <= now,
+              sendingDeliveryIDs.insert(id).inserted else { return }
+        defer { sendingDeliveryIDs.remove(id) }
         guard let connection = state.connections.first(where: { $0.id == delivery.connectionID }), connection.enabled else {
             deadLetter(index: index, error: ChannelServiceError.disabledConnection(delivery.connectionID).localizedDescription, now: now)
             return
@@ -247,7 +289,7 @@ public actor ChannelService {
         }
         state.deliveries[index].status = .sending
         state.deliveries[index].attemptCount += 1
-        try? persist()
+        do { try persist() } catch { return }
         do {
             try await connector.send(delivery.outbound, to: delivery.address, connection: connection, idempotencyKey: delivery.idempotencyKey)
             guard let liveIndex = state.deliveries.firstIndex(where: { $0.id == id }) else { return }
@@ -290,18 +332,35 @@ public actor ChannelService {
         try? persist()
     }
 
-    private func ingestFromListener(_ envelope: ChannelEnvelope) -> Bool {
-        (try? ingest(envelope)) == true
+    private func ingestFromListener(_ envelope: ChannelEnvelope, connectionID: UUID, token: UUID) -> Bool {
+        guard !Task.isCancelled, listeners[connectionID]?.token == token,
+              envelope.connectionID == connectionID,
+              let connection = state.connections.first(where: { $0.id == connectionID }), connection.enabled,
+              envelope.address.platform == connection.connectorID else { return false }
+        return (try? ingest(envelope)) == true
     }
 
-    private func recordListenerFailure(connectionID: UUID, error: Error) {
-        guard !Task.isCancelled else { return }
+    private func recordListenerFailure(connectionID: UUID, token: UUID, error: Error) {
+        guard !Task.isCancelled, listeners[connectionID]?.token == token,
+              state.connections.contains(where: { $0.id == connectionID && $0.enabled }) else { return }
         let deliveryID = UUID()
         state.failureWakes.append(.init(connectionID: connectionID, deliveryID: deliveryID, error: error.localizedDescription))
         try? persist()
     }
 
-    private func persist() throws { try Self.save(state, to: storeURL) }
+    private func listenerFinished(connectionID: UUID, token: UUID) {
+        if listeners[connectionID]?.token == token { listeners[connectionID] = nil }
+    }
+
+    private func persist() throws {
+        do {
+            try Self.save(state, to: storeURL)
+            persistedState = state
+        } catch {
+            state = persistedState
+            throw error
+        }
+    }
 
     private static func save(_ state: ChannelPersistentState, to url: URL) throws {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
