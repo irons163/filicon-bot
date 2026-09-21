@@ -2590,6 +2590,12 @@ final class AppModel: ObservableObject {
             }, commitWorkflow: { [weak self] change, lifetime in
                 guard let self else { throw CancellationError() }
                 return try await self.commitAgentWorkflowWrite(change, lifetime: lifetime, originID: originID, generation: generation)
+            }, authorizeWorkflowDeletion: { [weak self] sender, change, call, context in
+                guard let self else { throw CancellationError() }
+                try await self.authorizeAgentWorkflowChange(sender: sender, previous: change.workflow, proposed: nil, call: call, context: context)
+            }, commitWorkflowDeletion: { [weak self] change, lifetime in
+                guard let self else { throw CancellationError() }
+                try await self.commitAgentWorkflowDeletion(change, lifetime: lifetime, originID: originID, generation: generation)
             })
         return AgentMessagingSession(
             originConversationID: originID, agents: agentService, messenger: agentMessenger,
@@ -2897,7 +2903,26 @@ final class AppModel: ObservableObject {
 
     private func authorizeAgentWorkflowWrite(sender: AgentProfile, change: AgentWorkflowWrite,
                                              call: NormalizedToolCall, context: ToolContext) async throws {
-        guard let workflowService, isAgentMessagingScopeActive(context.conversationID) else { throw CancellationError() }
+        try await authorizeAgentWorkflowChange(sender: sender, previous: change.previous, proposed: change.proposed, call: call, context: context)
+    }
+
+    private func commitAgentWorkflowDeletion(_ change: AgentWorkflowDeletion, lifetime: AgentWorkflowDeletionLifetime,
+                                             originID: UUID, generation: UInt64) async throws {
+        guard let workflowService, let agentService, generation == autoReviewAccountGeneration,
+              isAgentMessagingScopeActive(originID),
+              let owner = await agentService.profile(id: change.requesterID), owner.archivedAt == nil else { throw CancellationError() }
+        // Removing a definition does not require new quota or touch any runtime.
+        try await workflowService.applyAgentDeletion(change, lifetime: lifetime)
+        let current = await workflowService.workflows()
+        if generation == autoReviewAccountGeneration { workflows = current }
+    }
+
+    private func authorizeAgentWorkflowChange(sender: AgentProfile, previous: AgentWorkflow?, proposed: AgentWorkflow?,
+                                              call: NormalizedToolCall, context: ToolContext) async throws {
+        guard let workflowService, let subject = proposed ?? previous,
+              isAgentMessagingScopeActive(context.conversationID) else { throw CancellationError() }
+        let operation = proposed == nil ? "delete" : previous == nil ? "create" : "update"
+        let title = operation == "delete" ? "Delete reusable workflow" : operation == "create" ? "Save reusable workflow" : "Rewrite reusable workflow"
         let generation = autoReviewAccountGeneration
         let fence = ApprovalFence(accountID: settings.accountScope ?? "local", agentID: context.conversationID.uuidString.lowercased(),
                                   runID: context.runID, generation: generation)
@@ -2906,17 +2931,17 @@ final class AppModel: ObservableObject {
         let routines = await automationService?.list() ?? []
         // Reference names/IDs are shown only to the user, never returned to the
         // requesting model. This snapshot is advisory, not a frozen audience.
-        let aliases = [change.previous, change.proposed].compactMap { $0 }
+        let aliases = [previous, proposed].compactMap { $0 }
         var references = library.filter { value in
-            value.id != change.proposed.id && !AgentWorkflowReferenceResolver.mentionedIDs(in: value, library: aliases).isEmpty
+            value.id != subject.id && !AgentWorkflowReferenceResolver.mentionedIDs(in: value, library: aliases).isEmpty
         }.map { "\($0.name) (sand-workflow:\($0.id))" }
         references += routines.filter { routine in
             let carrier = AgentWorkflow(id: "reference-check", name: "Reference check", steps: [.prompt(routine.prompt)])
             return !AgentWorkflowReferenceResolver.mentionedIDs(in: carrier, library: aliases).isEmpty
         }.map { "\($0.name) (routine:\($0.id.uuidString))" }
         var metadata = ["tool": "update_state", "agentStateTarget": "workflow", "agentName": sender.name,
-                        "agentWorkflowAction": change.previous == nil ? "create" : "update",
-                        "agentWorkflowID": change.proposed.id,
+                        "agentWorkflowAction": operation,
+                        "agentWorkflowID": subject.id,
                         "agentWorkflowReferences": references.sorted().prefix(100).joined(separator: "\n"),
                         "agentWorkflowReferenceCount": String(references.count)]
         func append(_ value: AgentWorkflow, prefix: String) {
@@ -2925,10 +2950,10 @@ final class AppModel: ObservableObject {
             metadata[prefix + "Enabled"] = String(value.isEnabled)
             if case .prompt(let body) = value.steps.first { metadata[prefix + "Body"] = body }
         }
-        append(change.proposed, prefix: "agentWorkflow")
-        if let previous = change.previous { append(previous, prefix: "previousAgentWorkflow") }
-        let action = AutoReviewAction(summary: "\(sender.name) → \(l10n(change.previous == nil ? "Save reusable workflow" : "Rewrite reusable workflow")): \(change.proposed.name)",
-            target: .resource(kind: "workflow", identifier: change.proposed.id), risks: [.sensitive],
+        if let proposed { append(proposed, prefix: "agentWorkflow") }
+        if let previous { append(previous, prefix: "previousAgentWorkflow") }
+        let action = AutoReviewAction(summary: "\(sender.name) → \(FiliconLocalization.string(title)): \(subject.name)",
+            target: .resource(kind: "workflow", identifier: subject.id), risks: operation == "delete" ? [.sensitive, .destructive] : [.sensitive],
             context: .init(fence: fence, conversationID: context.conversationID, toolCallID: call.id.rawValue, metadata: metadata))
         let pending = PendingApproval(action: action, reason: "Approval required", expiresAt: Date().addingTimeInterval(300))
         try await autoReviewBroker.waitForApprovalToExecute(pending) { [weak self] in await self?.registerAutoReviewApproval($0) }

@@ -1560,3 +1560,9 @@
 "The workflow library changed while awaiting approval. Request approval again." = "La biblioteca de flujos cambió mientras se esperaba la aprobación. Solicita la aprobación de nuevo.";
 "Workflow enabled" = "Flujo de trabajo activado";
 "Workflow disabled" = "Flujo de trabajo desactivado";
+
+/* Explicit deletion of an owned reusable workflow. */
+"Delete reusable workflow" = "Eliminar flujo reutilizable";
+"This permanently removes the shared workflow definition. There is no undo. Existing run history remains visible by workflow ID. Runs that already captured its content are not cancelled. Other workflows and routines stay unchanged, including their schedules; future references may fail or omit this content. Files, sources, connections and permissions are not removed or changed." = "La definición del flujo compartido se eliminará de forma permanente. No se puede deshacer. El historial seguirá visible por ID del flujo. Las ejecuciones que ya hayan obtenido su contenido no se cancelarán. Los demás flujos y rutinas, incluidas sus programaciones, no cambiarán; las referencias futuras pueden fallar u omitir este contenido. No se eliminarán ni cambiarán archivos, fuentes, conexiones ni permisos.";
+"Workflow deletion requires only target, action and an exact workflow ID." = "Para eliminar un flujo solo se aceptan target, action y un ID de flujo exacto.";
+"Only your own local manual single-prompt workflows within the review limit can be deleted here. Source-linked, managed and other agents' workflows are protected." = "Aquí solo puedes eliminar tus propios flujos locales manuales de una sola instrucción que no excedan el límite de revisión. Los flujos vinculados a fuentes, administrados o de otros agentes están protegidos.";

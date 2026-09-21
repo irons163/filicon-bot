@@ -40,6 +40,9 @@ public actor WorkflowService {
                                 at date: Date = .now) async throws -> AgentWorkflow {
         try await store.applyAgentWrite(change, lifetime: lifetime, at: date)
     }
+    public func applyAgentDeletion(_ change: AgentWorkflowDeletion, lifetime: AgentWorkflowDeletionLifetime) async throws {
+        try await store.applyAgentDeletion(change, lifetime: lifetime)
+    }
     public func runs(workflowID: String? = nil) async -> [AgentWorkflowRun] {
         await runtime.runs(workflowID: workflowID)
     }

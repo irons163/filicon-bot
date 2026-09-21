@@ -78,7 +78,7 @@ is plain prompt text, never parsed as triggers or permissions.
 
 Only owned, local, manual, single-prompt definitions are eligible. Source-linked
 imports, the managed learning workflow, unowned or other agents' definitions,
-multi-step/action/scheduled workflows, delete and authority fields are rejected.
+multi-step/action/scheduled workflows and authority fields are rejected.
 An imported copy with no source marker that the user explicitly assigns to an
 agent is treated as a local definition, not an immutable external source.
 Creation generates a host ID and enables the manual definition; rewriting keeps
@@ -98,6 +98,22 @@ store invalidates pending workflow approval, even if values are later restored.
 This revision fence does not coordinate external edits or multiple app processes.
 Writes share the four-change budget, atomic persistence and storage quota checks;
 the tool's own-agent directory does not reveal other agents' workflow bodies.
+
+To delete an eligible owned definition, propose a separate call:
+
+```json
+{"target":"workflow","action":"delete","id":"exact-workflow-id"}
+```
+
+Only those three fields are accepted. Deletion requires fresh **destructive approval**
+showing the entire current definition and known direct references; write/profile
+approvals do not authorize it. There is no undo. Existing run history remains visible
+by workflow ID, and runs that already captured the content are not cancelled.
+Other workflows and routines (including their schedules), files, sources, connections
+and permissions are unchanged. Future references may fail or silently omit the
+deleted content. The same owner/revision/Stop/account fences, shared four-change
+budget and exact-call receipts apply; deletion does not require new storage quota.
+This is bounded native support, not parity with every reference workflow operation.
 
 Group and mailbox agents can propose **pausing, resuming or deleting their own existing
 automations** with `update_state(target:"routine", action:"pause"|"resume"|"delete", id:...)`.

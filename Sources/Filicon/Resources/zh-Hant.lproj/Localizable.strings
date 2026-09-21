@@ -1560,3 +1560,9 @@
 "The workflow library changed while awaiting approval. Request approval again." = "等待核准期間工作流程庫已變更，請重新提出核准要求。";
 "Workflow enabled" = "工作流程已啟用";
 "Workflow disabled" = "工作流程已停用";
+
+/* Explicit deletion of an owned reusable workflow. */
+"Delete reusable workflow" = "刪除可重用工作流程";
+"This permanently removes the shared workflow definition. There is no undo. Existing run history remains visible by workflow ID. Runs that already captured its content are not cancelled. Other workflows and routines stay unchanged, including their schedules; future references may fail or omit this content. Files, sources, connections and permissions are not removed or changed." = "這會永久移除共用工作流程定義，無法復原。現有執行歷史仍可依工作流程 ID 查看。已取得流程內容的執行不會被取消。其他工作流程、自動化及其排程均維持不變；未來引用可能失敗或略過此內容。不會移除或變更檔案、來源、連線或權限。";
+"Workflow deletion requires only target, action and an exact workflow ID." = "刪除工作流程僅接受 target、action 及精確的工作流程 ID。";
+"Only your own local manual single-prompt workflows within the review limit can be deleted here. Source-linked, managed and other agents' workflows are protected." = "此處僅能刪除你自己的本機手動、單一提示工作流程，且內容須在審閱上限內。連結來源、受管理及其他代理人的工作流程均受保護。";

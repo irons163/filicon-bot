@@ -1560,3 +1560,9 @@
 "The workflow library changed while awaiting approval. Request approval again." = "승인 대기 중 워크플로 라이브러리가 변경되었습니다. 승인을 다시 요청하세요.";
 "Workflow enabled" = "워크플로 활성화됨";
 "Workflow disabled" = "워크플로 비활성화됨";
+
+/* Explicit deletion of an owned reusable workflow. */
+"Delete reusable workflow" = "재사용 워크플로 삭제";
+"This permanently removes the shared workflow definition. There is no undo. Existing run history remains visible by workflow ID. Runs that already captured its content are not cancelled. Other workflows and routines stay unchanged, including their schedules; future references may fail or omit this content. Files, sources, connections and permissions are not removed or changed." = "공유 워크플로 정의를 영구적으로 삭제합니다. 실행 취소할 수 없습니다. 기존 실행 기록은 워크플로 ID로 계속 확인할 수 있습니다. 이미 내용을 가져온 실행은 취소되지 않습니다. 다른 워크플로와 루틴 및 일정은 변경되지 않으며, 이후 참조가 실패하거나 이 내용을 생략할 수 있습니다. 파일, 소스, 연결 및 권한은 삭제되거나 변경되지 않습니다.";
+"Workflow deletion requires only target, action and an exact workflow ID." = "워크플로 삭제에는 target, action 및 정확한 워크플로 ID만 허용됩니다.";
+"Only your own local manual single-prompt workflows within the review limit can be deleted here. Source-linked, managed and other agents' workflows are protected." = "검토 한도 이내인 본인 소유의 로컬 수동 단일 프롬프트 워크플로만 여기서 삭제할 수 있습니다. 소스에 연결되거나 관리 대상이거나 다른 에이전트 소유인 워크플로는 보호됩니다.";

@@ -1560,3 +1560,9 @@
 "The workflow library changed while awaiting approval. Request approval again." = "承認待ちの間にワークフローライブラリが変更されました。改めて承認をリクエストしてください。";
 "Workflow enabled" = "ワークフローは有効です";
 "Workflow disabled" = "ワークフローは無効です";
+
+/* Explicit deletion of an owned reusable workflow. */
+"Delete reusable workflow" = "再利用可能なワークフローを削除";
+"This permanently removes the shared workflow definition. There is no undo. Existing run history remains visible by workflow ID. Runs that already captured its content are not cancelled. Other workflows and routines stay unchanged, including their schedules; future references may fail or omit this content. Files, sources, connections and permissions are not removed or changed." = "共有ワークフローの定義を完全に削除します。元に戻せません。既存の実行履歴はワークフロー ID で引き続き確認できます。内容を取得済みの実行はキャンセルされません。他のワークフローやルーチン、そのスケジュールは変更されませんが、今後の参照は失敗するか、この内容を省略する場合があります。ファイル、ソース、接続、権限の削除や変更は行いません。";
+"Workflow deletion requires only target, action and an exact workflow ID." = "ワークフローの削除には target、action、正確なワークフロー ID のみを指定してください。";
+"Only your own local manual single-prompt workflows within the review limit can be deleted here. Source-linked, managed and other agents' workflows are protected." = "ここで削除できるのは、確認可能な上限内に収まる、自分のローカル手動・単一プロンプトのワークフローのみです。ソースにリンクされたもの、管理対象、他のエージェントのワークフローは保護されています。";

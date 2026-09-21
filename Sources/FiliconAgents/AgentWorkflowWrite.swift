@@ -62,3 +62,45 @@ public final class AgentWorkflowWriteLifetime: @unchecked Sendable {
         }
     }
 }
+
+/// Deletion reviews one exact definition and the same library revision as writes.
+/// It is deliberately separate from a write so approved text cannot imply removal.
+public struct AgentWorkflowDeletion: Sendable, Equatable {
+    public let requesterID: UUID
+    public let expectedRevision: UUID
+    public let workflow: AgentWorkflow
+    public init(requesterID: UUID, expectedRevision: UUID, workflow: AgentWorkflow) {
+        self.requesterID = requesterID; self.expectedRevision = expectedRevision; self.workflow = workflow
+    }
+}
+
+public enum AgentWorkflowDeletionError: LocalizedError, Equatable, Sendable {
+    case invalid, unavailable
+    public var errorDescription: String? {
+        switch self {
+        case .invalid: "Workflow deletion requires only target, action and an exact workflow ID."
+        case .unavailable: "Only your own local manual single-prompt workflows within the review limit can be deleted here. Source-linked, managed and other agents' workflows are protected."
+        }
+    }
+}
+
+public final class AgentWorkflowDeletionLifetime: @unchecked Sendable {
+    private let lock = NSLock()
+    private var active = true
+    private var receipts: [AgentWorkflowDeletion] = []
+    public init() {}
+    public func close() { lock.withLock { active = false } }
+    public func check() throws {
+        try lock.withLock { if !active { throw CancellationError() } }
+        try Task.checkCancellation()
+    }
+    public func committed(_ change: AgentWorkflowDeletion) -> Bool { lock.withLock { receipts.contains(change) } }
+    func commit(_ change: AgentWorkflowDeletion, operation: () throws -> Void) throws {
+        try lock.withLock {
+            guard active else { throw CancellationError() }
+            try Task.checkCancellation()
+            try operation()
+            receipts.append(change)
+        }
+    }
+}

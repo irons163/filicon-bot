@@ -58,6 +58,18 @@ public actor AgentWorkflowStore {
         var next = document; next.workflows.append(workflow); try commit(next); return workflow
     }
 
+    public func applyAgentDeletion(_ change: AgentWorkflowDeletion, lifetime: AgentWorkflowDeletionLifetime) throws {
+        try lifetime.commit(change) {
+            guard revision == change.expectedRevision else { throw AgentWorkflowWriteError.stale }
+            guard AgentWorkflowWrite.isEditable(change.workflow, by: change.requesterID),
+                  let index = document.workflows.firstIndex(where: { $0.id == change.workflow.id }),
+                  document.workflows[index] == change.workflow else { throw AgentWorkflowDeletionError.unavailable }
+            var next = document
+            next.workflows.remove(at: index)
+            try commit(next)
+        }
+    }
+
     @discardableResult public func create(name: String, description: String = "", trigger: AgentWorkflowTrigger = .manual,
                                           steps: [AgentWorkflowStep], sourceReference: String? = nil) throws -> AgentWorkflow {
         try create(.init(id: AgentWorkflow.slug(name), name: name, description: description, trigger: trigger, steps: steps, sourceReference: sourceReference))

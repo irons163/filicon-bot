@@ -1560,3 +1560,9 @@
 "The workflow library changed while awaiting approval. Request approval again." = "The workflow library changed while awaiting approval. Request approval again.";
 "Workflow enabled" = "Workflow enabled";
 "Workflow disabled" = "Workflow disabled";
+
+/* Explicit deletion of an owned reusable workflow. */
+"Delete reusable workflow" = "Delete reusable workflow";
+"This permanently removes the shared workflow definition. There is no undo. Existing run history remains visible by workflow ID. Runs that already captured its content are not cancelled. Other workflows and routines stay unchanged, including their schedules; future references may fail or omit this content. Files, sources, connections and permissions are not removed or changed." = "This permanently removes the shared workflow definition. There is no undo. Existing run history remains visible by workflow ID. Runs that already captured its content are not cancelled. Other workflows and routines stay unchanged, including their schedules; future references may fail or omit this content. Files, sources, connections and permissions are not removed or changed.";
+"Workflow deletion requires only target, action and an exact workflow ID." = "Workflow deletion requires only target, action and an exact workflow ID.";
+"Only your own local manual single-prompt workflows within the review limit can be deleted here. Source-linked, managed and other agents' workflows are protected." = "Only your own local manual single-prompt workflows within the review limit can be deleted here. Source-linked, managed and other agents' workflows are protected.";
