@@ -146,6 +146,13 @@ public struct TeamsAutomationTrigger: Codable, Hashable, Sendable {
         }
     }
 
+    /// Model proposals share the bounded editor policy, never the permissive
+    /// legacy initializer. Validate again at the durable commit boundary.
+    public func validateForAgentWrite() throws {
+        do { try validateForManualEditing() }
+        catch { throw AutomationStateChangeError.invalidTeamsTrigger }
+    }
+
     public static func isManualScopeID(_ value: String) -> Bool {
         (1...200).contains(value.utf8.count)
             && value.rangeOfCharacter(from: .whitespacesAndNewlines.union(.controlCharacters)

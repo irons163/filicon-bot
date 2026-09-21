@@ -97,6 +97,169 @@ struct AgentRoutineChangeTests {
             primaryIDs: ["bbbbbbbb-0000-0000-0000-000000000001"], cycleIDs: ["dddddddd-0000-0000-0000-000000000001"])))
     }
 
+    private var teamsFields: [String: Any] {
+        ["type": "microsoftTeams", "tenantId": "AAAAAAAA-0000-0000-0000-000000000001",
+         "teamId": "BBBBBBBB-0000-0000-0000-000000000001", "teamIds": ["19:Team@thread.tacv2"],
+         "channelIds": ["19:Channel@thread.tacv2"], "messageContains": " deploy "]
+    }
+    private func teamsTrigger() throws -> AutomationTrigger {
+        .platform(.microsoftTeams(try .init(tenantID: "aaaaaaaa-0000-0000-0000-000000000001",
+            teamIDs: ["bbbbbbbb-0000-0000-0000-000000000001", "19:Team@thread.tacv2"],
+            channelIDs: ["19:Channel@thread.tacv2"], messageContains: "deploy")))
+    }
+
+    @Test(arguments: [true, false], ["single", "group"])
+    func teamsDefinitionRequiresApprovalAndCanonicalReplay(enabled: Bool, form: String) async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let id = UUID(uuidString: "00000000-0000-0000-0000-000000000099")!
+        let teams = try teamsTrigger()
+        let expected: AutomationTrigger = form == "single" ? teams : .anyOf([
+            .cron(expression: "@every 1h", timeZoneIdentifier: "Asia/Taipei"), teams])
+        let session = f.session(authorize: { sender, change, _, _ in
+            expectNoDifference(sender.id, f.owner.id)
+            expectNoDifference(change.automation.trigger, expected)
+            expectNoDifference(change.automation.enabled, enabled)
+            let before = await f.automations.list()
+            expectNoDifference(before, [f.routine, f.peerRoutine])
+        }, makeID: { id })
+        defer { session.close() }
+        let tool = session.tools(for: f.owner.id)[2]
+        var fields: [String: Any] = ["target": "routine", "action": "create", "name": "Teams definition", "prompt": "Review", "enabled": enabled,
+            "trigger": form == "single" ? teamsFields : ["type": "group", "listeners": [teamsFields, ["type": "cron", "schedule": "@every 1h"]]]]
+        let result = try await tool.execute(writeCall(fields), context: f.context)
+        var alias = teamsFields
+        alias.removeValue(forKey: "teamId")
+        alias["tenantId"] = "aaaaaaaa-0000-0000-0000-000000000001"
+        alias["teamIds"] = ["19:Team@thread.tacv2", "bbbbbbbb-0000-0000-0000-000000000001", "19:Team@thread.tacv2"]
+        alias["messageContains"] = "deploy"; alias["messageContainsIsRegex"] = false; alias["blockUnauthenticatedTeamsUsers"] = true
+        fields["trigger"] = form == "single" ? [alias, teamsFields] : [alias, ["type": "cron", "schedule": "@every 1h"], teamsFields]
+        let replay = try await tool.execute(writeCall(fields), context: f.context)
+        expectNoDifference(replay, result)
+        #expect(result.content.contains { if case .text(let text) = $0 { text.contains("Teams events CANNOT execute") } else { false } })
+        let saved = try #require(await f.automations.list().first { $0.id == id })
+        expectNoDifference(saved.trigger, expected); expectNoDifference(saved.lastRunAt, nil)
+        expectNoDifference(saved.nextRunAt, enabled && form == "group" ? Date(timeIntervalSince1970: 6_600) : nil)
+        let restored = try AutomationService(storeURL: f.file)
+        let durable = await restored.list().first { $0.id == id }, history = await restored.history(automationID: id)
+        expectNoDifference(durable, saved); expectNoDifference(history, [])
+        let runtime = try await #require(tool as? any ToolRuntimeContextProviding).runtimeContext(for: f.context)
+        #expect(runtime.contains("Teams events CANNOT execute") && tool.descriptor.description?.contains("Teams events CANNOT execute") == true)
+    }
+
+    @Test func teamsRejectInvalidShapeBoundsAndPolicies() async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let session = f.session(authorize: { _, _, _, _ in Issue.record("Invalid Teams proposal reached approval") })
+        defer { session.close() }
+        var invalid: [[String: Any]] = []
+        for (key, value): (String, Any) in [
+            ("tenantId", "tenant"), ("tenantId", " aaaaaaaa-0000-0000-0000-000000000001"), ("teamId", ""), ("teamId", NSNull()),
+            ("teamIds", Array(repeating: "team", count: 50)), ("teamIds", "team"), ("teamIds", [true]), ("teamIds", [1]),
+            ("channelIds", Array(repeating: "channel", count: 51)), ("channelIds", [NSNull()]),
+            ("messageContains", " "), ("messageContains", "\ndeploy"), ("messageContains", "deploy\u{0000}"),
+            ("messageContains", String(repeating: "x", count: 121)), ("messageContains", true), ("messageContains", NSNull()),
+            ("messageContainsIsRegex", true), ("messageContainsIsRegex", 0), ("messageContainsIsRegex", "false"),
+            ("blockUnauthenticatedTeamsUsers", false), ("blockUnauthenticatedTeamsUsers", 1), ("blockUnauthenticatedTeamsUsers", "true"),
+            ("blockUnauthenticatedUsers", true), ("agent_id", f.peer.id.uuidString)] {
+            var raw = teamsFields; raw[key] = value; invalid.append(raw)
+        }
+        for key in ["teamId", "channelIds"] {
+            for id in ["*", "team*", "team,name", "team name", "team\n", "team\u{0000}", String(repeating: "界", count: 67)] {
+                var raw = teamsFields; raw[key] = key == "teamId" ? id : [id]; invalid.append(raw)
+            }
+        }
+        for key in ["type", "tenantId", "messageContains"] { var raw = teamsFields; raw.removeValue(forKey: key); invalid.append(raw) }
+        var empty = teamsFields; empty.removeValue(forKey: "teamId"); empty["teamIds"] = []; invalid.append(empty)
+        for raw in invalid {
+            for trigger: Any in [raw, [slackFields, raw]] {
+                for action in ["create", "update"] {
+                    var fields: [String: Any] = ["target": "routine", "action": action, "trigger": trigger]
+                    if action == "create" { fields["name"] = "No"; fields["prompt"] = "No" }
+                    else { fields["id"] = f.routine.id.uuidString }
+                    await #expect(throws: (any Error).self) {
+                        _ = try await session.tools(for: f.owner.id)[2].execute(writeCall(fields), context: f.context)
+                    }
+                }
+            }
+        }
+        let after = await f.automations.list(); expectNoDifference(after, [f.routine, f.peerRoutine])
+    }
+
+    @Test func teamsBoundsAndSchemaPreserveSafeDefaults() async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let session = f.session(); defer { session.close() }
+        let tool = session.tools(for: f.owner.id)[2]
+        var fields = teamsFields; fields.removeValue(forKey: "teamId")
+        let ids = (0..<50).map { String(repeating: "界", count: 66) + String(format: "%02d", $0) }
+        fields["teamIds"] = ids; fields["channelIds"] = ids; fields["messageContains"] = String(repeating: "界", count: 120)
+        _ = try await tool.execute(writeCall(["target": "routine", "action": "create", "name": "Bounds", "prompt": "Review", "trigger": fields]), context: f.context)
+        let saved = try #require(await f.automations.list().first { $0.name == "Bounds" })
+        expectNoDifference(saved.trigger, .platform(.microsoftTeams(try .init(tenantID: "aaaaaaaa-0000-0000-0000-000000000001",
+            teamIDs: Set(ids), channelIDs: Set(ids), messageContains: String(repeating: "界", count: 120)))))
+        let schema = try #require(JSONSerialization.jsonObject(with: tool.descriptor.inputSchema) as? [String: Any])
+        let properties = try #require(schema["properties"] as? [String: Any])
+        let trigger = try #require(properties["trigger"] as? [String: Any])
+        let variants = try #require(trigger["anyOf"] as? [[String: Any]])
+        let teams = try #require(variants.first { (($0["properties"] as? [String: Any])?["type"] as? [String: Any])?["enum"] as? [String] == ["microsoftTeams"] })
+        expectNoDifference(teams["additionalProperties"] as? Bool, false)
+        #expect((teams["description"] as? String)?.contains("CANNOT execute") == true)
+        let members = try #require(teams["properties"] as? [String: Any])
+        expectNoDifference((members["blockUnauthenticatedTeamsUsers"] as? [String: Any])?["enum"] as? [Bool], [true])
+        expectNoDifference((members["messageContainsIsRegex"] as? [String: Any])?["enum"] as? [Bool], [false])
+        expectNoDifference((members["teamIds"] as? [String: Any])?["maxItems"] as? Int, 50)
+        expectNoDifference((members["channelIds"] as? [String: Any])?["maxItems"] as? Int, 50)
+    }
+
+    @Test func teamsCoreRejectsPolicyBypassAndLegacyConversion() async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let tenant = "aaaaaaaa-0000-0000-0000-000000000001"
+        let invalid = try [
+            TeamsAutomationTrigger(tenantID: tenant, teamIDs: ["team"], messageContains: "deploy", blockUnauthenticatedUsers: false),
+            .init(tenantID: tenant, teamIDs: ["team"], messageContains: "deploy", messageContainsIsRegex: true),
+            .init(tenantID: tenant, teamIDs: ["team"]),
+            .init(tenantID: "tenant", teamIDs: ["team"], messageContains: "deploy")]
+        for raw in invalid {
+            for trigger: AutomationTrigger in [.platform(.microsoftTeams(raw)), .anyOf([f.routine.trigger, .platform(.microsoftTeams(raw))])] {
+                let proposed = Automation(agentID: f.owner.id, name: "No", prompt: "No", trigger: trigger, enabled: false)
+                await #expect(throws: AutomationStateChangeError.invalidTeamsTrigger) {
+                    _ = try await f.automations.applyStateChange(.init(operation: .create, automation: proposed), lifetime: .init())
+                }
+            }
+        }
+        let legacy = try await f.automations.save(.init(agentID: f.owner.id, name: "Legacy", prompt: "Legacy", trigger: .platform(.microsoftTeams(invalid[0]))))
+        var updated = legacy; updated.trigger = try teamsTrigger()
+        await #expect(throws: AutomationStateChangeError.invalidTeamsTrigger) {
+            _ = try await f.automations.applyStateChange(.init(operation: .update, automation: updated, previous: legacy), lifetime: .init())
+        }
+        let after = await f.automations.list(); expectNoDifference(after, [f.routine, f.peerRoutine, legacy])
+    }
+
+    @Test func teamsUpdatePreservesHistoryWhileEventsStayBlocked() async throws {
+        let initial = try teamsTrigger()
+        let f = try await fixture(trigger: initial); defer { try? FileManager.default.removeItem(at: f.root) }
+        let event = AutomationEvent(connectorID: UUID(), kind: "microsoftTeams", externalEventID: "teams-fixture", payloadJSON: try JSONSerialization.data(withJSONObject: [
+            "supportedEvent": true, "authenticated": true, "tenantId": "aaaaaaaa-0000-0000-0000-000000000001",
+            "teamId": "19:Team@thread.tacv2", "channelId": "19:Channel@thread.tacv2", "text": "deploy"]))
+        let blocked = await f.automations.fire(events: [event], executor: RoutineExecutor(), now: Date(timeIntervalSince1970: 2_000))
+        expectNoDifference(blocked, [])
+        _ = try await f.automations.runNow(id: f.routine.id, executor: RoutineExecutor(), now: Date(timeIntervalSince1970: 2_000))
+        let history = await f.automations.history(automationID: f.routine.id)
+        let session = f.session(authorize: { _, change, _, _ in
+            let current = await f.automations.list().first { $0.id == f.routine.id }
+            expectNoDifference(change.previous, current)
+        }); defer { session.close() }
+        _ = try await session.tools(for: f.owner.id)[2].execute(writeCall(["target": "routine", "action": "update", "id": f.routine.id.uuidString,
+            "name": "Mixed", "trigger": [teamsFields, ["type": "cron", "schedule": "@every 1h"]]]), context: f.context)
+        let saved = try #require(await f.automations.list().first { $0.id == f.routine.id })
+        expectNoDifference(saved.lastRunAt, Date(timeIntervalSince1970: 2_000))
+        expectNoDifference(saved.nextRunAt, Date(timeIntervalSince1970: 6_600))
+        let historyAfter = await f.automations.history(automationID: f.routine.id)
+        expectNoDifference(historyAfter, history)
+        let stillBlocked = await f.automations.fire(events: [event], executor: RoutineExecutor(), now: Date(timeIntervalSince1970: 6_000))
+        expectNoDifference(stillBlocked, [])
+        let due = await f.automations.fireDue(at: Date(timeIntervalSince1970: 6_600), executor: RoutineExecutor())
+        expectNoDifference(due.map(\.automationID), [f.routine.id])
+    }
+
     private var pagerDutyFields: [String: Any] {
         ["type": "pagerduty", "event": ["case": "incidentAny"], "serviceIds": ["PF9KMXH", "PA12345"]]
     }
@@ -841,7 +1004,7 @@ struct AgentRoutineChangeTests {
         let properties = try #require(schema["properties"] as? [String: Any])
         let specification = try #require(properties["trigger"] as? [String: Any])
         let variants = try #require(specification["anyOf"] as? [[String: Any]])
-        expectNoDifference(variants.count, 8)
+        expectNoDifference(variants.count, 9)
         let groupVariant = try #require(variants.first { ($0["required"] as? [String])?.contains("listeners") == true })
         expectNoDifference(groupVariant["additionalProperties"] as? Bool, false)
         let group = try #require(groupVariant["properties"] as? [String: Any])
@@ -849,7 +1012,10 @@ struct AgentRoutineChangeTests {
         expectNoDifference(listeners["maxItems"] as? Int, AutomationService.maximumListeners)
         expectNoDifference(listeners["minItems"] as? Int, 1)
         let items = try #require(listeners["items"] as? [String: Any])
-        expectNoDifference((items["anyOf"] as? [Any])?.count, 6) // Cron/GitHub/Slack/Linear/Sentry/PagerDuty only; no recursive or other platforms.
+        let flatMembers = try #require(items["anyOf"] as? [[String: Any]])
+        expectNoDifference(flatMembers.count, 7)
+        let types = flatMembers.compactMap { (($0["properties"] as? [String: Any])?["type"] as? [String: Any])?["enum"] as? [String] }.flatMap { $0 }
+        expectNoDifference(Set(types), ["cron", "github", "slack", "linear", "sentry", "pagerduty", "microsoftTeams"])
     }
 
     @Test(arguments: [1, 8]) func eventGroupsAcceptExactBounds(count: Int) async throws {
@@ -1139,7 +1305,7 @@ struct AgentRoutineChangeTests {
         let properties = try #require(schema["properties"] as? [String: Any])
         let combined = try #require(properties["trigger"] as? [String: Any])
         let variants = try #require(combined["anyOf"] as? [[String: Any]])
-        expectNoDifference(variants.count, 8)
+        expectNoDifference(variants.count, 9)
         let specification = try #require(variants.first { ($0["required"] as? [String])?.contains("repo") == true })
         expectNoDifference(specification["additionalProperties"] as? Bool, false)
         let fields = try #require(specification["properties"] as? [String: Any])
@@ -1219,10 +1385,10 @@ struct AgentRoutineChangeTests {
         expectNoDifference(unchanged, [f.routine, f.peerRoutine])
     }
 
-    @Test(arguments: ["create-github", "update-github", "create-slack", "update-slack", "create-group", "update-group", "create-mixed", "update-mixed", "create-linear", "update-linear", "create-cycle", "update-cycle", "create-sentry", "update-sentry", "create-pagerduty", "update-pagerduty"], [false, true])
+    @Test(arguments: ["create-github", "update-github", "create-slack", "update-slack", "create-group", "update-group", "create-mixed", "update-mixed", "create-linear", "update-linear", "create-cycle", "update-cycle", "create-sentry", "update-sentry", "create-pagerduty", "update-pagerduty", "create-teams", "update-teams"], [false, true])
     func eventWritesRecheckSpendGuardAfterApproval(scenario: String, initiallyPaused: Bool) async throws {
         let action = scenario.hasPrefix("create") ? "create" : "update"
-        let eventFields = scenario.hasSuffix("pagerduty") ? pagerDutyFields : scenario.hasSuffix("sentry") ? sentryFields : scenario.hasSuffix("linear") ? linearFields : scenario.hasSuffix("cycle") ? cycleFields : scenario.hasSuffix("github") ? githubFields : scenario.hasSuffix("group") ? groupFields : scenario.hasSuffix("mixed") ? mixedFields : slackFields
+        let eventFields = scenario.hasSuffix("teams") ? teamsFields : scenario.hasSuffix("pagerduty") ? pagerDutyFields : scenario.hasSuffix("sentry") ? sentryFields : scenario.hasSuffix("linear") ? linearFields : scenario.hasSuffix("cycle") ? cycleFields : scenario.hasSuffix("github") ? githubFields : scenario.hasSuffix("group") ? groupFields : scenario.hasSuffix("mixed") ? mixedFields : slackFields
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
         if initiallyPaused { try await f.automations.answerSpendGuard(.pause, at: Date(timeIntervalSince1970: 2_000)) }
         let session = f.session(authorize: { _, _, _, _ in
@@ -1305,15 +1471,15 @@ struct AgentRoutineChangeTests {
         session.close()
     }
 
-    @Test func manualTeamsEditingDoesNotEnableModelTeamsProposals() async throws {
+    @Test func unsafeTeamsModelProposalsNeverReachApproval() async throws {
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
-        let session = f.session(authorize: { _, _, _, _ in Issue.record("Teams model writes must not reach approval") })
+        let session = f.session(authorize: { _, _, _, _ in Issue.record("Unsafe Teams model writes must not reach approval") })
         defer { session.close() }
         let tool = session.tools(for: f.owner.id)[2]
-        for blocked in [false, true] {
+        for (blocked, regex) in [(false, false), (true, true)] {
             let teams: [String: Any] = ["type": "microsoftTeams", "tenantId": "aaaaaaaa-0000-0000-0000-000000000001",
                 "teamIds": ["bbbbbbbb-0000-0000-0000-000000000001"], "messageContains": "deploy",
-                "messageContainsIsRegex": false, "blockUnauthenticatedTeamsUsers": blocked]
+                "messageContainsIsRegex": regex, "blockUnauthenticatedTeamsUsers": blocked]
             for trigger: Any in [teams, [teams, ["type": "cron", "schedule": "@daily"]]] {
                 for action in ["create", "update"] {
                     var fields: [String: Any] = ["target": "routine", "action": action, "trigger": trigger]
@@ -1365,10 +1531,10 @@ struct AgentRoutineChangeTests {
         session.close()
     }
 
-    @Test(arguments: ["create", "update", "create-github", "update-github", "create-slack", "update-slack", "create-group", "update-group", "create-mixed", "update-mixed", "create-linear", "update-linear", "create-cycle", "update-cycle", "create-sentry", "update-sentry", "create-pagerduty", "update-pagerduty"], ["deny", "archive", "save-failure", "stale"])
+    @Test(arguments: ["create", "update", "create-github", "update-github", "create-slack", "update-slack", "create-group", "update-group", "create-mixed", "update-mixed", "create-linear", "update-linear", "create-cycle", "update-cycle", "create-sentry", "update-sentry", "create-pagerduty", "update-pagerduty", "create-teams", "update-teams"], ["deny", "archive", "save-failure", "stale"])
     func routineWritesFailClosed(scenario: String, mode: String) async throws {
         let action = scenario.hasPrefix("create") ? "create" : "update"
-        let eventFields = scenario.hasSuffix("pagerduty") ? pagerDutyFields : scenario.hasSuffix("sentry") ? sentryFields : scenario.hasSuffix("linear") ? linearFields : scenario.hasSuffix("cycle") ? cycleFields : scenario.hasSuffix("github") ? githubFields : scenario.hasSuffix("slack") ? slackFields : scenario.hasSuffix("group") ? groupFields : scenario.hasSuffix("mixed") ? mixedFields : nil
+        let eventFields = scenario.hasSuffix("teams") ? teamsFields : scenario.hasSuffix("pagerduty") ? pagerDutyFields : scenario.hasSuffix("sentry") ? sentryFields : scenario.hasSuffix("linear") ? linearFields : scenario.hasSuffix("cycle") ? cycleFields : scenario.hasSuffix("github") ? githubFields : scenario.hasSuffix("slack") ? slackFields : scenario.hasSuffix("group") ? groupFields : scenario.hasSuffix("mixed") ? mixedFields : nil
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
         let session = f.session(authorize: { _, change, _, _ in
             switch mode {
@@ -1401,10 +1567,10 @@ struct AgentRoutineChangeTests {
         session.close()
     }
 
-    @Test(arguments: ["create", "update", "create-github", "update-github", "create-slack", "update-slack", "create-group", "update-group", "create-mixed", "update-mixed", "create-linear", "update-linear", "create-cycle", "update-cycle", "create-sentry", "update-sentry", "create-pagerduty", "update-pagerduty"], [false, true])
+    @Test(arguments: ["create", "update", "create-github", "update-github", "create-slack", "update-slack", "create-group", "update-group", "create-mixed", "update-mixed", "create-linear", "update-linear", "create-cycle", "update-cycle", "create-sentry", "update-sentry", "create-pagerduty", "update-pagerduty", "create-teams", "update-teams"], [false, true])
     func routineWritesStopAcrossApprovalAndCommit(scenario: String, duringCommit: Bool) async throws {
         let action = scenario.hasPrefix("create") ? "create" : "update"
-        let eventFields = scenario.hasSuffix("pagerduty") ? pagerDutyFields : scenario.hasSuffix("sentry") ? sentryFields : scenario.hasSuffix("linear") ? linearFields : scenario.hasSuffix("cycle") ? cycleFields : scenario.hasSuffix("github") ? githubFields : scenario.hasSuffix("slack") ? slackFields : scenario.hasSuffix("group") ? groupFields : scenario.hasSuffix("mixed") ? mixedFields : nil
+        let eventFields = scenario.hasSuffix("teams") ? teamsFields : scenario.hasSuffix("pagerduty") ? pagerDutyFields : scenario.hasSuffix("sentry") ? sentryFields : scenario.hasSuffix("linear") ? linearFields : scenario.hasSuffix("cycle") ? cycleFields : scenario.hasSuffix("github") ? githubFields : scenario.hasSuffix("slack") ? slackFields : scenario.hasSuffix("group") ? groupFields : scenario.hasSuffix("mixed") ? mixedFields : nil
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
         let gate = RoutineGate()
         let session = f.session(authorize: { _, _, _, _ in if !duringCommit { await gate.hold() } }, commit: { change, lifetime in
@@ -1422,8 +1588,8 @@ struct AgentRoutineChangeTests {
         expectNoDifference(values, [f.routine, f.peerRoutine])
     }
 
-    @Test(arguments: ["time", "github", "slack", "group", "mixed", "linear", "cycle", "sentry", "pagerduty"]) func routineCreationBudgetReceiptAndCapacityAreBounded(kind: String) async throws {
-        let eventFields = kind == "pagerduty" ? pagerDutyFields : kind == "sentry" ? sentryFields : kind == "linear" ? linearFields : kind == "cycle" ? cycleFields : kind == "github" ? githubFields : kind == "slack" ? slackFields : kind == "group" ? groupFields : kind == "mixed" ? mixedFields : nil
+    @Test(arguments: ["time", "github", "slack", "group", "mixed", "linear", "cycle", "sentry", "pagerduty", "teams"]) func routineCreationBudgetReceiptAndCapacityAreBounded(kind: String) async throws {
+        let eventFields = kind == "teams" ? teamsFields : kind == "pagerduty" ? pagerDutyFields : kind == "sentry" ? sentryFields : kind == "linear" ? linearFields : kind == "cycle" ? cycleFields : kind == "github" ? githubFields : kind == "slack" ? slackFields : kind == "group" ? groupFields : kind == "mixed" ? mixedFields : nil
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
         let session = f.session(commit: { change, lifetime in
             _ = try await f.automations.applyStateChange(change, lifetime: lifetime)
@@ -1452,9 +1618,9 @@ struct AgentRoutineChangeTests {
         full.close()
     }
 
-    @Test(arguments: ["create", "update", "create-github", "update-github", "create-slack", "update-slack", "create-group", "update-group", "create-mixed", "update-mixed", "create-linear", "update-linear", "create-cycle", "update-cycle", "create-sentry", "update-sentry", "create-pagerduty", "update-pagerduty"]) func routineWritesRequireAnAuthorizerAndMatchingScope(scenario: String) async throws {
+    @Test(arguments: ["create", "update", "create-github", "update-github", "create-slack", "update-slack", "create-group", "update-group", "create-mixed", "update-mixed", "create-linear", "update-linear", "create-cycle", "update-cycle", "create-sentry", "update-sentry", "create-pagerduty", "update-pagerduty", "create-teams", "update-teams"]) func routineWritesRequireAnAuthorizerAndMatchingScope(scenario: String) async throws {
         let action = scenario.hasPrefix("create") ? "create" : "update"
-        let eventFields = scenario.hasSuffix("pagerduty") ? pagerDutyFields : scenario.hasSuffix("sentry") ? sentryFields : scenario.hasSuffix("linear") ? linearFields : scenario.hasSuffix("cycle") ? cycleFields : scenario.hasSuffix("github") ? githubFields : scenario.hasSuffix("slack") ? slackFields : scenario.hasSuffix("group") ? groupFields : scenario.hasSuffix("mixed") ? mixedFields : nil
+        let eventFields = scenario.hasSuffix("teams") ? teamsFields : scenario.hasSuffix("pagerduty") ? pagerDutyFields : scenario.hasSuffix("sentry") ? sentryFields : scenario.hasSuffix("linear") ? linearFields : scenario.hasSuffix("cycle") ? cycleFields : scenario.hasSuffix("github") ? githubFields : scenario.hasSuffix("slack") ? slackFields : scenario.hasSuffix("group") ? groupFields : scenario.hasSuffix("mixed") ? mixedFields : nil
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
         let session = AgentManagementSession(originID: f.context.conversationID, agents: f.agents,
             automations: f.automations, routineTimeZoneIdentifier: "Asia/Taipei")

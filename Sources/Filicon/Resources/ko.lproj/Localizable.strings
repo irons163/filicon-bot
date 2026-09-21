@@ -377,7 +377,7 @@
 "Enable Shared Rooms first." = "개인 정보 보호 정책";
 "Enable shared rooms" = "공용 객실";
 "Enable {0}" = "사용 가능한 {0}";
-"Enabled" = "지원하다";
+"Enabled" = "활성화됨";
 "English" = "영어";
 "Ensure running" = "관련 기사";
 "Enter a Keychain credential reference." = "키 체인 식별 참조를 입력합니다.";
@@ -1626,3 +1626,10 @@
 "Use memory write/forget with one fact of at most 1,000 characters, scope agent/user/project, and tier profile/log/note. Project scope requires an exact joined project slug. Forget requires exact recorded text, the same scope/project, and no tier." = "write/forget에는 1,000자 이하의 사실 하나, agent/user/project 범위, profile/log/note 계층을 사용하세요. project에는 참여한 프로젝트의 정확한 식별자가 필요합니다. forget은 원문과 같은 범위 및 프로젝트를 사용하며 계층은 지정하지 않습니다.";
 "Memory search accepts query (up to 256 Unicode scalars), scope all/agent/user/project, and an optional exact project slug with scope project only, or a continuation cursor by itself." = "검색에는 query(최대 Unicode 스칼라 256개), all/agent/user/project 범위를 사용하며 project 범위에서만 정확한 프로젝트 식별자를 추가할 수 있습니다. 또는 이어받기 커서만 사용하세요.";
 "Project names and descriptions are shared across this account. Joining also permits recall of approved project facts from current and departed writers; future members receive the same access. Leaving preserves those facts but stops future recall; rejoining restores access. Already-sent messages are not erased. Private memories, chats, files and tool permissions stay unchanged." = "이름과 설명은 계정 내에서 공유됩니다. 참여하면 탈퇴한 작성자를 포함한 승인된 프로젝트 사실을 회상할 수 있으며 향후 멤버도 같은 접근 권한을 얻습니다. 탈퇴 시 사실은 유지되지만 회상이 중단되고 재참여하면 복구됩니다. 보낸 메시지는 삭제되지 않습니다. 개인 기억, 채팅, 파일, 도구 권한은 변경되지 않습니다.";
+
+/* Bounded Teams model proposals: definitions do not enable Teams execution. */
+"Routine create needs name, prompt and either schedule or a supported trigger, never both. Update needs your own id and at least one changed field. Only name, prompt, schedule, trigger and boolean enabled are supported." = "루틴 생성에는 이름, 지시 사항, 일정 또는 지원되는 트리거 중 하나가 필요합니다. 둘 다 지정할 수 없습니다. 수정에는 본인 루틴 ID와 최소 한 개의 변경 필드가 필요합니다. 이름, 지시 사항, 일정, 트리거 및 불리언 활성화 상태만 지원합니다.";
+"Use 1 to 8 flat supported conditions. Executable branches use OR; restricted Teams conditions cannot execute. Nested groups and unsupported platforms are rejected. No invalid condition is ignored." = "지원되는 조건 1~8개를 중첩 없이 사용하세요. 실행 가능한 분기는 OR로 연결되며, 제한된 Teams 조건은 실행할 수 없습니다. 중첩 그룹과 지원하지 않는 플랫폼은 거부됩니다. 잘못된 조건을 무시하지 않습니다.";
+"Routine writes support valid time schedules, supported platform events and restricted Teams definitions. Groups allow up to eight flat conditions. Time zones must be valid, with a next run within 366 days; intervals must be between one minute and 366 days." = "유효한 일정, 지원되는 플랫폼 이벤트 및 제한된 Teams 정의를 저장할 수 있습니다. 그룹은 중첩 없이 최대 8개 조건을 허용합니다. 유효한 시간대와 366일 이내의 다음 실행이 필요하며 간격은 1분~366일이어야 합니다.";
+"Teams proposals need a tenant UUID, 1 to 50 exact team IDs, up to 50 channel IDs and literal text of 1 to 120 characters. No regex, wildcards, control characters, guessed IDs or relaxed sign-in policy. Teams events cannot execute until trusted user identity is available." = "Teams 제안에는 테넌트 UUID, 정확한 팀 ID 1~50개, 채널 ID 최대 50개, 1~120자의 리터럴 텍스트가 필요합니다. 정규식, 와일드카드, 제어 문자, 추측한 ID 또는 로그인 제한 완화는 허용되지 않습니다. 신뢰할 수 있는 사용자 신원이 확보되기 전에는 Teams 이벤트를 실행할 수 없습니다.";
+"Approval saves a Teams definition only. Teams events cannot run because trusted user identity is unavailable; the signed-in-user restriction stays on and regex stays off. Use exact IDs and literal text; empty channel IDs allow any channel in the selected teams. Other OR conditions and explicit Run Now may still run and incur model costs. No connection, login or tool permissions are granted." = "승인하면 Teams 정의만 저장됩니다. 신뢰할 수 있는 사용자 신원이 없어 Teams 이벤트는 실행할 수 없으며, 로그인 사용자 제한은 켜지고 정규식은 꺼진 상태를 유지합니다. 정확한 ID와 리터럴 텍스트를 사용하세요. 채널 ID를 비우면 선택한 팀의 모든 채널을 허용합니다. 다른 OR 조건과 명시적인 ‘지금 실행’은 실행되어 모델 비용이 발생할 수 있습니다. 연결, 로그인 또는 도구 권한은 부여되지 않습니다.";

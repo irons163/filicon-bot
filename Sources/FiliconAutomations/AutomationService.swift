@@ -238,7 +238,7 @@ public actor AutomationService {
             }
             switch current.trigger {
             case .cron, .platform(.github), .platform(.slack): break
-            case .platform(.linear), .platform(.sentry), .platform(.pagerDuty): try validateAgentTrigger(current.trigger, now: now)
+            case .platform(.linear), .platform(.sentry), .platform(.pagerDuty), .platform(.microsoftTeams): try validateAgentTrigger(current.trigger, now: now)
             case .anyOf: try validateAgentTrigger(current.trigger, now: now)
             default: throw AutomationStateChangeError.unsupportedSchedule
             }
@@ -275,13 +275,14 @@ public actor AutomationService {
         case .platform(.linear(let linear)): try linear.validateForAgentWrite()
         case .platform(.sentry(let sentry)): try sentry.validateForSentryAgentWrite()
         case .platform(.pagerDuty(let pagerDuty)): try pagerDuty.validateForPagerDutyAgentWrite()
+        case .platform(.microsoftTeams(let teams)): try teams.validateForAgentWrite()
         case .anyOf(let members):
             guard (2...Self.maximumListeners).contains(members.count), Set(members).count == members.count else {
                 throw AutomationStateChangeError.invalidEventGroup
             }
             for member in members {
                 switch member {
-                case .cron, .platform(.github), .platform(.slack), .platform(.linear), .platform(.sentry), .platform(.pagerDuty): try validateAgentTrigger(member, now: now)
+                case .cron, .platform(.github), .platform(.slack), .platform(.linear), .platform(.sentry), .platform(.pagerDuty), .platform(.microsoftTeams): try validateAgentTrigger(member, now: now)
                 default: throw AutomationStateChangeError.invalidEventGroup
                 }
             }

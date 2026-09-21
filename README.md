@@ -495,8 +495,23 @@ Conditions using regex, allowing unauthenticated users, empty filters or invalid
 scope remain read-only, including their containing OR group. Name/instruction
 edits preserve the original trigger. Unchanged members stay intact; changed
 conditions are checked again at the atomic manual-save boundary. This adds no
-policy-relaxation switch, model Teams proposals, account connection or event
+policy-relaxation switch, account connection or event
 execution capability, and does not migrate existing definitions.
+
+Group/mailbox agents may now propose their own Teams routine creation or update
+through `update_state`, using `type: "microsoftTeams"`, `tenantId`, `teamId` and/or
+`teamIds`, optional `channelIds`, and required literal `messageContains` text.
+The team aliases merge with a combined limit of 50 raw entries before deduplication;
+channel lists have the same limit. UUIDs normalize; opaque IDs retain exact case.
+`messageContainsIsRegex` must be false and `blockUnauthenticatedTeamsUsers` true
+(their defaults). Null, unknown fields, wrong types and invalid filters reject
+the whole proposal, including a mixed OR. Full before/after approval is required;
+the durable boundary revalidates the policy and preserves history, spend guards,
+owner identity, revision and cancellation fences. Legacy relaxed/regex definitions
+cannot be converted by the model. Approval and tool results explicitly disclose
+that this saves a **definition, not an executable Teams listener**. Other approved
+OR branches and explicit Run Now can still run and incur model costs. This does
+not connect an account, grant tools, authenticate users or start external services.
 
 The native adapter only classifies bounded `message` activities from `msteams`
 channel conversations with tenant, team, channel, conversation, sender and
@@ -526,7 +541,7 @@ again; optional Graph metadata does not alter its identity. Invalid supplied
 activity IDs are rejected rather than truncated. Identity is bounded and
 connector-scoped; there is no permanent deduplication after cache/history expiry,
 signed delivery freshness, or migration of old receipts. Seven-language notices
-explain these limits. This does not add Teams model routine proposals, a user
+explain these limits. This does not add a user
 authentication control, account login, Graph polling/subscriptions or a public
 webhook, and has not been validated against a live Teams account.
 

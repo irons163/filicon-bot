@@ -377,7 +377,7 @@
 "Enable Shared Rooms first." = "共有ルームを最初に有効化します。";
 "Enable shared rooms" = "共有部屋を有効にする";
 "Enable {0}" = "{0} を有効にする";
-"Enabled" = "有効化";
+"Enabled" = "有効";
 "English" = "英語";
 "Ensure running" = "実行を確かめて下さい";
 "Enter a Keychain credential reference." = "Keychain クレデンシャル リファレンスを入力します。";
@@ -1626,3 +1626,10 @@
 "Use memory write/forget with one fact of at most 1,000 characters, scope agent/user/project, and tier profile/log/note. Project scope requires an exact joined project slug. Forget requires exact recorded text, the same scope/project, and no tier." = "write/forget は1,000文字以内の事実1件、範囲 agent/user/project、階層 profile/log/note を指定します。project には参加済みプロジェクトの正確な識別子が必要です。forget は原文と同じ範囲・プロジェクトを指定し、階層は指定しません。";
 "Memory search accepts query (up to 256 Unicode scalars), scope all/agent/user/project, and an optional exact project slug with scope project only, or a continuation cursor by itself." = "検索はクエリ（Unicodeスカラー256個まで）、範囲 all/agent/user/project、および project 範囲のみで任意の正確なプロジェクト識別子を指定できます。または続行カーソルだけを指定してください。";
 "Project names and descriptions are shared across this account. Joining also permits recall of approved project facts from current and departed writers; future members receive the same access. Leaving preserves those facts but stops future recall; rejoining restores access. Already-sent messages are not erased. Private memories, chats, files and tool permissions stay unchanged." = "名前と説明はアカウント内で共有されます。参加すると、退会した記録者を含む承認済みの事実を参照でき、今後のメンバーにも同じアクセスが付与されます。退会後は事実を保持して参照を停止し、再参加でアクセスが戻ります。送信済みメッセージは消えません。個人記憶、チャット、ファイル、ツール権限は変わりません。";
+
+/* Bounded Teams model proposals: definitions do not enable Teams execution. */
+"Routine create needs name, prompt and either schedule or a supported trigger, never both. Update needs your own id and at least one changed field. Only name, prompt, schedule, trigger and boolean enabled are supported." = "作成には名前、指示、スケジュールまたは対応するトリガーが必要です。両方は指定できません。更新には自分のルーチン ID と、少なくとも一つの変更が必要です。名前、指示、スケジュール、トリガー、真偽値の有効状態のみ対応しています。";
+"Use 1 to 8 flat supported conditions. Executable branches use OR; restricted Teams conditions cannot execute. Nested groups and unsupported platforms are rejected. No invalid condition is ignored." = "対応する条件を入れ子にせず 1～8 個指定してください。実行可能な分岐は OR で結合されますが、制限付き Teams 条件は実行できません。入れ子のグループと未対応のプラットフォームは拒否されます。無効な条件を無視することはありません。";
+"Routine writes support valid time schedules, supported platform events and restricted Teams definitions. Groups allow up to eight flat conditions. Time zones must be valid, with a next run within 366 days; intervals must be between one minute and 366 days." = "有効なスケジュール、対応するプラットフォームイベント、制限付き Teams 定義を書き込めます。グループは入れ子なしで最大 8 条件です。有効なタイムゾーンと 366 日以内の次回実行が必要です。間隔は 1 分～366 日です。";
+"Teams proposals need a tenant UUID, 1 to 50 exact team IDs, up to 50 channel IDs and literal text of 1 to 120 characters. No regex, wildcards, control characters, guessed IDs or relaxed sign-in policy. Teams events cannot execute until trusted user identity is available." = "Teams の提案にはテナント UUID、1～50 個の正確なチーム ID、最大 50 個のチャネル ID、1～120 文字のリテラルテキストが必要です。正規表現、ワイルドカード、制御文字、推測した ID、サインイン制限の緩和は不可です。信頼できるユーザー識別が利用可能になるまで Teams イベントは実行できません。";
+"Approval saves a Teams definition only. Teams events cannot run because trusted user identity is unavailable; the signed-in-user restriction stays on and regex stays off. Use exact IDs and literal text; empty channel IDs allow any channel in the selected teams. Other OR conditions and explicit Run Now may still run and incur model costs. No connection, login or tool permissions are granted." = "承認では Teams 定義のみを保存します。信頼できるユーザー識別がないため Teams イベントは実行できません。サインイン済みユーザーの制限は有効、正規表現は無効のままです。正確な ID とリテラルテキストを使用してください。チャネル ID が空の場合、選択したチームの全チャネルが対象です。他の OR 条件と明示的な「今すぐ実行」は実行され、モデル料金が発生する場合があります。接続、ログイン、ツール権限は付与されません。";

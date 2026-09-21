@@ -715,6 +715,11 @@ struct AgentRoutineApprovalDetails: View {
         VStack(alignment: .leading, spacing: 10) {
             Text(l10n(title)).font(.headline)
             Text(verbatim: metadata["agentName"] ?? "").font(.callout.weight(.semibold))
+            if metadata["agentRoutineTeamsTrigger"] == "true" {
+                Text(l10n("Teams event execution unavailable")).font(.headline)
+                Text(l10n("Approval saves a Teams definition only. Teams events cannot run because trusted user identity is unavailable; the signed-in-user restriction stays on and regex stays off. Use exact IDs and literal text; empty channel IDs allow any channel in the selected teams. Other OR conditions and explicit Run Now may still run and incur model costs. No connection, login or tool permissions are granted."))
+                    .font(.caption).foregroundStyle(FiliconTheme.textSecondary)
+            }
             Text(l10n("Routine ID")).font(.caption.weight(.semibold))
             Text(verbatim: metadata["agentRoutineID"] ?? "").font(.caption.monospaced())
             if metadata["agentRoutineAction"] == "update" {

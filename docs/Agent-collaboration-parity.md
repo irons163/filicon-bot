@@ -1,6 +1,25 @@
 # 協作能力核對紀錄（更新至 2026-09-22）
 
-## 本輪增量：受核准的專案共享記憶（2026-09-22）
+## 本輪增量：受核准的 Teams 排程定義提案（2026-09-22）
+
+先提交上一批為 `a217e93`（`feat: add approved project-scoped shared memory`），提交前 **23 Swift Testing／3 suites 通過**（`/tmp/filicon-project-memory-precommit.log`）。本輪核對本機非官方 reconstructed 的 `source/host/runner/tools/sand-state-tool.ts`：Microsoft Teams trigger 支援 tenantId、teamId／teamIds、channelIds 與文字／政策欄位。原生入口沒有可信應用程式使用者身分，故只補受限的模型定義路由，不宣稱 Teams 雲端 runtime 已完成。
+
+- 群組／mailbox 的自身 routine create/update 可用 `type:microsoftTeams`，單一條件、平面 group 或 bare array，與既有時間／平台條件共用最多八個 OR 分支。tenantId 須為 UUID；teamId 與 teamIds 合併，去重前合計 1–50 筆；channelIds 最多 50，空清單表示所選團隊內不限頻道。每 ID 最多 200 UTF-8 bytes，不接受空白、控制字元、逗號或萬用字元。不解析名稱、不猜測 ID。Graph team UUID 正規化，opaque Bot／channel ID 保留大小寫。
+- messageContains 必填 1–120 字元 literal，不接受控制字元；messageContainsIsRegex 僅 false，blockUnauthenticatedTeamsUsers 僅 true，省略使用上述安全預設。null、錯誤型別、未知欄位與任一無效分支使整個提案失敗，不丟棄篩選。teamId/teamIds aliases、重排與重複項目具有相同 canonical replay receipt；原始清單上限不因去重而繞過。
+- 完整新舊定義與啟用狀態需獨立核准，host 固定身分。保存時再次驗證 Teams 條件及舊定義；regex／放寬登入／空篩選等舊格式不得由模型轉換。沿用 owner／revision／lifetime、Stop／帳號切換／封存、費用保護、四次共用額度、原子保存／失敗回滾／durable receipt，保留執行歷史與進行中的任務。
+- **只保存定義，不啟用 Teams 事件執行。** blockUnauthenticatedUsers=true 保持不變，HMAC 或 payload 的 authenticated=true 仍不能代替可信登入身分。其他 OR 分支及使用者明確 Run Now 仍可執行並產生模型費用；沒有新連線、登入、webhook、工具權限、Graph subscription 或主文判定。核准卡頂端與工具回覆／runtime／schema 明示限制，七語言同步新增提示與錯誤。
+
+依 Swift 測試／CustomDump 技能使用固定時間、隔離 store、受控 continuation、完整值比較與 fixture provider；依 SwiftUI 技能沿用既有核准明細，將重要限制置頂，不自造 binding。新增五項核心測試函式與一項雙外觀渲染測試；擴充既有 create/update 的核准、拒絕、Stop／延遲 commit、帳號、封存、stale、保存失敗、容量／receipt／身分測試，包含 group 與 mailbox。首次編譯修正 let 字串組合與測試 optional description；首次實際聚焦有兩項舊 schema 數量斷言失敗（6 issues），更新為包含 Teams 的精確型別集合與數量，不弱化驗證（`/tmp/filicon-teams-model-focused3.log`）。
+
+聚焦回歸 **81 Swift Testing／4 suites 通過**（`/tmp/filicon-teams-model-focused-final.log`）。產生 **28 張 Teams 核准明細**：單一 create/update × 七語言（380 點寬），以及 Teams＋cron 混合 update × 七語言 × 明暗（440 點寬）；並重新產生既有各平台預覽（`/tmp/filicon-teams-model-previews/`）。逐語檢視至少一張，另檢視繁中／法／西／日／韓深色卡，未見文字裁切。修正既有 Enabled 西文殘留英文、韓文誤譯與日文動作式用詞後，重新渲染並通過兩項預覽測試（`/tmp/filicon-teams-model-preview-final.log`）。只驗證核准明細，不是全產品逐頁或 live 模型驗收；fixture 名稱／任務仍是使用者內容。
+
+最終完整 `swift test --no-parallel` **135 XCTest、1,007 Swift Testing／112 suites 全數通過**（`/tmp/filicon-teams-model-full-final.log`），兩項 opt-in live Codex 測試未啟用；既有 CoreData NSXPC 診斷仍在。七語言各 **1,624 keys、零缺漏**，`git diff --check` 通過。
+
+原生增量 build 成功，但最後三語言資源更新未重新執行 CodeSign，嚴格驗簽發現 ja／es／ko 與舊 seal 不一致（`/tmp/filicon-teams-model-native-verified.log`）。改用全新隔離 DerivedData `/tmp/filicon-teams-model-native.vOK7XS` 完整建置，**原生 Debug build 與 deep strict codesign 通過**，包含 helpers／XPC（`/tmp/filicon-teams-model-native-clean.log`）。沒有手動補簽、修改使用者 Xcode 產物或宣稱增量簽章問題已根治。既有 optional-to-Any、weak capture、AppIntents metadata／ad-hoc runtime 提示仍在；不是 release 簽署／公證驗收。
+
+本批新修改尚未提交；未 push、未啟動／重啟使用者 App／Xcode、未操作真實聊天／群組／排程／外部帳號或憑證。`AGENT-01`／`AUTO-03` 維持 partial，整體仍 **43 complete／4 partial／1 NA**。
+
+## 已提交增量：受核准的專案共享記憶（2026-09-22）
 
 先提交上一批為 `391a9ff`（`feat: approve account-scoped collaboration project membership`），提交前專案核心／App 聚焦 **14 Swift Testing／2 suites 通過**（`/tmp/filicon-project-precommit.log`）。本輪核對本機非官方 reconstructed 的 `source/host/extensions/memory/agent-state.ts` 與 `source/host/runner/tools/sand-state-tool.ts`：project memory 要求專案存在及自身成員資格，記錄以 writer 區分。本輪接上受限制的原生對應，不以此宣稱完整原版 runtime。
 
@@ -15,7 +34,7 @@
 
 最終聚焦 **23 Swift Testing／3 suites 通過**（`/tmp/filicon-project-memory-focused-final.log`）。產生 **28 張專案記憶核准明細**（寫入／忘記 × 七語言 × 明暗）及重新產生 **42 張專案成員核准明細**（`/tmp/filicon-project-memory-previews/`）；逐語檢視共享記憶淺色卡，另檢視繁中／法文深色忘記卡和英文加入／繁中離開卡，380 點寬未見文字裁切。英文 fixture 姓名／事實保留為使用者內容。只驗證明細元件，非全產品逐頁或 live 模型驗收。
 
-最終完整 `swift test --no-parallel` **135 XCTest、1,001 Swift Testing／112 suites 全數通過**（`/tmp/filicon-project-memory-full-final.log`），兩項 opt-in live Codex 測試未啟用；既有 CoreData NSXPC 診斷仍在。原生 `Filicon App` Debug build（`/tmp/filicon-project-memory-native.log`）及產物 deep strict codesign 通過，含 helpers／XPC，不是 release 公證驗收。七語言各 **1,619 keys、零缺漏**，`git diff --check` 通過。未 push、未啟動／重啟使用者 App／Xcode、未操作真實聊天／群組／專案／外部帳號或憑證。此輪新修改尚未提交。仍缺自動記憶抽取／任意 archive、其他執行入口與完整 persona/runtime；`AGENT-01` 維持 partial，整體 **43 complete／4 partial／1 NA**。
+最終完整 `swift test --no-parallel` **135 XCTest、1,001 Swift Testing／112 suites 全數通過**（`/tmp/filicon-project-memory-full-final.log`），兩項 opt-in live Codex 測試未啟用；既有 CoreData NSXPC 診斷仍在。原生 `Filicon App` Debug build（`/tmp/filicon-project-memory-native.log`）及產物 deep strict codesign 通過，含 helpers／XPC，不是 release 公證驗收。七語言各 **1,619 keys、零缺漏**，`git diff --check` 通過。未 push、未啟動／重啟使用者 App／Xcode、未操作真實聊天／群組／專案／外部帳號或憑證。本批已於下一輪提交為 `a217e93`。仍缺自動記憶抽取／任意 archive、其他執行入口與完整 persona/runtime；`AGENT-01` 維持 partial，整體 **43 complete／4 partial／1 NA**。
 
 ## 已提交增量：受核准的協作專案成員資格（2026-09-21）
 
