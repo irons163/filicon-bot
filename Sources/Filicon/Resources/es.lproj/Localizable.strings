@@ -1547,3 +1547,16 @@
 "Memory search accepts only query (up to 256 Unicode scalars), scope all/agent/user, or a continuation cursor by itself." = "La búsqueda de memoria solo acepta query (hasta 256 valores escalares Unicode), scope all/agent/user, o un cursor de continuación por sí solo.";
 "This memory search cursor is invalid or the saved facts changed. Start a new search." = "El cursor de búsqueda no es válido o los datos guardados han cambiado. Inicia una nueva búsqueda.";
 "This request reached its 32 memory-search limit. Report the results already available." = "Esta solicitud alcanzó el límite de 32 búsquedas de memoria. Informa de los resultados ya disponibles.";
+"Save reusable workflow" = "Guardar flujo de trabajo reutilizable";
+"Rewrite reusable workflow" = "Reescribir flujo de trabajo reutilizable";
+"Current workflow" = "Flujo de trabajo actual";
+"Proposed workflow" = "Flujo de trabajo propuesto";
+"Full workflow body" = "Contenido completo del flujo de trabajo";
+"Known direct references" = "Referencias directas conocidas";
+"This is a shared workflow, not private memory. All agents in this local workspace may reference it and send its body to their models. Existing and future routines or workflows may use the new body; renaming may break name-based references. Saving does not run or schedule anything, grant tools, or change permissions. Already running requests keep their captured content." = "Este flujo de trabajo es compartido, no es memoria privada. Todos los agentes de este espacio local pueden referenciarlo y enviar su contenido a sus modelos. Las rutinas y los flujos existentes o futuros pueden usar el contenido nuevo; cambiar el nombre puede romper las referencias por nombre. Guardar no ejecuta ni programa nada, ni concede herramientas o cambia permisos. Las solicitudes en curso conservan el contenido capturado al iniciarse.";
+"Direct references are a snapshot, not the full affected audience; indirect and future references may also use this workflow. At most 100 direct references are listed." = "La lista es una instantánea de las referencias directas, no de todos los usos afectados; las referencias indirectas y futuras también pueden usar este flujo. Se muestran hasta 100 referencias directas.";
+"Workflow write requires name, description and body within the supported limits, with no execution or permission fields." = "Guardar un flujo requiere nombre, descripción y contenido dentro de los límites, sin campos de ejecución ni permisos.";
+"Only your own local manual single-prompt workflows can be rewritten. Source-linked, managed and other agents' workflows are not writable here." = "Solo puedes reescribir tus propios flujos locales manuales de una sola instrucción. Aquí no se pueden modificar los vinculados a una fuente, los administrados ni los de otros agentes.";
+"The workflow library changed while awaiting approval. Request approval again." = "La biblioteca de flujos cambió mientras se esperaba la aprobación. Solicita la aprobación de nuevo.";
+"Workflow enabled" = "Flujo de trabajo activado";
+"Workflow disabled" = "Flujo de trabajo desactivado";

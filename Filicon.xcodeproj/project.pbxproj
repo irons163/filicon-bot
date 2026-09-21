@@ -92,6 +92,7 @@
 		F49C98B5DD6D5FF25070D93399E14AB6 /* AttachmentMediaViewer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 92F3FFC9B0692FDE981007ECE4C11572 /* AttachmentMediaViewer.swift */; };
 		F62703190D0B6A44AE25C5C0E21125C5 /* FiliconSecurityKey in Frameworks */ = {isa = PBXBuildFile; productRef = BE8E14C506AD72F5C4F240A2A7778ED5 /* FiliconSecurityKey */; };
 		FA425AA6F7B62E21720310600E3221D7 /* FiliconMCP in Frameworks */ = {isa = PBXBuildFile; productRef = 9C04D81628318B9335F3DD84F18278B0 /* FiliconMCP */; };
+		AB9020100011000022000044 /* AgentWorkflowApprovalDetails.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB9020100011000022000033 /* AgentWorkflowApprovalDetails.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -226,6 +227,7 @@
 		F93E743D977E39E47E9020BC77684332 /* WorkspaceNavigationBridge.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WorkspaceNavigationBridge.swift; sourceTree = "<group>"; };
 		FCA71F5AD675C011BBD518124E217DC6 /* RichMarkdownView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RichMarkdownView.swift; sourceTree = "<group>"; };
 		FFD799D46DA78A6F9D41249F2F10A1C8 /* WorkflowComposerReferences.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WorkflowComposerReferences.swift; sourceTree = "<group>"; };
+		AB9020100011000022000033 /* AgentWorkflowApprovalDetails.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AgentWorkflowApprovalDetails.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -392,6 +394,7 @@
 				08E5FA7292533DB8264CC6AEBE3CC9BB /* AccountExperienceView.swift */,
 				25695B7A8D6D11E1121CFBB8C4CFF231 /* AgentMessagingView.swift */,
 				8DAD592594C2A916EB769203BA06C074 /* AgentNotificationProjection.swift */,
+				AB9020100011000022000033 /* AgentWorkflowApprovalDetails.swift */,
 				AFC4B544D33DEA599FF5653B8E2F2AFE /* AgentsWorkspaceScreen.swift */,
 				DE46E2BA4D41B05F5984AFBBCC352B36 /* AppModel.swift */,
 				92F3FFC9B0692FDE981007ECE4C11572 /* AttachmentMediaViewer.swift */,
@@ -666,6 +669,7 @@
 				3C40F2744C2EFB2A28C36EABDB2689FA /* AccountExperienceView.swift in Sources */,
 				A49FDCD7C01D3EC81BF5DE73BCE8CF77 /* AgentMessagingView.swift in Sources */,
 				E78F64D096C0C305E790863A7F517F44 /* AgentNotificationProjection.swift in Sources */,
+				AB9020100011000022000044 /* AgentWorkflowApprovalDetails.swift in Sources */,
 				4C7B212585BCFC13897A73AFD3B79A6C /* AgentsWorkspaceScreen.swift in Sources */,
 				369CCF477A63B6BF019EC4E2ECFE4A32 /* AppModel.swift in Sources */,
 				F49C98B5DD6D5FF25070D93399E14AB6 /* AttachmentMediaViewer.swift in Sources */,

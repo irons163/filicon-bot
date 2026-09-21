@@ -1547,3 +1547,16 @@
 "Memory search accepts only query (up to 256 Unicode scalars), scope all/agent/user, or a continuation cursor by itself." = "记忆搜索只接受 query（最多 256 个 Unicode 标量值）、scope all/agent/user，或单独的续页游标。";
 "This memory search cursor is invalid or the saved facts changed. Start a new search." = "记忆搜索游标无效，或已保存的事实已有变更。请重新搜索。";
 "This request reached its 32 memory-search limit. Report the results already available." = "此请求已达 32 次记忆搜索上限。请报告目前已有的结果。";
+"Save reusable workflow" = "保存可复用工作流程";
+"Rewrite reusable workflow" = "改写可复用工作流程";
+"Current workflow" = "当前工作流程";
+"Proposed workflow" = "提议的工作流程";
+"Full workflow body" = "工作流程全文";
+"Known direct references" = "已知的直接引用";
+"This is a shared workflow, not private memory. All agents in this local workspace may reference it and send its body to their models. Existing and future routines or workflows may use the new body; renaming may break name-based references. Saving does not run or schedule anything, grant tools, or change permissions. Already running requests keep their captured content." = "这是共享工作流程，不是私人记忆。此本地工作区的所有代理都可能引用它，并将内容发送给各自的模型。现有及未来的计划任务或工作流程可能使用新内容；重命名可能使按名称引用失效。保存不会执行或安排任何工作，也不会授予工具或更改权限。运行中的请求保留启动时获取的内容。";
+"Direct references are a snapshot, not the full affected audience; indirect and future references may also use this workflow. At most 100 direct references are listed." = "直接引用列表仅反映检查当时，不涵盖所有受影响对象；间接及未来的引用也可能使用此工作流程。最多列出 100 条直接引用。";
+"Workflow write requires name, description and body within the supported limits, with no execution or permission fields." = "保存工作流程须提供限制范围内的名称、说明及全文，不得包含执行或权限字段。";
+"Only your own local manual single-prompt workflows can be rewritten. Source-linked, managed and other agents' workflows are not writable here." = "只能改写自己的本地、手动、单一提示工作流程。此处不能改写关联来源、受管理或其他代理的工作流程。";
+"The workflow library changed while awaiting approval. Request approval again." = "等待批准期间工作流程库已更改，请重新请求批准。";
+"Workflow enabled" = "工作流程已启用";
+"Workflow disabled" = "工作流程已停用";

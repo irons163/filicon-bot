@@ -2583,7 +2583,14 @@ final class AppModel: ObservableObject {
             }, commitRoutine: { [weak self] change, lifetime in
                 guard let self else { throw CancellationError() }
                 return try await self.commitAgentRoutineChange(change, lifetime: lifetime, originID: originID, generation: generation)
-            }, routineTimeZoneIdentifier: settings.timeZoneIdentifier ?? TimeZone.current.identifier)
+            }, routineTimeZoneIdentifier: settings.timeZoneIdentifier ?? TimeZone.current.identifier,
+            workflows: workflowService, authorizeWorkflow: { [weak self] sender, change, call, context in
+                guard let self else { throw CancellationError() }
+                try await self.authorizeAgentWorkflowWrite(sender: sender, change: change, call: call, context: context)
+            }, commitWorkflow: { [weak self] change, lifetime in
+                guard let self else { throw CancellationError() }
+                return try await self.commitAgentWorkflowWrite(change, lifetime: lifetime, originID: originID, generation: generation)
+            })
         return AgentMessagingSession(
             originConversationID: originID, agents: agentService, messenger: agentMessenger,
             registry: registry, coordinator: coordinator, conversations: agentConversations,
@@ -2863,6 +2870,65 @@ final class AppModel: ObservableObject {
         let action = AutoReviewAction(summary: "\(sender.name) → \(change.operation.rawValue): \(change.automation.name)",
             target: .resource(kind: "automation", identifier: change.automation.id.uuidString),
             risks: change.operation == .delete ? [.sensitive, .destructive] : [.sensitive],
+            context: .init(fence: fence, conversationID: context.conversationID, toolCallID: call.id.rawValue, metadata: metadata))
+        let pending = PendingApproval(action: action, reason: "Approval required", expiresAt: Date().addingTimeInterval(300))
+        try await autoReviewBroker.waitForApprovalToExecute(pending) { [weak self] in await self?.registerAutoReviewApproval($0) }
+        try Task.checkCancellation()
+        guard generation == autoReviewAccountGeneration, isAgentMessagingScopeActive(context.conversationID) else { throw CancellationError() }
+    }
+
+    private func commitAgentWorkflowWrite(_ change: AgentWorkflowWrite, lifetime: AgentWorkflowWriteLifetime,
+                                          originID: UUID, generation: UInt64) async throws -> AgentWorkflow {
+        guard let workflowService, generation == autoReviewAccountGeneration,
+              isAgentMessagingScopeActive(originID) else { throw CancellationError() }
+        let saved: AgentWorkflow
+        do {
+            saved = try await quotaWrite(scope: "workflow", key: change.proposed.id, data: JSONEncoder().encode(change.proposed)) {
+                try await workflowService.applyAgentWrite(change, lifetime: lifetime)
+            }
+        } catch {
+            guard let receipt = lifetime.committed(for: change) else { throw error }
+            errorMessage = Self.quotaMessage(error); saved = receipt
+        }
+        let current = await workflowService.workflows()
+        if generation == autoReviewAccountGeneration { workflows = current }
+        return saved
+    }
+
+    private func authorizeAgentWorkflowWrite(sender: AgentProfile, change: AgentWorkflowWrite,
+                                             call: NormalizedToolCall, context: ToolContext) async throws {
+        guard let workflowService, isAgentMessagingScopeActive(context.conversationID) else { throw CancellationError() }
+        let generation = autoReviewAccountGeneration
+        let fence = ApprovalFence(accountID: settings.accountScope ?? "local", agentID: context.conversationID.uuidString.lowercased(),
+                                  runID: context.runID, generation: generation)
+        await autoReviewBroker.activate(fence)
+        let library = await workflowService.workflows()
+        let routines = await automationService?.list() ?? []
+        // Reference names/IDs are shown only to the user, never returned to the
+        // requesting model. This snapshot is advisory, not a frozen audience.
+        let aliases = [change.previous, change.proposed].compactMap { $0 }
+        var references = library.filter { value in
+            value.id != change.proposed.id && !AgentWorkflowReferenceResolver.mentionedIDs(in: value, library: aliases).isEmpty
+        }.map { "\($0.name) (sand-workflow:\($0.id))" }
+        references += routines.filter { routine in
+            let carrier = AgentWorkflow(id: "reference-check", name: "Reference check", steps: [.prompt(routine.prompt)])
+            return !AgentWorkflowReferenceResolver.mentionedIDs(in: carrier, library: aliases).isEmpty
+        }.map { "\($0.name) (routine:\($0.id.uuidString))" }
+        var metadata = ["tool": "update_state", "agentStateTarget": "workflow", "agentName": sender.name,
+                        "agentWorkflowAction": change.previous == nil ? "create" : "update",
+                        "agentWorkflowID": change.proposed.id,
+                        "agentWorkflowReferences": references.sorted().prefix(100).joined(separator: "\n"),
+                        "agentWorkflowReferenceCount": String(references.count)]
+        func append(_ value: AgentWorkflow, prefix: String) {
+            metadata[prefix + "Name"] = value.name
+            metadata[prefix + "Description"] = value.description
+            metadata[prefix + "Enabled"] = String(value.isEnabled)
+            if case .prompt(let body) = value.steps.first { metadata[prefix + "Body"] = body }
+        }
+        append(change.proposed, prefix: "agentWorkflow")
+        if let previous = change.previous { append(previous, prefix: "previousAgentWorkflow") }
+        let action = AutoReviewAction(summary: "\(sender.name) → \(l10n(change.previous == nil ? "Save reusable workflow" : "Rewrite reusable workflow")): \(change.proposed.name)",
+            target: .resource(kind: "workflow", identifier: change.proposed.id), risks: [.sensitive],
             context: .init(fence: fence, conversationID: context.conversationID, toolCallID: call.id.rawValue, metadata: metadata))
         let pending = PendingApproval(action: action, reason: "Approval required", expiresAt: Date().addingTimeInterval(300))
         try await autoReviewBroker.waitForApprovalToExecute(pending) { [weak self] in await self?.registerAutoReviewApproval($0) }

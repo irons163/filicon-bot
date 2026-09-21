@@ -1547,3 +1547,16 @@
 "Memory search accepts only query (up to 256 Unicode scalars), scope all/agent/user, or a continuation cursor by itself." = "메모리 검색에는 query(Unicode 스칼라 값 최대 256개), scope all/agent/user 또는 이어보기 커서만 단독으로 지정할 수 있습니다.";
 "This memory search cursor is invalid or the saved facts changed. Start a new search." = "메모리 검색 커서가 유효하지 않거나 저장된 정보가 변경되었습니다. 새로 검색하세요.";
 "This request reached its 32 memory-search limit. Report the results already available." = "이 요청은 메모리 검색 한도인 32회에 도달했습니다. 이미 확인한 결과를 보고하세요.";
+"Save reusable workflow" = "재사용 가능한 워크플로 저장";
+"Rewrite reusable workflow" = "재사용 가능한 워크플로 다시 작성";
+"Current workflow" = "현재 워크플로";
+"Proposed workflow" = "제안된 워크플로";
+"Full workflow body" = "워크플로 전체 내용";
+"Known direct references" = "확인된 직접 참조";
+"This is a shared workflow, not private memory. All agents in this local workspace may reference it and send its body to their models. Existing and future routines or workflows may use the new body; renaming may break name-based references. Saving does not run or schedule anything, grant tools, or change permissions. Already running requests keep their captured content." = "이 워크플로는 공유되며 비공개 메모리가 아닙니다. 이 로컬 작업 공간의 모든 에이전트가 참조하고 내용을 각자의 모델로 보낼 수 있습니다. 기존 및 향후 루틴이나 워크플로가 새 내용을 사용할 수 있으며, 이름을 바꾸면 이름 기반 참조가 끊길 수 있습니다. 저장해도 작업 실행이나 예약, 도구 부여, 권한 변경은 이루어지지 않습니다. 실행 중인 요청은 시작 시 확보한 내용을 유지합니다.";
+"Direct references are a snapshot, not the full affected audience; indirect and future references may also use this workflow. At most 100 direct references are listed." = "직접 참조 목록은 확인 시점의 상태일 뿐 전체 영향 범위가 아닙니다. 간접 참조나 향후 참조에서도 이 워크플로를 사용할 수 있습니다. 직접 참조는 최대 100개까지 표시됩니다.";
+"Workflow write requires name, description and body within the supported limits, with no execution or permission fields." = "워크플로 저장에는 제한 내의 이름, 설명, 본문이 필요하며 실행 또는 권한 필드는 포함할 수 없습니다.";
+"Only your own local manual single-prompt workflows can be rewritten. Source-linked, managed and other agents' workflows are not writable here." = "자신의 로컬 수동 단일 프롬프트 워크플로만 다시 작성할 수 있습니다. 소스에 연결된 워크플로, 관리 대상 워크플로, 다른 에이전트의 워크플로는 여기서 수정할 수 없습니다.";
+"The workflow library changed while awaiting approval. Request approval again." = "승인 대기 중 워크플로 라이브러리가 변경되었습니다. 승인을 다시 요청하세요.";
+"Workflow enabled" = "워크플로 활성화됨";
+"Workflow disabled" = "워크플로 비활성화됨";

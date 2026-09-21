@@ -1547,3 +1547,16 @@
 "Memory search accepts only query (up to 256 Unicode scalars), scope all/agent/user, or a continuation cursor by itself." = "メモリ検索では query（Unicode スカラー値 256 個まで）、scope all/agent/user、または継続カーソル単独のみを指定できます。";
 "This memory search cursor is invalid or the saved facts changed. Start a new search." = "メモリ検索カーソルが無効か、保存済みの情報が変更されています。新しく検索してください。";
 "This request reached its 32 memory-search limit. Report the results already available." = "このリクエストはメモリ検索の上限（32 回）に達しました。取得済みの結果を報告してください。";
+"Save reusable workflow" = "再利用可能なワークフローを保存";
+"Rewrite reusable workflow" = "再利用可能なワークフローを書き換え";
+"Current workflow" = "現在のワークフロー";
+"Proposed workflow" = "提案されたワークフロー";
+"Full workflow body" = "ワークフローの全文";
+"Known direct references" = "確認済みの直接参照";
+"This is a shared workflow, not private memory. All agents in this local workspace may reference it and send its body to their models. Existing and future routines or workflows may use the new body; renaming may break name-based references. Saving does not run or schedule anything, grant tools, or change permissions. Already running requests keep their captured content." = "これは共有ワークフローであり、非公開のメモリではありません。このローカルワークスペースのすべてのエージェントが参照し、内容を各モデルに送信できます。既存および将来のルーチンやワークフローで新しい内容が使われる可能性があり、名前の変更で名前による参照が無効になることがあります。保存しても実行やスケジュール設定、ツールの付与、権限の変更は行われません。実行中のリクエストは開始時の内容を保持します。";
+"Direct references are a snapshot, not the full affected audience; indirect and future references may also use this workflow. At most 100 direct references are listed." = "直接参照の一覧は確認時点のもので、影響範囲のすべてではありません。間接参照や将来の参照でもこのワークフローが使われる可能性があります。直接参照は最大 100 件表示されます。";
+"Workflow write requires name, description and body within the supported limits, with no execution or permission fields." = "ワークフローの保存には制限内の名前、説明、本文が必要です。実行や権限のフィールドは指定できません。";
+"Only your own local manual single-prompt workflows can be rewritten. Source-linked, managed and other agents' workflows are not writable here." = "書き換えられるのは自分のローカルの手動・単一プロンプトのワークフローだけです。ソースにリンクされたもの、管理対象、他のエージェントのワークフローはここでは変更できません。";
+"The workflow library changed while awaiting approval. Request approval again." = "承認待ちの間にワークフローライブラリが変更されました。改めて承認をリクエストしてください。";
+"Workflow enabled" = "ワークフローは有効です";
+"Workflow disabled" = "ワークフローは無効です";

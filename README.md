@@ -61,7 +61,43 @@ URLs, generated images and changes to another agent's avatar are not supported.
 The approved change preserves names, private instructions, models and permissions;
 resetting does not delete custom image files. Stop/account changes revoke pending
 proposals, and an intervening manual avatar edit invalidates the old proposal.
-Avatar, profile, memory and routine changes share the four-change limit per request.
+Avatar, profile, memory, routine and workflow changes share the four-change limit per request.
+
+Group and mailbox agents can propose **saving or rewriting their own reusable workflow**:
+
+```json
+{"target":"workflow","action":"write","name":"Review layout","description":"Use for visual accessibility reviews.","body":"Check keyboard access and text contrast."}
+```
+
+This is an `update_state` call, not a scheduled routine. Omit `id` to create;
+to rewrite, supply an exact ID from the host's own-agent editable-workflow directory.
+All three text fields are required, including the entire replacement body. Limits:
+80 characters for name, 1,536 for description, and 8,000 UTF-8 bytes for body.
+Outer whitespace is trimmed; name/description are single-line. Body frontmatter
+is plain prompt text, never parsed as triggers or permissions.
+
+Only owned, local, manual, single-prompt definitions are eligible. Source-linked
+imports, the managed learning workflow, unowned or other agents' definitions,
+multi-step/action/scheduled workflows, delete and authority fields are rejected.
+An imported copy with no source marker that the user explicitly assigns to an
+agent is treated as a local definition, not an immutable external source.
+Creation generates a host ID and enables the manual definition; rewriting keeps
+its owner, ID, enabled state, trigger and creation time. Neither operation runs
+anything, adds a schedule, grants tools or changes existing run history.
+
+Every save needs fresh approval showing the **full before/after definition**,
+even when auto-review is enabled. The workflow library is shared by the local
+workspace, **not private or account-scoped memory**: other agents and their models,
+existing/future workflows and routines may consume the body through references.
+Renaming can break name-based references. Known direct references are an advisory
+snapshot (count plus at most 100 names/IDs), not the complete or frozen audience.
+Do not put private history or credentials into a shared procedure without explicit
+authorization. Already running requests keep their captured content.
+Stop/account changes revoke pending proposals; any library save through the same
+store invalidates pending workflow approval, even if values are later restored.
+This revision fence does not coordinate external edits or multiple app processes.
+Writes share the four-change budget, atomic persistence and storage quota checks;
+the tool's own-agent directory does not reveal other agents' workflow bodies.
 
 Group and mailbox agents can propose **pausing, resuming or deleting their own existing
 automations** with `update_state(target:"routine", action:"pause"|"resume"|"delete", id:...)`.

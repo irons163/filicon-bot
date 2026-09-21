@@ -1547,3 +1547,16 @@
 "Memory search accepts only query (up to 256 Unicode scalars), scope all/agent/user, or a continuation cursor by itself." = "Memory search accepts only query (up to 256 Unicode scalars), scope all/agent/user, or a continuation cursor by itself.";
 "This memory search cursor is invalid or the saved facts changed. Start a new search." = "This memory search cursor is invalid or the saved facts changed. Start a new search.";
 "This request reached its 32 memory-search limit. Report the results already available." = "This request reached its 32 memory-search limit. Report the results already available.";
+"Save reusable workflow" = "Save reusable workflow";
+"Rewrite reusable workflow" = "Rewrite reusable workflow";
+"Current workflow" = "Current workflow";
+"Proposed workflow" = "Proposed workflow";
+"Full workflow body" = "Full workflow body";
+"Known direct references" = "Known direct references";
+"This is a shared workflow, not private memory. All agents in this local workspace may reference it and send its body to their models. Existing and future routines or workflows may use the new body; renaming may break name-based references. Saving does not run or schedule anything, grant tools, or change permissions. Already running requests keep their captured content." = "This is a shared workflow, not private memory. All agents in this local workspace may reference it and send its body to their models. Existing and future routines or workflows may use the new body; renaming may break name-based references. Saving does not run or schedule anything, grant tools, or change permissions. Already running requests keep their captured content.";
+"Direct references are a snapshot, not the full affected audience; indirect and future references may also use this workflow. At most 100 direct references are listed." = "Direct references are a snapshot, not the full affected audience; indirect and future references may also use this workflow. At most 100 direct references are listed.";
+"Workflow write requires name, description and body within the supported limits, with no execution or permission fields." = "Workflow write requires name, description and body within the supported limits, with no execution or permission fields.";
+"Only your own local manual single-prompt workflows can be rewritten. Source-linked, managed and other agents' workflows are not writable here." = "Only your own local manual single-prompt workflows can be rewritten. Source-linked, managed and other agents' workflows are not writable here.";
+"The workflow library changed while awaiting approval. Request approval again." = "The workflow library changed while awaiting approval. Request approval again.";
+"Workflow enabled" = "Workflow enabled";
+"Workflow disabled" = "Workflow disabled";

@@ -3,6 +3,7 @@ import Foundation
 public actor AgentWorkflowStore {
     public let persistenceURL: URL
     private var document: AgentWorkflowDocument
+    private var revision = UUID()
     private let fileManager: FileManager
 
     public init(persistenceURL: URL, fileManager: FileManager = .default) throws {
@@ -15,6 +16,39 @@ public actor AgentWorkflowStore {
 
     public func list() -> [AgentWorkflow] { document.workflows.sorted { $0.id < $1.id } }
     public func get(_ id: String) -> AgentWorkflow? { document.workflows.first { $0.id == id } }
+
+    public func writeSnapshot() -> AgentWorkflowLibrarySnapshot {
+        .init(revision: revision, workflows: list())
+    }
+
+    public func applyAgentWrite(_ change: AgentWorkflowWrite, lifetime: AgentWorkflowWriteLifetime,
+                                at date: Date = .now) throws -> AgentWorkflow {
+        try lifetime.commit(change) {
+            guard revision == change.expectedRevision else { throw AgentWorkflowWriteError.stale }
+            let value = change.proposed
+            guard AgentWorkflowWrite.isEditable(value, by: change.requesterID),
+                  !value.description.isEmpty, try value.validated() == value else { throw AgentWorkflowWriteError.invalid }
+            var next = document
+            var saved = value
+            if let previous = change.previous {
+                guard AgentWorkflowWrite.isEditable(previous, by: change.requesterID),
+                      let index = next.workflows.firstIndex(where: { $0.id == previous.id }),
+                      next.workflows[index] == previous else { throw AgentWorkflowWriteError.unavailable }
+                var permitted = previous
+                permitted.name = value.name; permitted.description = value.description; permitted.steps = value.steps
+                guard permitted == value else { throw AgentWorkflowWriteError.invalid }
+                saved.updatedAt = date
+                next.workflows[index] = saved
+            } else {
+                guard value.isEnabled, next.workflows.count < AgentWorkflowLimits.maximumWorkflows,
+                      !next.workflows.contains(where: { $0.id == value.id }) else { throw AgentWorkflowWriteError.invalid }
+                saved.createdAt = date; saved.updatedAt = date
+                next.workflows.append(saved)
+            }
+            try commit(next)
+            return saved
+        }
+    }
 
     @discardableResult public func create(_ proposed: AgentWorkflow) throws -> AgentWorkflow {
         guard document.workflows.count < AgentWorkflowLimits.maximumWorkflows else { throw AgentWorkflowError.boundsExceeded("workflow count") }
@@ -88,6 +122,7 @@ public actor AgentWorkflowStore {
         let data = try AgentWorkflowCodec.serialize(next)
         try AgentWorkflowSafePersistence.write(data, to: persistenceURL, fileManager: fileManager)
         document = next
+        revision = UUID()
     }
 }
 

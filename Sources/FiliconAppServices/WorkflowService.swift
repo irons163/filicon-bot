@@ -35,6 +35,11 @@ public actor WorkflowService {
 
     public func workflows() async -> [AgentWorkflow] { await store.list() }
     public func workflow(id: String) async -> AgentWorkflow? { await store.get(id) }
+    public func writeSnapshot() async -> AgentWorkflowLibrarySnapshot { await store.writeSnapshot() }
+    public func applyAgentWrite(_ change: AgentWorkflowWrite, lifetime: AgentWorkflowWriteLifetime,
+                                at date: Date = .now) async throws -> AgentWorkflow {
+        try await store.applyAgentWrite(change, lifetime: lifetime, at: date)
+    }
     public func runs(workflowID: String? = nil) async -> [AgentWorkflowRun] {
         await runtime.runs(workflowID: workflowID)
     }

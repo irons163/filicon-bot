@@ -521,6 +521,8 @@ struct GroupToolApprovalPanel: View {
                     AgentAvatarApprovalDetails(metadata: approval.action.context.metadata)
                 } else if approval.action.context.metadata["agentStateTarget"] == "routine" {
                     AgentRoutineApprovalDetails(metadata: approval.action.context.metadata)
+                } else if approval.action.context.metadata["agentStateTarget"] == "workflow" {
+                    AgentWorkflowApprovalDetails(metadata: approval.action.context.metadata)
                 } else if ["CreateAgent", "UpdateAgent", "update_state"].contains(approval.action.context.metadata["tool"] ?? "") {
                     AgentProfileApprovalDetails(metadata: approval.action.context.metadata)
                 }
