@@ -1601,3 +1601,16 @@
 "Teams needs one tenant UUID and 1 to 50 team IDs. Channel IDs are optional (up to 50). Use Graph team UUIDs or exact Bot team IDs; no name lookup. IDs must be 1 to 200 UTF-8 bytes, without whitespace, control characters, commas or wildcards. Empty comma items are invalid." = "Teams 需要一個租用戶 UUID 與 1 到 50 個團隊 ID。頻道 ID 可留空，最多 50 個。請用 Graph 團隊 UUID 或精確的 Bot 團隊 ID，不會查詢名稱。ID 長度須為 1 到 200 個 UTF-8 位元組，不可包含空白、控制字元、逗號或萬用字元。逗號之間不可有空項目。";
 "Enter a literal Teams message filter of 1 to 120 characters, without control characters. Empty filters and regular expressions cannot be edited here." = "請輸入 1 到 120 字元的 Teams 訊息文字篩選，不可含控制字元。此處無法編輯空白篩選或正規表示式。";
 "This editor preserves the Teams signed-in-user restriction and supports literal text only. Existing conditions with a different policy or regex remain read-only; name and instruction edits preserve them." = "此編輯器保留 Teams 已登入使用者限制，且只支援文字比對。採用不同政策或正規表示式的既有條件維持唯讀；修改名稱與指示時會原樣保留。";
+"Collaboration project membership" = "協作專案成員資格";
+"Create and join project" = "建立並加入專案";
+"Join existing project" = "加入既有專案";
+"Leave project" = "離開專案";
+"Project member" = "已加入專案";
+"Not a project member" = "未加入專案";
+"Project member count" = "專案成員數";
+"Project names and descriptions are shared with current and future agents in this account and their models. Only this agent's membership changes; other members and existing metadata stay unchanged. Leaving preserves the project. This does not create a chat or folder, grant file access, start work or share private memories. Project memory is not available yet." = "專案名稱與說明會與此帳號現有及未來的代理人及其模型分享。只變更此代理人的成員資格，其他成員與既有資料保持不變。離開後仍保留專案。不會建立聊天或資料夾、授權檔案存取、開始工作或分享私人記憶。尚不支援專案記憶。";
+"Project changes accept create/join/leave and one exact lowercase slug (letters, digits and single hyphens, up to 64 bytes). Create also requires a name (up to 200 UTF-8 bytes) and optional description (up to 1,000 UTF-8 bytes), without control characters. No paths or permission fields." = "專案變更支援建立／加入／離開，須提供精確的小寫識別碼（英文字母、數字及單一連字號，最多 64 位元組）。建立時須提供名稱（最多 200 UTF-8 位元組），說明為選填（最多 1,000 UTF-8 位元組），均不可含控制字元。不接受路徑或權限欄位。";
+"The project or active agent is unavailable in this account." = "此帳號找不到該專案或可用的代理人。";
+"This agent already has the requested project membership. Nothing changed." = "此代理人的專案成員資格已符合要求，未做變更。";
+"This account already has 50 collaboration projects. No project was created." = "此帳號已有 50 個協作專案，未建立新專案。";
+"Project membership changed while approval was pending. Request approval again." = "等待核准時專案成員資格已變更，請重新要求核准。";

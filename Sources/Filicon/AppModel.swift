@@ -2609,6 +2609,12 @@ final class AppModel: ObservableObject {
             }, commitChannel: { [weak self] change, lifetime in
                 guard let self else { throw CancellationError() }
                 try await self.commitAgentChannelDisconnection(change, lifetime: lifetime, originID: originID, generation: generation)
+            }, authorizeProject: { [weak self] sender, change, call, context in
+                guard let self else { throw CancellationError() }
+                try await self.authorizeAgentProjectChange(sender: sender, change: change, call: call, context: context)
+            }, commitProject: { [weak self] change, lifetime in
+                guard let self else { throw CancellationError() }
+                try await self.commitAgentProjectChange(change, lifetime: lifetime, originID: originID, generation: generation)
             })
         return AgentMessagingSession(
             originConversationID: originID, agents: agentService, messenger: agentMessenger,
@@ -3008,6 +3014,52 @@ final class AppModel: ObservableObject {
         // Credentials can be shared with other connections. Retain them, as
         // disclosed before approval; local deletion is not remote revocation.
         if generation == autoReviewAccountGeneration { await reloadChannelState() }
+    }
+
+    private func authorizeAgentProjectChange(sender: AgentProfile, change: AgentProjectChange,
+                                             call: NormalizedToolCall, context: ToolContext) async throws {
+        guard isAgentMessagingScopeActive(context.conversationID), change.proposed.accountID == (settings.accountScope ?? "local") else {
+            throw CancellationError()
+        }
+        let generation = autoReviewAccountGeneration
+        let fence = ApprovalFence(accountID: change.proposed.accountID, agentID: context.conversationID.uuidString.lowercased(),
+                                  runID: context.runID, generation: generation)
+        await autoReviewBroker.activate(fence)
+        let metadata = ["tool": "update_state", "agentStateTarget": "project", "agentName": sender.name,
+            "projectSlug": change.proposed.slug, "projectName": change.proposed.name, "projectDescription": change.proposed.summary,
+            "projectCreates": String(change.createsProject), "projectAction": change.action.rawValue,
+            "projectBeforeJoined": String(change.previous?.memberIDs.contains(change.agentID) ?? false),
+            "projectAfterJoined": String(change.proposed.memberIDs.contains(change.agentID)),
+            "projectBeforeCount": String(change.previous?.memberIDs.count ?? 0), "projectAfterCount": String(change.proposed.memberIDs.count)]
+        let action = AutoReviewAction(summary: sender.name + " → " + l10n("Collaboration project membership"),
+            target: .resource(kind: "agent-project", identifier: change.proposed.slug), risks: [.sensitive],
+            context: .init(fence: fence, conversationID: context.conversationID, toolCallID: call.id.rawValue, metadata: metadata))
+        let pending = PendingApproval(action: action, reason: "Approval required", expiresAt: Date().addingTimeInterval(300))
+        try await autoReviewBroker.waitForApprovalToExecute(pending) { [weak self] in await self?.registerAutoReviewApproval($0) }
+        try Task.checkCancellation()
+        guard generation == autoReviewAccountGeneration, isAgentMessagingScopeActive(context.conversationID) else { throw CancellationError() }
+    }
+
+    static func projectQuotaKey(accountID: String, slug: String) -> String {
+        // The quota ledger is app-wide, whereas slugs are unique only per account.
+        // Base64 has no colon separator and bounds a 256-byte account ID below
+        // the ledger's 512-byte key limit, even with a maximum-length slug.
+        "agent-project-" + Data(accountID.utf8).base64EncodedString() + ":" + slug
+    }
+
+    private func commitAgentProjectChange(_ change: AgentProjectChange, lifetime: AgentProjectChangeLifetime,
+                                          originID: UUID, generation: UInt64) async throws {
+        guard let agentService, isAgentMessagingScopeActive(originID), generation == autoReviewAccountGeneration,
+              change.proposed.accountID == (settings.accountScope ?? "local") else { throw CancellationError() }
+        let payload = try JSONEncoder().encode(change.proposed)
+        do {
+            try await quotaWrite(scope: "workflow", key: Self.projectQuotaKey(accountID: change.proposed.accountID, slug: change.proposed.slug), data: payload) {
+                try await agentService.applyProjectChange(change, lifetime: lifetime)
+            }
+        } catch {
+            guard lifetime.committed(change) else { throw error }
+            errorMessage = Self.quotaMessage(error)
+        }
     }
 
     private func authorizeAgentSettingsChange(sender: AgentProfile, change: AgentSettingsChange,

@@ -1601,3 +1601,16 @@
 "Teams needs one tenant UUID and 1 to 50 team IDs. Channel IDs are optional (up to 50). Use Graph team UUIDs or exact Bot team IDs; no name lookup. IDs must be 1 to 200 UTF-8 bytes, without whitespace, control characters, commas or wildcards. Empty comma items are invalid." = "Teams에는 테넌트 UUID 1개와 팀 ID 1~50개가 필요합니다. 채널 ID는 선택 사항이며 최대 50개입니다. Graph 팀 UUID 또는 정확한 Bot 팀 ID를 사용하세요. 이름 검색은 지원하지 않습니다. ID는 UTF-8 기준 1~200바이트이며 공백, 제어 문자, 쉼표, 와일드카드를 포함할 수 없습니다. 쉼표 사이의 빈 항목은 허용되지 않습니다.";
 "Enter a literal Teams message filter of 1 to 120 characters, without control characters. Empty filters and regular expressions cannot be edited here." = "제어 문자 없이 1~120자의 Teams 메시지 문자열 필터를 입력하세요. 빈 필터와 정규식은 여기에서 편집할 수 없습니다.";
 "This editor preserves the Teams signed-in-user restriction and supports literal text only. Existing conditions with a different policy or regex remain read-only; name and instruction edits preserve them." = "이 편집기는 Teams의 로그인한 사용자 제한을 유지하며 문자열 일치만 지원합니다. 다른 정책이나 정규식을 사용하는 기존 조건은 읽기 전용으로 유지되며, 이름과 지침을 편집해도 그대로 보존됩니다.";
+"Collaboration project membership" = "협업 프로젝트 참여";
+"Create and join project" = "프로젝트 생성 및 참여";
+"Join existing project" = "기존 프로젝트 참여";
+"Leave project" = "프로젝트 나가기";
+"Project member" = "프로젝트 참여 중";
+"Not a project member" = "프로젝트 미참여";
+"Project member count" = "프로젝트 참여자 수";
+"Project names and descriptions are shared with current and future agents in this account and their models. Only this agent's membership changes; other members and existing metadata stay unchanged. Leaving preserves the project. This does not create a chat or folder, grant file access, start work or share private memories. Project memory is not available yet." = "프로젝트 이름과 설명은 이 계정의 현재 및 향후 에이전트와 해당 모델에 공유됩니다. 이 에이전트의 참여 상태만 변경되며 다른 참여자와 기존 정보는 유지됩니다. 나가도 프로젝트는 보존됩니다. 채팅이나 폴더를 만들거나 파일 접근 권한을 부여하거나 작업을 시작하거나 비공개 기억을 공유하지 않습니다. 프로젝트 기억은 아직 지원하지 않습니다.";
+"Project changes accept create/join/leave and one exact lowercase slug (letters, digits and single hyphens, up to 64 bytes). Create also requires a name (up to 200 UTF-8 bytes) and optional description (up to 1,000 UTF-8 bytes), without control characters. No paths or permission fields." = "create/join/leave와 정확한 소문자 식별자(ASCII 영문자, 숫자, 단일 하이픈, 최대 64바이트)를 사용하세요. 생성 시 이름(최대 200 UTF-8바이트)이 필요하며 설명(최대 1,000 UTF-8바이트)은 선택 사항입니다. 제어 문자, 경로 및 권한 필드는 허용되지 않습니다.";
+"The project or active agent is unavailable in this account." = "이 계정에서 프로젝트 또는 활성 에이전트를 사용할 수 없습니다.";
+"This agent already has the requested project membership. Nothing changed." = "이 에이전트는 이미 요청한 참여 상태입니다. 변경된 내용이 없습니다.";
+"This account already has 50 collaboration projects. No project was created." = "이 계정에는 이미 협업 프로젝트가 50개 있습니다. 프로젝트를 생성하지 않았습니다.";
+"Project membership changed while approval was pending. Request approval again." = "승인 대기 중 프로젝트 참여 상태가 변경되었습니다. 승인을 다시 요청하세요.";

@@ -291,7 +291,7 @@ struct AgentManagementSessionTests {
             ["action": "set", "name": "New name"], ["target": "profile", "name": "New name"],
             ["target": "profile", "action": "set", "name": "  "],
             ["target": "profile", "action": "set", "description": String(repeating: "x", count: 2_001)]]
-        for target in ["project", "PROFILE"] {
+        for target in ["unknown", "PROFILE"] {
             var fields = base; fields["target"] = target; invalid.append(fields)
         }
         for action in ["write", "delete", "archive", "create", "SET"] {
@@ -304,6 +304,11 @@ struct AgentManagementSessionTests {
             await #expect(throws: AgentProfileChangeError.invalidFields) {
                 _ = try await tool.execute(call(fields, operation: "update_state"), context: f.context)
             }
+        }
+        // Project membership has its own validator; profile fields still cannot
+        // turn it into a profile mutation or bypass the project approval gate.
+        await #expect(throws: AgentProjectError.invalid) {
+            _ = try await tool.execute(call(["target": "project", "action": "set", "name": "New name"], operation: "update_state"), context: f.context)
         }
         await #expect(throws: ChannelDisconnectionError.invalid) {
             _ = try await tool.execute(call(["target": "channel", "action": "set", "name": "New name"], operation: "update_state"), context: f.context)

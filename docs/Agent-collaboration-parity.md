@@ -1,6 +1,26 @@
 # 協作能力核對紀錄（更新至 2026-09-21）
 
-## 本輪增量：受限制的 Teams 手動條件編輯（2026-09-21）
+## 本輪增量：受核准的協作專案成員資格（2026-09-21）
+
+先提交上一批為 `6eaf146`（`feat: add validated manual Teams routine editing`），提交前 Teams 編輯／事件／App 聚焦 **91 Swift Testing／5 suites 通過**（`/tmp/filicon-teams-editor-precommit.log`）。此輪核對本機非官方 reconstructed 的 `source/host/runner/tools/sand-state-tool.ts` 與 `source/host/extensions/memory/agent-state.ts`：create 是建立後加入、已存在時只加入不覆蓋 metadata，join 須存在，leave 不刪除 project；project memory 為另一條需成員身分的路由。本批只補前者，不宣稱還原完整共享專案記憶。
+
+- 群組／mailbox 使用 `update_state(target:"project",action:"create"|"join"|"leave",project:slug)`。host 固定自身代理人及帳號；create 另需名稱、可選說明，join／leave 不接受其他欄位。JSON 上限 8 KiB；slug 為最多 64 UTF-8 bytes 的小寫 ASCII 字母／數字與單一連字號，拒絕路徑。名稱最多 200、說明最多 1,000 UTF-8 bytes，拒絕控制字元後才去除首尾空白。
+- 帳號內最多 50 個專案，含空專案；已加入／已離開回傳 no-op error，不當成新變更。create existing 保留全部舊 metadata，離開只移除自己、保留其餘成員及專案。獨立明確核准不可沿用 auto-review allow；七語言卡片完整顯示 metadata、加入／離開前後與成員數量，提醒名稱／說明為同帳號目前及未來代理人及其模型共享資料。
+- 模型目錄只注入該帳號的 slug／name／自身 joined，不包含 peer 名單、description 或私人事實，並標記為不受信任資料。project 不是群組、檔案授權或工作指派；不新增聊天／wake／任務／資料夾、不改私人 persona 或記憶。`scope:project` 記憶仍拒絕。
+- 提案由 AgentService 快照產生，提交時重驗完整舊值及持久化 revision，涵蓋 leave/rejoin ABA、並行建立與容量競爭；同步 lifetime fence 擋下 Stop／取消／帳號切換後未提交的變更，也重驗 owner 是否封存。沿用原子保存與完整回滾；保存成功才記 receipt，後續 bookkeeping 失敗不誤報未執行。重播同 call 返回結果、pending 重複拒絕，與既有狀態修改共用四次額度。不是跨程序直接改檔的 CAS。
+- `agents.json` 加入可省略的 projects，舊檔缺鍵時為空清單；不遷移聊天／私人記憶／資料夾。沒有專案 rename/delete、專用手動管理 UI、reference project.md 或 project memory。AgentService 原有 agents 為本機 roster，本批 project records 才有明確 account scope。
+
+依 Swift 測試／CustomDump 技能使用隔離 store、固定時間、完整值比較及受控 continuation gate；依 SwiftUI 技能重用群組／mailbox 核准卡，不引入新的自訂 binding。新增十項核心測試與四項 App 測試函式（含拒絕／Stop／帳號／封存／保存失敗等參數），檢查身分隔離、嚴格欄位與 UTF-8 上限、create-is-join、持久化／舊格式、私人記憶保留、stale／ABA、容量、延遲 commit、receipt、共用額度及 mailbox recipient。開發中修正 fixture 的 ToolCallID 建構與 App 私有存取編譯錯誤，沒有開放產品私有 service 供測試使用。
+
+最後檢查發現 quota ledger 為 App-wide，僅以 slug 當用量 key 會讓不同帳號同名專案互相覆蓋計數。本輪改用有界 account 編碼＋slug 複合 key，不改檔案路徑；補上不同帳號／分隔字元／最大長度及真實 App 核准保存後的 ledger 檢查。兩項聚焦測試（含六組保存結果）通過（`/tmp/filicon-project-quota.log`），原生 build 與 deep strict 簽章重新通過，再重跑全套驗證。
+
+初次聚焦 **12 Swift Testing／2 suites 通過**（`/tmp/filicon-project-focused3.log`），其後補上舊檔／私人記憶回歸。首次完整回歸在舊 profile 測試有 **1 issue**（`/tmp/filicon-project-full.log`）：原測試把 project 視為未知 route、預期 profile.invalidFields；新增 project validator 後回傳 project.invalid。將該非法 profile 欄位案例獨立檢查精確錯誤，保留未知 route 拒絕測試，未放寬產品驗證。
+
+核准明細產生 **42 張預覽**（create／join／leave × 七語言 × 明暗，380 點寬；`/tmp/filicon-project-previews/`），每種語言至少檢視一張；英文 fixture 的姓名／名稱／說明保留為使用者資料，不自行翻譯。修正建立預覽的成員數量為 0→1 後重新產生全部預覽，另檢視繁中／法／韓建立卡。只驗證此核准明細，非全產品 UI 或真實模型驗收。
+
+最終完整 `swift test --no-parallel` **135 XCTest、989 Swift Testing／111 suites 全數通過**（`/tmp/filicon-project-full-verified.log`），兩項 opt-in live Codex 測試未啟用；既有 CoreData NSXPC 診斷仍在。原生 `Filicon App` Debug 增量 build（`/tmp/filicon-project-native-final.log`）及產物 deep strict codesign 通過，含 helpers／XPC；不是 release 簽署／公證驗收。最終預覽測試另外通過（`/tmp/filicon-project-previews-final.log`）。七語言各 **1,607 keys、零缺漏**，`git diff --check` 通過。未 push、未啟動／重啟使用者 App／Xcode、未改實際聊天／群組／專案／排程／連線／憑證。這批新修改尚未提交。`AGENT-01` 仍為 partial；整體維持 **43 complete／4 partial／1 NA**。
+
+## 已提交增量：受限制的 Teams 手動條件編輯（2026-09-21）
 
 先提交上一批為 `4a434f2`（`feat: approve disconnection of agent-owned channels`），提交前頻道／管理聚焦 64 項再次通過。此輪核對本機非官方 reconstructed 的 `sand-state-tool.ts` Microsoft Teams schema、`automation-trigger.ts` scope／filter 判定，以及 Filicon 既有原生 Teams 安全邊界；不以表單完成宣稱原版 Teams 雲端能力已還原。
 
@@ -15,7 +35,7 @@
 
 產生 **56 張 Teams 專用預覽**（欄位有效／無效、完整 sheet 可編輯／唯讀 × 七語言 × 明暗；`/tmp/filicon-teams-editor-previews/teams-fields-*` 及 `teams-sheet-*`），每種語言至少檢視一張。檢視後修正沿用的韓文標籤中的英文殘留、以及 macOS Form 對輸入欄的右側配置，重新渲染確認韓文與日文完整 sheet；長清單可軟換行。sheet 內容可捲動，並非全產品逐頁或真實 Teams 帳號驗收。
 
-最後完整 `swift test --no-parallel` **135 XCTest、975 Swift Testing／110 suites 全數通過**（`/tmp/filicon-teams-editor-full-final.log`），兩項 opt-in live Codex 測試未啟用；既有 CoreData NSXPC 診斷仍在。原生 `Filicon App` Debug 增量 build（`/tmp/filicon-teams-editor-native-verified.log`）及 deep strict codesign 通過，含 helpers／XPC；七語言各 **1,594 keys、零缺漏**，`git diff --check` 通過。未 push、未啟動／重啟使用者 App／Xcode、未改真實聊天／群組／排程／連線／憑證。新一批修改尚未提交。
+最後完整 `swift test --no-parallel` **135 XCTest、975 Swift Testing／110 suites 全數通過**（`/tmp/filicon-teams-editor-full-final.log`），兩項 opt-in live Codex 測試未啟用；既有 CoreData NSXPC 診斷仍在。原生 `Filicon App` Debug 增量 build（`/tmp/filicon-teams-editor-native-verified.log`）及 deep strict codesign 通過，含 helpers／XPC；七語言各 **1,594 keys、零缺漏**，`git diff --check` 通過。未 push、未啟動／重啟使用者 App／Xcode、未改真實聊天／群組／排程／連線／憑證。本批已於下一輪提交為 `6eaf146`。
 
 `AUTO-03` 仍為 partial：Teams 可信登入／主文／Graph／同步回覆／regex 與模型提案、GitHub checks 彙整、Slack 名稱／人類身分及 live 帳號驗收尚有缺口。整體維持 **43 complete／4 partial／1 NA**。
 

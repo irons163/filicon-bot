@@ -139,6 +139,61 @@ public actor AgentService {
 
     public func profile(id: UUID) -> AgentProfile? { state.agents.first { $0.id == id } }
 
+    /// Public project metadata in one account; does not expose private facts.
+    public func projects(accountID: String) -> [AgentProject] {
+        state.projects.filter { $0.accountID == accountID }.sorted { $0.slug < $1.slug }
+    }
+
+    public func proposeProjectChange(accountID: String, agentID: UUID, action: AgentProjectAction,
+                                     slug: String, name: String? = nil, summary: String? = nil,
+                                     at: Date = Date()) throws -> AgentProjectChange {
+        guard !accountID.isEmpty, accountID.utf8.count <= 256,
+              (1...64).contains(slug.utf8.count), slug.wholeMatch(of: /^[a-z0-9]+(?:-[a-z0-9]+)*$/) != nil,
+              action == .create || (name == nil && summary == nil) else { throw AgentProjectError.invalid }
+        func text(_ value: String, limit: Int, allowEmpty: Bool) -> Bool {
+            (allowEmpty || !value.isEmpty) && value.utf8.count <= limit
+                && value == value.trimmingCharacters(in: .whitespacesAndNewlines)
+                && value.rangeOfCharacter(from: .controlCharacters) == nil
+        }
+        if action == .create {
+            guard let name, text(name, limit: 200, allowEmpty: false),
+                  text(summary ?? "", limit: 1_000, allowEmpty: true) else { throw AgentProjectError.invalid }
+        }
+        guard state.agents.contains(where: { $0.id == agentID && $0.archivedAt == nil }) else {
+            throw AgentProjectError.unavailable
+        }
+        let previous = state.projects.first { $0.accountID == accountID && $0.slug == slug }
+        if previous == nil && action != .create { throw AgentProjectError.unavailable }
+        if previous == nil && projects(accountID: accountID).count >= 50 { throw AgentProjectError.limit }
+        var proposed = previous ?? AgentProject(accountID: accountID, slug: slug, name: name ?? "", summary: summary ?? "",
+            createdAt: at, memberIDs: [], revision: UUID())
+        let joining = action != .leave
+        guard proposed.memberIDs.contains(agentID) != joining else { throw AgentProjectError.unchanged }
+        if joining { proposed.memberIDs.insert(agentID) } else { proposed.memberIDs.remove(agentID) }
+        proposed.revision = UUID()
+        return .init(action: action, agentID: agentID, previous: previous, proposed: proposed)
+    }
+
+    public func applyProjectChange(_ change: AgentProjectChange, lifetime: AgentProjectChangeLifetime) throws {
+        try lifetime.check()
+        try lifetime.commit(change) {
+            let project = change.proposed
+            guard state.agents.contains(where: { $0.id == change.agentID && $0.archivedAt == nil }) else {
+                throw AgentProjectError.unavailable
+            }
+            let index = state.projects.firstIndex { $0.accountID == project.accountID && $0.slug == project.slug }
+            guard index.map({ state.projects[$0] }) == change.previous else { throw AgentProjectError.stale }
+            if let index { state.projects[index] = project }
+            else {
+                guard projects(accountID: project.accountID).count < 50 else { throw AgentProjectError.limit }
+                state.projects.append(project)
+            }
+            // Metadata and membership commit atomically; persist rolls back all
+            // in-memory state on failure. Leaving preserves the project itself.
+            try persist()
+        }
+    }
+
     /// Only the specified writer's records; models cannot forget another writer's shard.
     public func memories(accountID: String, agentID: UUID, scope: AgentMemory.Scope = .agent) -> [AgentMemory] {
         sortedMemories(state.memories.filter { $0.accountID == accountID && $0.agentID == agentID && $0.scope == scope })

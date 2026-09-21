@@ -1601,3 +1601,16 @@
 "Teams needs one tenant UUID and 1 to 50 team IDs. Channel IDs are optional (up to 50). Use Graph team UUIDs or exact Bot team IDs; no name lookup. IDs must be 1 to 200 UTF-8 bytes, without whitespace, control characters, commas or wildcards. Empty comma items are invalid." = "Teams 需要一个租户 UUID 与 1 到 50 个团队 ID。频道 ID 可留空，最多 50 个。请用 Graph 团队 UUID 或精确的 Bot 团队 ID，不会查询名称。ID 长度须为 1 到 200 个 UTF-8 字节，不可包含空白、控制字符、逗号或通配符。逗号之间不可有空项。";
 "Enter a literal Teams message filter of 1 to 120 characters, without control characters. Empty filters and regular expressions cannot be edited here." = "请输入 1 到 120 个字符的 Teams 消息文本筛选，不可含控制字符。此处无法编辑空白筛选或正则表达式。";
 "This editor preserves the Teams signed-in-user restriction and supports literal text only. Existing conditions with a different policy or regex remain read-only; name and instruction edits preserve them." = "此编辑器保留 Teams 已登录用户限制，且只支持文本匹配。采用不同策略或正则表达式的现有条件保持只读；修改名称与指令时会原样保留。";
+"Collaboration project membership" = "协作项目成员资格";
+"Create and join project" = "创建并加入项目";
+"Join existing project" = "加入现有项目";
+"Leave project" = "离开项目";
+"Project member" = "已加入项目";
+"Not a project member" = "未加入项目";
+"Project member count" = "项目成员数";
+"Project names and descriptions are shared with current and future agents in this account and their models. Only this agent's membership changes; other members and existing metadata stay unchanged. Leaving preserves the project. This does not create a chat or folder, grant file access, start work or share private memories. Project memory is not available yet." = "项目名称与说明会与此账号现有及未来的代理及其模型共享。仅更改此代理的成员资格，其他成员与现有资料保持不变。退出后仍保留项目。不会创建聊天或文件夹、授权文件访问、开始工作或共享私人记忆。尚不支持项目记忆。";
+"Project changes accept create/join/leave and one exact lowercase slug (letters, digits and single hyphens, up to 64 bytes). Create also requires a name (up to 200 UTF-8 bytes) and optional description (up to 1,000 UTF-8 bytes), without control characters. No paths or permission fields." = "项目变更支持创建／加入／退出，须提供准确的小写标识符（英文字母、数字及单个连字符，最多 64 字节）。创建时须提供名称（最多 200 UTF-8 字节），说明可选（最多 1,000 UTF-8 字节），均不可含控制字符。不接受路径或权限字段。";
+"The project or active agent is unavailable in this account." = "此账号中找不到该项目或可用的代理。";
+"This agent already has the requested project membership. Nothing changed." = "此代理的项目成员资格已符合要求，未作更改。";
+"This account already has 50 collaboration projects. No project was created." = "此账号已有 50 个协作项目，未创建新项目。";
+"Project membership changed while approval was pending. Request approval again." = "等待批准时项目成员资格已更改，请重新请求批准。";

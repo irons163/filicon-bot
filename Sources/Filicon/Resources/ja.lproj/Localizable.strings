@@ -1601,3 +1601,16 @@
 "Teams needs one tenant UUID and 1 to 50 team IDs. Channel IDs are optional (up to 50). Use Graph team UUIDs or exact Bot team IDs; no name lookup. IDs must be 1 to 200 UTF-8 bytes, without whitespace, control characters, commas or wildcards. Empty comma items are invalid." = "Teams にはテナント UUID 1 件とチーム ID 1〜50 件が必要です。チャネル ID は任意で最大 50 件です。Graph チーム UUID または正確な Bot チーム ID を指定してください。名前検索は行いません。ID は UTF-8 で 1〜200 バイトとし、空白、制御文字、カンマ、ワイルドカードは使用できません。カンマ間の空項目は無効です。";
 "Enter a literal Teams message filter of 1 to 120 characters, without control characters. Empty filters and regular expressions cannot be edited here." = "Teams メッセージの文字列フィルターを 1〜120 文字で入力してください。制御文字は使用できません。空のフィルターや正規表現はここでは編集できません。";
 "This editor preserves the Teams signed-in-user restriction and supports literal text only. Existing conditions with a different policy or regex remain read-only; name and instruction edits preserve them." = "このエディターは Teams のログイン済みユーザー制限を維持し、文字列一致のみ対応します。別のポリシーや正規表現を使う既存条件は読み取り専用です。名前や指示の編集時もそのまま保持されます。";
+"Collaboration project membership" = "共同プロジェクトへの参加";
+"Create and join project" = "プロジェクトを作成して参加";
+"Join existing project" = "既存のプロジェクトに参加";
+"Leave project" = "プロジェクトから退出";
+"Project member" = "参加済み";
+"Not a project member" = "未参加";
+"Project member count" = "プロジェクトのメンバー数";
+"Project names and descriptions are shared with current and future agents in this account and their models. Only this agent's membership changes; other members and existing metadata stay unchanged. Leaving preserves the project. This does not create a chat or folder, grant file access, start work or share private memories. Project memory is not available yet." = "名前と説明は、このアカウントの現在および将来のエージェントとそのモデルに共有されます。このエージェントの参加状態だけが変わり、他のメンバーや既存の情報は変わりません。退出してもプロジェクトは残ります。チャットやフォルダの作成、ファイル権限の付与、作業の開始、非公開の記憶の共有は行いません。プロジェクト記憶はまだ利用できません。";
+"Project changes accept create/join/leave and one exact lowercase slug (letters, digits and single hyphens, up to 64 bytes). Create also requires a name (up to 200 UTF-8 bytes) and optional description (up to 1,000 UTF-8 bytes), without control characters. No paths or permission fields." = "create/join/leave と正確な小文字の識別子（ASCII 英数字と単一のハイフン、最大64バイト）を指定してください。作成には名前（最大200 UTF-8バイト）が必要で、説明（最大1,000 UTF-8バイト）は任意です。制御文字、パス、権限の指定はできません。";
+"The project or active agent is unavailable in this account." = "このアカウントでプロジェクトまたは有効なエージェントを利用できません。";
+"This agent already has the requested project membership. Nothing changed." = "このエージェントの参加状態はすでに指定どおりです。変更はありません。";
+"This account already has 50 collaboration projects. No project was created." = "このアカウントにはすでに50個の共同プロジェクトがあります。作成されませんでした。";
+"Project membership changed while approval was pending. Request approval again." = "承認待ちの間に参加状態が変更されました。再度承認を依頼してください。";

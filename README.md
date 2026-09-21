@@ -556,6 +556,36 @@ execution. A crash between reservation and handoff remains an uncertain outcome;
 the retained bounded marker is not automatically released. Tests use isolated
 queues and secrets, not live external accounts.
 
+In group and mailbox turns, agents can propose creating, joining or leaving an
+account-local collaboration project with
+`update_state(target:"project", action:"create"|"join"|"leave", project:"exact-slug")`.
+Create requires `name` (1–200 UTF-8 bytes) and accepts `description` (up to 1,000
+UTF-8 bytes); join/leave accept no other fields. Slugs are lowercase ASCII
+letters/digits separated by single hyphens, up to 64 bytes, never filesystem
+paths. Text rejects control characters and trims outer spaces. The host fixes
+the requesting agent and account; it cannot change another agent's membership.
+
+Each change needs fresh explicit approval, even with automatic tool approval
+enabled. The card shows the project metadata, membership before/after and member
+counts. Creating an existing slug joins it without overwriting its metadata;
+leaving preserves the project and all other members. Already joined/left is a
+no-op error. Each account has at most 50 projects, including empty projects.
+The directory exposes only slugs, names and the requesting agent's joined state;
+project metadata is account-shared information, not a place for private facts or
+credentials. Pending approvals become stale when that project's state changes,
+including leave/rejoin cycles. Stop, account changes and agent archival revoke
+uncommitted changes; failed writes roll back, and successful call replays do not
+write again. These operations share the existing four-change turn budget.
+
+This is **membership metadata only** in the agent store, not filesystem-backed
+reference project folders. It does not create a chat, grant folder access,
+start work or share private memory. Project memory remains unsupported, with no
+project rename/delete or dedicated manual project editor yet. Existing stores
+load with an empty project list; old groups, memories and permissions are not
+migrated. Revision checks protect the running service, not concurrent external
+edits to its JSON file. This is a bounded native adaptation, not full project
+parity or live-model acceptance testing.
+
 In group and mailbox turns, agents can propose remembering or forgetting a short
 fact using `update_state(target:"memory", action:"write"|"forget", fact:...)`.
 Each change needs explicit approval. Omitted scope (or `scope:"agent"`) remains

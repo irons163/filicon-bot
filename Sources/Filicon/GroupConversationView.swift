@@ -517,6 +517,8 @@ struct GroupToolApprovalPanel: View {
                 }
                 if approval.action.context.metadata["agentStateTarget"] == "memory" {
                     AgentMemoryApprovalDetails(metadata: approval.action.context.metadata)
+                } else if approval.action.context.metadata["agentStateTarget"] == "project" {
+                    AgentProjectApprovalDetails(metadata: approval.action.context.metadata)
                 } else if approval.action.context.metadata["agentStateTarget"] == "channel" {
                     AgentChannelDisconnectionDetails(metadata: approval.action.context.metadata)
                 } else if approval.action.context.metadata["agentStateTarget"] == "settings" {
@@ -545,6 +547,26 @@ struct GroupToolApprovalPanel: View {
 
     private func resolve(_ approval: PendingApproval, approve: Bool) async {
         await model.resolveGroupApproval(approval, groupID: groupID, approve: approve)
+    }
+}
+
+struct AgentProjectApprovalDetails: View {
+    let metadata: [String: String]
+    static let notice = "Project names and descriptions are shared with current and future agents in this account and their models. Only this agent's membership changes; other members and existing metadata stay unchanged. Leaving preserves the project. This does not create a chat or folder, grant file access, start work or share private memories. Project memory is not available yet."
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(l10n("Collaboration project membership")).font(.callout.weight(.semibold))
+            Text(verbatim: metadata["agentName"] ?? "").textSelection(.enabled)
+            Text(l10n(metadata["projectCreates"] == "true" ? "Create and join project" : metadata["projectAction"] == "leave" ? "Leave project" : "Join existing project"))
+                .font(.callout.weight(.semibold))
+            Text(verbatim: metadata["projectSlug"] ?? "").font(.caption.monospaced()).textSelection(.enabled)
+            Text(verbatim: metadata["projectName"] ?? "").textSelection(.enabled)
+            Text(verbatim: metadata["projectDescription"] ?? "").font(.callout).textSelection(.enabled)
+            LabeledContent(l10n("Before"), value: l10n(metadata["projectBeforeJoined"] == "true" ? "Project member" : "Not a project member"))
+            LabeledContent(l10n("After"), value: l10n(metadata["projectAfterJoined"] == "true" ? "Project member" : "Not a project member"))
+            LabeledContent(l10n("Project member count"), value: (metadata["projectBeforeCount"] ?? "0") + " → " + (metadata["projectAfterCount"] ?? "0"))
+            Text(FiliconLocalization.string(Self.notice)).font(.caption).foregroundStyle(FiliconTheme.textSecondary)
+        }.fixedSize(horizontal: false, vertical: true)
     }
 }
 

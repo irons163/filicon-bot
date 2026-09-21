@@ -10,6 +10,7 @@ import FiliconProviderKit
 import FiliconAutoReview
 import FiliconAutomations
 import FiliconChannels
+import FiliconAppServices
 
 private struct ManagingAgentProvider: InteractiveToolProvider {
     let descriptor = ProviderDescriptor(id: "management-fixture", displayName: "Profile fixture", requiresAPIKey: false)
@@ -78,6 +79,138 @@ private actor ManagementWakeProbe {
         let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
         await model.reloadWorkspaceData()
         return (root, model, groupID, sender, recipient, own, other)
+    }
+
+    private func storedProjects(_ root: URL) throws -> [AgentProject] {
+        struct Saved: Decodable { let projects: [AgentProject]? }
+        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .millisecondsSince1970
+        return try decoder.decode(Saved.self, from: Data(contentsOf: root.appending(path: "agents.json"))).projects ?? []
+    }
+
+    @Test func projectQuotaIdentityIncludesAccountAndFitsLedgerLimit() {
+        let accounts = ["local", "other", "a:b", "a\u{1f}b", String(repeating: "a", count: 256)]
+        let keys = accounts.map { AppModel.projectQuotaKey(accountID: $0, slug: String(repeating: "s", count: 64)) }
+        expectNoDifference(Set(keys).count, accounts.count)
+        #expect(keys.allSatisfy { $0.utf8.count <= 512 && !$0.contains("\u{1f}") })
+        #expect(AppModel.projectQuotaKey(accountID: "a:b", slug: "c") != AppModel.projectQuotaKey(accountID: "a", slug: "b-c"))
+    }
+
+    @Test(arguments: ["approve", "deny", "stop", "account", "archive", "save-failure"])
+    func projectMembershipRequiresExplicitApproval(mode: String) async throws {
+        let (root, model, groupID, owner, _) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        await model.registry.register(ManagingAgentProvider { _, execute in
+            let result = try await execute(.init(id: "project", name: "update_state",
+                argumentsJSON: Data(#"{"target":"project","action":"create","project":"website","name":"Public website","description":"Shared description"}"#.utf8)))
+            expectNoDifference(result.isError, mode != "approve")
+            return "PASS"
+        })
+        let groups = model.groups
+        let run = Task { await model.sendGroupMessage(groupID: groupID, text: "Create and join this collaboration project") }
+        let approval = try await pending(model, tool: "update_state")
+        expectNoDifference(approval.action.target, .resource(kind: "agent-project", identifier: "website"))
+        expectNoDifference(approval.action.context.metadata["agentStateTarget"], "project")
+        expectNoDifference(approval.action.context.metadata["projectName"], "Public website")
+        expectNoDifference(approval.action.context.metadata["projectDescription"], "Shared description")
+        expectNoDifference(approval.action.context.metadata["projectCreates"], "true")
+        expectNoDifference(approval.action.context.metadata["projectBeforeJoined"], "false")
+        expectNoDifference(approval.action.context.metadata["projectAfterJoined"], "true")
+        expectNoDifference(try storedProjects(root), [])
+        var expected: [AgentProject] = []
+        if mode == "stop" { await model.stopGroup(id: groupID) }
+        if mode == "account" { await model.cancelAutoReviewApprovals(nextAccountID: "other") }
+        if mode == "archive" { await model.archiveAgent(id: owner.id) }
+        let file = root.appending(path: "agents.json"), backup = root.appending(path: "agents-backup.json")
+        if mode == "save-failure" {
+            try FileManager.default.moveItem(at: file, to: backup)
+            try FileManager.default.createDirectory(at: file, withIntermediateDirectories: false)
+        }
+        await model.resolveGroupApproval(approval, groupID: groupID, approve: mode != "deny")
+        await run.value
+        await model.resolveGroupApproval(approval, groupID: groupID, approve: true)
+        if mode == "save-failure" {
+            try FileManager.default.removeItem(at: file)
+            try FileManager.default.moveItem(at: backup, to: file)
+        }
+        let saved = try storedProjects(root)
+        if mode == "approve" {
+            let project = try #require(saved.first)
+            expectNoDifference(project.memberIDs, [owner.id]); expectNoDifference(project.name, "Public website")
+            expectNoDifference(project.summary, "Shared description"); expectNoDifference(saved.count, 1)
+            expected = saved
+            let ledger = try StorageQuotaLedger.live(dataRoot: root)
+            let record = try #require(await ledger.record(scope: "workflow", key: AppModel.projectQuotaKey(accountID: "local", slug: "website")))
+            #expect(record.byteCount > 0)
+            expectNoDifference(record, .init(scope: "workflow", key: AppModel.projectQuotaKey(accountID: "local", slug: "website"),
+                byteCount: record.byteCount, generation: 1))
+            let other = await ledger.record(scope: "workflow", key: AppModel.projectQuotaKey(accountID: "other", slug: "website"))
+            expectNoDifference(other, nil)
+        }
+        expectNoDifference(saved, expected)
+        #expect(model.pendingAutoReviewApprovals.isEmpty && model.runningGroups.isEmpty)
+        // Posting the request changes room history, not the group's members or metadata.
+        expectNoDifference(model.groups.map(\.memberIDs), groups.map(\.memberIDs))
+        let reopened = try AgentService(storeURL: file)
+        let durable = await reopened.projects(accountID: "local")
+        // The store uses millisecond timestamps; compare the full wire representation.
+        let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .millisecondsSince1970; encoder.outputFormatting = [.sortedKeys]
+        expectNoDifference(try encoder.encode(durable), try encoder.encode(expected))
+    }
+
+    @Test func mailboxProjectMembershipUsesRecipientIdentity() async throws {
+        let (root, model, _, sender, recipient) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        await model.registry.register(ManagingAgentProvider { _, execute in
+            let result = try await execute(.init(id: "project", name: "update_state",
+                argumentsJSON: Data(#"{"target":"project","action":"create","project":"design-system","name":"Design system"}"#.utf8)))
+            #expect(!result.isError); return "PASS"
+        })
+        #expect(await model.sendAgentMessage(senderID: sender.id, recipientID: recipient.id, text: "Create the collaboration project"))
+        let approval = try await pending(model, tool: "update_state")
+        expectNoDifference(approval.action.context.metadata["agentName"], recipient.name)
+        await model.resolveGroupApproval(approval, groupID: approval.action.context.conversationID, approve: true)
+        try await waitForMailbox(model)
+        let project = try #require(storedProjects(root).first)
+        expectNoDifference(project.memberIDs, [recipient.id])
+    }
+
+    @Test func projectApprovalRendersInSevenLanguagesAndBothAppearances() throws {
+        let output = ProcessInfo.processInfo.environment["FILICON_UI_REVIEW_OUTPUT"].map { URL(fileURLWithPath: $0) }
+        for language in ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"] {
+            for dark in [false, true] {
+                try FiliconLocalization.$languageOverride.withValue(language) {
+                    if language != "en" {
+                        for key in ["Collaboration project membership", "Create and join project", "Join existing project", "Leave project",
+                            "Project member", "Not a project member", "Project member count", AgentProjectApprovalDetails.notice,
+                            AgentProjectError.invalid.rawValue, AgentProjectError.unavailable.rawValue, AgentProjectError.limit.rawValue,
+                            AgentProjectError.unchanged.rawValue, AgentProjectError.stale.rawValue] {
+                            #expect(FiliconLocalization.string(key) != key)
+                        }
+                    }
+                    for mode in ["create", "join", "leave"] {
+                        let metadata = ["agentName": "Designer", "projectSlug": "design-system", "projectName": "Product design system",
+                            "projectDescription": "Shared project metadata for a responsive, accessible website. No private memory.",
+                            "projectCreates": String(mode == "create"), "projectAction": mode,
+                            "projectBeforeJoined": String(mode == "leave"), "projectAfterJoined": String(mode != "leave"),
+                            "projectBeforeCount": mode == "create" ? "0" : "2",
+                            "projectAfterCount": mode == "create" ? "1" : mode == "leave" ? "1" : "3"]
+                        let host = NSHostingView(rootView: AgentProjectApprovalDetails(metadata: metadata)
+                            .padding(20).frame(width: 380).background(FiliconTheme.canvas)
+                            .environment(\.locale, Locale(identifier: language)).environment(\.colorScheme, dark ? .dark : .light))
+                        host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+                        host.frame = .init(x: 0, y: 0, width: 380, height: 820); host.layoutSubtreeIfNeeded()
+                        #expect(host.fittingSize.height <= 820)
+                        let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                        host.cacheDisplay(in: host.bounds, to: bitmap)
+                        let data = try #require(bitmap.representation(using: .png, properties: [:]))
+                        if let output {
+                            try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+                            try data.write(to: output.appending(path: "project-\(mode)-\(language)-\(dark ? "dark" : "light").png"))
+                        }
+                    }
+                }
+            }
+        }
     }
 
     @Test(arguments: ["approve", "deny", "stop", "account", "stale", "archive", "save-failure"])
