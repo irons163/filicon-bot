@@ -1,6 +1,22 @@
 # 協作能力核對紀錄（更新至 2026-09-22）
 
-## 本輪增量：一般群組的折疊討論串（2026-09-22）
+## 本輪增量：人類群組回覆與同回合自動串接（2026-09-22）
+
+先提交折疊投影為 `ca5a107`（`feat: fold quoted group replies into discussion threads`）。本批對照 reconstructed 的 `send-thread-stamping.ts`／`turn-runtime.ts`：人類的 reply context 綁定該回合，未明示 reply_to 的模型訊息沿用該討論串。本機採原生群組回合，回應引用當次人類訊息、仍歸到同一 root；不模擬原版獨立 session／fork。
+
+- 群組訊息 hover 列／文字 context menu 新增「回覆」。輸入框上方顯示原文、作者、取消與同群組／@mention／非核准說明；Esc 優先關閉 mention menu，再取消引用。選擇跟各群組的文字／圖片草稿分開保留，帳號切換清除；送出失敗或使用者已改選時不清除草稿。原文不可用時保留預覽和取消入口，不假送到主線。
+- `postUserMessage` 在 await 後重新檢查成員／epoch，再驗證完整群組投影中的唯一有效 target，引用與本文同次保存。損壞／循環／前向／空白／狀態／外群／未知引用不回退普通發送，保存失敗恢復完整歷史。圖片限定既有當次 host handles，圖片本身可以是回覆內容；引用預覽僅顯示 Image 字樣，不讀舊檔案。
+- 正常人類回覆回合的成員 final fallback／SendMessage 文字、核准圖片及 widget 自動引用當次人類訊息。明確的合法 reply_to 優先；一般新訊息解除串接。host 預設目標在工具執行前解析，進入同一 payload／冪等回條，不於成功後偷偷改 ID；無效預設拒絕，不捏造成功。Stop／帳號／成員撤銷及兩次額度仍有效，背景／delegated wake 不繼承人類討論串。
+- 選中的舊原文超過 prompt 最近 40 筆時，另附最多 2,000 字的結構化 quotation；明示不是新指令或權限，舊圖片只提供 omittedImageCount、不載入 bytes。提問答案仍只續接 asker、不是工具核准；對已在串中的問題回答／略過會把人類答案及後續成員回應留在該串，不等於任意 quote 自動回答問題。
+- SwiftUI 技能維持元件只呈現／派送，選擇驗證及自動串接在 host service／投影中；Swift 測試／CustomDump 技能新增 `GroupUserReplyTests` 五項測試（含文字／圖片單獨／explicit/fallback 參數），App 四項測試涵蓋原作者與 @成員分離、文字／圖片／提問、回條、重開、過期 target、超出 prompt 的舊原文與三種 lifecycle 撤銷。更新既有 threaded-question 整體斷言，保留原文、唯一 asker、無額外核准檢查；工具與實際檔案均使用隔離 fixture。
+
+驗收證據：`.build/validation/group-composer-thread/`。聚焦 **39 Swift Testing／5 suites** 通過（`focused-3.log`）；完整**預設並行** **135 XCTest、1,097 Swift Testing／123 suites** 通過（App **359／48 suites，34.831 秒**）。兩項 opt-in live Codex 仍跳過，沒有提高逾時或排除 UI。七語言各 **1,646 keys／零缺漏**。14 張 `ui/group-reply-composer-*.png` 簽頭／CRC／完整檔名及尺寸驗證通過：760-pixel 寬、430／482-pixel 高；繁中淺色及法文暗色目視抽查完整，未做逐張人工或真實 App 點擊。初次舊問答測試仍期待答案無 replyTo，已改為保存串接及後續 root 的完整斷言；一次新 fixture 誤用 AppModel 私有 coordinator，改用注入的隔離 coordinator，不放寬存取。畫面初始高度下限 220 points 對中文實際 215 points 過嚴，檢查完整畫面後調為 200，未改 UI 內容／字級或逾時。
+
+最終完整並行回歸 `full-parallel-final.log` 再次通過同樣數量（App 359／48 suites，39.768 秒），包含圖片原文與明確 null 引用拒絕。原生 Debug 建置、deep strict codesign 與封裝檢查皆通過（`native-final.log`、`codesign-final.log`、`package-final.log`）；此為 ad-hoc Debug，非發佈公證或 live XPC 驗收。不 push、不啟動／重啟 App 或 Xcode、不變更真實帳號／聊天／憑證。尚缺跨 session/fork、chip、背景引用／提問、外部 channel、獨立附件、安全憑證請求及供應商 cloud-agent 卡等，整體仍 **43 complete／4 partial／1 NA**。
+
+## 已提交增量：一般群組的折疊討論串（2026-09-22）
+
+本批已提交為 `ca5a107`。
 
 先提交訊息回條增量為 `36ec1fe`。對照本機非官方 reconstructed 的 `source/shared/transcript-threads.ts` 及 `source/host/extensions/transcript/send-thread-stamping.ts`：巢狀引用歸到最初 root，回覆計數及展開不等於新增成員或工具授權。本批只還原群組顯示投影，不假稱 composer／session 自動 thread stamping 已完成。
 

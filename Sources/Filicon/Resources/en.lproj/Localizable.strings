@@ -1653,3 +1653,5 @@
 "Hide thread replies" = "Hide thread replies";
 "Show thread replies" = "Show thread replies";
 "Kept open while a question or tool is pending." = "Kept open while a question or tool is pending.";
+"Cancel reply" = "Cancel reply";
+"Replies stay in this group. @mentions choose responders; replying is not tool approval." = "Replies stay in this group. @mentions choose responders; replying is not tool approval.";

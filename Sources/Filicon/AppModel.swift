@@ -3449,6 +3449,7 @@ final class AppModel: ObservableObject {
     }
 
     func sendGroupMessage(groupID: UUID, text: String, images: [AttachmentMetadata] = [],
+                          replyToMessageID: UUID? = nil,
                           questionReply: (UUID, AgentQuestionAnswer)? = nil,
                           onPosted: @MainActor () -> Void = {}) async {
         guard let groupService, !agentMessagingAccountTransition,
@@ -3456,7 +3457,7 @@ final class AppModel: ObservableObject {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty || !images.isEmpty || questionReply != nil,
               let group = groups.first(where: { $0.id == groupID }), !group.memberIDs.isEmpty else { return }
-        guard questionReply == nil || images.isEmpty else { return }
+        guard questionReply == nil || (images.isEmpty && replyToMessageID == nil) else { return }
         let generation = autoReviewAccountGeneration
         let questionLifetime = AgentPublicationLifetime()
         groupQuestionLifetimes[groupID] = questionLifetime
@@ -3501,7 +3502,8 @@ final class AppModel: ObservableObject {
                 posted = try await groupService.answerQuestion(groupID: groupID, messageID: messageID, answer: answer,
                     accountID: settings.accountScope ?? "local", lifetime: questionLifetime)
             } else {
-                posted = try await groupService.postUserMessage(text, groupID: groupID, images: images, expectedMemberIDs: group.memberIDs)
+                posted = try await groupService.postUserMessage(text, groupID: groupID, images: images,
+                    expectedMemberIDs: group.memberIDs, replyToMessageID: replyToMessageID)
             }
             guard generation == autoReviewAccountGeneration, !agentMessagingAccountTransition else { throw CancellationError() }
             onPosted()

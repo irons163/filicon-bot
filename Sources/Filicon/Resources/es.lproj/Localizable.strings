@@ -1653,3 +1653,5 @@
 "Hide thread replies" = "Ocultar respuestas del hilo";
 "Show thread replies" = "Mostrar respuestas del hilo";
 "Kept open while a question or tool is pending." = "Se mantiene abierto mientras haya una pregunta o herramienta pendiente.";
+"Cancel reply" = "Cancelar respuesta";
+"Replies stay in this group. @mentions choose responders; replying is not tool approval." = "Las respuestas permanecen en este grupo. Las @menciones eligen quién responde; responder no autoriza herramientas.";

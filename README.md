@@ -130,8 +130,21 @@ their original quotes. Opening a quote or inline reference expands its thread
 before navigation. Pending questions and tools keep their thread open; collapsing
 never removes messages or changes permissions. Broken, cyclic, ambiguous or
 foreign references remain visible on the main timeline. Expansion is local UI
-state, not a persisted message edit. This is native group-thread presentation,
-not the reference's automatic composer/session thread stamping or exact chip UI.
+state, not a persisted message edit. Hover over a message or open its context menu
+and choose **Reply** to quote it from the group composer. The preview can be
+cancelled with its close button or Escape (after closing an open mention menu).
+Reply selection stays with that group's draft and clears on account changes.
+Only a successful save clears the sent selection; an unavailable target never
+silently becomes an ordinary message. Replies stay in the same group, and
+@mentions still determine responding members, not the original message's author.
+During this human reply turn, member publications and final responses automatically
+reply to the current human message unless an explicit valid `reply_to` overrides
+it. Answering a threaded question stays in that thread and resumes only its asker;
+an ordinary new message starts on the main timeline again. Old selected messages
+outside the 40-entry prompt get a bounded quotation, never their attachment bytes.
+Image-only human replies remain in their thread, with an Image placeholder in
+the quote; image publication still requires separate approval. This is native
+group-turn threading, not cross-session forks or the reference's exact chip UI.
 Standalone attachments, masked secret requests and vendor-specific cloud-agent
 cards also remain outside this `SendMessage` implementation; parity is incomplete.
 

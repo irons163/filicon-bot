@@ -364,7 +364,7 @@ struct WorkspaceFolderAccessTests {
                         text: (index == 0 ? "Beginning of history. " : "History message \(index). ") + String(repeating: "Test content. ", count: 20))
         }
         let height = width < 700 ? 420.0 : 650.0
-        let host = NSHostingView(rootView: GroupConversationView(group: group, draft: .constant(""), images: .constant([]))
+        let host = NSHostingView(rootView: GroupConversationView(group: group, draft: .constant(""), images: .constant([]), replyTargetID: .constant(nil))
             .environmentObject(model).environment(\.locale, Locale(identifier: "en"))
             .environment(\.colorScheme, dark ? .dark : .light)
             .frame(width: width, height: height))

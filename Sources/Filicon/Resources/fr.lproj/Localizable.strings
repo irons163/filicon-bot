@@ -1653,3 +1653,5 @@
 "Hide thread replies" = "Masquer les réponses du fil";
 "Show thread replies" = "Afficher les réponses du fil";
 "Kept open while a question or tool is pending." = "Le fil reste ouvert tant qu’une question ou un outil est en attente.";
+"Cancel reply" = "Annuler la réponse";
+"Replies stay in this group. @mentions choose responders; replying is not tool approval." = "Les réponses restent dans ce groupe. Les @mentions choisissent les répondants ; répondre n’autorise pas les outils.";

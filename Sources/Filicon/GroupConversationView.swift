@@ -11,12 +11,13 @@ struct GroupWorkspaceView: View {
     @State private var showingNewGroup = false
     @State private var drafts = GroupComposerDrafts()
     @State private var imageDrafts = GroupImageDrafts()
+    @State private var replyDrafts: [UUID: UUID] = [:]
 
     var body: some View {
         let _ = locale.identifier
         Group {
             if let group = model.groups.first(where: { $0.id == model.selectedGroupID }) ?? model.groups.first {
-                GroupConversationView(group: group, draft: $drafts[group.id], images: $imageDrafts[group.id])
+                GroupConversationView(group: group, draft: $drafts[group.id], images: $imageDrafts[group.id], replyTargetID: $replyDrafts[group.id])
                     .id(group.id)
             } else {
                 VStack(spacing: 0) {
@@ -48,7 +49,7 @@ struct GroupWorkspaceView: View {
         .background(FiliconTheme.canvas)
         .sheet(isPresented: $showingNewGroup) { CreateGroupSheet() }
         .onChange(of: model.settings.accountScope) {
-            drafts = GroupComposerDrafts(); imageDrafts = GroupImageDrafts()
+            drafts = GroupComposerDrafts(); imageDrafts = GroupImageDrafts(); replyDrafts = [:]
         }
     }
 }
@@ -59,6 +60,7 @@ struct GroupConversationView: View {
     let group: AgentGroup
     @Binding var draft: String
     @Binding var images: [AttachmentMetadata]
+    @Binding var replyTargetID: UUID?
     @State private var inspectorVisible = true
     @State private var compactInspectorPresented = false
     @State private var composerSelection = NSRange(location: 0, length: 0)
@@ -215,6 +217,7 @@ struct GroupConversationView: View {
             replySource: messages.first { $0.id == message.replyToMessageID && $0.groupID == group.id && $0.memberOutcome == nil },
             replyAuthor: replyAuthor(for: message), inlineReferences: references,
             onShowReply: { threadPresentation.reveal($0, in: threads) },
+            onReply: threads.canReply(to: message.id) ? { beginReply(to: message.id) } : nil,
             onReaction: { Task { await model.toggleGroupReaction(groupID: group.id, messageID: message.id, emoji: "👍") } }
         )
     }
@@ -259,6 +262,12 @@ struct GroupConversationView: View {
                 }.disabled(isRunning || posting)
             }
             if mentionQuery != nil { mentionMenu }
+            if let replyTargetID {
+                GroupReplyComposerPreview(original: replyTarget(replyTargetID), author: authorName(replyTarget(replyTargetID)),
+                    onOpen: { threadPresentation.reveal(replyTargetID, in: GroupThreadProjection(history: messages, groupID: group.id)) },
+                    onCancel: cancelReply)
+                    .disabled(posting)
+            }
             HStack(alignment: .bottom, spacing: 10) {
                 FiliconIconButton(label: l10n("Attach images…"), systemName: "photo.badge.plus", size: 30, action: attachImages)
                     .disabled(isRunning || posting || importingImages)
@@ -292,6 +301,25 @@ struct GroupConversationView: View {
         guard let senderID = original.senderID else { return l10n("You") }
         return model.agents.first(where: { $0.id == senderID })?.name ?? l10n("Agent")
     }
+
+    private func replyTarget(_ id: UUID) -> RoomMessage? {
+        guard GroupThreadProjection(history: messages, groupID: group.id).canReply(to: id) else { return nil }
+        return messages.first { $0.id == id && $0.groupID == group.id }
+    }
+
+    private func authorName(_ message: RoomMessage?) -> String {
+        guard let message else { return l10n("Agent") }
+        guard let senderID = message.senderID else { return l10n("You") }
+        return model.agents.first { $0.id == senderID }?.name ?? l10n("Agent")
+    }
+
+    private func beginReply(to id: UUID) {
+        guard !posting, replyTarget(id) != nil else { return }
+        replyTargetID = id
+        composerFocused = true
+    }
+
+    private func cancelReply() { replyTargetID = nil; composerFocused = true }
 
     private var mentionMenu: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -366,7 +394,11 @@ struct GroupConversationView: View {
             guard open, !candidates.isEmpty else { return false }
             selectedMention = GroupMentionCompletion.movedSelection(selectedMention, by: command == .next ? 1 : -1, count: candidates.count)
         case .dismiss:
-            guard open else { return false }
+            guard open else {
+                guard replyTargetID != nil, !posting else { return false }
+                cancelReply()
+                return true
+            }
             dismissedMention = query
         case .accept, .submit:
             if open {
@@ -388,14 +420,16 @@ struct GroupConversationView: View {
         }
         let value = draft
         let selectedImages = images
+        let selectedReply = replyTargetID
         posting = true
         Task {
             defer { posting = false }
-            await model.sendGroupMessage(groupID: group.id, text: value, images: selectedImages) {
+            await model.sendGroupMessage(groupID: group.id, text: value, images: selectedImages, replyToMessageID: selectedReply) {
                 // Preserve the draft if validation/persistence failed, and never
                 // clear text the user started editing while preflight awaited.
                 if draft == value { draft = ""; composerSelection = NSRange(location: 0, length: 0) }
                 if images == selectedImages { images = [] }
+                if replyTargetID == selectedReply { replyTargetID = nil }
                 dismissedMention = nil
             }
         }
@@ -447,6 +481,24 @@ struct GroupReplyThread<ReplyContent: View>: View {
                 }
             }
         }
+    }
+}
+
+struct GroupReplyComposerPreview: View {
+    let original: RoomMessage?
+    let author: String
+    let onOpen: () -> Void
+    let onCancel: () -> Void
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(alignment: .top, spacing: 8) {
+                GroupReplyPreview(original: original, author: author, onOpen: onOpen)
+                FiliconIconButton(label: l10n("Cancel reply"), systemName: "xmark", size: 26, action: onCancel)
+            }
+            Text(l10n("Replies stay in this group. @mentions choose responders; replying is not tool approval."))
+                .font(.caption2).foregroundStyle(FiliconTheme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }.accessibilityIdentifier("group-reply-composer-preview")
     }
 }
 
@@ -507,6 +559,7 @@ struct GroupMessageBubble: View {
     var replyAuthor: String?
     var inlineReferences: GroupMessageReferenceDirectory?
     var onShowReply: ((UUID) -> Void)?
+    var onReply: (() -> Void)?
     let onReaction: () -> Void
     @State private var hovering = false
     private var isUser: Bool { message.senderID == nil }
@@ -547,6 +600,7 @@ struct GroupMessageBubble: View {
                     .background(isUser ? FiliconTheme.userBubble : FiliconTheme.incomingBubble, in: RoundedRectangle(cornerRadius: 16))
                     .contextMenu {
                         Button(FiliconLocalization.string("Copy"), action: copy)
+                        if let onReply { Button(l10n("Reply"), systemImage: "arrowshape.turn.up.left", action: onReply) }
                         if !isUser { Button("👍", action: onReaction) }
                     }
                 }
@@ -578,6 +632,10 @@ struct GroupMessageBubble: View {
                 }
                 HStack(spacing: 8) {
                     Text(message.createdAt, style: .time).font(.system(size: 9))
+                    if let onReply {
+                        Button(l10n("Reply"), systemImage: "arrowshape.turn.up.left", action: onReply)
+                            .buttonStyle(.plain).font(.system(size: 10))
+                    }
                     if !isUser && message.memberOutcome == nil { Button("👍", action: onReaction).buttonStyle(.plain).font(.system(size: 10)) }
                 }
                 .foregroundStyle(FiliconTheme.textTertiary)
@@ -624,7 +682,7 @@ struct GroupReplyPreview: View {
                     Text(l10n("Replying to")).font(.caption2)
                     if let original {
                         Text(author).font(.caption.weight(.semibold)).lineLimit(1)
-                        Text(String(original.text.prefix(240))).font(.caption).lineLimit(3)
+                        Text(original.text.isEmpty && !(original.images ?? []).isEmpty ? l10n("Image") : String(original.text.prefix(240))).font(.caption).lineLimit(3)
                             .multilineTextAlignment(.leading)
                     } else { Text(l10n("Original message unavailable")).font(.caption) }
                 }

@@ -11,7 +11,11 @@ public struct GroupThreadProjection: Sendable {
     public let roots: [Entry]
     private let children: [UUID: [Entry]]
     private let rootByMessage: [UUID: UUID]
+    private let replyableIDs: Set<UUID>
     public let attentionRootIDs: Set<UUID>
+    /// Only an explicit human reply starts a reply-scoped turn. Quoting does not
+    /// change responders; a newer ordinary request always leaves that thread.
+    public let defaultReplyTargetID: UUID?
 
     public init(history: [RoomMessage], groupID: UUID) {
         let messages = history.filter { $0.groupID == groupID }
@@ -44,13 +48,18 @@ public struct GroupThreadProjection: Sendable {
         }
         self.roots = roots; self.children = children
         self.rootByMessage = rootByMessage; attentionRootIDs = attention
+        replyableIDs = threadableIDs
+        defaultReplyTargetID = messages.last(where: { $0.senderID == nil }).flatMap {
+            $0.replyToMessageID != nil && threadableIDs.contains($0.id) ? $0.id : nil
+        }
     }
 
     public func replies(to rootID: UUID) -> [Entry] { children[rootID] ?? [] }
     public func root(containing messageID: UUID) -> UUID? { rootByMessage[messageID] }
+    public func canReply(to messageID: UUID) -> Bool { replyableIDs.contains(messageID) }
 
     private static func canThread(_ message: RoomMessage) -> Bool {
-        message.memberOutcome == nil && !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        message.memberOutcome == nil && (!message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !(message.images ?? []).isEmpty)
     }
 }
 

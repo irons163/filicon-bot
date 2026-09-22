@@ -138,12 +138,14 @@ public actor AgentMessagingSession {
 
     public func savedGroupPublisher(for senderID: UUID, userMessageID: UUID, replyHistory: [RoomMessage],
                                     questionAccountID: String?, memberIDs: [UUID],
+                                    defaultReplyToMessageID: UUID? = nil,
                                     publish: @escaping @Sendable (GroupAgentPublication) async throws -> RoomMessage?) async throws -> AgentUserMessageTool {
         let images = try await availableImages(senderID: senderID, replyTo: nil, groupUserMessageID: userMessageID)
         guard let sender = await agents.profile(id: senderID), sender.archivedAt == nil else { throw AgentMessagingError.invalidRecipient }
         try checkOpen()
         return AgentUserMessageTool(conversationID: originConversationID, senderID: senderID, replyHistory: replyHistory,
-            supportsQuestions: questionAccountID != nil, availableImages: images, imageStore: imageStore,
+            supportsQuestions: questionAccountID != nil, defaultReplyToMessageID: defaultReplyToMessageID,
+            availableImages: images, imageStore: imageStore,
             authorizeImages: { [self] text, images, call, context in
                 try await checkOpen()
                 try await authorizePublication(sender, text, images, call, context)

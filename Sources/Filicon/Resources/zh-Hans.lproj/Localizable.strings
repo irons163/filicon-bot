@@ -1653,3 +1653,5 @@
 "Hide thread replies" = "折叠讨论串回复";
 "Show thread replies" = "展开讨论串回复";
 "Kept open while a question or tool is pending." = "问题或工具仍在等待处理，暂时保持展开。";
+"Cancel reply" = "取消回复";
+"Replies stay in this group. @mentions choose responders; replying is not tool approval." = "回复仍在此群组中，通过 @提及选择回复成员；回复不代表批准工具。";

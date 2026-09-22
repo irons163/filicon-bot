@@ -86,6 +86,178 @@ private struct GroupReplyAppProvider: InteractiveToolProvider {
 
 @Suite("Group reply app integration", .timeLimit(.minutes(1)))
 @MainActor struct GroupReplyAppTests {
+    @Test(arguments: [false, true], [false, true])
+    func humanReplyKeepsMentionsReceiptsAndQuestionSuspension(imageInput: Bool, question: Bool) async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "filicon-human-reply-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+        let engineer = try #require(await model.createAgent(name: "Engineer", summary: "", instructions: "", providerID: "group-reply-fixture", modelID: "test"))
+        let designer = try #require(await model.createAgent(name: "Designer", summary: "", instructions: "", providerID: "group-reply-fixture", modelID: "test"))
+        #expect(await model.createGroup(name: "Team", summary: "", memberIDs: [engineer.id, designer.id]))
+        let group = try #require(model.groups.first)
+        await model.registry.register(GroupReplyAppProvider { _, _ in "Design proposal" })
+        await model.sendGroupMessage(groupID: group.id, text: "@Designer propose a design")
+        let original = try #require(model.groupMessages[group.id]?.first { $0.senderID == designer.id && $0.text == "Design proposal" })
+        var images: [AttachmentMetadata] = []
+        if imageInput {
+            let bitmap = try #require(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 2, pixelsHigh: 2,
+                bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+            for y in 0..<2 { for x in 0..<2 { bitmap.setColor(.blue, atX: x, y: y) } }
+            let file = root.appending(path: "reply.png")
+            try #require(bitmap.representation(using: .png, properties: [:])).write(to: file)
+            images = try await model.importAgentMessageImages([file])
+        }
+        let probe = GroupReplyAppProbe()
+        await model.registry.register(GroupReplyAppProvider { request, execute in
+            let count = await probe.record(request)
+            expectNoDifference(count, 1)
+            #expect(request.messages.first?.text.contains(engineer.id.uuidString) == true)
+            #expect(request.messages.contains { $0.text.contains("The user selected this earlier message") && $0.text.contains(original.id.uuidString) })
+            #expect(request.messages.contains { $0.text.contains("Omitted reply_to automatically replies") })
+            expectNoDifference(request.attachmentsByMessageID.isEmpty, !imageInput)
+            let call = try NormalizedToolCall(id: "reply", name: "SendMessage", argumentsJSON: Data((question
+                ? #"{"type":"widget","widget":{"prompt":"Proceed?","options":[{"label":"Continue"}]}}"#
+                : #"{"text":"Engineering review"}"#).utf8))
+            do {
+                await probe.record(try GroupReplySavedReceipt.decode(try await execute(call)))
+                #expect(!question)
+            } catch let suspension as ToolTurnSuspension {
+                await probe.record(try GroupReplySavedReceipt.decode(suspension.result))
+                #expect(question); throw suspension
+            }
+            return "Must not duplicate the published text"
+        })
+        var posted = false
+        await model.sendGroupMessage(groupID: group.id, text: "@Engineer review this", images: images, replyToMessageID: original.id) { posted = true }
+        #expect(posted && model.errorMessage == nil && model.runningGroups.isEmpty)
+        #expect(model.pendingAutoReviewApprovals.isEmpty)
+        let history = model.groupMessages[group.id, default: []]
+        let human = try #require(history.last { $0.senderID == nil })
+        expectNoDifference(human.replyToMessageID, original.id)
+        #expect(human.questionReplyTo == nil)
+        let receipts = await probe.receipts
+        let saved = try #require(history.first { $0.id == receipts.first?.messageID })
+        expectNoDifference(saved.senderID, engineer.id)
+        expectNoDifference(saved.replyToMessageID, human.id)
+        expectNoDifference(saved.question?.isPending, question ? true : nil)
+        #expect(saved.images == nil)
+        let threads = GroupThreadProjection(history: history, groupID: group.id)
+        expectNoDifference(threads.root(containing: saved.id), original.id)
+        expectNoDifference(threads.attentionRootIDs.contains(original.id), question)
+        let restored = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+        await restored.reloadWorkspaceData()
+        expectNoDifference(restored.groupMessages[group.id, default: []].map(\.replyToMessageID), history.map(\.replyToMessageID))
+        let count = restored.groupMessages[group.id, default: []].count
+        var invalidPosted = false
+        await restored.sendGroupMessage(groupID: group.id, text: "Must remain a draft", replyToMessageID: UUID()) { invalidPosted = true }
+        #expect(!invalidPosted && restored.errorMessage != nil && restored.runningGroups.isEmpty)
+        expectNoDifference(restored.groupMessages[group.id, default: []].count, count)
+    }
+
+    @Test func selectedOlderMessageIsBoundedContextWithoutLoadingItsImages() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "filicon-old-reply-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+        let agent = AgentProfile(name: "Engineer", providerID: "group-reply-fixture", modelID: "test")
+        let group = AgentGroup(name: "Team", memberIDs: [agent.id])
+        let original = RoomMessage(groupID: group.id, senderID: nil, text: "Unique old proposal " + String(repeating: "x", count: 5_000),
+            images: [.init(id: "not-loaded", filename: "private.png", mimeType: "image/png", byteCount: 1, kind: .image)])
+        let middle = (0..<45).map { RoomMessage(groupID: group.id, senderID: nil, text: "Later \($0)") }
+        var current = RoomMessage(groupID: group.id, senderID: nil, text: "Review the selected proposal")
+        current.replyToMessageID = original.id
+        let probe = GroupReplyAppProbe()
+        await model.registry.register(GroupReplyAppProvider { request, _ in
+            _ = await probe.record(request)
+            let quote = try #require(request.messages.first { $0.text.contains("The user selected this earlier message") })
+            #expect(quote.text.contains(original.id.uuidString) && quote.text.contains("Unique old proposal"))
+            #expect(quote.text.count < 3_000 && !quote.text.contains(original.text))
+            #expect(quote.text.contains("omittedImageCount") && request.attachmentsByMessageID.isEmpty)
+            return "Reviewed"
+        })
+        let responder = GroupConversationResponder(groupID: group.id, registry: model.registry,
+            coordinator: TurnCoordinator(registry: model.registry, toolCatalog: ToolCatalog()),
+            questionAccountID: "local", questionLifetime: AgentPublicationLifetime())
+        let context = GroupTurnContext(group: group, members: [.init(agent)], respondingMemberIDs: [agent.id], round: 0, newMessageIDs: [current.id])
+        let history = [original] + middle + [current]
+        let results = try await responder.respond(agent: agent, history: history,
+            context: context,
+            onTools: { _ in }, onSavedPublication: { _ in nil })
+        expectNoDifference(results, ["Reviewed"])
+        let requests = await probe.requests
+        expectNoDifference(requests.count, 1)
+    }
+
+    @Test(.serialized, arguments: ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"])
+    func replyComposerPreviewRendersAvailableAndMissingTargets(language: String) async throws {
+        for dark in [false, true] {
+            try await withUIRenderTurn(language: language) {
+                if language != "en" {
+                    for key in ["Cancel reply", "Replies stay in this group. @mentions choose responders; replying is not tool approval."] {
+                        #expect(FiliconLocalization.string(key) != key)
+                    }
+                }
+                let original = RoomMessage(groupID: UUID(), senderID: UUID(), text: "Proposal with a long name and enough content to wrap onto multiple lines for review.")
+                let host = NSHostingView(rootView: VStack(spacing: 20) {
+                    GroupReplyComposerPreview(original: original, author: "Designer", onOpen: {}, onCancel: {})
+                    GroupReplyComposerPreview(original: nil, author: "Designer", onOpen: {}, onCancel: {})
+                }.padding(16).frame(width: 380).background(FiliconTheme.canvas)
+                    .environment(\.locale, Locale(identifier: language)).environment(\.colorScheme, dark ? .dark : .light))
+                host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+                let size = host.fittingSize
+                expectNoDifference(size.width, 380)
+                #expect(size.height > 200 && size.height < 500)
+                host.frame = .init(origin: .zero, size: size); host.layoutSubtreeIfNeeded()
+                let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                host.cacheDisplay(in: host.bounds, to: bitmap)
+                if let output = ProcessInfo.processInfo.environment["FILICON_UI_REVIEW_OUTPUT"] {
+                    let directory = URL(fileURLWithPath: output)
+                    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                    try #require(bitmap.representation(using: .png, properties: [:])).write(to: directory.appending(path: "group-reply-composer-\(language)-\(dark ? "dark" : "light").png"))
+                }
+            }
+        }
+    }
+
+    @Test(arguments: ["stop", "account", "members"])
+    func automaticThreadPublicationIsRevokedWithItsOrigin(mode: String) async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "filicon-auto-thread-stop-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+        let agent = try #require(await model.createAgent(name: "Engineer", summary: "", instructions: "", providerID: "group-reply-fixture", modelID: "test"))
+        #expect(await model.createGroup(name: "Team", summary: "", memberIDs: [agent.id]))
+        let group = try #require(model.groups.first)
+        await model.registry.register(GroupReplyAppProvider { _, _ in "PASS" })
+        await model.sendGroupMessage(groupID: group.id, text: "Original")
+        let original = try #require(model.groupMessages[group.id]?.first { $0.text == "Original" })
+        let (started, signal) = AsyncStream<Void>.makeStream()
+        let (blocked, release) = AsyncStream<Void>.makeStream()
+        defer { signal.finish(); release.finish() }
+        await model.registry.register(GroupReplyAppProvider { request, execute in
+            #expect(request.messages.contains { $0.text.contains("Omitted reply_to automatically replies") })
+            signal.yield(()); signal.finish()
+            for await _ in blocked { break }
+            do {
+                let result = try await execute(.init(id: "late", name: "SendMessage", argumentsJSON: Data(#"{"text":"Late automatic publication"}"#.utf8)))
+                #expect(result.isError)
+            } catch {}
+            return "PASS"
+        })
+        let sending = Task { await model.sendGroupMessage(groupID: group.id, text: "Review this", replyToMessageID: original.id) }
+        defer { sending.cancel() }
+        var iterator = started.makeAsyncIterator()
+        try #require(await iterator.next() != nil)
+        if mode == "stop" { await model.stopGroup(id: group.id) }
+        if mode == "account" { await model.cancelAutoReviewApprovals(nextAccountID: "other") }
+        if mode == "members" { await model.updateGroupMembers(groupID: group.id, memberIDs: []) }
+        release.finish()
+        await sending.value
+        await model.reloadWorkspaceData()
+        let history = model.groupMessages[group.id, default: []]
+        #expect(history.allSatisfy { $0.text != "Late automatic publication" })
+        expectNoDifference(history.filter { $0.senderID == nil }.map(\.replyToMessageID), [nil, original.id])
+        #expect(model.runningGroups.isEmpty)
+    }
+
     @Test(.serialized, arguments: ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"])
     func foldedExpandedAndPendingThreadsRenderInSevenLanguages(language: String) async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-thread-render-\(UUID())")
@@ -542,7 +714,10 @@ private struct GroupReplyAppProvider: InteractiveToolProvider {
         let answers = messages.filter { $0.questionReplyTo == question.id }
         expectNoDifference(answers.count, 1)
         expectNoDifference(answers.first?.shortAddress, "t2u")
-        expectNoDifference(answers.first?.replyToMessageID, nil)
+        expectNoDifference(answers.first?.replyToMessageID, question.id)
+        expectNoDifference(messages.first { $0.text == "Decision noted." }?.replyToMessageID, answers.first?.id)
+        let threads = GroupThreadProjection(history: messages, groupID: group.id)
+        expectNoDifference(threads.root(containing: try #require(answers.first).id), original.id)
         let requests = await probe.requests
         expectNoDifference(requests.count, 1)
         let after = await restored.localToolPermissionPolicy.effectivePermission(for: .writeFile)

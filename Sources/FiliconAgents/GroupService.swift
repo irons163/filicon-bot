@@ -229,7 +229,7 @@ public actor GroupService {
     }
 
     public func postUserMessage(_ text: String, groupID: UUID, images: [AttachmentMetadata] = [],
-                                expectedMemberIDs: [UUID]? = nil) async throws -> RoomMessage {
+                                expectedMemberIDs: [UUID]? = nil, replyToMessageID: UUID? = nil) async throws -> RoomMessage {
         // Truncating can remove a trailing @mention and turn a targeted image
         // request into a broadcast. Reject oversized input without posting it.
         guard text.count <= 8_000 else { throw AgentServiceError.messageTooLong }
@@ -244,7 +244,13 @@ public actor GroupService {
         if let unknown = Self.unknownMentions(in: text, members: members).first {
             throw AgentServiceError.unknownGroupMention(unknown)
         }
-        let message = RoomMessage(groupID: groupID, senderID: nil, text: text, images: images)
+        if let replyToMessageID {
+            guard GroupThreadProjection(history: state.roomMessages, groupID: groupID).canReply(to: replyToMessageID) else {
+                throw GroupReplyError.unavailable
+            }
+        }
+        var message = RoomMessage(groupID: groupID, senderID: nil, text: text, images: images)
+        message.replyToMessageID = replyToMessageID
         let previous = state.roomMessages
         retireQuestions(groupID: groupID, onlyMoveOn: true)
         state.roomMessages.append(message)
@@ -269,6 +275,10 @@ public actor GroupService {
               let index = state.roomMessages.firstIndex(where: { $0 == original }) else { throw AgentQuestionError.unavailable }
         var reply = RoomMessage(groupID: groupID, senderID: nil, text: text)
         reply.questionReplyTo = original.id
+        if original.replyToMessageID != nil,
+           GroupThreadProjection(history: state.roomMessages, groupID: groupID).canReply(to: original.id) {
+            reply.replyToMessageID = original.id
+        }
         try lifetime.commit {
             let previous = state.roomMessages
             state.roomMessages[index].question?.answer = answer
@@ -315,6 +325,8 @@ public actor GroupService {
         var publishedTexts: [UUID: Set<String>] = [:]
         var firstFailure: (any Error)?
         let initialHistory = state.roomMessages.filter { $0.groupID == groupID }
+        let threadTarget = delegatedAudience == nil
+            ? GroupThreadProjection(history: initialHistory, groupID: groupID).defaultReplyTargetID : nil
         let questionRecipient: UUID? = initialHistory.last(where: { $0.senderID == nil }).flatMap { reply in
             guard let questionID = reply.questionReplyTo,
                   let question = initialHistory.first(where: { $0.id == questionID }),
@@ -356,7 +368,9 @@ public actor GroupService {
                     newMessageIDs: Set(unread.map(\.id))
                 )
                 let responses: [String]
-                let activityMessage = RoomMessage(groupID: groupID, senderID: memberID, text: "")
+                var activity = RoomMessage(groupID: groupID, senderID: memberID, text: "")
+                activity.replyToMessageID = threadTarget
+                let activityMessage = activity
                 let remainingBudget = Self.maximumMemberMessages - total
                 let previousTexts = publishedTexts[memberID, default: []]
                 defer { explicitReplies[activityMessage.id] = nil }
@@ -422,6 +436,7 @@ public actor GroupService {
                     let fingerprint = boundedText.split(whereSeparator: \.isWhitespace).joined(separator: " ")
                     guard publishedTexts[memberID, default: []].insert(fingerprint).inserted else { continue }
                     var message = RoomMessage(groupID: groupID, senderID: memberID, text: boundedText)
+                    message.replyToMessageID = threadTarget
                     if sentThisTurn == 0, let index = state.roomMessages.firstIndex(where: { $0.id == activityMessage.id }) {
                         state.roomMessages[index].text = message.text
                         message = state.roomMessages[index]
@@ -470,10 +485,9 @@ public actor GroupService {
         let text = publication.text, images = publication.images
         if let replyID = publication.replyToMessageID {
             guard publication.lifetime != nil, replyID != activity.id,
-                  state.roomMessages.contains(where: {
-                      $0.groupID == activity.groupID && $0.id == replyID && $0.memberOutcome == nil
-                        && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                  }) else { throw GroupReplyError.unavailable }
+                  GroupThreadProjection(history: state.roomMessages, groupID: activity.groupID).canReply(to: replyID) else {
+                throw GroupReplyError.unavailable
+            }
         }
         if let card = publication.question {
             try card.question.validate()
@@ -502,7 +516,7 @@ public actor GroupService {
         }
         var draft = RoomMessage(groupID: activity.groupID, senderID: activity.senderID, text: text, images: images)
         draft.question = publication.question
-        draft.replyToMessageID = publication.replyToMessageID
+        draft.replyToMessageID = publication.replyToMessageID ?? activity.replyToMessageID
         let message = draft
         let commit = {
             self.state.roomMessages.append(message)

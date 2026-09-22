@@ -1653,3 +1653,5 @@
 "Hide thread replies" = "스레드 답글 숨기기";
 "Show thread replies" = "스레드 답글 표시";
 "Kept open while a question or tool is pending." = "질문에 대한 답변이나 도구 실행이 대기 중이면 펼쳐진 상태를 유지합니다.";
+"Cancel reply" = "답글 취소";
+"Replies stay in this group. @mentions choose responders; replying is not tool approval." = "답글은 이 그룹에 남습니다. @멘션으로 응답할 멤버를 선택하며, 답글은 도구 승인이 아닙니다.";

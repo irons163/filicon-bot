@@ -1653,3 +1653,5 @@
 "Hide thread replies" = "スレッドの返信を折りたたむ";
 "Show thread replies" = "スレッドの返信を表示";
 "Kept open while a question or tool is pending." = "質問への回答やツールの完了を待っている間は、展開したままになります。";
+"Cancel reply" = "返信をキャンセル";
+"Replies stay in this group. @mentions choose responders; replying is not tool approval." = "返信はこのグループ内に送信されます。@メンションで応答するメンバーを選べます。返信はツールの承認ではありません。";

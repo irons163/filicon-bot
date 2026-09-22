@@ -1653,3 +1653,5 @@
 "Hide thread replies" = "收合討論串回覆";
 "Show thread replies" = "展開討論串回覆";
 "Kept open while a question or tool is pending." = "問題或工具尚在等待處理，暫時保持展開。";
+"Cancel reply" = "取消回覆";
+"Replies stay in this group. @mentions choose responders; replying is not tool approval." = "回覆仍在此群組中，透過 @提及選擇回覆成員；回覆不代表核准工具。";
