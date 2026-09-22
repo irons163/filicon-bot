@@ -66,9 +66,22 @@ ordinary user message retires the question; the default is false.
 A question answer is **not tool approval** and must not contain passwords or
 API keys. Writes, image publication and delegation retain their separate gates.
 Question widgets are not yet available in mailbox/direct-chat/background peer
-wakes. Standalone attachments, masked secret requests, `reply_to`/`channel`
-routing and the reference's vendor-specific cloud-agent cards remain outside
-this `SendMessage` implementation; this is not complete reference parity.
+wakes.
+
+Normal group agents can quote a prior message with
+`SendMessage(text:"…", reply_to:"<UUID from the reply directory>")`.
+The host supplies a bounded directory from the latest 40 same-group entries;
+empty messages and host status notices cannot be quoted. The chat shows the
+original author and a plain-text excerpt, with a button to return to the original.
+The relationship survives restart; an unavailable original has a disabled preview.
+Quotes do not change recipients, wake additional members, answer choice questions,
+or grant tool permissions. Text plus this request's incoming images can include a
+quote, but still requires the existing image preview approval; quoted attachments
+are never loaded or forwarded. Invalid targets fail without an unquoted fallback.
+This native UUID routing does not support the reference's short addresses, widgets,
+mailbox/direct-chat/background peer wakes, or external `channel` destinations.
+Standalone attachments, masked secret requests and vendor-specific cloud-agent
+cards also remain outside this `SendMessage` implementation; parity is incomplete.
 
 In group and mailbox turns, an agent can also propose changing **its own avatar**
 with `update_state(target:"avatar", action:"set", pet_id:"hoots")`, or restore

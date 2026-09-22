@@ -74,7 +74,8 @@ public struct GroupConversationResponder: GroupAgentResponder {
         let latestUser = latestUserIndex.map { history[$0] }
         let context = history.indices.suffix(40).filter { $0 != latestUserIndex }.map { index in
             let message = history[index]
-            return ContextMessage(sender: message.senderID.map { "agent:\($0.uuidString)" } ?? "user",
+            return ContextMessage(messageID: message.id, replyToMessageID: message.replyToMessageID,
+                                  sender: message.senderID.map { "agent:\($0.uuidString)" } ?? "user",
                                   senderName: roomContext?.members.first { $0.id == message.senderID }?.name,
                                   text: message.text, omittedImageCount: message.images?.count ?? 0, hostToolActivities: message.toolActivities,
                                   repliesToLatestUserRequest: latestUserIndex.map { index > $0 } ?? false,
@@ -135,6 +136,14 @@ public struct GroupConversationResponder: GroupAgentResponder {
         let memoryQuery = delegatedMessage?.text ?? latestUser?.text ?? ""
         var additionalTools = messaging?.tools(for: agent.id, groupUserMessageID: forwardingMessageID, memoryQuery: memoryQuery) ?? []
         let publisher: AgentUserMessageTool?
+        let replyHistory = delegatedMessage == nil && questionLifetime != nil ? history : []
+        let reply: AgentUserMessageTool.ReplyPublisher?
+        if !replyHistory.isEmpty, let onPublication, let questionLifetime {
+            reply = { text, images, replyID in
+                guard images.isEmpty else { throw AgentImageError.unavailable }
+                try await onPublication(.init(text: text, lifetime: questionLifetime, replyToMessageID: replyID))
+            }
+        } else { reply = nil }
         let ask: AgentUserMessageTool.QuestionPublisher?
         if delegatedMessage == nil, let onPublication, let roomContext, let questionAccountID, let questionLifetime {
             ask = { question in
@@ -143,9 +152,11 @@ public struct GroupConversationResponder: GroupAgentResponder {
             }
         } else { ask = nil }
         if let onPublication, let messaging, let forwardingMessageID {
-            publisher = try await messaging.groupPublisher(for: agent.id, userMessageID: forwardingMessageID, publishQuestion: ask, publish: onPublication)
+            publisher = try await messaging.groupPublisher(for: agent.id, userMessageID: forwardingMessageID, publishQuestion: ask,
+                replyHistory: replyHistory, publish: onPublication)
         } else if let onPublication {
-            publisher = AgentUserMessageTool(conversationID: toolScopeID, publishQuestion: ask) { try await onPublication(.init(text: $0)) }
+            publisher = AgentUserMessageTool(conversationID: toolScopeID, publishQuestion: ask,
+                replyHistory: replyHistory, publishReply: reply) { try await onPublication(.init(text: $0)) }
         } else { publisher = onMessage.map { AgentUserMessageTool(conversationID: toolScopeID, publish: $0) } }
         if let publisher { additionalTools.append(publisher) }
         do {
@@ -183,6 +194,8 @@ public struct GroupConversationResponder: GroupAgentResponder {
     }
 
     private struct ContextMessage: Encodable {
+        let messageID: UUID
+        let replyToMessageID: UUID?
         let sender: String
         let senderName: String?
         let text: String

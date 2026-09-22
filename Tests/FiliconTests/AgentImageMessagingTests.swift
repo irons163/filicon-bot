@@ -178,6 +178,48 @@ struct AgentImageMessagingTests {
         try await session.close()
     }
 
+    @Test(arguments: ["approve", "deny", "revoke", "new-request"])
+    func quotedImageReplyRetainsPreviewApprovalAndSourceFences(mode: String) async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let groups = try GroupService(agents: f.agents, storeURL: f.root.appending(path: "groups.json"))
+        let group = try await groups.create(name: "Review", memberIDs: [f.sender.id])
+        let image = try await f.store.importImage(data: peerImageBytes(), filename: "review.png")
+        let old = try await groups.postUserMessage("Previous request", groupID: group.id)
+        let user = try await groups.postUserMessage("Review this image", groupID: group.id, images: [image])
+        let session = AgentMessagingSession(originConversationID: group.id, agents: f.agents, messenger: f.messenger,
+            registry: f.registry, coordinator: TurnCoordinator(registry: f.registry, toolCatalog: ToolCatalog()),
+            groups: groups, imageStore: f.store, authorizePublication: { _, _, images, _, _ in
+                await f.probe.approve(images)
+                if mode == "deny" { throw AgentMessagingError.approvalRequired }
+                if mode == "new-request" { _ = try await groups.postUserMessage("Moved on", groupID: group.id) }
+            })
+        let responder = ImageGroupPublicationResponder { publish in
+            let tool = try await session.groupPublisher(for: f.sender.id, userMessageID: user.id,
+                replyHistory: [old, user], publish: publish)
+            if mode == "revoke" { session.revokeProfileChanges() }
+            let raw: [String: Any] = ["text": "Reviewed layout", "images": [image.id], "reply_to": old.id.uuidString]
+            let call = try NormalizedToolCall(id: "quote-image", name: "SendMessage", argumentsJSON: JSONSerialization.data(withJSONObject: raw))
+            if mode == "revoke" {
+                await #expect(throws: CancellationError.self) { try await tool.execute(call, context: .init(conversationID: group.id)) }
+            } else {
+                let result = try await tool.execute(call, context: .init(conversationID: group.id))
+                expectNoDifference(result.isError, mode != "approve")
+            }
+            return []
+        }
+        _ = try await groups.run(groupID: group.id, responder: responder)
+        let messages = await groups.messages(groupID: group.id)
+        let replies = messages.filter { $0.replyToMessageID != nil }
+        expectNoDifference(replies.count, mode == "approve" ? 1 : 0)
+        if mode == "approve" {
+            expectNoDifference(replies.first?.replyToMessageID, old.id)
+            expectNoDifference(replies.first?.images, [image])
+        }
+        let approvals = await f.probe.approvals
+        expectNoDifference(approvals, [[image]])
+        try await session.close()
+    }
+
     @Test func groupForwardingOnlyExposesTheAddressedCurrentRequest() async throws {
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
         let groups = try GroupService(agents: f.agents, storeURL: f.root.appending(path: "groups.json"))

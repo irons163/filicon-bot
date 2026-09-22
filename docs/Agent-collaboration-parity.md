@@ -1,6 +1,24 @@
 # 協作能力核對紀錄（更新至 2026-09-22）
 
-## 本輪增量：一般群組的選項式提問與續接（2026-09-22）
+## 本輪增量：一般群組的引用回覆（2026-09-22）
+
+先提交上一批為 `f8bc157`（`feat: pause group turns for durable choice questions`）。本輪對照本機非官方 reconstructed 的 `source/host/runner/tools/send-message-schema.ts`、`send-message-tool.ts` 中的 `reply_to`，補上一般群組的原生引用回覆；不是原版所有訊息路由的完整還原。
+
+- `SendMessage(text:"…", reply_to:"<host 提供的 UUID>")` 可引用同群組近期訊息。host 只提供最近 40 筆同群組歷史內非空、非狀態通知且 ID 不重複的目標；原文摘要最多 240 字元，標示為資料而非指令。新發布訊息不在同次工具目錄內動態增加。拒絕 null、短地址、URL、其他群組／不存在的 ID、作者欄位及 `channel`；失敗不退回未引用的普通訊息。
+- 保存獨立的 `replyToMessageID`，舊資料可繼續解碼；不挪用問題回答的 `questionReplyTo`。回覆作者及群組由 host 綁定，引用不增加發言者、不觸發提及、不解答選項問題或授予工具權限。沿用兩則訊息上限、去重、相同呼叫的回執及持久化失敗回滾；改變引用目標不能重播同一呼叫。Stop／帳號／成員變更後晚到的發布會被拒絕。
+- 可在原有文字加圖片發布上附引用，但圖片仍只來自本輪 host 綁定的 incoming ID，需重新預覽核准且核准後重驗來源；不讀取或轉送被引用訊息的附件。取消、拒絕、來源變更不能產生新回覆。
+- 群組訊息顯示原作者、純文字摘要與回到原文的按鈕，使用既有 ScrollViewReader；找不到原文時顯示七語言的停用提示，不遞迴展開引用或讀取附件。依 SwiftUI／狀態模型技能將發布與驗證留在 service；依測試／CustomDump 技能使用隔離 store、完整值差異斷言與 AsyncStream 事件同步，取消測試不以 sleep 猜測時序。
+
+最終驗收：
+
+- 新增聚焦 **11 Swift Testing／3 suites** 通過；紀錄 `/tmp/filicon-reply-focused-final.log`。涵蓋界限／嚴格 schema、同呼叫重播、保存失敗、舊資料、重啟、圖片核准／撤銷、App 真實工具接線、不增加成員回覆，以及 Stop／帳號／成員變更和 delegated wake 的拒絕路由。
+- 完整預設並行回歸 **135 XCTest、1,041 Swift Testing／117 suites** 通過；App **338／48 suites，56.988 秒**。紀錄 `/tmp/filicon-reply-full-parallel.log`；未排除渲染或增加時間上限。兩項 opt-in live Codex 測試仍跳過，既有 CoreData NSXPC 診斷仍在，不視為本輪修復或 live 模型驗收。
+- 七語言各 **1,637 keys／零缺漏**；七語言 × 明暗 × 使用者原文／代理人原文／原文缺失，共 **42 張 PNG**，位於 `/tmp/filicon-reply-ui/`。逐檔驗證簽頭、chunk CRC、非零尺寸；380-point 寬渲染通過高度界限，目視抽查繁中淺色代理人引用、法文暗色缺失卡，未見裁切。原文及回覆是 fixture 資料，不強制翻譯。未做逐張人工、pixel-perfect baseline 或 live 點擊捲動驗收。
+- 原生 `Filicon App` Debug build（`/tmp/filicon-reply-native.log`）、`codesign --verify --deep --strict` 與 `scripts/verify-package.sh --xcode-debug` 通過；App／XPC entitlements 與 `Support/*.entitlements` 一致。產物 `/tmp/filicon-question-native.l2MIZt/Build/Products/Debug/Filicon.app`，未啟動。未新增依賴／修改 Xcode 配置；未做 Developer ID 發佈簽章、公證或 live XPC 操作。
+
+邊界：目前只接一般群組的文字或本輪核准圖片；mailbox／單獨聊天／背景 peer／delegated room wake、widget 引用、原版 `t3u`／`t3s1` 短地址、`sand-msg` 內文連結和外部 `channel` 路由仍未還原。獨立附件、安全遮罩憑證請求與供應商 cloud-agent 卡也仍缺。整體維持 **43 complete／4 partial／1 NA**，`AGENT-02` 維持 partial。本批新增程式尚未提交；未 push、未啟動／重啟使用者 App／Xcode、未操作真實群組／帳號／憑證。
+
+## 已提交增量：一般群組的選項式提問與續接（2026-09-22）
 
 先提交上一輪驗收文件為 `e1e9799`（`docs: record complete parallel regression and remaining message gaps`）。本輪接續本機非官方 reconstructed 的 `send-message-schema.ts`、`send-message-tool.ts`、`sand-widgets.ts` 所定義的選項提問，不把原版所有訊息型態一併列為完成。
 
@@ -18,7 +36,7 @@
 
 原生建置另查出資源摘要腳本的目錄授權問題：原先生成的 sandbox profile 把已宣告的 `Sources/Filicon/Resources` 當作 `literal`，無法讀取子目錄中的翻譯與頭像；單加結尾斜線仍失敗。依 [Swift Build 的 shell script input 實作](https://github.com/swiftlang/swift-build/blob/main/Sources/SWBTaskConstruction/TaskProducers/BuildPhaseTaskProducers/ShellScriptTaskProducer.swift)，在 App 的 Debug／Release 及專案產生器加入 `USE_RECURSIVE_SCRIPT_INPUTS_IN_SCRIPT_PHASES=YES`，實際生成的同一路徑改為 `subpath`；不關閉腳本沙箱，也不放寬 App／XPC 權限。上述最終建置未另帶此旗標的命令列 override。Xcode 同時將 workspace lockfile 對齊原已提交的根目錄 `Package.resolved`：CustomDump 仍 1.7.3、IssueReporting 2.1.0；未改 Package.swift 或新增依賴，完整 Swift 測試也使用這兩版。
 
-邊界：此提問續接僅限一般群組，不含 mailbox、私人單獨聊天、背景 peer／跨群組 wake；獨立附件、安全遮罩憑證請求、`reply_to`／`channel` 路由及原版供應商 cloud-agent 卡仍未還原。仍 **43 complete／4 partial／1 NA**，`AGENT-02` 維持 partial。本批新增程式尚未提交；未 push、未啟動／重啟使用者 App／Xcode、未操作真實群組／帳號／憑證。
+邊界：此提問續接僅限一般群組，不含 mailbox、私人單獨聊天、背景 peer／跨群組 wake；當時獨立附件、安全遮罩憑證請求、`reply_to`／`channel` 路由及原版供應商 cloud-agent 卡仍未還原。仍 **43 complete／4 partial／1 NA**，`AGENT-02` 維持 partial。本批已於下一輪提交為 `f8bc157`；未 push、未啟動／重啟使用者 App／Xcode、未操作真實群組／帳號／憑證。
 
 ## 本輪驗收：完整並行與非並行回歸（2026-09-22）
 

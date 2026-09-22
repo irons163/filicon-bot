@@ -387,6 +387,7 @@ public struct RoomMessage: Identifiable, Codable, Hashable, Sendable {
     public var images: [AttachmentMetadata]?
     public var question: GroupQuestion?
     public var questionReplyTo: UUID?
+    public var replyToMessageID: UUID?
     public init(id: UUID = UUID(), groupID: UUID, senderID: UUID?, text: String, createdAt: Date = Date(), toolActivities: [RoomToolActivity] = [], memberOutcome: RoomMemberOutcome? = nil, images: [AttachmentMetadata] = []) {
         self.id = id; self.groupID = groupID; self.senderID = senderID; self.text = text; self.createdAt = createdAt
         self.toolActivities = toolActivities
@@ -394,7 +395,7 @@ public struct RoomMessage: Identifiable, Codable, Hashable, Sendable {
         self.images = images.isEmpty ? nil : images
     }
 
-    private enum CodingKeys: String, CodingKey { case id, groupID, senderID, text, createdAt, toolActivities, memberOutcome, images, question, questionReplyTo }
+    private enum CodingKeys: String, CodingKey { case id, groupID, senderID, text, createdAt, toolActivities, memberOutcome, images, question, questionReplyTo, replyToMessageID }
     public init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         id = try values.decode(UUID.self, forKey: .id)
@@ -407,6 +408,7 @@ public struct RoomMessage: Identifiable, Codable, Hashable, Sendable {
         images = try values.decodeIfPresent([AttachmentMetadata].self, forKey: .images)
         question = try values.decodeIfPresent(GroupQuestion.self, forKey: .question)
         questionReplyTo = try values.decodeIfPresent(UUID.self, forKey: .questionReplyTo)
+        replyToMessageID = try values.decodeIfPresent(UUID.self, forKey: .replyToMessageID)
     }
 }
 

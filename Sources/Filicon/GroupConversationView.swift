@@ -171,6 +171,9 @@ struct GroupConversationView: View {
                             onQuestionAnswer: { answer in
                                 Task { await model.groupQuestionAnswered(message, answer: answer) }
                             },
+                            replySource: messages.first { $0.id == message.replyToMessageID && $0.groupID == group.id && $0.memberOutcome == nil },
+                            replyAuthor: replyAuthor(for: message),
+                            onShowReply: { id in withAnimation { proxy.scrollTo(id, anchor: .center) } },
                             onReaction: { Task { await model.toggleGroupReaction(groupID: group.id, messageID: message.id, emoji: "👍") } }
                         ).id(message.id)
                     }
@@ -246,6 +249,12 @@ struct GroupConversationView: View {
         .disabled(!model.isBootstrapped)
         .onChange(of: mentionQuery) { selectedMention = 0 }
         .onChange(of: mentionCandidates.map(\.id)) { selectedMention = 0 }
+    }
+
+    private func replyAuthor(for message: RoomMessage) -> String? {
+        guard let original = messages.first(where: { $0.id == message.replyToMessageID && $0.groupID == group.id }) else { return nil }
+        guard let senderID = original.senderID else { return l10n("You") }
+        return model.agents.first(where: { $0.id == senderID })?.name ?? l10n("Agent")
     }
 
     private var mentionMenu: some View {
@@ -407,6 +416,9 @@ struct GroupMessageBubble: View {
     var waitingForFolderCallIDs: Set<String> = []
     var questionEnabled = false
     var onQuestionAnswer: ((AgentQuestionAnswer) -> Void)?
+    var replySource: RoomMessage?
+    var replyAuthor: String?
+    var onShowReply: ((UUID) -> Void)?
     let onReaction: () -> Void
     @State private var hovering = false
     private var isUser: Bool { message.senderID == nil }
@@ -425,6 +437,13 @@ struct GroupMessageBubble: View {
                 if let question = message.question {
                     GroupQuestionCard(card: question, enabled: questionEnabled, onAnswer: onQuestionAnswer ?? { _ in })
                         .accessibilityIdentifier("group-question-\(message.id)")
+                }
+                if let replyID = message.replyToMessageID {
+                    let original = replySource.flatMap { $0.id == replyID && $0.groupID == message.groupID && $0.memberOutcome == nil ? $0 : nil }
+                    GroupReplyPreview(original: original, author: replyAuthor ?? l10n("Agent")) {
+                        onShowReply?(replyID)
+                    }
+                    .accessibilityIdentifier("group-reply-\(message.id)")
                 }
                 if !message.text.isEmpty && message.question == nil {
                     Group {
@@ -496,6 +515,35 @@ struct GroupMessageBubble: View {
         case .failed: l10n("Failed")
         case .cancelled: l10n("Cancelled")
         }
+    }
+}
+
+struct GroupReplyPreview: View {
+    let original: RoomMessage?
+    let author: String
+    let onOpen: () -> Void
+
+    var body: some View {
+        Button(action: onOpen) {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "arrowshape.turn.up.left").font(.caption)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(l10n("Replying to")).font(.caption2)
+                    if let original {
+                        Text(author).font(.caption.weight(.semibold)).lineLimit(1)
+                        Text(String(original.text.prefix(240))).font(.caption).lineLimit(3)
+                            .multilineTextAlignment(.leading)
+                    } else { Text(l10n("Original message unavailable")).font(.caption) }
+                }
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(FiliconTheme.textSecondary)
+            .padding(10).frame(maxWidth: .infinity, alignment: .leading)
+            .background(FiliconTheme.input, in: RoundedRectangle(cornerRadius: 10))
+        }
+        .buttonStyle(.plain).disabled(original == nil)
+        .help(l10n("View original message"))
+        .accessibilityIdentifier("group-reply-preview")
     }
 }
 

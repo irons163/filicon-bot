@@ -1642,3 +1642,7 @@
 "Routine writes support valid time schedules, supported platform events and restricted Teams definitions. Groups allow up to eight flat conditions. Time zones must be valid, with a next run within 366 days; intervals must be between one minute and 366 days." = "排程寫入支援有效的時間排程、支援的平台事件及受限的 Teams 定義。群組最多八個平面條件。時區必須有效，下次執行須在 366 天內；間隔須介於一分鐘與 366 天之間。";
 "Teams proposals need a tenant UUID, 1 to 50 exact team IDs, up to 50 channel IDs and literal text of 1 to 120 characters. No regex, wildcards, control characters, guessed IDs or relaxed sign-in policy. Teams events cannot execute until trusted user identity is available." = "Teams 提案需要租用戶 UUID、1 至 50 個精確團隊 ID、最多 50 個頻道 ID，以及 1 至 120 字的純文字篩選。不可使用正規表示式、萬用字元、控制字元、猜測的 ID 或放寬登入限制。在取得可信使用者身分之前，Teams 事件無法執行。";
 "Approval saves a Teams definition only. Teams events cannot run because trusted user identity is unavailable; the signed-in-user restriction stays on and regex stays off. Use exact IDs and literal text; empty channel IDs allow any channel in the selected teams. Other OR conditions and explicit Run Now may still run and incur model costs. No connection, login or tool permissions are granted." = "核准只會儲存 Teams 定義。由於尚無可信的使用者身分驗證，Teams 事件無法執行；登入使用者限制保持開啟，正規表示式保持關閉。請使用精確 ID 與純文字；頻道 ID 留空表示所選團隊的所有頻道。其他 OR 條件及明確的「立即執行」仍可能執行並產生模型費用。此操作不授予連線、登入或工具權限。";
+"Replying to" = "回覆對象";
+"Original message unavailable" = "原始訊息無法使用";
+"View original message" = "查看原始訊息";
+"Choose an available message in this group to reply to. Nothing was sent." = "請選擇此群組內可用的訊息來回覆。未傳送任何內容。";

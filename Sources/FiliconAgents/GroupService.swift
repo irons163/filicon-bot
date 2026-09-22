@@ -35,13 +35,20 @@ public struct GroupAgentPublication: Sendable {
     public let sourceUserMessageID: UUID?
     public let lifetime: AgentPublicationLifetime?
     public let question: GroupQuestion?
+    public let replyToMessageID: UUID?
 
     public init(text: String, images: [AttachmentMetadata] = [], sourceUserMessageID: UUID? = nil,
-                lifetime: AgentPublicationLifetime? = nil, question: GroupQuestion? = nil) {
+                lifetime: AgentPublicationLifetime? = nil, question: GroupQuestion? = nil, replyToMessageID: UUID? = nil) {
         self.text = text; self.images = images
         self.sourceUserMessageID = sourceUserMessageID; self.lifetime = lifetime
         self.question = question
+        self.replyToMessageID = replyToMessageID
     }
+}
+
+public enum GroupReplyError: LocalizedError, Equatable, Sendable {
+    case unavailable
+    public var errorDescription: String? { "Choose an available message in this group to reply to. Nothing was sent." }
 }
 
 public protocol GroupAgentResponder: Sendable {
@@ -151,7 +158,7 @@ public actor GroupService {
         guard let senderID = message.senderID, message.groupID == expected.id,
               !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, message.text.count <= 8_000,
               message.toolActivities.isEmpty, message.memberOutcome == nil,
-              message.question == nil, message.questionReplyTo == nil else { throw AgentGroupPostError.unavailable }
+              message.question == nil, message.questionReplyTo == nil, message.replyToMessageID == nil else { throw AgentGroupPostError.unavailable }
         let current = try await audience(groupID: expected.id, senderID: senderID)
         guard current == expected else { throw AgentGroupPostError.changed }
         try lifetime.commit {
@@ -166,7 +173,7 @@ public actor GroupService {
     /// Host-only reports from approved cross-agent wakes. The app fences these
     /// to the originating request; they are not new user messages or @mentions.
     public func recordDelegatedMessage(_ message: RoomMessage) throws {
-        guard message.question == nil, message.questionReplyTo == nil else { throw AgentQuestionError.unavailable }
+        guard message.question == nil, message.questionReplyTo == nil, message.replyToMessageID == nil else { throw AgentQuestionError.unavailable }
         guard message.senderID != nil, state.groups.contains(where: { $0.id == message.groupID }) else {
             throw AgentServiceError.unknownGroup(message.groupID)
         }
@@ -445,6 +452,13 @@ public actor GroupService {
         try Task.checkCancellation()
         guard epochs[activity.groupID] == epoch else { throw CancellationError() }
         let text = publication.text, images = publication.images
+        if let replyID = publication.replyToMessageID {
+            guard publication.lifetime != nil, publication.question == nil, replyID != activity.id,
+                  state.roomMessages.contains(where: {
+                      $0.groupID == activity.groupID && $0.id == replyID && $0.memberOutcome == nil
+                        && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                  }) else { throw GroupReplyError.unavailable }
+        }
         if let card = publication.question {
             try card.question.validate()
             guard publication.lifetime != nil, images.isEmpty, card.isPending, card.responseMessageID == nil,
@@ -472,6 +486,7 @@ public actor GroupService {
         }
         var draft = RoomMessage(groupID: activity.groupID, senderID: activity.senderID, text: text, images: images)
         draft.question = publication.question
+        draft.replyToMessageID = publication.replyToMessageID
         let message = draft
         let commit = {
             self.state.roomMessages.append(message)
