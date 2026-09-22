@@ -61,9 +61,19 @@ public protocol GroupAgentResponder: Sendable {
     func respond(agent: AgentProfile, history: [RoomMessage], context: GroupTurnContext,
                  onTools: @escaping @Sendable ([RoomToolActivity]) async throws -> Void,
                  onPublication: @escaping @Sendable (GroupAgentPublication) async throws -> Void) async throws -> [String]
+    func respond(agent: AgentProfile, history: [RoomMessage], context: GroupTurnContext,
+                 onTools: @escaping @Sendable ([RoomToolActivity]) async throws -> Void,
+                 onSavedPublication: @escaping @Sendable (GroupAgentPublication) async throws -> RoomMessage?) async throws -> [String]
 }
 
 public extension GroupAgentResponder {
+    func respond(agent: AgentProfile, history: [RoomMessage], context: GroupTurnContext,
+                 onTools: @escaping @Sendable ([RoomToolActivity]) async throws -> Void,
+                 onSavedPublication: @escaping @Sendable (GroupAgentPublication) async throws -> RoomMessage?) async throws -> [String] {
+        try await respond(agent: agent, history: history, context: context, onTools: onTools,
+                          onPublication: { _ = try await onSavedPublication($0) })
+    }
+
     func respond(agent: AgentProfile, history: [RoomMessage], context: GroupTurnContext,
                  onTools: @escaping @Sendable ([RoomToolActivity]) async throws -> Void,
                  onPublication: @escaping @Sendable (GroupAgentPublication) async throws -> Void) async throws -> [String] {
@@ -359,7 +369,7 @@ public actor GroupService {
                     try Task.checkCancellation()
                     return try await responder.respond(agent: agent, history: history, context: context, onTools: { tools in
                         try await self.recordTools(tools, message: activityMessage, epoch: epoch, onMessage: onMessage)
-                    }, onPublication: { publication in
+                    }, onSavedPublication: { publication in
                         try await self.recordExplicitReply(publication, activity: activityMessage, epoch: epoch,
                                                            remainingBudget: remainingBudget, previousTexts: previousTexts, onMessage: onMessage)
                     })
@@ -454,7 +464,7 @@ public actor GroupService {
     }
 
     private func recordExplicitReply(_ publication: GroupAgentPublication, activity: RoomMessage, epoch: UInt64, remainingBudget: Int,
-                                     previousTexts: Set<String>, onMessage: @Sendable (RoomMessage) async -> Void) async throws {
+                                     previousTexts: Set<String>, onMessage: @Sendable (RoomMessage) async -> Void) async throws -> RoomMessage {
         try Task.checkCancellation()
         guard epochs[activity.groupID] == epoch else { throw CancellationError() }
         let text = publication.text, images = publication.images
@@ -502,7 +512,11 @@ public actor GroupService {
         }
         if let lifetime = publication.lifetime { try lifetime.commit(commit) }
         else { try commit() }
-        await onMessage(state.roomMessages.last(where: { $0.id == message.id }) ?? message)
+        // Capture the durable identity before yielding to UI callbacks. Never
+        // acknowledge the pre-save draft, which has no assigned short address.
+        let saved = state.roomMessages.last(where: { $0.id == message.id }) ?? message
+        await onMessage(saved)
+        return saved
     }
 
     private func recordTools(_ tools: [RoomToolActivity], message: RoomMessage, epoch: UInt64, onMessage: @Sendable (RoomMessage) async -> Void) async throws {

@@ -10,7 +10,58 @@ import FiliconProviderKit
 
 private actor GroupReplyAppProbe {
     var requests: [InferenceRequest] = []
+    var receipts: [GroupReplySavedReceipt] = []
     func record(_ request: InferenceRequest) -> Int { requests.append(request); return requests.count }
+    func record(_ receipt: GroupReplySavedReceipt) { receipts.append(receipt) }
+}
+
+private struct GroupReplySavedReceipt: Decodable, Equatable, Sendable {
+    let messageID: UUID
+    let shortAddress: String
+    static func decode(_ result: NormalizedToolResult) throws -> Self {
+        #expect(!result.isError)
+        let text = result.content.compactMap { if case .text(let text) = $0 { return text }; return nil }.joined()
+        let start = try #require(text.range(of: " Saved message receipt: "))
+        let end = try #require(text[start.upperBound...].firstIndex(of: "}"))
+        return try JSONDecoder().decode(Self.self, from: Data(text[start.upperBound...end].utf8))
+    }
+}
+
+private struct GroupReplyReceiptLoopProvider: AIProvider {
+    let descriptor = ProviderDescriptor(id: "group-reply-fixture", displayName: "Replies", requiresAPIKey: false)
+    let probe: GroupReplyAppProbe
+    func models() async throws -> [AIModel] { [.init(id: "test")] }
+    func stream(_ request: InferenceRequest) -> AsyncThrowingStream<InferenceEvent, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    let step = await probe.record(request)
+                    let call: NormalizedToolCall
+                    if step == 1 {
+                        call = try .init(id: "first", name: "SendMessage", argumentsJSON: Data(#"{"text":"Progress"}"#.utf8))
+                    } else if step == 2 {
+                        let result = try #require(request.toolExchanges.last?.results.first)
+                        let receipt = try GroupReplySavedReceipt.decode(result)
+                        await probe.record(receipt)
+                        #expect(request.messages.contains { $0.role == .system && $0.text.contains("Reply directory:") && $0.text.contains(receipt.messageID.uuidString) })
+                        call = try .init(id: "second", name: "SendMessage", argumentsJSON: JSONEncoder().encode([
+                            "text": "Details", "reply_to": receipt.shortAddress
+                        ]))
+                    } else {
+                        expectNoDifference(step, 3)
+                        let receipt = try GroupReplySavedReceipt.decode(try #require(request.toolExchanges.last?.results.first))
+                        await probe.record(receipt)
+                        continuation.yield(.textDelta("Ignored final fallback"))
+                        continuation.yield(.completed(.stop)); continuation.finish(); return
+                    }
+                    continuation.yield(.toolCallStarted(id: call.id, name: call.name))
+                    continuation.yield(.toolCallCompleted(call))
+                    continuation.yield(.completed(.toolUse)); continuation.finish()
+                } catch { continuation.finish(throwing: error) }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
 }
 
 private struct GroupReplyAppProvider: InteractiveToolProvider {
@@ -35,6 +86,89 @@ private struct GroupReplyAppProvider: InteractiveToolProvider {
 
 @Suite("Group reply app integration", .timeLimit(.minutes(1)))
 @MainActor struct GroupReplyAppTests {
+    @Test func streamingToolLoopRefreshesReceiptDirectoryAndPersistsChainedReplies() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "filicon-receipt-loop-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+        let agent = try #require(await model.createAgent(name: "Engineer", summary: "", instructions: "", providerID: "group-reply-fixture", modelID: "test"))
+        #expect(await model.createGroup(name: "Team", summary: "", memberIDs: [agent.id]))
+        let group = try #require(model.groups.first)
+        let probe = GroupReplyAppProbe()
+        await model.registry.register(GroupReplyReceiptLoopProvider(probe: probe))
+        await model.sendGroupMessage(groupID: group.id, text: "Review this")
+        #expect(model.errorMessage == nil && model.runningGroups.isEmpty)
+        let receipts = await probe.receipts
+        try #require(receipts.count == 2)
+        expectNoDifference(receipts.map(\.shortAddress), ["t0s0", "t0s1"])
+        let restored = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+        await restored.reloadWorkspaceData()
+        let history = restored.groupMessages[group.id, default: []]
+        let replies = history.filter { !$0.text.isEmpty && $0.senderID == agent.id }
+        expectNoDifference(replies.map(\.id), receipts.map(\.messageID))
+        expectNoDifference(replies.map(\.shortAddress), receipts.map { Optional($0.shortAddress) })
+        expectNoDifference(replies.map(\.replyToMessageID), [nil, receipts[0].messageID])
+        #expect(model.pendingAutoReviewApprovals.isEmpty)
+    }
+
+    @Test(arguments: [false, true], [false, true])
+    func interactiveReceiptSupportsSameTurnTextAndQuestionsWithOrWithoutInputImages(imageInput: Bool, question: Bool) async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "filicon-receipt-interactive-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+        let agent = try #require(await model.createAgent(name: "Engineer", summary: "", instructions: "", providerID: "group-reply-fixture", modelID: "test"))
+        #expect(await model.createGroup(name: "Team", summary: "", memberIDs: [agent.id]))
+        let group = try #require(model.groups.first)
+        var images: [AttachmentMetadata] = []
+        if imageInput {
+            let bitmap = try #require(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 2, pixelsHigh: 2,
+                bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+            for y in 0..<2 { for x in 0..<2 { bitmap.setColor(.blue, atX: x, y: y) } }
+            let file = root.appending(path: "input.png")
+            try #require(bitmap.representation(using: .png, properties: [:])).write(to: file)
+            images = try await model.importAgentMessageImages([file])
+        }
+        let probe = GroupReplyAppProbe()
+        await model.registry.register(GroupReplyAppProvider { request, execute in
+            let requestCount = await probe.record(request)
+            expectNoDifference(requestCount, 1)
+            let first = try GroupReplySavedReceipt.decode(try await execute(.init(id: "first", name: "SendMessage",
+                argumentsJSON: Data(#"{"text":"Proposal"}"#.utf8))))
+            await probe.record(first)
+            let raw: [String: Any] = question
+                ? ["type": "widget", "widget": ["prompt": "Review this?", "options": [["label": "Continue"]]], "reply_to": first.shortAddress]
+                : ["text": "Review [my proposal](sand-msg:\(first.shortAddress))", "reply_to": first.messageID.uuidString]
+            let call = try NormalizedToolCall(id: "second", name: "SendMessage", argumentsJSON: JSONSerialization.data(withJSONObject: raw))
+            do {
+                let second = try GroupReplySavedReceipt.decode(try await execute(call))
+                #expect(!question)
+                await probe.record(second)
+            } catch let suspension as ToolTurnSuspension {
+                #expect(question)
+                await probe.record(try GroupReplySavedReceipt.decode(suspension.result))
+                throw suspension
+            }
+            return "Ignored final fallback"
+        })
+        await model.sendGroupMessage(groupID: group.id, text: "Review this", images: images)
+        #expect(model.errorMessage == nil && model.runningGroups.isEmpty && model.pendingAutoReviewApprovals.isEmpty)
+        let receipts = await probe.receipts
+        try #require(receipts.count == 2)
+        expectNoDifference(receipts.map(\.shortAddress), ["t0s0", "t0s1"])
+        let restored = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+        await restored.reloadWorkspaceData()
+        let history = restored.groupMessages[group.id, default: []]
+        let replies = history.filter { !$0.text.isEmpty && $0.senderID == agent.id }
+        expectNoDifference(replies.map(\.id), receipts.map(\.messageID))
+        expectNoDifference(replies.map(\.replyToMessageID), [nil, receipts[0].messageID])
+        expectNoDifference(replies.last?.question?.isPending, question ? true : nil)
+        #expect(replies.allSatisfy { $0.images == nil }) // An input image is not publication approval.
+        if !question {
+            let directory = GroupMessageReferenceDirectory(history: history, groupID: group.id)
+            expectNoDifference(directory.target(for: URL(string: "sand-msg:\(receipts[0].shortAddress)")!, from: receipts[1].messageID), receipts[0].messageID)
+        }
+    }
+
     @Test func inlineReferencePublishesAndReopensWithoutQuotingRoutingOrApproval() async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-inline-app-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }

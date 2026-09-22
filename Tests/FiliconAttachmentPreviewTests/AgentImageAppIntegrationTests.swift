@@ -75,7 +75,12 @@ private actor AppImageProbe {
             struct Publication: Encodable { let text = "Reviewed group layout"; let images: [String] }
             let result = try await execute(.init(id: "group-publish", name: "SendMessage",
                 argumentsJSON: JSONEncoder().encode(Publication(images: [image.id]))))
-            if shouldPublish { #expect(!result.isError) }
+            if shouldPublish {
+                #expect(!result.isError)
+                let saved = try #require(await model.groupMessages[group.id]?.first { $0.text == "Reviewed group layout" })
+                let content = result.content.compactMap { if case .text(let text) = $0 { return text }; return nil }.joined()
+                #expect(content.contains(saved.id.uuidString) && content.contains("\"shortAddress\":\"t0s0\""))
+            }
             if mode == "deny" || mode == "corrupt" { #expect(result.isError) }
             if mode == "failure" { throw ProviderError.invalidResponse }
             if mode == "stop-after-publication" { try await Task.sleep(for: .seconds(30)) }

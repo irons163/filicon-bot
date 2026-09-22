@@ -89,11 +89,18 @@ Group-local short addresses are assigned by the host and persisted with the
 message: `t0u` is the first user message, `t0s0` and `t0s1` its first two visible
 member replies; `tbs0` is a reply before any user message. Legacy group logs gain
 addresses without changing their message UUIDs or content. A bounded prompt never
-renumbers messages. Only addresses listed in the current directory are accepted;
+renumbers messages. Only addresses listed in the current directory or returned
+in a successful same-turn publication receipt are accepted;
 malformed/ambiguous addresses cannot be guessed or rebound, and the original UUID
 route remains available. Replaying one call with its equivalent UUID or short
-address does not publish twice. This does not yet return newly published addresses
-in tool receipts or add them to the same turn's directory.
+address does not publish twice. Normal group publications return a host-generated
+`messageID` and, when available, `shortAddress` only after the message is saved.
+These new targets join the same turn's directory, so a second message can quote
+or link to the first without guessing its address. The initial 40-entry directory
+can grow by at most two publications; this does not increase the publishing limit.
+Failures return no receipt, and cancellation after saving does not republish on
+replay. Compatibility transports without a saved identity return no address.
+Question receipts still pause the turn; they do not authorize further actions.
 Choice questions may also include a quote in a normal group turn:
 
 ```json

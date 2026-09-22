@@ -136,14 +136,40 @@ public actor AgentMessagingSession {
             }
     }
 
-    private func publishGroupMessage(text: String, images: [AttachmentMetadata], senderID: UUID, userMessageID: UUID,
-                                     replyTo: UUID?, publish: @Sendable (GroupAgentPublication) async throws -> Void) async throws {
+    public func savedGroupPublisher(for senderID: UUID, userMessageID: UUID, replyHistory: [RoomMessage],
+                                    questionAccountID: String?, memberIDs: [UUID],
+                                    publish: @escaping @Sendable (GroupAgentPublication) async throws -> RoomMessage?) async throws -> AgentUserMessageTool {
+        let images = try await availableImages(senderID: senderID, replyTo: nil, groupUserMessageID: userMessageID)
+        guard let sender = await agents.profile(id: senderID), sender.archivedAt == nil else { throw AgentMessagingError.invalidRecipient }
+        try checkOpen()
+        return AgentUserMessageTool(conversationID: originConversationID, senderID: senderID, replyHistory: replyHistory,
+            supportsQuestions: questionAccountID != nil, availableImages: images, imageStore: imageStore,
+            authorizeImages: { [self] text, images, call, context in
+                try await checkOpen()
+                try await authorizePublication(sender, text, images, call, context)
+                try await checkOpen()
+            }) { [self] text, images, replyID, question in
+                try await validateGroupPublication(images: images, senderID: senderID, userMessageID: userMessageID)
+                let card = question.flatMap { question in questionAccountID.map {
+                    GroupQuestion(question: question, accountID: $0, memberIDs: memberIDs)
+                } }
+                return try await publish(.init(text: text, images: images, sourceUserMessageID: userMessageID,
+                    lifetime: publicationLifetime, question: card, replyToMessageID: replyID))
+            }
+    }
+
+    private func validateGroupPublication(images: [AttachmentMetadata], senderID: UUID, userMessageID: UUID) async throws {
         try checkOpen()
         if !images.isEmpty {
             let current = try await availableImages(senderID: senderID, replyTo: nil, groupUserMessageID: userMessageID)
             guard images.allSatisfy(current.contains) else { throw AgentImageError.unavailable }
         }
         try checkOpen()
+    }
+
+    private func publishGroupMessage(text: String, images: [AttachmentMetadata], senderID: UUID, userMessageID: UUID,
+                                     replyTo: UUID?, publish: @Sendable (GroupAgentPublication) async throws -> Void) async throws {
+        try await validateGroupPublication(images: images, senderID: senderID, userMessageID: userMessageID)
         try await publish(.init(text: text, images: images, sourceUserMessageID: userMessageID,
             lifetime: publicationLifetime, replyToMessageID: replyTo))
     }

@@ -64,7 +64,8 @@ public struct GroupConversationResponder: GroupAgentResponder {
 
     private func respond(agent: AgentProfile, history: [RoomMessage], roomContext: GroupTurnContext?, onTools: @escaping @Sendable ([RoomToolActivity]) async throws -> Void,
                          onMessage: (@Sendable (String) async throws -> Void)? = nil,
-                         onPublication: (@Sendable (GroupAgentPublication) async throws -> Void)? = nil) async throws -> [String] {
+                         onPublication: (@Sendable (GroupAgentPublication) async throws -> Void)? = nil,
+                         onSavedPublication: (@Sendable (GroupAgentPublication) async throws -> RoomMessage?)? = nil) async throws -> [String] {
         guard let provider = await registry.provider(id: agent.providerID) else { throw ProviderError.invalidResponse }
         let supportsTools = provider.descriptor.supportsToolCalling
         // Keep the reply bound on the actual stored log, before hiding status
@@ -158,7 +159,22 @@ public struct GroupConversationResponder: GroupAgentResponder {
                 try await onPublication(.init(text: question.prompt, lifetime: questionLifetime, question: card, replyToMessageID: replyID))
             }
         } else { ask = nil; askReply = nil }
-        if let onPublication, let messaging, let forwardingMessageID {
+        if delegatedMessage == nil, let onSavedPublication, let roomContext, let questionLifetime {
+            if let messaging, let forwardingMessageID {
+                publisher = try await messaging.savedGroupPublisher(for: agent.id, userMessageID: forwardingMessageID,
+                    replyHistory: replyHistory, questionAccountID: questionAccountID,
+                    memberIDs: roomContext.group.memberIDs, publish: onSavedPublication)
+            } else {
+                publisher = AgentUserMessageTool(conversationID: toolScopeID, senderID: agent.id,
+                    replyHistory: replyHistory, supportsQuestions: questionAccountID != nil) { text, images, replyID, question in
+                    guard images.isEmpty else { throw AgentImageError.unavailable }
+                    let card = question.flatMap { question in questionAccountID.map {
+                        GroupQuestion(question: question, accountID: $0, memberIDs: roomContext.group.memberIDs)
+                    } }
+                    return try await onSavedPublication(.init(text: text, lifetime: questionLifetime, question: card, replyToMessageID: replyID))
+                }
+            }
+        } else if let onPublication, let messaging, let forwardingMessageID {
             publisher = try await messaging.groupPublisher(for: agent.id, userMessageID: forwardingMessageID, publishQuestion: ask,
                 publishQuestionReply: askReply, replyHistory: replyHistory, publish: onPublication)
         } else if let onPublication {
@@ -198,6 +214,15 @@ public struct GroupConversationResponder: GroupAgentResponder {
         guard context.group.id == groupID, context.members.contains(where: { $0.id == agent.id }),
               context.respondingMemberIDs.contains(agent.id) else { throw ProviderError.invalidResponse }
         return try await respond(agent: agent, history: history, roomContext: context, onTools: onTools, onPublication: onPublication)
+    }
+
+    public func respond(agent: AgentProfile, history: [RoomMessage], context: GroupTurnContext,
+                        onTools: @escaping @Sendable ([RoomToolActivity]) async throws -> Void,
+                        onSavedPublication: @escaping @Sendable (GroupAgentPublication) async throws -> RoomMessage?) async throws -> [String] {
+        guard context.group.id == groupID, context.members.contains(where: { $0.id == agent.id }),
+              context.respondingMemberIDs.contains(agent.id) else { throw ProviderError.invalidResponse }
+        return try await respond(agent: agent, history: history, roomContext: context, onTools: onTools,
+            onPublication: { _ = try await onSavedPublication($0) }, onSavedPublication: onSavedPublication)
     }
 
     private struct ContextMessage: Encodable {

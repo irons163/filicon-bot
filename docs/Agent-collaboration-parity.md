@@ -1,6 +1,20 @@
 # 協作能力核對紀錄（更新至 2026-09-22）
 
-## 本輪修正：Markdown 段落與清單呈現（2026-09-22）
+## 本輪增量：保存後訊息回條與同回合引用（2026-09-22）
+
+開始時上一批已提交 `235e7c5`，工作目錄乾淨。使用者要求 commit 後持續補齊剩餘差異；本批核對 reconstructed 的 `source/host/runner/tools/send-message-tool.ts`，其成功結果會把 `onSendMessage` 回傳的 ID 交還模型，不是讓模型自行編號。
+
+- `GroupAgentResponder` 新增帶已保存列的 callback，保留舊 Void callback 相容性。`GroupService` 先通過既有 epoch／lifetime／回覆／圖片／提問與額度檢查，原子保存後才回傳真正訊息；UI callback 前固定該列，不用未保存 draft 當回條。
+- 一般群組的 `AgentUserMessageTool` 新增固定作者的 host publisher。成功工具結果包含 `messageID` 與有效 `shortAddress`；新列加入本回合引用目錄，初始最多 40 筆，額外最多兩筆。串流工具下一步取得更新目錄，互動式工具可直接使用前次回條，不擴大權限或回覆成員。文字、核准圖片與 choice question 共用路徑。
+- 儲存失敗不回位址、不扣發布額度；同 call ID 以短位址／等價 UUID 重送不重複發布。保存後取消仍記錄成功的 side effect，避免重播副作用；停止／帳號／成員撤銷前未落盤者不發布。錯群組／作者／內容／引用／狀態／重複 ID 的 host 回條不加入目錄，既有無回條 callback 不捏造 ID。短位址與完整原歷史查重，壞位址只保留唯一 UUID；碰撞位址從本回合目錄移除。
+- 問題卡成功後仍暫停，回條不解除暫停或等同核准；輸入圖片不自動轉成發布授權。模型仍不能指定訊息 ID／群組／作者、以未知位址猜測目標，或藉回條載入歷史附件。背景／mailbox／非 receipt 相容入口沒有因此得到新引用能力。
+- 依 Swift 測試／CustomDump 技能新增七項隔離 store／固定資料的測試，以及兩項 App 整合（含參數化的圖片／文字／提問組合）；真實工具迴圈驗證同回合目錄更新與重開後的 ID／引用關係。既有圖片核准整合另驗證保存位址。首輪新測試因 Date 毫秒編解碼浮點精度差異失敗，改用儲存格式 round-trip 後做完整值比較，未移除欄位斷言；Swift 6 初始化編譯問題改成明確 closure 與區域值，沒有降低隔離檢查。
+
+驗證證據：`.build/validation/message-receipts.aE0kYS/`。聚焦 **56 Swift Testing／7 suites** 通過；完整**預設並行**回歸 **135 XCTest、1,080 Swift Testing／121 suites**（App **354／48 suites，60.078 秒**）通過。兩項 opt-in live Codex 仍跳過，既有 SDK/CoreData 診斷未宣稱修復；七語言各 **1,637 keys／零缺漏**，本批沒有 UI 翻譯或新視覺驗收。原生 Debug build、deep strict codesign 與 package verifier 均通過，App／XPC entitlements 符合 Support 定義；這是 ad-hoc Debug 驗證，非新的發佈公證。未使用真實帳號、未改使用者群組資料、未啟動／重啟 App／Xcode、未 push。
+
+剩餘原版 chip／折疊討論串、背景引用／提問、外部 channel、獨立附件、安全憑證請求與供應商 cloud-agent 卡等仍未完成；本批不改整體 **43 complete／4 partial／1 NA**。
+
+## 已提交修正：Markdown 段落與清單呈現（2026-09-22）
 
 開始時上一批已提交 `3aa150b`，工作目錄乾淨。本輪處理上一輪畫面抽查已記錄的 prose 段落黏連，不新增訊息路由或宣稱原版剩餘功能已完成。
 
