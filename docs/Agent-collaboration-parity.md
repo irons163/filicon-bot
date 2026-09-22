@@ -1,6 +1,24 @@
 # 協作能力核對紀錄（更新至 2026-09-22）
 
-## 本輪增量：並行驗收的事件同步與渲染案例邊界（2026-09-22）
+## 本輪增量：一般群組的持久短位址引用（2026-09-22）
+
+先提交上一批為 `e6030b4`（`test: stabilize concurrent execution and render fixtures`）。對照本機非官方 reconstructed 的 `source/host/extensions/transcript/transcript-entry-ids.ts` 與 `source/host/runner/tools/send-message-schema.ts`：原版使用零起算的 `t0u`、`t0s0`／`t0s1`，未有使用者訊息前為 `tbs0`。本輪接入一般群組引用，不宣稱所有 reference 訊息識別／UI 已還原。
+
+- `RoomMessage.shortAddress` 是選用的 host 欄位；GroupService 以完整儲存紀錄按群組分配，與原 UUID 一起原子保存。舊紀錄可載入且在記憶體補位址，單純載入不寫回，下一次正常保存才持久化。既有位址不重新分配；模型的 40 筆上下文不是計數來源。原生可見 final fallback／提問／委派報告使用 s 編號，不提供原版私人推理 a／附件 ua 的位址。
+- 一般群組文字／圖片與 widget 的 `reply_to` 可用本回合目錄列出的短位址或既有 UUID。先正規化成 UUID，再做回執、防重播與 publication；同一次呼叫以短位址／UUID 重送不重複發布，改目標仍拒絕。與圖片授權、問題暫停、僅續接提問者、Stop／帳號／成員失效等既有能力分離。
+- 目錄仍只開放最新 40 筆同群組紀錄中的有效原文；先檢查整份傳入同群組歷史的 ID／位址重複，再取 bound。非本群組的相同短位址不遮蔽本群組對應，不存在的外群位址也不引入資料。損壞、重複、錯誤角色、非 canonical 位址不猜測修復；其唯一 UUID 仍可用。null、網址、`sand-msg:`、私有 a／附件 ua、大小寫／前導零變體及不在目錄內的位址拒絕，不退回普通訊息。host 狀態、空文字與新發布訊息不增加本回合可引用目標。
+- 群組服務的對外回傳、發布 callback 與持久紀錄對齊；更新委派／工具訊息保留原位址，外部 host envelope 不能自行指定新位址。保存失敗不耗用位址或假報發布；分配上限安全回退為 UUID，不溢位。用原地更新的每群組計數器與集合掃描歷史，避免每則訊息複製逐漸增長的集合。
+- 依 Swift 測試、依賴控制與 CustomDump 技能使用隔離 store、固定測試時間、fixture provider、完整資料比較；新增 `GroupMessageAddressTests`，涵蓋舊資料／重開／保存失敗、boot／多人／跨群組編號、截斷歷史、稀疏／損壞／重複位址、文字與 widget 共用正規化回執。App 測試擴充原文短位址、UUID 兩路，含 incoming 圖片下的引用提問及重開後回答者／權限不變。
+
+驗收：聚焦 **23 Swift Testing／4 suites** 通過（`/tmp/filicon-short-address-focused-2.log`）。初次開發編譯發現 publication closure 捕捉可變訊息違反 Swift 6 隔離，改為 immutable draft 加保存後讀取；第一輪新增 store 測試發現毫秒儲存格式前後日期精度不同，改以相同儲存格式 round-trip 後比較完整值，未刪除欄位斷言。首次完整預設並行（`/tmp/filicon-short-address-full-parallel.log`）中 App **341／48 suites，126.602 秒**，七項既有畫面案例超過 60 秒，不能列為全部通過；其餘 target 與新增功能測試通過，沒有改成序列或排除畫面。
+
+將位址分配改為原地集合更新後，最終完整**預設並行**回歸 **135 XCTest、1,057 Swift Testing／119 suites** 通過（`/tmp/filicon-short-address-final-parallel.log`），App **341／48 suites，101.761 秒**。沒有放寬時間上限、排除畫面或改成序列；最終測試與原生建置分開執行。兩項 opt-in live Codex 仍跳過，既有 CoreData NSXPC 診斷仍在；這次通過不抹除前次七項逾時，也不宣稱已根治所有並行穩定性問題。
+
+原生 `Filicon App` Debug 建置（`/tmp/filicon-short-address-native.log`）、deep strict codesign 與 `verify-package.sh --xcode-debug` 已通過；entitlements 符合 `Support/*.entitlements`。七語言各 **1,637 keys／零缺漏**，沒有 UI／翻譯改動；未宣稱新的人工視覺驗收。本輪未新增依賴、修改 Xcode 配置或權限，未操作真實帳號、群組、憑證，未啟動／重啟使用者 App／Xcode、未 push。
+
+剩餘：短位址目前只讀本回合 bounded directory，尚未於工具成功回條返回新訊息位址／動態加入本回合目錄；`sand-msg:` 行內跳轉、原版折疊討論串、mailbox／單獨聊天／背景引用與提問、外部 channel、獨立附件、安全遮罩憑證請求及供應商 cloud-agent 卡仍缺。整體 **43 complete／4 partial／1 NA**，`AGENT-02` 仍 partial。
+
+## 已提交增量：並行驗收的事件同步與渲染案例邊界（2026-09-22）
 
 先提交上一批為 `5dd0bb2`（`feat: support quoted choice questions in group conversations`）。本輪接續上一輪完整並行回歸的等待失敗，只調整測試 fixture／案例邊界與驗收文件，不改正式排程、權限、訊息路由或 UI。
 
@@ -15,7 +33,7 @@
 - 調整過程中前兩輪完整預設並行回歸均通過 **135 XCTest、1,052 Swift Testing／118 suites**（`/tmp/filicon-wait-boundaries-full-parallel-1.log`、`/tmp/filicon-wait-boundaries-full-parallel-2.log`），App 均為 **341／48 suites**，分別 **68.611／99.396 秒**。多觀察者的準備通知強化後，最終版本再次完整通過相同數量（`/tmp/filicon-wait-boundaries-full-parallel-final.log`），App **58.657 秒**。三次均使用預設並行模式，未排除渲染或降低斷言；不再只有序列診斷通過。
 - 兩項 opt-in live Codex 測試仍跳過，既有 CoreData NSXPC 診斷仍在；不把套件通過當成真實帳號、原生 XPC、發佈簽章或所有未來並行負載的保證。剩餘三秒入列輪詢仍是已知的等待方式，這次沒有宣稱全部 fixture 都已改成事件同步。
 
-本批尚未提交。未更動正式 Swift 程式、套件依賴、Xcode 配置、資料格式或權限，未啟動／重啟使用者 App／Xcode、未 push；上一批原生建置證據保留，不能當成本輪重新執行。整體仍為 **43 complete／4 partial／1 NA**，原版其餘功能缺口沒有因此完成。
+本批已於下一輪提交為 `e6030b4`。未更動正式 Swift 程式、套件依賴、Xcode 配置、資料格式或權限，未啟動／重啟使用者 App／Xcode、未 push；上一批原生建置證據保留，不能當成本輪重新執行。整體仍為 **43 complete／4 partial／1 NA**，原版其餘功能缺口沒有因此完成。
 
 ## 已提交增量：引用原文的選項式提問（2026-09-22）
 

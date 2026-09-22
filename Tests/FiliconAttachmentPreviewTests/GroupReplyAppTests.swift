@@ -35,7 +35,8 @@ private struct GroupReplyAppProvider: InteractiveToolProvider {
 
 @Suite("Group reply app integration", .timeLimit(.minutes(1)))
 @MainActor struct GroupReplyAppTests {
-    @Test func quotedReplyPersistsWithoutChangingRecipientsOrQuestionState() async throws {
+    @Test(arguments: [false, true])
+    func quotedReplyPersistsWithoutChangingRecipientsOrQuestionState(shortAddress: Bool) async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-reply-app-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }
         let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
@@ -49,13 +50,15 @@ private struct GroupReplyAppProvider: InteractiveToolProvider {
         })
         await model.sendGroupMessage(groupID: group.id, text: "@Designer propose a design")
         let source = try #require(model.groupMessages[group.id]?.first(where: { $0.senderID == designer.id && $0.text == "Design proposal for review" }))
+        let target = shortAddress ? try #require(source.shortAddress) : source.id.uuidString
+        expectNoDifference(source.shortAddress, "t0s0")
         let probe = GroupReplyAppProbe()
         await model.registry.register(GroupReplyAppProvider { request, execute in
             guard await probe.record(request) == 1 else { return "PASS" }
             #expect(request.messages.first?.text.contains(engineer.id.uuidString) == true)
             #expect(request.messages.contains { $0.text.contains("Reply directory:") && $0.text.contains(source.id.uuidString) })
             let call = try NormalizedToolCall(id: "reply", name: "SendMessage", argumentsJSON: JSONEncoder().encode([
-                "text": "@everyone the proposal is ready for review", "reply_to": source.id.uuidString
+                "text": "@everyone the proposal is ready for review", "reply_to": target
             ]))
             let result = try await execute(call)
             #expect(!result.isError)
@@ -77,6 +80,7 @@ private struct GroupReplyAppProvider: InteractiveToolProvider {
         await restored.reloadWorkspaceData()
         let saved = try #require(restored.groupMessages[group.id]?.first(where: { $0.id == reply.id }))
         expectNoDifference(saved.replyToMessageID, source.id)
+        expectNoDifference(saved.shortAddress, "t1s0")
         expectNoDifference(restored.groupMessages[group.id]?.first(where: { $0.id == source.id })?.text, source.text)
     }
 
@@ -202,6 +206,7 @@ private struct GroupReplyAppProvider: InteractiveToolProvider {
         })
         await model.sendGroupMessage(groupID: group.id, text: "@Designer propose a design")
         let original = try #require(model.groupMessages[group.id]?.first { $0.senderID == designer.id && $0.text == "Design proposal to discuss" })
+        let target = withImage ? try #require(original.shortAddress) : original.id.uuidString
         var images: [AttachmentMetadata] = []
         if withImage {
             let bitmap = try #require(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 8, pixelsHigh: 8,
@@ -217,7 +222,7 @@ private struct GroupReplyAppProvider: InteractiveToolProvider {
             #expect(request.messages.first?.text.contains(engineer.id.uuidString) == true)
             #expect(request.messages.contains { $0.text.contains("Reply directory:") && $0.text.contains(original.id.uuidString) })
             expectNoDifference(request.attachmentsByMessageID.isEmpty, !withImage)
-            let payload: [String: Any] = ["type": "widget", "reply_to": original.id.uuidString, "widget": [
+            let payload: [String: Any] = ["type": "widget", "reply_to": target, "widget": [
                 "prompt": "Which part of this proposal should we review?", "allowCustom": true, "dismissOnMoveOn": true,
                 "options": [["label": "Layout", "value": "@everyone review layout"], ["label": "Typography", "value": "@Designer review typography"]]
             ]]
@@ -230,6 +235,7 @@ private struct GroupReplyAppProvider: InteractiveToolProvider {
         #expect(model.errorMessage == nil)
         let question = try #require(model.groupMessages[group.id]?.first { $0.question != nil })
         expectNoDifference(question.replyToMessageID, original.id)
+        expectNoDifference(question.shortAddress, "t1s0")
         expectNoDifference(question.senderID, engineer.id)
         #expect(question.images == nil && question.questionReplyTo == nil && model.canAnswerGroupQuestion(question))
         let requests = await probe.requests
@@ -267,6 +273,7 @@ private struct GroupReplyAppProvider: InteractiveToolProvider {
         expectNoDifference(messages.first { $0.id == original.id }, savedOriginal)
         let answers = messages.filter { $0.questionReplyTo == question.id }
         expectNoDifference(answers.count, 1)
+        expectNoDifference(answers.first?.shortAddress, "t2u")
         expectNoDifference(answers.first?.replyToMessageID, nil)
         let requests = await probe.requests
         expectNoDifference(requests.count, 1)

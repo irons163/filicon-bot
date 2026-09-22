@@ -104,6 +104,7 @@ public actor GroupService {
             let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .millisecondsSince1970
             state = try decoder.decode(AgentPersistentState.self, from: Data(contentsOf: storeURL))
         } else { state = .init() }
+        GroupMessageAddressing.assignMissing(in: &state.roomMessages)
         // A process restart cannot resume an in-flight tool or its approval.
         for index in state.roomMessages.indices {
             for toolIndex in state.roomMessages[index].toolActivities.indices where state.roomMessages[index].toolActivities[toolIndex].status == .pending {
@@ -155,6 +156,8 @@ public actor GroupService {
 
     public func postAgentMessage(_ message: RoomMessage, audience expected: AgentGroupAudience,
                                  lifetime: AgentGroupPostLifetime) async throws {
+        var message = message
+        message.shortAddress = nil
         guard let senderID = message.senderID, message.groupID == expected.id,
               !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, message.text.count <= 8_000,
               message.toolActivities.isEmpty, message.memberOutcome == nil,
@@ -178,6 +181,8 @@ public actor GroupService {
             throw AgentServiceError.unknownGroup(message.groupID)
         }
         let previous = state.roomMessages
+        var message = message
+        message.shortAddress = state.roomMessages.first(where: { $0.id == message.id && $0.groupID == message.groupID })?.shortAddress
         if let index = state.roomMessages.firstIndex(where: { $0.id == message.id && $0.groupID == message.groupID }) {
             state.roomMessages[index] = message
         } else { state.roomMessages.append(message) }
@@ -235,7 +240,7 @@ public actor GroupService {
         state.roomMessages.append(message)
         do { try persist() }
         catch { state.roomMessages = previous; throw error }
-        return message
+        return state.roomMessages.last(where: { $0.id == message.id }) ?? message
     }
 
     public func answerQuestion(groupID: UUID, messageID: UUID, answer: AgentQuestionAnswer,
@@ -261,7 +266,7 @@ public actor GroupService {
             state.roomMessages.append(reply)
             do { try persist() } catch { state.roomMessages = previous; throw error }
         }
-        return reply
+        return state.roomMessages.last(where: { $0.id == reply.id }) ?? reply
     }
 
     private func retireQuestions(groupID: UUID, onlyMoveOn: Bool = false) {
@@ -412,6 +417,7 @@ public actor GroupService {
                         message = state.roomMessages[index]
                     } else { state.roomMessages.append(message) }
                     try persist()
+                    message = state.roomMessages.last(where: { $0.id == message.id }) ?? message
                     produced.append(message)
                     await onMessage(message)
                     total += 1
@@ -491,11 +497,12 @@ public actor GroupService {
         let commit = {
             self.state.roomMessages.append(message)
             do { try self.persist() } catch { self.state.roomMessages.removeLast(); throw error }
-            self.explicitReplies[activity.id, default: []].append(message)
+            let saved = self.state.roomMessages.last(where: { $0.id == message.id }) ?? message
+            self.explicitReplies[activity.id, default: []].append(saved)
         }
         if let lifetime = publication.lifetime { try lifetime.commit(commit) }
         else { try commit() }
-        await onMessage(message)
+        await onMessage(state.roomMessages.last(where: { $0.id == message.id }) ?? message)
     }
 
     private func recordTools(_ tools: [RoomToolActivity], message: RoomMessage, epoch: UInt64, onMessage: @Sendable (RoomMessage) async -> Void) async throws {
@@ -504,10 +511,11 @@ public actor GroupService {
         var updated = message
         updated.toolActivities = tools
         if let index = state.roomMessages.firstIndex(where: { $0.id == message.id }) {
+            updated.shortAddress = state.roomMessages[index].shortAddress
             state.roomMessages[index] = updated
         } else { state.roomMessages.append(updated) }
         try persist()
-        await onMessage(updated)
+        await onMessage(state.roomMessages.last(where: { $0.id == updated.id }) ?? updated)
     }
 
     private func finishPendingTools(messageID: UUID, cancelled: Bool, onMessage: @Sendable (RoomMessage) async -> Void) async throws {
@@ -545,9 +553,12 @@ public actor GroupService {
     public func reactions(messageID: UUID) -> [MessageReaction] { state.reactions.filter { $0.messageID == messageID } }
 
     private func persist() throws {
+        var saved = state
+        GroupMessageAddressing.assignMissing(in: &saved.roomMessages)
         try FileManager.default.createDirectory(at: storeURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .millisecondsSince1970; encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try encoder.encode(state).write(to: storeURL, options: .atomic)
+        try encoder.encode(saved).write(to: storeURL, options: .atomic)
+        state = saved
     }
 
     private func resolveMembers(_ ids: [UUID]) async -> [AgentProfile] {

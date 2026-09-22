@@ -67,6 +67,9 @@ public struct GroupConversationResponder: GroupAgentResponder {
                          onPublication: (@Sendable (GroupAgentPublication) async throws -> Void)? = nil) async throws -> [String] {
         guard let provider = await registry.provider(id: agent.providerID) else { throw ProviderError.invalidResponse }
         let supportsTools = provider.descriptor.supportsToolCalling
+        // Keep the reply bound on the actual stored log, before hiding status
+        // rows from inference. Hidden rows must not mask an ambiguous address.
+        let replyHistory = delegatedMessage == nil && questionLifetime != nil ? history.filter { $0.groupID == groupID } : []
         // Exclude host-only PASS/error notices from the model's conversation.
         // Keep genuine tool activity even when the subsequent inference failed.
         let history = history.filter { $0.groupID == groupID && ($0.memberOutcome == nil || !$0.toolActivities.isEmpty) }
@@ -136,7 +139,6 @@ public struct GroupConversationResponder: GroupAgentResponder {
         let memoryQuery = delegatedMessage?.text ?? latestUser?.text ?? ""
         var additionalTools = messaging?.tools(for: agent.id, groupUserMessageID: forwardingMessageID, memoryQuery: memoryQuery) ?? []
         let publisher: AgentUserMessageTool?
-        let replyHistory = delegatedMessage == nil && questionLifetime != nil ? history : []
         let reply: AgentUserMessageTool.ReplyPublisher?
         if !replyHistory.isEmpty, let onPublication, let questionLifetime {
             reply = { text, images, replyID in

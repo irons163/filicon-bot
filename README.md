@@ -69,7 +69,7 @@ Question widgets are not yet available in mailbox/direct-chat/background peer
 wakes.
 
 Normal group agents can quote a prior message with
-`SendMessage(text:"…", reply_to:"<UUID from the reply directory>")`.
+`SendMessage(text:"…", reply_to:"<shortAddress or UUID from the reply directory>")`.
 The host supplies a bounded directory from the latest 40 same-group entries;
 empty messages and host status notices cannot be quoted. The chat shows the
 original author and a plain-text excerpt, with a button to return to the original.
@@ -78,10 +78,19 @@ Quotes do not change recipients, wake additional members, answer choice question
 or grant tool permissions. Text plus this request's incoming images can include a
 quote, but still requires the existing image preview approval; quoted attachments
 are never loaded or forwarded. Invalid targets fail without an unquoted fallback.
+Group-local short addresses are assigned by the host and persisted with the
+message: `t0u` is the first user message, `t0s0` and `t0s1` its first two visible
+member replies; `tbs0` is a reply before any user message. Legacy group logs gain
+addresses without changing their message UUIDs or content. A bounded prompt never
+renumbers messages. Only addresses listed in the current directory are accepted;
+malformed/ambiguous addresses cannot be guessed or rebound, and the original UUID
+route remains available. Replaying one call with its equivalent UUID or short
+address does not publish twice. This does not yet return newly published addresses
+in tool receipts or add them to the same turn's directory.
 Choice questions may also include a quote in a normal group turn:
 
 ```json
-{"type":"widget","reply_to":"<UUID from the reply directory>","widget":{"prompt":"Which part of this proposal should we review?","options":[{"label":"Layout"},{"label":"Typography"}]}}
+{"type":"widget","reply_to":"<shortAddress or UUID from the reply directory>","widget":{"prompt":"Which part of this proposal should we review?","options":[{"label":"Layout"},{"label":"Typography"}]}}
 ```
 
 The quote appears above the question. Answering or dismissing still resumes only
@@ -89,7 +98,7 @@ the **asking agent**, not the original message's author or everyone mentioned in
 the answer. The quote and pending question survive restart; an invalid quote or
 failed save never falls back to an unquoted question. A question cannot include
 text or image payloads, even when the current request has images.
-This native UUID routing does not support the reference's short addresses,
+This native routing does not support `sand-msg:` inline links,
 mailbox/direct-chat/background peer wakes, or external `channel` destinations.
 The original's collapsed reply-thread UI is not implemented by this quote preview.
 Standalone attachments, masked secret requests and vendor-specific cloud-agent
