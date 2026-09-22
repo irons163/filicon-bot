@@ -1,6 +1,24 @@
 # 協作能力核對紀錄（更新至 2026-09-22）
 
-## 本輪增量：並行 App 測試的渲染排程（2026-09-22）
+## 本輪驗收：完整並行與非並行回歸（2026-09-22）
+
+先提交上一批為 `2433983`（`test: keep UI rendering from starving parallel integration tests`）。提交前渲染排程、MCP OAuth 與群組圖片的 **20 Swift Testing／3 suites** 通過；此次受保護檔案可正常讀取，沒有修改或關閉檔案保護。以下驗收皆針對該 commit，未排除渲染或整合測試、未增加時間上限，也未在失敗後自動重試。
+
+| 執行模式 | 結果 | App 測試耗時 | 紀錄 |
+|---|---|---|---|
+| 預設並行，第 1 次 | exit 0；135 XCTest、1,014 Swift Testing／113 suites | 329 項／46 suites，59.772 秒 | `/tmp/filicon-render-unlocked-parallel-1.log` |
+| 預設並行，第 2 次 | exit 0；135 XCTest、1,014 Swift Testing／113 suites | 329 項／46 suites，59.577 秒 | `/tmp/filicon-render-unlocked-parallel-2.log` |
+| 明確 `--no-parallel` 對照 | exit 0；135 XCTest、1,014 Swift Testing／113 suites | 329 項／46 suites，70.655 秒 | `/tmp/filicon-render-unlocked-serial.log` |
+
+三次均未再出現前輪的 60 秒逾時、Cocoa 257／POSIX 1 檔案拒讀或索引越界。以上採各 test target 的摘要加總（含 Swift Testing 單數 `suite` 的摘要）；兩項 opt-in live Codex 測試均跳過，**不算 live 驗收**。既有 CoreData NSXPC 診斷仍在，不能宣稱已修復所有系統診斷或未觀察到的競態。先前鎖定狀態下的失敗紀錄保留為歷史，不再列為目前尚待執行的回歸。
+
+七語言 audit 仍為各 **1,624 keys／零缺漏**；本輪未修改程式碼、翻譯、依賴或封裝，只補驗收與測試操作文件。上一輪 **789 張 PNG** 的驗證仍是獨立的歷史證據，這三次完整回歸沒有設定 PNG 輸出，不宣稱重新產出或逐張目視比對。未重跑原生 App build、XPC smoke、Developer ID 簽章或公證。
+
+接續核對的具體功能缺口：本機非官方 reconstructed 的 `source/host/runner/tools/send-message-schema.ts` 與 `send-message-tool.ts` 定義 `text`、`attachment`、`widget`、`cursor-agent`、`secret-request` 五種訊息；Filicon 的 `Sources/FiliconAppServices/AgentUserMessageTool.swift` 目前只接受文字與本輪 host 提供的圖片 ID。**選項式提問及其回覆／取消續接、獨立附件、安全遮罩憑證請求仍未接在這個代理人工具上**；原版 `reply_to`／`channel` 路由亦不能因 App 另有一般回覆／頻道功能就視為已對等。原版 cloud-agent 卡屬不同供應商 runtime，不以假卡片冒充。上述為缺口確認，本輪沒有實作、登入服務或要求任何憑證；後續可先獨立處理不涉及外部帳號的選項式提問。
+
+整體仍 **43 complete／4 partial／1 NA**。本輪驗收文件尚未提交；未 push、未啟動／重啟使用者 App／Xcode、未操作真實群組／排程／帳號／憑證。
+
+## 已提交增量：並行 App 測試的渲染排程（2026-09-22）
 
 先提交上一批為 `448e187`（`fix: preserve subagent steering across completion`），提交前含取消／群組交接的 **35 Swift Testing／3 suites** 通過，diff check 通過。本輪只修改測試與文件，不改 App 行為、權限或功能 parity 狀態。
 
@@ -13,14 +31,14 @@
 
 中間驗證：初版合作式渲染通過 App **328 項／46 suites** 及全專案 **135 XCTest、1,013 Swift Testing／113 suites**；但開啟大量 PNG 輸出的壓力測試仍逾時。加入單一渲染放行後，登入／核准／協作工作約 15 秒內完成，只剩上述三個大批次超時，據此再拆每語言案例。這些失敗紀錄保留在 `/tmp/filicon-render-artifacts.log`、`/tmp/filicon-render-admission-artifacts.log`，不以先前通過結果當成最終修正的驗收。
 
-最新驗證與限制：
+該批提交前的驗證與限制（歷史紀錄）：
 
 - 最終程式版本的 App 預設並行驗證（含大量 PNG 寫出）**329 Swift Testing／46 suites 全數通過，58.733 秒**，紀錄 `/tmp/filicon-render-final-artifacts.log`。產物為 `/tmp/filicon-render-final.KgVbOj/` 的 **789 張 PNG**：七語言各 112 張，另有 5 張 compact／narrow／dark／empty／direct layout。逐檔驗證 PNG 簽頭、每個 chunk CRC 與非零尺寸；目視抽查繁中唯讀 Teams sheet、法文暗色無效 connector 表單，未見內容被裁切。不是宣稱逐張人工比對或 pixel-perfect baseline 驗收。
-- 最新完整預設並行回歸**未通過**（`/tmp/filicon-render-final-parallel-1.log`）：多個儲存／附件／代理人測試收到 **Cocoa 257／POSIX 1 Operation not permitted**，並觸發其他既有未防護測試的索引越界。隨後只讀檢查確認 `CGSSessionScreenIsLocked=Yes`。沒有將鎖定造成的受保護檔案錯誤當成本輪渲染問題，也沒有弱化檔案保護；fail-fast 停止後，第二次完整並行及最新非並行回歸尚未執行，需解鎖後再驗證。中間版完整通過結果不可冒充最終版本已完整通過。
+- 該批提交前最後一次完整預設並行回歸**未通過**（`/tmp/filicon-render-final-parallel-1.log`）：多個儲存／附件／代理人測試收到 **Cocoa 257／POSIX 1 Operation not permitted**，並觸發其他既有未防護測試的索引越界。隨後只讀檢查確認 `CGSSessionScreenIsLocked=Yes`。沒有將鎖定造成的受保護檔案錯誤當成本輪渲染問題，也沒有弱化檔案保護；fail-fast 停止後，第二次完整並行及最新非並行回歸當時尚未執行，留待解鎖後再驗證（後續結果見本文件首節）。中間版完整通過結果不可冒充最終版本已完整通過。
 - 不涉及受保護檔案的 **5 項 UI render scheduling 回歸，預設並行連續 20 輪全數通過**（`/tmp/filicon-render-scheduler-stress-1.log` 至 `-20.log`）。任一輪失敗即停止，不以重試隱藏失敗；此聚焦結果不代替待解鎖的完整驗證。
 - 七語言各 **1,624 keys／零缺漏**、`git diff --check` 通過。兩項 opt-in live Codex 測試未啟用；既有 CoreData NSXPC 診斷與編譯的 CKShareMetadata context 警告未列為本輪修復。未修改正式 UI／翻譯／封裝，未重跑 native App build／簽章／公證。
 
-新修改尚未提交；未 push、未啟動／重啟使用者 App／Xcode、未操作真實群組／排程／帳號／憑證。整體仍 **43 complete／4 partial／1 NA**，非 live 服務或 release 公證驗收。
+本批已於下一輪提交為 `2433983`；其後完整回歸結果見上節。未 push、未啟動／重啟使用者 App／Xcode、未操作真實群組／排程／帳號／憑證。整體仍 **43 complete／4 partial／1 NA**，非 live 服務或 release 公證驗收。
 
 ## 已提交增量：轉向與完成交界、協作測試的受控時序（2026-09-22）
 

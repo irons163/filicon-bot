@@ -790,8 +790,22 @@ It never changes the original app or accesses your workspace data.
 For all Swift package unit/integration tests, use the full Xcode toolchain:
 
 ```sh
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
+```
+
+Keep the Mac unlocked while running persistence/attachment tests: fixtures use
+protected files, and reopening them while the session is locked can fail with
+Cocoa 257 / POSIX 1. Do not disable file protection to make tests pass. UI render
+fixtures yield between images; the default parallel run includes the complete
+rendering matrix. For a serial diagnostic comparison, use:
+
+```sh
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test --no-parallel
 ```
+
+A serial pass does not replace a failed parallel run. Two live Codex integration
+tests remain opt-in (see the live tool-bridge checks below); an ordinary suite
+pass is not live-account, native XPC sandbox, or release-signing validation.
 
 Maintainers can regenerate the checked-in project after bulk source-layout
 changes with `ruby scripts/generate-xcode-project.rb` (`xcodeproj` gem 1.27).
