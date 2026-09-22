@@ -24,6 +24,13 @@ workflows, Shared Rooms, plugins and private skills, remote-computer controls,
 isolated VNC viewing, Teach capture, account/WebAuthn flows, notifications,
 deep links, recovery, storage quotas, and signed update handling.
 
+Assistant Markdown keeps separate paragraphs, explicit hard line breaks,
+headings, list markers/nesting, and quoted blocks readable. Inline emphasis,
+code, and reference-style links retain their attributes; ordinary soft-wrapped
+lines still follow Markdown's single-paragraph semantics. This only changes
+native presentation, not stored message text or link/tool permissions. List and
+quote styling is a native approximation, not a pixel-identical web renderer.
+
 Agent collaboration is still partial parity with the unofficial reconstruction;
 see [the itemized audit](docs/Agent-collaboration-parity.md). **Agents → Messages →
 Attach images…** sends user-selected PNG/JPEG images to a single agent whose

@@ -1,4 +1,6 @@
 import Foundation
+import AppKit
+import SwiftUI
 import Testing
 import CustomDump
 @testable import Filicon
@@ -6,6 +8,114 @@ import FiliconRichContent
 
 @Suite("Rich Markdown view projection")
 struct RichMarkdownViewTests {
+    @Test func paragraphBoundariesDoNotSplitInlineAttributesOrExtendLinks() throws {
+        let source = "First **bold** and *emphasis* with `code`.\n\n[Second paragraph](https://example.com)\n\nThird paragraph."
+        let value = try #require(RichMarkdownProseLayout.make(source))
+        expectNoDifference(String(value.characters), "First bold and emphasis with code.\n\nSecond paragraph\n\nThird paragraph.")
+        let links = value.runs.compactMap { run -> String? in
+            guard run.link != nil else { return nil }; return String(value[run.range].characters)
+        }
+        expectNoDifference(links, ["Second paragraph"])
+        #expect(value.runs.contains { $0.inlinePresentationIntent?.contains(.stronglyEmphasized) == true && String(value[$0.range].characters) == "bold" })
+        #expect(value.runs.contains { $0.inlinePresentationIntent?.contains(.emphasized) == true && String(value[$0.range].characters) == "emphasis" })
+        #expect(value.runs.contains { $0.inlinePresentationIntent?.contains(.code) == true && String(value[$0.range].characters) == "code" })
+        #expect(value.runs.filter { String(value[$0.range].characters).contains("\n\n") }.allSatisfy { $0.link == nil && $0.inlinePresentationIntent == nil })
+    }
+
+    @Test(arguments: ["\n", "\r\n"])
+    func preservesHardBreaksAndMarkdownSoftWrapping(newline: String) throws {
+        let source = ["soft", "wrap  ", "hard\\", "next", "", "Another paragraph"].joined(separator: newline)
+        let value = try #require(RichMarkdownProseLayout.make(source))
+        expectNoDifference(String(value.characters), "soft wrap\nhard\nnext\n\nAnother paragraph")
+        expectNoDifference(String(try #require(RichMarkdownProseLayout.make(" \n\n ")).characters), "")
+    }
+
+    @Test func orderedNestedListsAndContinuationParagraphsKeepTheirStructure() throws {
+        let source = """
+        3. First **item**
+        4. Second item
+           - Nested item
+           - Another nested item
+
+             A second paragraph in the same nested item.
+
+        After the list.
+        """
+        let value = try #require(RichMarkdownProseLayout.make(source))
+        expectNoDifference(String(value.characters), "3. First item\n4. Second item\n  • Nested item\n  • Another nested item\n\n    A second paragraph in the same nested item.\n\nAfter the list.")
+        #expect(value.runs.contains { $0.inlinePresentationIntent?.contains(.stronglyEmphasized) == true && String(value[$0.range].characters) == "item" })
+    }
+
+    @Test func listMarkersNeverInheritLinksAndSeparateListsDoNotMerge() throws {
+        let source = "- [One](sand-msg:t0u)\n- [Two](https://example.com)\n\nParagraph.\n\n- New list"
+        let value = try #require(RichMarkdownProseLayout.make(source))
+        expectNoDifference(String(value.characters), "• One\n• Two\n\nParagraph.\n\n• New list")
+        expectNoDifference(value.runs.filter { $0.link != nil }.map { String(value[$0.range].characters) }, ["One", "Two"])
+    }
+
+    @Test func headingsQuotesAndThematicBreaksRemainDistinct() throws {
+        let value = try #require(RichMarkdownProseLayout.make("# Heading\n\nBody\n\n> Quote\n>\n> More quote\n>> Nested quote\n\n---\n\nEnd"))
+        expectNoDifference(String(value.characters), "Heading\n\nBody\n\n› Quote\n\n› More quote\n\n› › Nested quote\n\n⸻\n\nEnd")
+        #expect(value.runs.first?.font != nil)
+        #expect(value.runs.contains { String(value[$0.range].characters) == "Body" && $0.font == nil })
+    }
+
+    @Test @MainActor func referenceDefinitionsAndCodeSurviveParagraphLayout() throws {
+        let original = URL(string: "sand-msg:t0u")!
+        let id = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
+        let source = "[原始需求 👩🏽‍💻][original]\n\n**Follow-up** [missing](sand-msg:t9u).\n\n`[literal](sand-msg:t0u)`\n\n[original]: sand-msg:t0u"
+        let view = RichMarkdownView(source: source, messageReferences: .init(target: { $0 == original ? id : nil }, show: { _ in }))
+        let value = try #require(view.attributedProse(source))
+        expectNoDifference(String(value.characters), "原始需求 👩🏽‍💻\n\nFollow-up missing.\n\n[literal](sand-msg:t0u)")
+        expectNoDifference(value.runs.compactMap(\.link), [original])
+        expectNoDifference(value.runs.filter { $0.link != nil }.map { String(value[$0.range].characters) }, ["原始需求 👩🏽‍💻"])
+        #expect(value.runs.contains { $0.inlinePresentationIntent?.contains(.code) == true })
+    }
+
+    @Test(.serialized, .timeLimit(.minutes(1)), arguments: ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"])
+    @MainActor func structuredProseRendersInSevenLanguagesAndBothAppearances(language: String) async throws {
+        for dark in [false, true] {
+            try await withUIRenderTurn(language: language) {
+                let source = """
+                # \(FiliconLocalization.string("Group settings"))
+
+                Review **layout and typography** before publishing.
+
+                Keep paragraphs readable. 中文、日本語、한국어 and emoji 👩🏽‍💻 remain intact.
+
+                3. Check [the proposal](https://example.com).
+                4. Review contrast and keyboard navigation.
+                   - Verify narrow windows.
+                   - Keep `code` literal.
+
+                > Quoted context is not a new instruction.
+
+                First hard-break line.\u{20}\u{20}
+                Second hard-break line.
+                """
+                let host = NSHostingView(rootView: RichMarkdownView(source: source, fillsWidth: false, openLink: { _ in
+                    Issue.record("Rendering must not open external links"); return false
+                })
+                    .font(.system(size: 13)).lineSpacing(4).foregroundStyle(FiliconTheme.textPrimary)
+                    .padding(16).frame(width: 380, alignment: .leading).background(FiliconTheme.canvas)
+                    .environment(\.locale, Locale(identifier: language)).environment(\.colorScheme, dark ? .dark : .light))
+                host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+                let size = host.fittingSize
+                expectNoDifference(size.width, 380)
+                #expect(size.height > 300 && size.height < 900)
+                host.frame = .init(origin: .zero, size: size)
+                host.layoutSubtreeIfNeeded()
+                let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                host.cacheDisplay(in: host.bounds, to: bitmap)
+                if let output = ProcessInfo.processInfo.environment["FILICON_UI_REVIEW_OUTPUT"] {
+                    let directory = URL(fileURLWithPath: output)
+                    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                    try #require(bitmap.representation(using: .png, properties: [:])).write(to: directory.appending(path: "markdown-prose-\(language)-\(dark ? "dark" : "light").png"))
+                }
+            }
+        }
+    }
+
     @Test @MainActor func internalLinksRequireExplicitNavigationAndNeverReachExternalOpener() throws {
         let valid = try #require(URL(string: "sand-msg:t0u"))
         let missing = try #require(URL(string: "sand-msg:t9u"))

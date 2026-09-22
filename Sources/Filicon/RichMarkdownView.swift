@@ -142,6 +142,71 @@ struct MermaidNativeLayout: Sendable, Equatable {
     let show: (UUID) -> Void
 }
 
+/// Foundation preserves block structure as presentation intents, not characters.
+/// SwiftUI Text needs explicit separators/markers; parse the whole prose first so
+/// reference-style links, inline formatting and hard breaks keep their meaning.
+enum RichMarkdownProseLayout {
+    static func make(_ source: String) -> AttributedString? {
+        guard let parsed = try? AttributedString(markdown: source, options: .init(interpretedSyntax: .full)) else { return nil }
+        var result = AttributedString()
+        var previous: Context?
+        var seenItems: Set<Int> = []
+        for (intent, range) in parsed.runs[\.presentationIntent] {
+            let context = Context(components: intent?.components ?? [])
+            if let previous {
+                let adjacentItems = context.itemID != previous.itemID && !context.listIDs.isDisjoint(with: previous.listIDs)
+                result.append(AttributedString(adjacentItems ? "\n" : "\n\n"))
+            }
+            var prefix = String(repeating: "› ", count: context.quoteDepth)
+            if let itemID = context.itemID {
+                prefix += String(repeating: "  ", count: max(context.listIDs.count - 1, 0))
+                prefix += seenItems.insert(itemID).inserted ? context.marker : String(repeating: " ", count: context.marker.count)
+            }
+            // Synthetic separators must not inherit an adjacent link or emphasis.
+            result.append(AttributedString(prefix))
+            var piece = AttributedString(parsed[range])
+            if let level = context.headerLevel {
+                piece.font = level == 1 ? .title2.bold() : level == 2 ? .title3.bold() : .headline
+            }
+            result.append(piece)
+            previous = context
+        }
+        return result
+    }
+
+    private struct Context {
+        let components: [PresentationIntent.IntentType]
+        var listIDs: Set<Int> {
+            Set(components.compactMap {
+                switch $0.kind {
+                case .orderedList, .unorderedList: $0.identity
+                default: nil
+                }
+            })
+        }
+        var itemID: Int? {
+            components.first { if case .listItem = $0.kind { true } else { false } }?.identity
+        }
+        var marker: String {
+            guard let index = components.firstIndex(where: { if case .listItem = $0.kind { true } else { false } }),
+                  case .listItem(let ordinal) = components[index].kind else { return "" }
+            for parent in components.dropFirst(index + 1) {
+                switch parent.kind {
+                case .orderedList: return "\(ordinal). "
+                case .unorderedList: return "• "
+                default: continue
+                }
+            }
+            return ""
+        }
+        var quoteDepth: Int { components.filter { $0.kind == .blockQuote }.count }
+        var headerLevel: Int? {
+            for component in components { if case .header(let level) = component.kind { return level } }
+            return nil
+        }
+    }
+}
+
 struct RichMarkdownView: View {
     @Environment(\.locale) private var uiLocale
     let source: String
@@ -230,7 +295,7 @@ struct RichMarkdownView: View {
     }
 
     func attributedProse(_ prose: String) -> AttributedString? {
-        guard var attributed = try? AttributedString(markdown: prose, options: .init(interpretedSyntax: .full)) else { return nil }
+        guard var attributed = RichMarkdownProseLayout.make(prose) else { return nil }
         // Keep the author's label, but don't display a dead internal link as clickable.
         let unavailable = attributed.runs.compactMap { run -> Range<AttributedString.Index>? in
             guard let url = run.link, url.scheme?.lowercased() == "sand-msg",

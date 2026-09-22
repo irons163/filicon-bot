@@ -1,6 +1,26 @@
 # 協作能力核對紀錄（更新至 2026-09-22）
 
-## 本輪增量：一般群組的行內訊息引用（2026-09-22）
+## 本輪修正：Markdown 段落與清單呈現（2026-09-22）
+
+開始時上一批已提交 `3aa150b`，工作目錄乾淨。本輪處理上一輪畫面抽查已記錄的 prose 段落黏連，不新增訊息路由或宣稱原版剩餘功能已完成。
+
+- 本機 Foundation 解析實測顯示：`.full` 模式把 `First\n\nSecond` 的字元輸出為 `FirstSecond`，段落仍保留在不同的 `PresentationIntent`；原畫面直接用 `Text(attributed)`，沒有把這些 block 邊界轉成分隔。新增純顯示投影 `RichMarkdownProseLayout`，先解析完整 prose，再依 block intent 組成文字，不先切開來源 Markdown，避免破壞跨段落的 reference-style link 定義。
+- 不同段落／標題／引用區塊間補空行，同一清單的相鄰項目用換行；恢復項目符號、原起始序號、巢狀縮排與同項目後續段落。標題使用原生字級，引用區塊顯示層級標記。一般 soft wrap 仍依 Markdown 合併為空格；兩個尾端空白或反斜線的 hard break 保留，LF／CRLF 同樣處理。
+- 原文 run 的粗體、斜體、inline code、Unicode／emoji 與連結屬性保留。補上的分隔、編號與標記不繼承鄰近連結；既有 `sand-msg:` 有效性過濾與 openURL 攔截仍在排版之後執行。code／math／table／Mermaid 仍走原本獨立 renderer；無新網路載入、工具權限、聊天保存或成員狀態變更。
+- 依 SwiftUI／Swift 測試與 CustomDump 技能把顯示投影獨立驗證；新增七項測試，含完整文字與屬性斷言、巢狀清單與延續段落、引用定義／無效連結／emoji，以及七語言明暗畫面。沿用逐 fixture 主執行緒排隊，沒有提高既有逾時、停用並行或排除 UI 測試。
+
+驗收紀錄保存在 Git 忽略的 `.build/validation/markdown-prose.SDrQnO/`：
+
+- 重新建置後，聚焦 **35 Swift Testing／4 suites** 通過（`focused.log`）。完整**預設並行**回歸 **135 XCTest、1,071 Swift Testing／120 suites** 通過（`full-parallel.log`），App **352／48 suites，59.750 秒**。SwiftPM 只限制建置 `--jobs 4`，沒有加 `--no-parallel`、排除 UI 或提高案例時間上限。兩項 opt-in live Codex 仍跳過；既有 SDK/CoreData 與 weak-self 診斷未列為修復。
+- 七語言各 **1,637 keys／零缺漏**（`localization.log`），沒有新翻譯鍵。重新產出 **28 張本輪關注 PNG**（`ui/markdown-prose-*.png`、`ui/inline-reference-*.png`，各七語言 × 明暗）；完整檔名集合、PNG 簽頭／CRC／尺寸皆通過，寬 380 points，排版圖高 353 points、群組引用圖高 252 points。目視抽查繁中淺色排版及法文暗色群組引用：段落分開、清單序號與層級可辨識、hard break 保留、有效引用仍是連結，code 字面值未啟用。資料文字不強制翻譯；未做逐張人工、pixel-perfect baseline 或真實 App 點擊驗收。
+- 原生 `Filicon App` Debug 建置（`native.log`）、deep strict codesign（`codesign.log`）與 `verify-package.sh --xcode-debug`（`package.log`）通過，App／XPC entitlements 與 `Support/*.entitlements` 相符。產物位於同目錄的 `native/Build/Products/Debug/Filicon.app`，未啟動；這是 ad-hoc Debug 驗證，不是 Developer ID 發佈簽章、公證或 live XPC 驗收。
+- 最初 `/tmp` 聚焦已回報 35 項通過並抽查輸出，但之後該處紀錄／建置目錄消失，當時的完整回歸結果無法確認，不能列為通過。以上數字來自重新建置／重跑，不沿用缺失紀錄；未推測暫存移除原因，也未操作使用者 App／Xcode。
+
+邊界：這是原生 prose 顯示修正，不是完整 CommonMark／GFM 或原版網頁 renderer 的 pixel-perfect 實作；清單與引用採原生文字標記，長行懸掛縮排／原版 chip／折疊討論串仍未還原。整體核對仍 **43 complete／4 partial／1 NA**；`complete` 只代表矩陣該列所述範圍，不等於原版全部細節已完成。未新增依賴或改動權限，未 push、未啟動／重啟 App／Xcode。
+
+## 已提交增量：一般群組的行內訊息引用（2026-09-22）
+
+本批已提交為 `3aa150b`（`feat: navigate inline message references in group chats`）。
 
 開始時上一批已提交 `c842f02`，工作目錄乾淨。對照本機非官方 reconstructed 的 `source/shared/message-reference.ts` 與 `source/host/runner/tools/send-message-tool.ts`：文字中的 `[label](sand-msg:<address>)` 是訊息跳轉，不是 `reply_to` 子討論串。本輪接入一般群組的原生文字連結；沒有把自訂 URL scheme 加入全域外部開啟白名單。
 
