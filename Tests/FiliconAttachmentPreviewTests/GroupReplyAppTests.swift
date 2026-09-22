@@ -35,6 +35,78 @@ private struct GroupReplyAppProvider: InteractiveToolProvider {
 
 @Suite("Group reply app integration", .timeLimit(.minutes(1)))
 @MainActor struct GroupReplyAppTests {
+    @Test func inlineReferencePublishesAndReopensWithoutQuotingRoutingOrApproval() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "filicon-inline-app-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+        let engineer = try #require(await model.createAgent(name: "Engineer", summary: "", instructions: "", providerID: "group-reply-fixture", modelID: "test"))
+        let designer = try #require(await model.createAgent(name: "Designer", summary: "", instructions: "", providerID: "group-reply-fixture", modelID: "test"))
+        #expect(await model.createGroup(name: "Team", summary: "", memberIDs: [engineer.id, designer.id]))
+        let group = try #require(model.groups.first)
+        await model.registry.register(GroupReplyAppProvider { _, _ in "Design proposal" })
+        await model.sendGroupMessage(groupID: group.id, text: "@Designer propose a layout")
+        let original = try #require(model.groupMessages[group.id]?.first { $0.senderID == designer.id && $0.text == "Design proposal" })
+        let address = try #require(original.shortAddress)
+        let text = "Review [the design proposal](sand-msg:\(address)) before implementation."
+        let probe = GroupReplyAppProbe()
+        await model.registry.register(GroupReplyAppProvider { request, execute in
+            guard await probe.record(request) == 1 else { return "PASS" }
+            #expect(request.messages.contains { $0.text.contains("[descriptive label](sand-msg:<shortAddress>)") })
+            let call = try NormalizedToolCall(id: "inline-reference", name: "SendMessage", argumentsJSON: JSONEncoder().encode(["text": text]))
+            #expect(try await !execute(call).isError)
+            return "Do not repeat this final text"
+        })
+        await model.sendGroupMessage(groupID: group.id, text: "@Engineer link the proposal")
+        let response = try #require(model.groupMessages[group.id]?.first { $0.text == text })
+        expectNoDifference(response.senderID, engineer.id)
+        #expect(response.replyToMessageID == nil && response.questionReplyTo == nil && response.question == nil)
+        #expect(model.pendingAutoReviewApprovals.isEmpty && model.runningGroups.isEmpty && model.errorMessage == nil)
+        #expect(await probe.requests.allSatisfy { $0.messages.first?.text.contains(engineer.id.uuidString) == true })
+        let restored = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+        await restored.reloadWorkspaceData()
+        let history = restored.groupMessages[group.id, default: []]
+        expectNoDifference(history.first { $0.id == response.id }?.text, text)
+        #expect(history.allSatisfy { $0.text != "Do not repeat this final text" })
+        let directory = GroupMessageReferenceDirectory(history: history, groupID: group.id)
+        expectNoDifference(directory.target(for: URL(string: "sand-msg:\(address)")!, from: response.id), original.id)
+    }
+
+    @Test(.serialized, arguments: ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"])
+    func inlineReferencesRenderInSevenLanguagesAndBothAppearances(language: String) async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "filicon-inline-render-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+        let group = UUID()
+        let agent = AgentProfile(name: "Designer", providerID: "fixture", modelID: "test")
+        var original = RoomMessage(groupID: group, senderID: nil, text: "Earlier request")
+        original.shortAddress = "t0u"
+        let response = RoomMessage(groupID: group, senderID: agent.id,
+            text: "Review [the earlier request / 原始需求](sand-msg:t0u) and [an unavailable reference](sand-msg:t9u).\n\n`[code stays literal](sand-msg:t0u)`\n\n**This is navigation, not approval.**")
+        let directory = GroupMessageReferenceDirectory(history: [original, response], groupID: group)
+        for dark in [false, true] {
+            try await withUIRenderTurn(language: language) {
+                let host = NSHostingView(rootView: GroupMessageBubble(message: response, agent: agent,
+                    inlineReferences: directory, onShowReply: { _ in }, onReaction: {})
+                    .padding(16).frame(width: 380).background(FiliconTheme.canvas)
+                    .environmentObject(model)
+                    .environment(\.locale, Locale(identifier: language)).environment(\.colorScheme, dark ? .dark : .light))
+                host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+                let size = host.fittingSize
+                expectNoDifference(size.width, 380)
+                #expect(size.height > 120 && size.height < 480)
+                host.frame = .init(origin: .zero, size: size)
+                host.layoutSubtreeIfNeeded()
+                let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                host.cacheDisplay(in: host.bounds, to: bitmap)
+                if let output = ProcessInfo.processInfo.environment["FILICON_UI_REVIEW_OUTPUT"] {
+                    let directory = URL(fileURLWithPath: output)
+                    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                    try #require(bitmap.representation(using: .png, properties: [:])).write(to: directory.appending(path: "inline-reference-\(language)-\(dark ? "dark" : "light").png"))
+                }
+            }
+        }
+    }
+
     @Test(arguments: [false, true])
     func quotedReplyPersistsWithoutChangingRecipientsOrQuestionState(shortAddress: Bool) async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-reply-app-\(UUID())")
@@ -178,6 +250,7 @@ private struct GroupReplyAppProvider: InteractiveToolProvider {
         let registry = ProviderRegistry()
         await registry.register(GroupReplyAppProvider { request, execute in
             #expect(!request.messages.contains { $0.text.contains("Reply directory:") })
+            #expect(!request.messages.contains { $0.text.contains("[descriptive label](sand-msg:<shortAddress>)") })
             let payload: [String: Any] = quotedQuestion
                 ? ["type": "widget", "widget": ["prompt": "Not authorized", "options": [["label": "Continue"]]], "reply_to": source.id.uuidString]
                 : ["text": "Not authorized", "reply_to": source.id.uuidString]

@@ -145,7 +145,8 @@ struct GroupConversationView: View {
     }
 
     private var transcript: some View {
-        ScrollViewReader { proxy in
+        let references = GroupMessageReferenceDirectory(history: messages, groupID: group.id)
+        return ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 16) {
                     if messages.isEmpty {
@@ -173,6 +174,7 @@ struct GroupConversationView: View {
                             },
                             replySource: messages.first { $0.id == message.replyToMessageID && $0.groupID == group.id && $0.memberOutcome == nil },
                             replyAuthor: replyAuthor(for: message),
+                            inlineReferences: references,
                             onShowReply: { id in withAnimation { proxy.scrollTo(id, anchor: .center) } },
                             onReaction: { Task { await model.toggleGroupReaction(groupID: group.id, messageID: message.id, emoji: "👍") } }
                         ).id(message.id)
@@ -418,6 +420,7 @@ struct GroupMessageBubble: View {
     var onQuestionAnswer: ((AgentQuestionAnswer) -> Void)?
     var replySource: RoomMessage?
     var replyAuthor: String?
+    var inlineReferences: GroupMessageReferenceDirectory?
     var onShowReply: ((UUID) -> Void)?
     let onReaction: () -> Void
     @State private var hovering = false
@@ -451,7 +454,7 @@ struct GroupMessageBubble: View {
                             Text(message.questionReplyTo != nil && message.text == "Question dismissed without an answer."
                                  ? l10n("Question dismissed without an answer.") : message.text)
                         }
-                        else { RichMarkdownView(source: message.text, fillsWidth: false) }
+                        else { RichMarkdownView(source: message.text, fillsWidth: false, messageReferences: referenceNavigation) }
                     }.font(.system(size: 13)).lineSpacing(4).textSelection(.enabled)
                     .foregroundStyle(isUser ? FiliconTheme.userBubbleText : FiliconTheme.textPrimary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -506,6 +509,11 @@ struct GroupMessageBubble: View {
     private func copy() {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(message.text, forType: .string)
+    }
+
+    private var referenceNavigation: RichMarkdownMessageReferences? {
+        guard let inlineReferences, let onShowReply else { return nil }
+        return .init(target: { inlineReferences.target(for: $0, from: message.id) }, show: onShowReply)
     }
 
     private func toolStatus(_ status: RoomToolActivity.Status) -> String {

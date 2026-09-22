@@ -1,10 +1,60 @@
 import Foundation
 import Testing
+import CustomDump
 @testable import Filicon
 import FiliconRichContent
 
 @Suite("Rich Markdown view projection")
 struct RichMarkdownViewTests {
+    @Test @MainActor func internalLinksRequireExplicitNavigationAndNeverReachExternalOpener() throws {
+        let valid = try #require(URL(string: "sand-msg:t0u"))
+        let missing = try #require(URL(string: "sand-msg:t9u"))
+        let https = try #require(URL(string: "https://example.com"))
+        let target = UUID()
+        var opened: [URL] = [], jumped: [UUID] = []
+        let plain = RichMarkdownView(source: "", openLink: { opened.append($0); return true })
+        #expect(!plain.open(valid))
+        let view = RichMarkdownView(source: "", messageReferences: .init(
+            target: { $0 == valid ? target : nil }, show: { jumped.append($0) }
+        ), openLink: { opened.append($0); return true })
+        #expect(view.open(valid))
+        #expect(!view.open(missing))
+        #expect(!view.open(URL(string: "SAND-MSG://t0u")!))
+        #expect(!view.open(URL(string: "file:///tmp/private")!))
+        #expect(view.open(https))
+        expectNoDifference(jumped, [target])
+        expectNoDifference(opened, [https])
+        let prose = "[Earlier request](sand-msg:t0u) [Unavailable](sand-msg:t9u) ` [code](sand-msg:t0u) ` [Web](https://example.com)"
+        let attributed = try #require(view.attributedProse(prose))
+        expectNoDifference(attributed.runs.compactMap(\.link), [valid, https])
+        #expect(String(attributed.characters).contains("Unavailable"))
+        #expect(String(attributed.characters).contains("[code](sand-msg:t0u)"))
+        expectNoDifference(try #require(plain.attributedProse(prose)).runs.compactMap(\.link), [https])
+        expectNoDifference(RichMarkdownProjection.make(source: prose).safeHTTPLinks(maximum: 3), [https])
+    }
+
+    @Test @MainActor func internalReferencesDoNotActivateInCodeMathOrTableBlocks() throws {
+        let source = """
+        [Original](sand-msg:t0u)
+
+        ```text
+        [Code](sand-msg:t0u)
+        ```
+        | Title | Link |
+        | --- | --- |
+        | Table | [label](sand-msg:t0u) |
+
+        \\([math](sand-msg:t0u)\\)
+        """
+        let blocks = RichMarkdownProjection.make(source: source).blocks
+        let prose = blocks.compactMap { block -> String? in
+            if case .prose(let text) = block { return text }; return nil
+        }
+        let view = RichMarkdownView(source: source, messageReferences: .init(target: { _ in UUID() }, show: { _ in }))
+        let links = prose.compactMap(view.attributedProse).flatMap { $0.runs.compactMap(\.link) }
+        expectNoDifference(links.map(\.absoluteString), ["sand-msg:t0u"])
+    }
+
     @Test func projectsEveryRichBlockWithoutExecutingContent() {
         let source = """
         Hello **world**

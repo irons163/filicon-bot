@@ -136,6 +136,12 @@ struct MermaidNativeLayout: Sendable, Equatable {
     }
 }
 
+/// An explicit, in-memory navigation capability. Other Markdown surfaces have none.
+@MainActor struct RichMarkdownMessageReferences {
+    let target: (URL) -> UUID?
+    let show: (UUID) -> Void
+}
+
 struct RichMarkdownView: View {
     @Environment(\.locale) private var uiLocale
     let source: String
@@ -143,6 +149,7 @@ struct RichMarkdownView: View {
     let maximumMetadataCards: Int
     let fillsWidth: Bool
     let openLink: @MainActor (URL) -> Bool
+    let messageReferences: RichMarkdownMessageReferences?
 
     @State private var metadata: [URL: SafeLinkMetadata] = [:]
     private var projection: RichMarkdownProjection { .make(source: source) }
@@ -152,6 +159,7 @@ struct RichMarkdownView: View {
         metadataController: RichLinkMetadataController? = nil,
         maximumMetadataCards: Int = 0,
         fillsWidth: Bool = true,
+        messageReferences: RichMarkdownMessageReferences? = nil,
         openLink: @escaping @MainActor (URL) -> Bool = RichMarkdownDefaultLinkOpener.open
     ) {
         self.source = source
@@ -159,6 +167,7 @@ struct RichMarkdownView: View {
         self.maximumMetadataCards = min(max(maximumMetadataCards, 0), 3)
         self.fillsWidth = fillsWidth
         self.openLink = openLink
+        self.messageReferences = messageReferences
     }
 
     static func transcript(
@@ -204,7 +213,7 @@ struct RichMarkdownView: View {
         switch block {
         case .prose(let prose):
             Group {
-                if let attributed = try? AttributedString(markdown: prose, options: .init(interpretedSyntax: .full)) { Text(attributed) }
+                if let attributed = attributedProse(prose) { Text(attributed) }
                 else { Text(prose) }
             }
             .environment(\.openURL, OpenURLAction { open($0) ? .handled : .discarded })
@@ -220,7 +229,24 @@ struct RichMarkdownView: View {
         }
     }
 
-    private func open(_ url: URL) -> Bool {
+    func attributedProse(_ prose: String) -> AttributedString? {
+        guard var attributed = try? AttributedString(markdown: prose, options: .init(interpretedSyntax: .full)) else { return nil }
+        // Keep the author's label, but don't display a dead internal link as clickable.
+        let unavailable = attributed.runs.compactMap { run -> Range<AttributedString.Index>? in
+            guard let url = run.link, url.scheme?.lowercased() == "sand-msg",
+                  messageReferences?.target(url) == nil else { return nil }
+            return run.range
+        }
+        for range in unavailable { attributed[range].link = nil }
+        return attributed
+    }
+
+    func open(_ url: URL) -> Bool {
+        if url.scheme?.lowercased() == "sand-msg" {
+            guard let messageReferences, let id = messageReferences.target(url) else { return false }
+            messageReferences.show(id)
+            return true
+        }
         guard case .allowed(let safeURL) = TranscriptLinkPolicy.decision(for: url) else { return false }
         return openLink(safeURL)
     }

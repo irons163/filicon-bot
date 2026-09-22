@@ -1,6 +1,26 @@
 # 協作能力核對紀錄（更新至 2026-09-22）
 
-## 本輪增量：一般群組的持久短位址引用（2026-09-22）
+## 本輪增量：一般群組的行內訊息引用（2026-09-22）
+
+開始時上一批已提交 `c842f02`，工作目錄乾淨。對照本機非官方 reconstructed 的 `source/shared/message-reference.ts` 與 `source/host/runner/tools/send-message-tool.ts`：文字中的 `[label](sand-msg:<address>)` 是訊息跳轉，不是 `reply_to` 子討論串。本輪接入一般群組的原生文字連結；沒有把自訂 URL scheme 加入全域外部開啟白名單。
+
+- 群組以完整已載入紀錄建立一次唯讀索引，使用既有持久短位址，點擊後交給原有 ScrollViewReader 以原訊息 UUID 捲動。文字由既有發布／儲存流程保存，不改資料格式、成員選擇、問題狀態或核准流程；重開後仍能定位同一訊息。工具提示沿用本回合有界引用目錄，不把原文摘要提升為指令。
+- 僅接受 canonical `sand-msg:t0u`／`sand-msg:t0s0`／`sand-msg:tbs0` 格式，且目標必須在同群組、早於連結所在訊息、非空、非 host 狀態，ID 與短位址都唯一。拒絕自身／未來訊息、僅在其他群組存在的目標、損壞角色、私人 a／附件 ua、UUID、URL host、百分比編碼、查詢、fragment、前導零及大小寫變體。另一群組的同名位址不遮蔽本群組；缺少的位址不會因後來新訊息出現而指向未來內容。
+- RichMarkdownView 只有在群組明確注入 navigation capability 時才處理內部連結。無效引用保留作者寫的標籤、移除可點屬性；攔截時再次解析，任何內部 scheme 都不送往 NSWorkspace／外部 opener。一般 HTTP(S) 保持原有連結政策；內部連結不抓取預覽、不載入附件、不路由訊息、不核准工具。code／math／table 與選項問題不啟用連結，背景工具上下文不宣告此能力。
+- 依 SwiftUI 技能把畫面限定為顯示與導航，索引獨立成可測試值型別；依 Swift 測試／CustomDump 技能使用隔離儲存、fixture provider、完整結果比較與注入 opener，測試不操作真實帳號、聊天或外部服務。
+
+驗收：
+
+- 聚焦 **24 Swift Testing／4 suites** 通過，紀錄 `/tmp/filicon-inline-reference-focused-2.log`。新增七項測試涵蓋位址解析、JSON 往返、缺失／歧義／角色／時間順序、外部 opener 隔離、原生 Markdown 屬性、群組發布與重開、不增加回覆成員及不隱含工具核准。首輪畫面 fixture 漏注入 AppModel 而中止（`/tmp/filicon-inline-reference-focused.log`）；補上隔離環境後重跑，未刪除案例或提高逾時。
+- 完整**預設並行**回歸 **135 XCTest、1,064 Swift Testing／120 suites** 通過，App **345／48 suites，91.539 秒**（`/tmp/filicon-inline-reference-full-parallel.log`）。兩項 opt-in live Codex 仍跳過；既有 SDK／CoreData 相關診斷未列為本輪修復。不宣稱單次全綠保證未來所有並行負載。
+- 七語言各 **1,637 keys／零缺漏**，未新增 UI 翻譯鍵。產出 **14 張行內引用 PNG**，位於 `/tmp/filicon-inline-reference-ui/inline-reference-*.png`；檢查完整檔名集合、PNG 簽頭／CRC／尺寸，全部 380-point 寬且高度在界限內。目視抽查繁中淺色及法文暗色：有效引用呈藍色、缺失標籤維持普通文字、code 保留字面值。沿用原生文字連結而非原版 chip；既有 prose renderer 的段落間距／段落黏連仍待改善，不宣稱 pixel-perfect。未做真實 App 點擊捲動或逐張人工驗收。
+- 原生 `Filicon App` Debug 建置（`/tmp/filicon-inline-reference-native.log`）、deep strict codesign 與 `verify-package.sh --xcode-debug`（`/tmp/filicon-inline-reference-package.log`）通過；App／XPC entitlements 與 `Support/*.entitlements` 一致。產物 `/tmp/filicon-question-native.l2MIZt/Build/Products/Debug/Filicon.app` 未啟動；這是 ad-hoc Debug 驗證，不是 Developer ID、公證或 live XPC 驗收。
+
+剩餘：新發布訊息的成功回條／同回合目錄擴充、原版折疊討論串與 chip 樣式、mailbox／單獨聊天／背景引用與提問、外部 channel、獨立附件、安全遮罩憑證請求及供應商 cloud-agent 卡仍缺。整體仍 **43 complete／4 partial／1 NA**，`AGENT-02` 維持 partial。未新增依賴、改 Xcode 配置／權限或啟動／重啟使用者 App／Xcode，未 push。
+
+## 已提交增量：一般群組的持久短位址引用（2026-09-22）
+
+本批已提交為 `c842f02`（`feat: support durable short addresses for group replies`）。
 
 先提交上一批為 `e6030b4`（`test: stabilize concurrent execution and render fixtures`）。對照本機非官方 reconstructed 的 `source/host/extensions/transcript/transcript-entry-ids.ts` 與 `source/host/runner/tools/send-message-schema.ts`：原版使用零起算的 `t0u`、`t0s0`／`t0s1`，未有使用者訊息前為 `tbs0`。本輪接入一般群組引用，不宣稱所有 reference 訊息識別／UI 已還原。
 

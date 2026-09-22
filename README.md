@@ -98,8 +98,18 @@ the **asking agent**, not the original message's author or everyone mentioned in
 the answer. The quote and pending question survive restart; an invalid quote or
 failed save never falls back to an unquoted question. A question cannot include
 text or image payloads, even when the current request has images.
-This native routing does not support `sand-msg:` inline links,
-mailbox/direct-chat/background peer wakes, or external `channel` destinations.
+Normal group text also supports inline Markdown references, for example
+`[the design proposal](sand-msg:t0s0)`, using a listed short address. Clicking the
+label scrolls to that earlier message in the same group; it does not create a quote
+or thread. The renderer uses the full stored group log (not the bounded prompt)
+and the target's UUID, so existing links survive restart and prompt truncation.
+Missing, ambiguous, malformed, self/future, or foreign-only targets render as
+plain labels. Internal links never launch an external app, fetch previews, load
+attachments, route a message, or approve a tool. Code, math, tables and choice
+widgets do not activate these links. This is native inline-link navigation, not
+the reference app's exact chip styling.
+This native routing does not support mailbox/direct-chat/background peer wakes,
+or external `channel` destinations.
 The original's collapsed reply-thread UI is not implemented by this quote preview.
 Standalone attachments, masked secret requests and vendor-specific cloud-agent
 cards also remain outside this `SendMessage` implementation; parity is incomplete.
