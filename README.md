@@ -78,8 +78,20 @@ Quotes do not change recipients, wake additional members, answer choice question
 or grant tool permissions. Text plus this request's incoming images can include a
 quote, but still requires the existing image preview approval; quoted attachments
 are never loaded or forwarded. Invalid targets fail without an unquoted fallback.
-This native UUID routing does not support the reference's short addresses, widgets,
+Choice questions may also include a quote in a normal group turn:
+
+```json
+{"type":"widget","reply_to":"<UUID from the reply directory>","widget":{"prompt":"Which part of this proposal should we review?","options":[{"label":"Layout"},{"label":"Typography"}]}}
+```
+
+The quote appears above the question. Answering or dismissing still resumes only
+the **asking agent**, not the original message's author or everyone mentioned in
+the answer. The quote and pending question survive restart; an invalid quote or
+failed save never falls back to an unquoted question. A question cannot include
+text or image payloads, even when the current request has images.
+This native UUID routing does not support the reference's short addresses,
 mailbox/direct-chat/background peer wakes, or external `channel` destinations.
+The original's collapsed reply-thread UI is not implemented by this quote preview.
 Standalone attachments, masked secret requests and vendor-specific cloud-agent
 cards also remain outside this `SendMessage` implementation; parity is incomplete.
 

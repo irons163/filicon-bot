@@ -145,17 +145,22 @@ public struct GroupConversationResponder: GroupAgentResponder {
             }
         } else { reply = nil }
         let ask: AgentUserMessageTool.QuestionPublisher?
+        let askReply: AgentUserMessageTool.QuestionReplyPublisher?
         if delegatedMessage == nil, let onPublication, let roomContext, let questionAccountID, let questionLifetime {
             ask = { question in
                 try await onPublication(.init(text: question.prompt, lifetime: questionLifetime,
                     question: .init(question: question, accountID: questionAccountID, memberIDs: roomContext.group.memberIDs)))
             }
-        } else { ask = nil }
+            askReply = { question, replyID in
+                let card = GroupQuestion(question: question, accountID: questionAccountID, memberIDs: roomContext.group.memberIDs)
+                try await onPublication(.init(text: question.prompt, lifetime: questionLifetime, question: card, replyToMessageID: replyID))
+            }
+        } else { ask = nil; askReply = nil }
         if let onPublication, let messaging, let forwardingMessageID {
             publisher = try await messaging.groupPublisher(for: agent.id, userMessageID: forwardingMessageID, publishQuestion: ask,
-                replyHistory: replyHistory, publish: onPublication)
+                publishQuestionReply: askReply, replyHistory: replyHistory, publish: onPublication)
         } else if let onPublication {
-            publisher = AgentUserMessageTool(conversationID: toolScopeID, publishQuestion: ask,
+            publisher = AgentUserMessageTool(conversationID: toolScopeID, publishQuestion: ask, publishQuestionReply: askReply,
                 replyHistory: replyHistory, publishReply: reply) { try await onPublication(.init(text: $0)) }
         } else { publisher = onMessage.map { AgentUserMessageTool(conversationID: toolScopeID, publish: $0) } }
         if let publisher { additionalTools.append(publisher) }

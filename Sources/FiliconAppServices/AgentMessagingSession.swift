@@ -115,6 +115,7 @@ public actor AgentMessagingSession {
 
     public func groupPublisher(for senderID: UUID, userMessageID: UUID,
                                publishQuestion: AgentUserMessageTool.QuestionPublisher? = nil,
+                               publishQuestionReply: AgentUserMessageTool.QuestionReplyPublisher? = nil,
                                replyHistory: [RoomMessage] = [],
                                publish: @escaping @Sendable (GroupAgentPublication) async throws -> Void) async throws -> AgentUserMessageTool {
         let images = try await availableImages(senderID: senderID, replyTo: nil, groupUserMessageID: userMessageID)
@@ -125,7 +126,7 @@ public actor AgentMessagingSession {
                 try await checkOpen()
                 try await authorizePublication(sender, text, images, call, context)
                 try await checkOpen()
-            }, publishQuestion: publishQuestion, replyHistory: replyHistory,
+            }, publishQuestion: publishQuestion, publishQuestionReply: publishQuestionReply, replyHistory: replyHistory,
             publishReply: { [self] text, images, replyID in
                 try await publishGroupMessage(text: text, images: images, senderID: senderID, userMessageID: userMessageID,
                     replyTo: replyID, publish: publish)

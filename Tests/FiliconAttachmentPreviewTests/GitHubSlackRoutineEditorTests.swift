@@ -320,30 +320,29 @@ struct GitHubSlackRoutineEditorTests {
         return try AutomationIngressEventNormalizer.event(route: route, request: request, nonce: auth.nonce, now: now)
     }
 
-    @Test func nativeEditorsRenderMenusAndRetainedErrorsInSevenLanguages() async throws {
+    @Test(.serialized, arguments: ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"])
+    func nativeEditorsRenderMenusAndRetainedErrorsInSevenLanguages(language: String) async throws {
         let output = ProcessInfo.processInfo.environment["FILICON_UI_REVIEW_OUTPUT"].map { URL(fileURLWithPath: $0) }
         var github = github(); github.secondary = "pr-opened,ci-failed"; github.tertiary = "main"; github.quaternary = "alice"
         var slack = AutomationListenerDraft.defaults(for: .slack, id: id)
         slack.primary = "C123"; slack.secondary = "reaction"; slack.slackEmoji = "eyes, +1"
         var invalid = slack; invalid.secondary = "keyword"; invalid.tertiary = "Review"
-        for language in ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"] {
-            for dark in [false, true] {
-                for (index, draft) in [github, slack, invalid].enumerated() {
-                    try await withUIRenderTurn {
-                        let host = NSHostingView(rootView: AutomationListenerEditor(listener: .constant(draft), canRemove: true, remove: {})
-                            .padding(20).frame(width: 440).background(Color(nsColor: .windowBackgroundColor))
-                            .environment(\.locale, Locale(identifier: language)).environment(\.colorScheme, dark ? .dark : .light))
-                        host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
-                        host.frame = .init(x: 0, y: 0, width: 440, height: 1100); host.layoutSubtreeIfNeeded()
-                        #expect(host.fittingSize.height <= 1100 && host.fittingSize.width <= 440)
-                        host.setFrameSize(.init(width: 440, height: ceil(host.fittingSize.height))); host.layoutSubtreeIfNeeded()
-                        let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
-                        host.cacheDisplay(in: host.bounds, to: bitmap)
-                        let png = try #require(bitmap.representation(using: .png, properties: [:]))
-                        if let output {
-                            try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
-                            try png.write(to: output.appending(path: "github-slack-\(language)-\(dark ? "dark" : "light")-\(index).png"))
-                        }
+        for dark in [false, true] {
+            for (index, draft) in [github, slack, invalid].enumerated() {
+                try await withUIRenderTurn {
+                    let host = NSHostingView(rootView: AutomationListenerEditor(listener: .constant(draft), canRemove: true, remove: {})
+                        .padding(20).frame(width: 440).background(Color(nsColor: .windowBackgroundColor))
+                        .environment(\.locale, Locale(identifier: language)).environment(\.colorScheme, dark ? .dark : .light))
+                    host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+                    host.frame = .init(x: 0, y: 0, width: 440, height: 1100); host.layoutSubtreeIfNeeded()
+                    #expect(host.fittingSize.height <= 1100 && host.fittingSize.width <= 440)
+                    host.setFrameSize(.init(width: 440, height: ceil(host.fittingSize.height))); host.layoutSubtreeIfNeeded()
+                    let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                    host.cacheDisplay(in: host.bounds, to: bitmap)
+                    let png = try #require(bitmap.representation(using: .png, properties: [:]))
+                    if let output {
+                        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+                        try png.write(to: output.appending(path: "github-slack-\(language)-\(dark ? "dark" : "light")-\(index).png"))
                     }
                 }
             }

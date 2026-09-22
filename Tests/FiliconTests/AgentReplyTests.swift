@@ -116,8 +116,8 @@ struct AgentReplyTests {
         expectNoDifference(published, [])
     }
 
-    @Test(arguments: ["valid", "foreign", "unknown", "closed", "no-lifetime", "save-failure", "stop", "members"])
-    func groupPublicationPersistsOrRejectsWithoutAnUnthreadedFallback(mode: String) async throws {
+    @Test(arguments: ["valid", "foreign", "unknown", "closed", "no-lifetime", "save-failure", "stop", "members"], [false, true])
+    func groupPublicationPersistsOrRejectsWithoutAnUnthreadedFallback(mode: String, quotedQuestion: Bool) async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-reply-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }
         let agents = try AgentService(storeURL: root.appending(path: "agents.json"))
@@ -144,7 +144,9 @@ struct AgentReplyTests {
                     try? FileManager.default.moveItem(at: backup, to: file)
                 }
             }
+            let question = GroupQuestion(question: try AgentQuestion.parse(Data(#"{"prompt":"Here is the review","options":[{"label":"Continue"}]}"#.utf8)), accountID: "local", memberIDs: group.memberIDs)
             try await publish(.init(text: "Here is the review", lifetime: mode == "no-lifetime" ? nil : lifetime,
+                question: quotedQuestion ? question : nil,
                 replyToMessageID: mode == "foreign" ? other.id : mode == "unknown" ? UUID() : source.id))
         }
         if ["valid", "stop", "members"].contains(mode) { _ = try await groups.run(groupID: group.id, responder: responder) }
@@ -155,6 +157,7 @@ struct AgentReplyTests {
         if mode == "valid" {
             expectNoDifference(published.first?.replyToMessageID, source.id)
             expectNoDifference(published.first?.questionReplyTo, nil)
+            expectNoDifference(published.first?.question?.isPending, quotedQuestion ? true : nil)
         }
         let reopened = try GroupService(agents: agents, storeURL: file)
         let restored = await reopened.messages(groupID: group.id)

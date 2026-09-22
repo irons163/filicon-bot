@@ -1,6 +1,31 @@
 # 協作能力核對紀錄（更新至 2026-09-22）
 
-## 本輪增量：一般群組的引用回覆（2026-09-22）
+## 本輪增量：引用原文的選項式提問（2026-09-22）
+
+先提交上一批為 `6058e93`（`feat: persist quoted replies in group conversations`）。對照本機非官方 reconstructed 的 `source/host/runner/tools/send-message-tool.ts`，原版 widget 也保存 `reply_to`；本輪把它接到一般群組既有的選項問題，而不是增加其他收件者或擴大工具權限。
+
+- 一般群組可使用 `SendMessage(type:"widget", reply_to:"<host 目錄中的 UUID>", widget:...)`。僅在 host 明確提供問題發布及問題引用能力時開放；沿用最近 40 筆同群組可引用目錄。拒絕未知／跨群組／空白／host 狀態目標、null、短地址和混入文字／圖片／作者／外部 channel；沒有能力或保存失敗時不退回普通問題。
+- 問題與原文 ID 同次保存，成功後仍以 suspension 結束回合。相同呼叫重播不再發布；修改或拿掉引用目標不能重用原回執。`replyToMessageID` 只表示原文，與人類回答的 `questionReplyTo` 分離；回答／略過只續接提問者，即使被引用的訊息是另一位成員所寫，或回答含 `@everyone`／`@Designer`。原文內容與狀態不變，圖片輸入的提問也不載入／轉送原文附件。
+- 重啟後可回答；Stop／帳號／成員／封存防護和 `dismissOnMoveOn` 保持有效，成員移除後再加入不復活舊問題。圖片所在回合使用同樣的問題引用接線；提問本身不請求圖片發布核准，也不因問題答案提升寫入權限。背景／delegated wake 仍拒絕。
+- 引用摘要在問題卡上方，原文缺失時只停用引用按鈕；問題自身的回答／失效狀態仍由 host 決定。依 SwiftUI／模型技能維持 View 只呈現與派送操作，發布驗證保留在 service；依測試技能使用隔離 AppModel／store、fixture provider、CustomDump 完整資料比較與既有 AsyncStream 事件同步。沒有新增依賴或改變資料格式。
+
+驗收：
+
+- 聚焦 **35 Swift Testing／6 suites** 通過，紀錄 `/tmp/filicon-question-reply-focused-4.log`。新增五項工具測試及三項 App 測試，另擴充既有保存失敗／晚到發布／背景拒絕參數案例。涵蓋文字及圖片輸入、選項／自訂／略過、重啟、唯一續接、無隱含工具核准、保存失敗及回執重播。
+- 七語言各 **1,637 keys／零缺漏**；本輪未新增翻譯鍵。七語言 × 明暗 × 等待／已回答／原文缺失／失效，產出 **56 張引用問題 PNG**，位於 `/tmp/filicon-question-reply-ui/question-reply-*.png`。逐檔驗證簽頭／chunk CRC／尺寸，380-point 寬版型通過高度界限；目視抽查繁中淺色失效卡、法文暗色等待卡，未見裁切。問題、選項及原文維持 fixture 原文，不強制翻譯資料；未做逐張人工、pixel-perfect 或 live 捲動點擊驗收。
+- 開發期測試曾把失效卡片也套用等待卡的最小高度，且把記憶體 Date 與毫秒 JSON 往返後的浮點值直接比較；已依失效卡實際版型及既有持久化日期 codec 校正測試，保留全部訊息欄位比較。不改正式儲存精度，也未增加測試逾時或排除案例。
+- 原生 `Filicon App` Debug 建置（`/tmp/filicon-question-reply-native-final.log`）、嚴格深層簽章與 `scripts/verify-package.sh --xcode-debug` 通過；App／XPC entitlements 與 `Support/*.entitlements` 一致。未啟動產物 `/tmp/filicon-question-native.l2MIZt/Build/Products/Debug/Filicon.app`，未做 Developer ID、公證或 live XPC 驗收。
+
+完整回歸與已知限制：
+
+- 首次預設並行回歸 `/tmp/filicon-question-reply-full-parallel.log` 有四項既有畫面測試超過 60 秒；新增引用問題測試通過。將 `GitHubSlackRoutineEditorTests`、`TeamsRoutineEditorTests`、`ConnectorRoutineEditorTests`、`AgentWorkflowWriteAppTests` 的七語言外層迴圈改為逐語言的 serialized 參數案例，保留所有明暗／情境、版型斷言、輸出檔名及每案例一分鐘上限，沒有排除渲染或放寬正式程式。
+- 第二次預設並行回歸 `/tmp/filicon-question-reply-full-parallel-2.log` 仍未通過：既有 `AgentExecutionSchedulerTests` 四項測試共六個案例在三秒條件輪詢失敗，`AgentManagementAppIntegrationTests` 的通知核准與 routine 預覽另有兩個 60 秒逾時。前述四項畫面測試及新增引用問題通過；不能宣稱並行穩定性已修復。
+- 將上述排程及六項畫面測試獨立重跑，**22 Swift Testing／6 suites** 全部通過（`/tmp/filicon-question-reply-recheck.log`）。同時輸出 **371 張既有畫面 PNG** 至 `/tmp/filicon-question-reply-existing-ui/`，含四項調整過的 182 張、通知 28 張、routine 161 張；逐檔驗證簽頭、chunk CRC 及正尺寸。單獨通過與並行失敗不同，仍需後續處理等待／渲染壅塞。
+- 完整序列診斷 `swift test --no-parallel` 通過 **135 XCTest、1,049 Swift Testing／118 suites**（`/tmp/filicon-question-reply-full-serial.log`），App **341／48 suites，94.090 秒**。兩項 opt-in live Codex 測試仍跳過；既有 CoreData NSXPC 診斷未修復。內部 Task／gate 併發斷言保留，但序列通過不代表預設並行回歸已全綠；本輪未進一步改動排程正式碼或提高等待上限。
+
+邊界：仍只限一般群組的原生引用卡；原版 `reply_to` 會折疊子討論串，本輪未還原該 UI。原版短地址／`sand-msg` 連結、mailbox／單獨聊天／背景引用與提問、外部 `channel`、獨立附件、安全遮罩憑證請求及供應商 cloud-agent 卡仍缺。整體維持 **43 complete／4 partial／1 NA**，`AGENT-02` 維持 partial。本批尚未提交；未 push、未啟動／重啟使用者 App／Xcode、未操作真實群組／帳號／憑證。
+
+## 已提交增量：一般群組的引用回覆（2026-09-22）
 
 先提交上一批為 `f8bc157`（`feat: pause group turns for durable choice questions`）。本輪對照本機非官方 reconstructed 的 `source/host/runner/tools/send-message-schema.ts`、`send-message-tool.ts` 中的 `reply_to`，補上一般群組的原生引用回覆；不是原版所有訊息路由的完整還原。
 
@@ -16,7 +41,7 @@
 - 七語言各 **1,637 keys／零缺漏**；七語言 × 明暗 × 使用者原文／代理人原文／原文缺失，共 **42 張 PNG**，位於 `/tmp/filicon-reply-ui/`。逐檔驗證簽頭、chunk CRC、非零尺寸；380-point 寬渲染通過高度界限，目視抽查繁中淺色代理人引用、法文暗色缺失卡，未見裁切。原文及回覆是 fixture 資料，不強制翻譯。未做逐張人工、pixel-perfect baseline 或 live 點擊捲動驗收。
 - 原生 `Filicon App` Debug build（`/tmp/filicon-reply-native.log`）、`codesign --verify --deep --strict` 與 `scripts/verify-package.sh --xcode-debug` 通過；App／XPC entitlements 與 `Support/*.entitlements` 一致。產物 `/tmp/filicon-question-native.l2MIZt/Build/Products/Debug/Filicon.app`，未啟動。未新增依賴／修改 Xcode 配置；未做 Developer ID 發佈簽章、公證或 live XPC 操作。
 
-邊界：目前只接一般群組的文字或本輪核准圖片；mailbox／單獨聊天／背景 peer／delegated room wake、widget 引用、原版 `t3u`／`t3s1` 短地址、`sand-msg` 內文連結和外部 `channel` 路由仍未還原。獨立附件、安全遮罩憑證請求與供應商 cloud-agent 卡也仍缺。整體維持 **43 complete／4 partial／1 NA**，`AGENT-02` 維持 partial。本批新增程式尚未提交；未 push、未啟動／重啟使用者 App／Xcode、未操作真實群組／帳號／憑證。
+邊界：當時只接一般群組的文字或本輪核准圖片；mailbox／單獨聊天／背景 peer／delegated room wake、widget 引用、原版 `t3u`／`t3s1` 短地址、`sand-msg` 內文連結和外部 `channel` 路由仍未還原。獨立附件、安全遮罩憑證請求與供應商 cloud-agent 卡也仍缺。整體維持 **43 complete／4 partial／1 NA**，`AGENT-02` 維持 partial。本批已於下一輪提交為 `6058e93`；未 push、未啟動／重啟使用者 App／Xcode、未操作真實群組／帳號／憑證。
 
 ## 已提交增量：一般群組的選項式提問與續接（2026-09-22）
 

@@ -453,7 +453,7 @@ public actor GroupService {
         guard epochs[activity.groupID] == epoch else { throw CancellationError() }
         let text = publication.text, images = publication.images
         if let replyID = publication.replyToMessageID {
-            guard publication.lifetime != nil, publication.question == nil, replyID != activity.id,
+            guard publication.lifetime != nil, replyID != activity.id,
                   state.roomMessages.contains(where: {
                       $0.groupID == activity.groupID && $0.id == replyID && $0.memberOutcome == nil
                         && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty

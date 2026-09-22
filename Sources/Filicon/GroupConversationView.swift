@@ -434,16 +434,16 @@ struct GroupMessageBubble: View {
                             .font(.system(size: 10.5, weight: .semibold)).foregroundStyle(FiliconTheme.textSecondary)
                     }
                 }
-                if let question = message.question {
-                    GroupQuestionCard(card: question, enabled: questionEnabled, onAnswer: onQuestionAnswer ?? { _ in })
-                        .accessibilityIdentifier("group-question-\(message.id)")
-                }
                 if let replyID = message.replyToMessageID {
                     let original = replySource.flatMap { $0.id == replyID && $0.groupID == message.groupID && $0.memberOutcome == nil ? $0 : nil }
                     GroupReplyPreview(original: original, author: replyAuthor ?? l10n("Agent")) {
                         onShowReply?(replyID)
                     }
                     .accessibilityIdentifier("group-reply-\(message.id)")
+                }
+                if let question = message.question {
+                    GroupQuestionCard(card: question, enabled: questionEnabled, onAnswer: onQuestionAnswer ?? { _ in })
+                        .accessibilityIdentifier("group-question-\(message.id)")
                 }
                 if !message.text.isEmpty && message.question == nil {
                     Group {

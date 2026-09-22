@@ -216,38 +216,37 @@ private struct WorkflowWritingProvider: InteractiveToolProvider {
         expectNoDifference(model.workflows.map(\.id), ["sender-layout"])
     }
 
-    @Test func fullApprovalRendersInSevenLanguagesAndBothAppearances() async throws {
+    @Test(.serialized, arguments: ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"])
+    func fullApprovalRendersInSevenLanguagesAndBothAppearances(language: String) async throws {
         let output = ProcessInfo.processInfo.environment["FILICON_UI_REVIEW_OUTPUT"].map { URL(fileURLWithPath: $0) }
-        for language in ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"] {
-            for action in ["create", "update", "delete"] {
-                for dark in [false, true] {
-                    try await withUIRenderTurn(language: language) {
-                        let keys = ["Save reusable workflow", "Rewrite reusable workflow", "Current workflow", "Proposed workflow", "Full workflow body", "Known direct references", "Workflow enabled", "Workflow disabled", AgentWorkflowApprovalDetails.disclosure, AgentWorkflowApprovalDetails.referenceNotice,
-                            AgentWorkflowWriteError.invalid.localizedDescription, AgentWorkflowWriteError.stale.localizedDescription, AgentWorkflowWriteError.unavailable.localizedDescription,
-                            "Delete reusable workflow", AgentWorkflowApprovalDetails.deletionDisclosure, AgentWorkflowDeletionError.invalid.localizedDescription, AgentWorkflowDeletionError.unavailable.localizedDescription]
-                        if language != "en" { for key in keys { #expect(FiliconLocalization.string(key) != key) } }
-                        var metadata = ["agentWorkflowAction": action, "agentName": "Designer / 設計師", "agentWorkflowID": "agent-00000000-0000-0000-0000-000000000099",
-                            "agentWorkflowName": "Accessible layout", "agentWorkflowDescription": "Use when checking keyboard access and contrast.", "agentWorkflowEnabled": "true",
-                            "agentWorkflowBody": "Check focus order.\nVerify contrast with real text.\n保持鍵盤導覽可用。\nNEW_BODY_END",
-                            "previousAgentWorkflowName": "Layout", "previousAgentWorkflowDescription": "Use when reviewing.", "previousAgentWorkflowEnabled": "true",
-                            "previousAgentWorkflowBody": "Check layout.\nOLD_BODY_END", "agentWorkflowReferenceCount": "1",
-                            "agentWorkflowReferences": "Layout routine (routine:00000000-0000-0000-0000-000000000001)"]
-                        if action == "delete" {
-                            for key in ["agentWorkflowName", "agentWorkflowDescription", "agentWorkflowEnabled", "agentWorkflowBody"] { metadata.removeValue(forKey: key) }
-                        }
-                        let host = NSHostingView(rootView: AgentWorkflowApprovalDetails(metadata: metadata).padding(20).frame(width: 420)
-                            .background(FiliconTheme.input).environment(\.locale, Locale(identifier: language)).environment(\.colorScheme, dark ? .dark : .light))
-                        host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
-                        host.frame = .init(x: 0, y: 0, width: 420, height: 2_000)
-                        host.layoutSubtreeIfNeeded()
-                        #expect(host.fittingSize.height > 400 && host.fittingSize.height < 2_000)
-                        host.frame.size.height = host.fittingSize.height; host.layoutSubtreeIfNeeded()
-                        let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
-                        host.cacheDisplay(in: host.bounds, to: bitmap)
-                        if let output {
-                            try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
-                            try #require(bitmap.representation(using: .png, properties: [:])).write(to: output.appending(path: "workflow-\(action)-\(language)-\(dark ? "dark" : "light").png"))
-                        }
+        for action in ["create", "update", "delete"] {
+            for dark in [false, true] {
+                try await withUIRenderTurn(language: language) {
+                    let keys = ["Save reusable workflow", "Rewrite reusable workflow", "Current workflow", "Proposed workflow", "Full workflow body", "Known direct references", "Workflow enabled", "Workflow disabled", AgentWorkflowApprovalDetails.disclosure, AgentWorkflowApprovalDetails.referenceNotice,
+                        AgentWorkflowWriteError.invalid.localizedDescription, AgentWorkflowWriteError.stale.localizedDescription, AgentWorkflowWriteError.unavailable.localizedDescription,
+                        "Delete reusable workflow", AgentWorkflowApprovalDetails.deletionDisclosure, AgentWorkflowDeletionError.invalid.localizedDescription, AgentWorkflowDeletionError.unavailable.localizedDescription]
+                    if language != "en" { for key in keys { #expect(FiliconLocalization.string(key) != key) } }
+                    var metadata = ["agentWorkflowAction": action, "agentName": "Designer / 設計師", "agentWorkflowID": "agent-00000000-0000-0000-0000-000000000099",
+                        "agentWorkflowName": "Accessible layout", "agentWorkflowDescription": "Use when checking keyboard access and contrast.", "agentWorkflowEnabled": "true",
+                        "agentWorkflowBody": "Check focus order.\nVerify contrast with real text.\n保持鍵盤導覽可用。\nNEW_BODY_END",
+                        "previousAgentWorkflowName": "Layout", "previousAgentWorkflowDescription": "Use when reviewing.", "previousAgentWorkflowEnabled": "true",
+                        "previousAgentWorkflowBody": "Check layout.\nOLD_BODY_END", "agentWorkflowReferenceCount": "1",
+                        "agentWorkflowReferences": "Layout routine (routine:00000000-0000-0000-0000-000000000001)"]
+                    if action == "delete" {
+                        for key in ["agentWorkflowName", "agentWorkflowDescription", "agentWorkflowEnabled", "agentWorkflowBody"] { metadata.removeValue(forKey: key) }
+                    }
+                    let host = NSHostingView(rootView: AgentWorkflowApprovalDetails(metadata: metadata).padding(20).frame(width: 420)
+                        .background(FiliconTheme.input).environment(\.locale, Locale(identifier: language)).environment(\.colorScheme, dark ? .dark : .light))
+                    host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+                    host.frame = .init(x: 0, y: 0, width: 420, height: 2_000)
+                    host.layoutSubtreeIfNeeded()
+                    #expect(host.fittingSize.height > 400 && host.fittingSize.height < 2_000)
+                    host.frame.size.height = host.fittingSize.height; host.layoutSubtreeIfNeeded()
+                    let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                    host.cacheDisplay(in: host.bounds, to: bitmap)
+                    if let output {
+                        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+                        try #require(bitmap.representation(using: .png, properties: [:])).write(to: output.appending(path: "workflow-\(action)-\(language)-\(dark ? "dark" : "light").png"))
                     }
                 }
             }
