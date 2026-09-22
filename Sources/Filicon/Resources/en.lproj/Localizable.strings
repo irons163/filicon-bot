@@ -1646,3 +1646,10 @@
 "Original message unavailable" = "Original message unavailable";
 "View original message" = "View original message";
 "Choose an available message in this group to reply to. Nothing was sent." = "Choose an available message in this group to reply to. Nothing was sent.";
+"1 reply in thread" = "1 reply in thread";
+"{0} replies in thread" = "{0} replies in thread";
+"Expanded" = "Expanded";
+"Collapsed" = "Collapsed";
+"Hide thread replies" = "Hide thread replies";
+"Show thread replies" = "Show thread replies";
+"Kept open while a question or tool is pending." = "Kept open while a question or tool is pending.";

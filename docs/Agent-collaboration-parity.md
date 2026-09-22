@@ -1,6 +1,21 @@
 # 協作能力核對紀錄（更新至 2026-09-22）
 
-## 本輪增量：保存後訊息回條與同回合引用（2026-09-22）
+## 本輪增量：一般群組的折疊討論串（2026-09-22）
+
+先提交訊息回條增量為 `36ec1fe`。對照本機非官方 reconstructed 的 `source/shared/transcript-threads.ts` 及 `source/host/extensions/transcript/send-thread-stamping.ts`：巢狀引用歸到最初 root，回覆計數及展開不等於新增成員或工具授權。本批只還原群組顯示投影，不假稱 composer／session 自動 thread stamping 已完成。
+
+- 新增純值 `GroupThreadProjection`，以完整群組紀錄做一次、非遞迴掃描。有效向後引用歸入原始 root、保留各自 quote 和先後順序；缺失／前向／自我／循環／跨群組／空白／host 狀態／重複 ID 不隱藏，仍留主時間線。壞鏈不能變成後續引用的有效 parent；重複資料使用 entry index 呈現，不丟列或當成可導航目標。
+- 一般群組在原文下顯示回覆數，可展開／收合，巢狀回覆保留引用卡。`GroupThreadPresentationState` 僅是暫存 view state，點 quote 或 sand-msg 連結先展開 root、再請求定位原文；切換帳號清除展開狀態。沒有改寫儲存資料或讓引用變成提問答案。待回答問題或待完成工具強制展開，不能以收合隱藏；UI 提示說明原因。
+- 群組工具提示同步說明 secondary discussion 的折疊行為，primary answer 可省略 reply_to；不改目標驗證、兩次額度、核准、收件者或持久格式。SwiftUI 技能讓 view 只負責呈現與操作，Swift 測試／CustomDump 技能把投影、切換及定位狀態獨立驗證。
+- 新增七項投影測試，涵蓋巢狀、壞鏈、外群同 ID、不消失、pending 保持開啟、展開／定位及 stale 完成、5,000 層鏈、JSON 重開。App 以 production `GroupReplyThread` 和 bubble／question card 產出七語言 × 明暗的折疊／展開／pending 組合，不是另畫 mockup；runtime prompt 另有回歸斷言。
+
+驗收證據：`.build/validation/group-threads.sieQ6c/`。聚焦 **19 Swift Testing／2 suites** 通過，完整**預設並行** **135 XCTest、1,088 Swift Testing／122 suites** 通過（App **355／48 suites，42.562 秒**）。未排除 UI、提高逾時或改成序列；兩项 opt-in live Codex 仍跳過。七語言各 **1,644 keys／零缺漏**。`ui/group-thread-*.png` 的 14 張預期檔名、簽頭、chunk CRC、760-pixel 寬及 2,072–2,124-pixel 高度皆通過；目視抽查繁中淺色與法文暗色，計數與 pending 說明可辨、引用和選項沒有裁切。fixture 原文／名稱不強制翻譯，沒有逐張人工、pixel-perfect 或真實 App 點擊／捲動驗收。
+
+原生 `Filicon App` Debug 建置、deep strict codesign 與 package verifier 均通過（`native.log`、`codesign.log`、`package.log`），App／XPC entitlements 符合 Support 定義。這是 ad-hoc Debug 檢查，不是發佈公證或 live XPC 驗收。不啟動產物、不重啟 App／Xcode、不改真實帳號／群組資料，未 push。整體仍 **43 complete／4 partial／1 NA**；其餘 composer／session 自動 thread stamping、chip、背景引用／問題、外部 channel、獨立附件、安全憑證請求與供應商 cloud-agent 卡等缺口繼續保留。
+
+## 已提交增量：保存後訊息回條與同回合引用（2026-09-22）
+
+本批已提交為 `36ec1fe`（`feat: return durable group message publication receipts`）。
 
 開始時上一批已提交 `235e7c5`，工作目錄乾淨。使用者要求 commit 後持續補齊剩餘差異；本批核對 reconstructed 的 `source/host/runner/tools/send-message-tool.ts`，其成功結果會把 `onSendMessage` 回傳的 ID 交還模型，不是讓模型自行編號。
 

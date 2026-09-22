@@ -1646,3 +1646,10 @@
 "Original message unavailable" = "原始訊息無法使用";
 "View original message" = "查看原始訊息";
 "Choose an available message in this group to reply to. Nothing was sent." = "請選擇此群組內可用的訊息來回覆。未傳送任何內容。";
+"1 reply in thread" = "討論串中有 1 則回覆";
+"{0} replies in thread" = "討論串中有 {0} 則回覆";
+"Expanded" = "已展開";
+"Collapsed" = "已收合";
+"Hide thread replies" = "收合討論串回覆";
+"Show thread replies" = "展開討論串回覆";
+"Kept open while a question or tool is pending." = "問題或工具尚在等待處理，暫時保持展開。";

@@ -1646,3 +1646,10 @@
 "Original message unavailable" = "元のメッセージを表示できません";
 "View original message" = "元のメッセージを表示";
 "Choose an available message in this group to reply to. Nothing was sent." = "このグループ内の利用可能なメッセージを選んで返信してください。何も送信されていません。";
+"1 reply in thread" = "スレッド内に返信 1 件";
+"{0} replies in thread" = "スレッド内に返信 {0} 件";
+"Expanded" = "展開済み";
+"Collapsed" = "折りたたみ済み";
+"Hide thread replies" = "スレッドの返信を折りたたむ";
+"Show thread replies" = "スレッドの返信を表示";
+"Kept open while a question or tool is pending." = "質問への回答やツールの完了を待っている間は、展開したままになります。";

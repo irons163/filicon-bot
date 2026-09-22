@@ -1646,3 +1646,10 @@
 "Original message unavailable" = "원본 메시지를 사용할 수 없음";
 "View original message" = "원본 메시지 보기";
 "Choose an available message in this group to reply to. Nothing was sent." = "이 그룹에서 답장할 수 있는 메시지를 선택하세요. 아무것도 전송되지 않았습니다.";
+"1 reply in thread" = "스레드의 답글 1개";
+"{0} replies in thread" = "스레드의 답글 {0}개";
+"Expanded" = "펼쳐짐";
+"Collapsed" = "접힘";
+"Hide thread replies" = "스레드 답글 숨기기";
+"Show thread replies" = "스레드 답글 표시";
+"Kept open while a question or tool is pending." = "질문에 대한 답변이나 도구 실행이 대기 중이면 펼쳐진 상태를 유지합니다.";

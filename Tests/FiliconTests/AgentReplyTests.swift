@@ -41,6 +41,8 @@ struct AgentReplyTests {
         let directory = try await tool.runtimeContext(for: .init(conversationID: groupID))
         #expect(!directory.contains(old.id.uuidString) && !directory.contains("PRIVATE FOREIGN CONTENT"))
         #expect(directory.contains(try #require(recent.first).id.uuidString))
+        #expect(directory.contains("folds secondary discussion") && directory.contains("pending questions or tools remain expanded"))
+        #expect(!directory.contains("not a folded thread"))
         for target in [old.id, foreign.id, UUID()] {
             #expect(try await tool.execute(call(target: target), context: .init(conversationID: groupID)).isError)
         }

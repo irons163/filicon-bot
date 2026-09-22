@@ -69,6 +69,7 @@ struct GroupConversationView: View {
     @State private var folderPromptHeight: CGFloat = 180
     @State private var importingImages = false
     @State private var posting = false
+    @State private var threadPresentation = GroupThreadPresentationState()
 
     private var messages: [RoomMessage] { model.groupMessages[group.id] ?? [] }
     private var isRunning: Bool { model.runningGroups.contains(group.id) }
@@ -125,6 +126,7 @@ struct GroupConversationView: View {
                 .frame(width: 340, height: 650)
         }
         .background(FiliconTheme.canvas)
+        .onChange(of: model.settings.accountScope) { threadPresentation = .init() }
     }
 
     private func header(inline: Bool) -> some View {
@@ -146,6 +148,7 @@ struct GroupConversationView: View {
 
     private var transcript: some View {
         let references = GroupMessageReferenceDirectory(history: messages, groupID: group.id)
+        let threads = GroupThreadProjection(history: messages, groupID: group.id)
         return ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 16) {
@@ -158,26 +161,24 @@ struct GroupConversationView: View {
                                 .multilineTextAlignment(.center)
                         }.frame(maxWidth: .infinity).padding(.vertical, 80)
                     }
-                    ForEach(Array(messages.enumerated()), id: \.element.id) { index, message in
-                        if index == 0 || !Calendar.current.isDate(messages[index - 1].createdAt, inSameDayAs: message.createdAt) {
+                    ForEach(Array(threads.roots.enumerated()), id: \.element.id) { index, entry in
+                        let message = entry.message
+                        if index == 0 || !Calendar.current.isDate(threads.roots[index - 1].message.createdAt, inSameDayAs: message.createdAt) {
                             Text(message.createdAt, format: .dateTime.month(.abbreviated).day().hour().minute())
                                 .font(.system(size: 10.5)).foregroundStyle(FiliconTheme.textTertiary)
                                 .frame(maxWidth: .infinity).padding(.vertical, 8)
                         }
-                        GroupMessageBubble(
-                            message: message,
-                            agent: model.agents.first { $0.id == message.senderID },
-                            waitingForFolderCallIDs: Set(folderRequests.map { $0.toolCallID.rawValue }),
-                            questionEnabled: model.canAnswerGroupQuestion(message),
-                            onQuestionAnswer: { answer in
-                                Task { await model.groupQuestionAnswered(message, answer: answer) }
-                            },
-                            replySource: messages.first { $0.id == message.replyToMessageID && $0.groupID == group.id && $0.memberOutcome == nil },
-                            replyAuthor: replyAuthor(for: message),
-                            inlineReferences: references,
-                            onShowReply: { id in withAnimation { proxy.scrollTo(id, anchor: .center) } },
-                            onReaction: { Task { await model.toggleGroupReaction(groupID: group.id, messageID: message.id, emoji: "👍") } }
-                        ).id(message.id)
+                        messageBubble(message, references: references, threads: threads).id(message.id)
+                        let replies = threads.replies(to: message.id)
+                        if !replies.isEmpty {
+                            GroupReplyThread(replies: replies, expanded: threadPresentation.isExpanded(message.id, in: threads),
+                                needsAttention: threads.attentionRootIDs.contains(message.id)) {
+                                withAnimation { threadPresentation.toggle(message.id, in: threads) }
+                            } message: { reply in
+                                messageBubble(reply, references: references, threads: threads)
+                            }
+                            .accessibilityIdentifier("group-thread-\(message.id)")
+                        }
                     }
                     if folderRequests.isEmpty {
                         if let agentID = model.thinkingGroupMembers[group.id],
@@ -195,11 +196,44 @@ struct GroupConversationView: View {
                 .frame(maxWidth: 780).frame(maxWidth: .infinity)
             }
             .defaultScrollAnchor(.bottom)
-            .onChange(of: messages.count) { scrollToBottom(proxy) }
+            .onChange(of: messages.count) { messagesChanged(proxy, threads: threads) }
             .onChange(of: model.thinkingGroupMembers[group.id]) { scrollToBottom(proxy) }
             .onChange(of: model.pendingAutoReviewApprovals) { scrollToBottom(proxy) }
             .onChange(of: model.pendingMCPApprovals.count) { scrollToBottom(proxy) }
+            .task(id: threadPresentation.pendingMessageID) { await revealPendingMessage(proxy, threads: threads) }
         }
+    }
+
+    private func messageBubble(_ message: RoomMessage, references: GroupMessageReferenceDirectory,
+                               threads: GroupThreadProjection) -> some View {
+        GroupMessageBubble(
+            message: message,
+            agent: model.agents.first { $0.id == message.senderID },
+            waitingForFolderCallIDs: Set(folderRequests.map { $0.toolCallID.rawValue }),
+            questionEnabled: model.canAnswerGroupQuestion(message),
+            onQuestionAnswer: { answer in Task { await model.groupQuestionAnswered(message, answer: answer) } },
+            replySource: messages.first { $0.id == message.replyToMessageID && $0.groupID == group.id && $0.memberOutcome == nil },
+            replyAuthor: replyAuthor(for: message), inlineReferences: references,
+            onShowReply: { threadPresentation.reveal($0, in: threads) },
+            onReaction: { Task { await model.toggleGroupReaction(groupID: group.id, messageID: message.id, emoji: "👍") } }
+        )
+    }
+
+    private func messagesChanged(_ proxy: ScrollViewProxy, threads: GroupThreadProjection) {
+        if let last = messages.last, last.question?.isPending == true {
+            threadPresentation.reveal(last.id, in: threads)
+        } else { scrollToBottom(proxy) }
+    }
+
+    private func revealPendingMessage(_ proxy: ScrollViewProxy, threads: GroupThreadProjection) async {
+        guard let id = threadPresentation.pendingMessageID, let root = threads.root(containing: id) else { return }
+        // Materialize the root first, then let SwiftUI lay out newly expanded
+        // children before trying to scroll to a formerly hidden descendant.
+        proxy.scrollTo(root, anchor: .center)
+        await Task.yield()
+        guard !Task.isCancelled, threadPresentation.pendingMessageID == id else { return }
+        withAnimation { proxy.scrollTo(id, anchor: .center) }
+        threadPresentation.didReveal(id)
     }
 
     private var composer: some View {
@@ -390,6 +424,57 @@ struct GroupConversationView: View {
     private func stop() { Task { await model.stopGroup(id: group.id) } }
     private func scrollToBottom(_ proxy: ScrollViewProxy) {
         withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo("group-bottom", anchor: .bottom) }
+    }
+}
+
+struct GroupReplyThread<ReplyContent: View>: View {
+    let replies: [GroupThreadProjection.Entry]
+    let expanded: Bool
+    let needsAttention: Bool
+    let onToggle: () -> Void
+    @ViewBuilder var message: (RoomMessage) -> ReplyContent
+
+    var body: some View {
+        Group {
+            GroupThreadDisclosure(count: replies.count, expanded: expanded || needsAttention,
+                                  needsAttention: needsAttention, onToggle: onToggle)
+            if expanded || needsAttention {
+                ForEach(replies) { reply in
+                    message(reply.message)
+                        .padding(.leading, 14)
+                        .overlay(alignment: .leading) { Rectangle().fill(FiliconTheme.border).frame(width: 2) }
+                        .id(reply.message.id)
+                }
+            }
+        }
+    }
+}
+
+struct GroupThreadDisclosure: View {
+    let count: Int
+    let expanded: Bool
+    let needsAttention: Bool
+    let onToggle: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Button(action: onToggle) {
+                Label(count == 1 ? l10n("1 reply in thread") : l10n("\(count) replies in thread"),
+                      systemImage: expanded ? "chevron.down" : "chevron.right")
+                    .font(.system(size: 11, weight: .medium))
+                    .padding(.horizontal, 10).padding(.vertical, 7)
+                    .background(FiliconTheme.input, in: Capsule())
+            }
+            .buttonStyle(.plain)
+            .disabled(needsAttention)
+            .accessibilityValue(expanded ? l10n("Expanded") : l10n("Collapsed"))
+            .help(expanded ? l10n("Hide thread replies") : l10n("Show thread replies"))
+            if needsAttention {
+                Text(l10n("Kept open while a question or tool is pending."))
+                    .font(.caption2).foregroundStyle(FiliconTheme.textSecondary)
+            }
+        }
+        .foregroundStyle(FiliconTheme.textSecondary)
     }
 }
 

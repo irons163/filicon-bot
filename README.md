@@ -124,7 +124,14 @@ widgets do not activate these links. This is native inline-link navigation, not
 the reference app's exact chip styling.
 This native routing does not support mailbox/direct-chat/background peer wakes,
 or external `channel` destinations.
-The original's collapsed reply-thread UI is not implemented by this quote preview.
+In the normal group timeline, quoted secondary discussions now fold beneath their
+original root message with a reply count. Nested replies share that root and keep
+their original quotes. Opening a quote or inline reference expands its thread
+before navigation. Pending questions and tools keep their thread open; collapsing
+never removes messages or changes permissions. Broken, cyclic, ambiguous or
+foreign references remain visible on the main timeline. Expansion is local UI
+state, not a persisted message edit. This is native group-thread presentation,
+not the reference's automatic composer/session thread stamping or exact chip UI.
 Standalone attachments, masked secret requests and vendor-specific cloud-agent
 cards also remain outside this `SendMessage` implementation; parity is incomplete.
 

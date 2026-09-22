@@ -1646,3 +1646,10 @@
 "Original message unavailable" = "Message original indisponible";
 "View original message" = "Voir le message original";
 "Choose an available message in this group to reply to. Nothing was sent." = "Choisissez un message disponible dans ce groupe auquel répondre. Rien n’a été envoyé.";
+"1 reply in thread" = "1 réponse dans le fil";
+"{0} replies in thread" = "{0} réponses dans le fil";
+"Expanded" = "Développé";
+"Collapsed" = "Réduit";
+"Hide thread replies" = "Masquer les réponses du fil";
+"Show thread replies" = "Afficher les réponses du fil";
+"Kept open while a question or tool is pending." = "Le fil reste ouvert tant qu’une question ou un outil est en attente.";

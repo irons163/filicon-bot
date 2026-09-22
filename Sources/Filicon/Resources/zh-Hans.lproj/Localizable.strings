@@ -1646,3 +1646,10 @@
 "Original message unavailable" = "原始消息不可用";
 "View original message" = "查看原始消息";
 "Choose an available message in this group to reply to. Nothing was sent." = "请选择此群组内可用的消息来回复。未发送任何内容。";
+"1 reply in thread" = "讨论串中有 1 条回复";
+"{0} replies in thread" = "讨论串中有 {0} 条回复";
+"Expanded" = "已展开";
+"Collapsed" = "已折叠";
+"Hide thread replies" = "折叠讨论串回复";
+"Show thread replies" = "展开讨论串回复";
+"Kept open while a question or tool is pending." = "问题或工具仍在等待处理，暂时保持展开。";

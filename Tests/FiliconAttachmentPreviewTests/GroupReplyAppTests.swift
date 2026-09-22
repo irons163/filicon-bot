@@ -86,6 +86,67 @@ private struct GroupReplyAppProvider: InteractiveToolProvider {
 
 @Suite("Group reply app integration", .timeLimit(.minutes(1)))
 @MainActor struct GroupReplyAppTests {
+    @Test(.serialized, arguments: ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"])
+    func foldedExpandedAndPendingThreadsRenderInSevenLanguages(language: String) async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "filicon-thread-render-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+        let group = UUID(), agent = AgentProfile(name: "Designer", providerID: "fixture", modelID: "test")
+        let original = RoomMessage(groupID: group, senderID: nil, text: "Review the layout")
+        var reply = RoomMessage(groupID: group, senderID: agent.id, text: "Use consistent spacing and clear focus indicators.")
+        reply.replyToMessageID = original.id
+        var question = RoomMessage(groupID: group, senderID: agent.id, text: "Continue with this layout?")
+        question.replyToMessageID = reply.id
+        question.question = .init(question: try AgentQuestion.parse(Data(#"{"prompt":"Continue with this layout?","options":[{"label":"Continue"},{"label":"Revise"}]}"#.utf8)), accountID: "local", memberIDs: [agent.id])
+        let regular = GroupThreadProjection(history: [original, reply], groupID: group)
+        let pending = GroupThreadProjection(history: [original, reply, question], groupID: group)
+        for dark in [false, true] {
+            try await withUIRenderTurn(language: language) {
+                if language != "en" {
+                    for key in ["1 reply in thread", "{0} replies in thread", "Expanded", "Collapsed",
+                                "Hide thread replies", "Show thread replies", "Kept open while a question or tool is pending."] {
+                        #expect(FiliconLocalization.string(key) != key)
+                    }
+                }
+                let host = NSHostingView(rootView: VStack(alignment: .leading, spacing: 14) {
+                    GroupMessageBubble(message: original, agent: nil, onReaction: {})
+                    GroupReplyThread(replies: regular.replies(to: original.id), expanded: false,
+                                     needsAttention: false, onToggle: {}) { message in
+                        GroupMessageBubble(message: message, agent: agent, onReaction: {})
+                    }
+                    Divider()
+                    GroupReplyThread(replies: regular.replies(to: original.id), expanded: true,
+                                     needsAttention: false, onToggle: {}) { message in
+                        GroupMessageBubble(message: message, agent: agent, replySource: original, replyAuthor: l10n("You"), onReaction: {})
+                    }
+                    Divider()
+                    // Even a collapsed-state caller cannot hide a pending card.
+                    GroupReplyThread(replies: pending.replies(to: original.id), expanded: false,
+                                     needsAttention: true, onToggle: {}) { message in
+                        GroupMessageBubble(message: message, agent: agent, questionEnabled: true,
+                            replySource: message.id == question.id ? reply : original,
+                            replyAuthor: message.id == question.id ? agent.name : l10n("You"), onReaction: {})
+                    }
+                }.padding(16).frame(width: 380).background(FiliconTheme.canvas)
+                    .environmentObject(model)
+                    .environment(\.locale, Locale(identifier: language)).environment(\.colorScheme, dark ? .dark : .light))
+                host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+                let size = host.fittingSize
+                expectNoDifference(size.width, 380)
+                #expect(size.height > 600 && size.height < 1_400)
+                host.frame = .init(origin: .zero, size: size)
+                host.layoutSubtreeIfNeeded()
+                let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                host.cacheDisplay(in: host.bounds, to: bitmap)
+                if let output = ProcessInfo.processInfo.environment["FILICON_UI_REVIEW_OUTPUT"] {
+                    let directory = URL(fileURLWithPath: output)
+                    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                    try #require(bitmap.representation(using: .png, properties: [:])).write(to: directory.appending(path: "group-thread-\(language)-\(dark ? "dark" : "light").png"))
+                }
+            }
+        }
+    }
+
     @Test func streamingToolLoopRefreshesReceiptDirectoryAndPersistsChainedReplies() async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-receipt-loop-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }
