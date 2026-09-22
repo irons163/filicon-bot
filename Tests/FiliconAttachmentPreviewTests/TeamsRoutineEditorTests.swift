@@ -210,7 +210,7 @@ struct TeamsRoutineEditorTests {
         expectNoDifference(FiliconLocalization.string("Channel IDs, comma-separated (optional)", language: "ko"), "채널 ID, 쉼표로 구분 (선택 사항)")
     }
 
-    @Test func teamsFieldsAndReadOnlySheetsRenderInSevenLanguages() throws {
+    @Test func teamsFieldsAndReadOnlySheetsRenderInSevenLanguages() async throws {
         let output = ProcessInfo.processInfo.environment["FILICON_UI_REVIEW_OUTPUT"].map { URL(fileURLWithPath: $0) }
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-teams-editor-ui-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }
@@ -220,16 +220,20 @@ struct TeamsRoutineEditorTests {
         for language in ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"] {
             for dark in [false, true] {
                 for (index, draft) in [listener(), invalid].enumerated() {
-                    let host = NSHostingView(rootView: AutomationListenerEditor(listener: .constant(draft), canRemove: true, remove: {})
-                        .padding(20).frame(width: 440).background(Color(nsColor: .windowBackgroundColor))
-                        .environment(\.locale, Locale(identifier: language)).environment(\.colorScheme, dark ? .dark : .light))
-                    try render(host, width: 440, height: 1100, output: output, name: "teams-fields-\(language)-\(dark)-\(index)")
+                    try await withUIRenderTurn {
+                        let host = NSHostingView(rootView: AutomationListenerEditor(listener: .constant(draft), canRemove: true, remove: {})
+                            .padding(20).frame(width: 440).background(Color(nsColor: .windowBackgroundColor))
+                            .environment(\.locale, Locale(identifier: language)).environment(\.colorScheme, dark ? .dark : .light))
+                        try render(host, width: 440, height: 1100, output: output, name: "teams-fields-\(language)-\(dark)-\(index)")
+                    }
                 }
                 for (index, definition) in [routine(try listener().trigger), readOnly].enumerated() {
-                    let host = NSHostingView(rootView: RoutineAutomationEditView(session: .init(automation: definition))
-                        .environmentObject(model).environment(\.locale, Locale(identifier: language))
-                        .environment(\.colorScheme, dark ? .dark : .light))
-                    try render(host, width: 690, height: 760, output: output, name: "teams-sheet-\(language)-\(dark)-\(index)")
+                    try await withUIRenderTurn {
+                        let host = NSHostingView(rootView: RoutineAutomationEditView(session: .init(automation: definition))
+                            .environmentObject(model).environment(\.locale, Locale(identifier: language))
+                            .environment(\.colorScheme, dark ? .dark : .light))
+                        try render(host, width: 690, height: 760, output: output, name: "teams-sheet-\(language)-\(dark)-\(index)")
+                    }
                 }
             }
         }

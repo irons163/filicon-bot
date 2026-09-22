@@ -271,11 +271,11 @@ private actor BroadcastGate {
         expectNoDifference(f.model.agentMessages.first?.delivery?.state, .completed)
     }
 
-    @Test func audienceApprovalRendersInSevenLanguages() throws {
+    @Test func audienceApprovalRendersInSevenLanguages() async throws {
         let members = "工程師 (00000000-0000-0000-0000-000000000001)\nDesigner (00000000-0000-0000-0000-000000000002)\nContrôle qualité (00000000-0000-0000-0000-000000000003)"
         let output = ProcessInfo.processInfo.environment["FILICON_UI_REVIEW_OUTPUT"].map { URL(fileURLWithPath: $0) }
         for language in ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"] {
-            try FiliconLocalization.$languageOverride.withValue(language) {
+            try await withUIRenderTurn(language: language) {
             if language != "en" { #expect(FiliconLocalization.string("Group audience") != "Group audience") }
             let locale = Locale(identifier: language)
             let host = NSHostingView(rootView: AgentGroupApprovalDetails(members: members)

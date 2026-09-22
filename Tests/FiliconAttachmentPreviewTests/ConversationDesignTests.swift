@@ -9,13 +9,13 @@ import FiliconDomain
 @Suite("Conversation design", .serialized)
 @MainActor
 struct ConversationDesignTests {
-    @Test func groupOutcomeNoticesAreLocalizedAndRender() throws {
+    @Test func groupOutcomeNoticesAreLocalizedAndRender() async throws {
         let agent = AgentProfile(name: "設計師", avatar: .pet(.dewey))
         let groupID = UUID()
         let output = ProcessInfo.processInfo.environment["FILICON_UI_REVIEW_OUTPUT"].map { URL(fileURLWithPath: $0, isDirectory: true) }
         if let output { try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true) }
         for language in ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"] {
-            try FiliconLocalization.$languageOverride.withValue(language) {
+            try await withUIRenderTurn(language: language) {
                 for key in ["Member response failed. Send a message to retry.", "No new contribution this turn."] {
                     let translated = FiliconLocalization.string(key)
                     #expect(!translated.isEmpty)
@@ -119,7 +119,7 @@ struct ConversationDesignTests {
 
     /// Opt-in PNGs use an isolated model and never seed the user's workspace.
     /// FILICON_UI_REVIEW_OUTPUT=/absolute/temp/directory swift test --filter ConversationDesignTests
-    @Test func renderReferenceLayouts() throws {
+    @Test func renderReferenceLayouts() async throws {
         let root = temporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
@@ -141,17 +141,15 @@ struct ConversationDesignTests {
         if let output { try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true) }
         let languages = output == nil ? ["zh-Hant"] : ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"]
         for language in languages {
-            try FiliconLocalization.$languageOverride.withValue(language) {
-                try render(model, size: NSSize(width: 1_260, height: 780), language: language, output: output, name: "chat-\(language)")
-            }
+            try await render(model, size: NSSize(width: 1_260, height: 780), language: language, output: output, name: "chat-\(language)")
         }
         if let output {
-            try FiliconLocalization.$languageOverride.withValue("zh-Hant") {
-                try render(model, size: NSSize(width: 800, height: 680), language: "zh-Hant", output: output, name: "chat-compact")
-                try render(model, size: NSSize(width: 580, height: 650), language: "zh-Hant", output: output, name: "chat-narrow")
-                try render(model, size: NSSize(width: 1_260, height: 780), language: "zh-Hant", output: output, name: "chat-dark", dark: true)
+            try await FiliconLocalization.$languageOverride.withValue("zh-Hant") {
+                try await render(model, size: NSSize(width: 800, height: 680), language: "zh-Hant", output: output, name: "chat-compact")
+                try await render(model, size: NSSize(width: 580, height: 650), language: "zh-Hant", output: output, name: "chat-narrow")
+                try await render(model, size: NSSize(width: 1_260, height: 780), language: "zh-Hant", output: output, name: "chat-dark", dark: true)
                 model.groups = []
-                try render(model, size: NSSize(width: 1_260, height: 780), language: "zh-Hant", output: output, name: "chat-empty")
+                try await render(model, size: NSSize(width: 1_260, height: 780), language: "zh-Hant", output: output, name: "chat-empty")
                 let conversation = Conversation(title: "產品規劃", messages: [
                     ChatMessage(role: .assistant, text: "你好！今天想一起做什麼？"),
                     ChatMessage(role: .user, text: "請幫我規劃第一版。\n\n簡單、清楚，而且能真正解決問題。"),
@@ -160,32 +158,34 @@ struct ConversationDesignTests {
                 model.conversations = [conversation]
                 model.selection = conversation.id
                 model.route = .conversation(conversation.id)
-                try render(model, size: NSSize(width: 1_040, height: 720), language: "zh-Hant", output: output, name: "chat-direct")
+                try await render(model, size: NSSize(width: 1_040, height: 720), language: "zh-Hant", output: output, name: "chat-direct")
             }
         }
     }
 
-    private func render(_ model: AppModel, size: NSSize, language: String, output: URL?, name: String, dark: Bool = false) throws {
-        let view = FiliconWorkspaceShell {
-            if let conversation = model.selectedConversation, case .conversation = model.route {
-                ChatDetailView(conversation: conversation)
-            } else {
-                GroupWorkspaceView()
+    private func render(_ model: AppModel, size: NSSize, language: String, output: URL?, name: String, dark: Bool = false) async throws {
+        try await withUIRenderTurn(language: language) {
+            let view = FiliconWorkspaceShell {
+                if let conversation = model.selectedConversation, case .conversation = model.route {
+                    ChatDetailView(conversation: conversation)
+                } else {
+                    GroupWorkspaceView()
+                }
             }
+                .environmentObject(model)
+                .environment(\.locale, Locale(identifier: language))
+                .environment(\.colorScheme, dark ? .dark : .light)
+                .frame(width: size.width, height: size.height)
+            let host = NSHostingView(rootView: view)
+            host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+            host.frame = NSRect(origin: .zero, size: size)
+            host.layoutSubtreeIfNeeded()
+            let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            let png = try #require(bitmap.representation(using: .png, properties: [:]))
+            #expect(!png.isEmpty)
+            if let output { try png.write(to: output.appending(path: "\(name).png")) }
         }
-            .environmentObject(model)
-            .environment(\.locale, Locale(identifier: language))
-            .environment(\.colorScheme, dark ? .dark : .light)
-            .frame(width: size.width, height: size.height)
-        let host = NSHostingView(rootView: view)
-        host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
-        host.frame = NSRect(origin: .zero, size: size)
-        host.layoutSubtreeIfNeeded()
-        let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
-        host.cacheDisplay(in: host.bounds, to: bitmap)
-        let png = try #require(bitmap.representation(using: .png, properties: [:]))
-        #expect(!png.isEmpty)
-        if let output { try png.write(to: output.appending(path: "\(name).png")) }
     }
 
     private func temporaryRoot() -> URL {

@@ -13,19 +13,6 @@ private struct FixedMCPOAuthTransport: MCPOAuthTokenTransport {
     }
 }
 
-private actor MCPAuthorizationURLCapture {
-    private var value: URL?
-
-    func set(_ url: URL) { value = url }
-    func wait() async throws -> URL {
-        for _ in 0..<200 {
-            if let value { return value }
-            try await Task.sleep(for: .milliseconds(10))
-        }
-        throw ChannelOAuthBrowserError.timedOut
-    }
-}
-
 @Suite("MCP multi-account app integration")
 struct MCPAccountAppIntegrationTests {
     @Test @MainActor func oauthAuthenticatesOnlyTheExactSlotAndDoesNotPersistTokenBytes() async throws {
@@ -80,7 +67,7 @@ struct MCPAccountAppIntegrationTests {
         }
     }
 
-    @Test @MainActor func oauthStateMismatchFailsAndLateCallbackAfterLogoutCannotCommit() async throws {
+    @Test(.timeLimit(.minutes(1))) @MainActor func oauthStateMismatchFailsAndLateCallbackAfterLogoutCannotCommit() async throws {
         let root = FileManager.default.temporaryDirectory
             .appending(path: "filicon-mcp-oauth-fence-\(UUID().uuidString)", directoryHint: .isDirectory)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -107,12 +94,15 @@ struct MCPAccountAppIntegrationTests {
         #expect(mismatchModel.mcpAccountDefinitions.first?.accounts.first?.authStatus == .failed)
         #expect(mismatchModel.mcpAccountDefinitions.first?.accounts.first?.tokenReference == nil)
 
-        let capture = MCPAuthorizationURLCapture()
+        // Wait for the actual opener event, not a two-second scheduling window.
+        // Buffering also covers an opener that fires before the iterator starts.
+        let capture = AsyncStream<URL>.makeStream(bufferingPolicy: .bufferingOldest(1))
+        defer { capture.continuation.finish() }
         let lateModel = AppModel(
             applicationSupportRoot: root.appending(path: "late"),
             bootstrapImmediately: false,
             mcpOAuthTransport: FixedMCPOAuthTransport(body: response),
-            mcpOAuthBrowserOpener: { url in Task { await capture.set(url) }; return true }
+            mcpOAuthBrowserOpener: { url in capture.continuation.yield(url); return true }
         )
         await lateModel.addMCPHTTPServer(identifier: "mail", displayName: "Mail", endpoint: "https://example.test/mcp")
         let authentication = Task { @MainActor in
@@ -123,7 +113,9 @@ struct MCPAccountAppIntegrationTests {
                 clientID: "public-client", scopes: "", audience: ""
             )
         }
-        let authorizationURL = try await capture.wait()
+        defer { authentication.cancel() }
+        var urls = capture.stream.makeAsyncIterator()
+        let authorizationURL = try #require(await urls.next())
         await lateModel.logoutMCPAccount(serverID: "mail", accountKey: "default")
         if let callback = Self.oauthCallback(from: authorizationURL) {
             _ = try? await URLSession.shared.data(from: callback)

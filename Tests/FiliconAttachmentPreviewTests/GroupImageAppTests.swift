@@ -112,6 +112,7 @@ private struct GroupImageProvider: AIProvider {
         await f.model.sendGroupMessage(groupID: f.group.id, text: "@Designer summarize")
         let requests = await f.probe.requests
         expectNoDifference(requests.count, 2)
+        try #require(requests.count == 2)
         #expect(requests[1].attachmentsByMessageID.isEmpty)
         #expect(requests[1].messages.allSatisfy { $0.attachments.isEmpty })
         #expect(requests[1].messages.contains { $0.text.contains("\"omittedImageCount\":1") })
@@ -239,6 +240,7 @@ private struct GroupImageProvider: AIProvider {
         try await session.close()
         let requests = await f.probe.requests
         expectNoDifference(requests.count, 1)
+        try #require(requests.count == 1)
         #expect(requests[0].messages.contains { $0.text == "Previous group request" })
         #expect(requests[0].messages.allSatisfy { $0.attachments.isEmpty })
         #expect(requests[0].attachmentsByMessageID.isEmpty)
@@ -250,7 +252,7 @@ private struct GroupImageProvider: AIProvider {
         let preview = try #require(NSImage(data: f.bytes))
         let title = "Images are saved in this group and sent to the responding members' configured models. @mentions limit this turn's recipients."
         for language in ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"] {
-            try FiliconLocalization.$languageOverride.withValue(language) {
+            try await withUIRenderTurn(language: language) {
                 if language != "en" { #expect(FiliconLocalization.string(title) != title) }
                 let host = NSHostingView(rootView: GroupImageDraftPreview(onRemove: {}) {
                     AgentMessageImagePreviewContent(image: f.images[0], preview: preview, compact: true)

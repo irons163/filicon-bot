@@ -133,13 +133,13 @@ private actor AppImageProbe {
         }
     }
 
-    @Test func groupPublicationAudienceRendersInSevenLanguages() throws {
+    @Test func groupPublicationAudienceRendersInSevenLanguages() async throws {
         let bytes = try imageData(), preview = try #require(NSImage(data: bytes))
         let image = AttachmentMetadata(id: String(repeating: "abcd", count: 16), filename: "review-layout.png", mimeType: "image/png", byteCount: Int64(bytes.count), kind: .image)
         let notice = "This saves the reply and images in this group. It does not add responders or automatically resend images to other models."
         let output = ProcessInfo.processInfo.environment["FILICON_UI_REVIEW_OUTPUT"].map { URL(fileURLWithPath: $0) }
         for language in ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"] {
-            try FiliconLocalization.$languageOverride.withValue(language) {
+            try await withUIRenderTurn(language: language) {
                 if language != "en" { #expect(FiliconLocalization.string(notice) != notice) }
                 let host = NSHostingView(rootView: VStack(alignment: .leading, spacing: 12) {
                     Text(FiliconLocalization.string("Publish these images in this conversation?")).font(.headline)
@@ -304,12 +304,12 @@ private actor AppImageProbe {
         }
     }
 
-    @Test func publicationPreviewAndReceiptRenderInSevenLanguages() throws {
+    @Test func publicationPreviewAndReceiptRenderInSevenLanguages() async throws {
         let bytes = try imageData(), preview = try #require(NSImage(data: bytes))
         let image = AttachmentMetadata(id: String(repeating: "abcd", count: 16), filename: "review-layout.png", mimeType: "image/png", byteCount: Int64(bytes.count), kind: .image)
         let output = ProcessInfo.processInfo.environment["FILICON_UI_REVIEW_OUTPUT"].map { URL(fileURLWithPath: $0) }
         for language in ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"] {
-            try FiliconLocalization.$languageOverride.withValue(language) {
+            try await withUIRenderTurn(language: language) {
                 let keys = ["Publish these images in this conversation?", "User in this conversation", "Published response"]
                 if language != "en" { for key in keys { #expect(FiliconLocalization.string(key) != key) } }
                 let host = NSHostingView(rootView: VStack(alignment: .leading, spacing: 12) {
@@ -396,13 +396,13 @@ private actor AppImageProbe {
         }
     }
 
-    @Test func actualImagePreviewAndDisclosureRenderInSevenLanguages() throws {
+    @Test func actualImagePreviewAndDisclosureRenderInSevenLanguages() async throws {
         let bytes = try imageData(), preview = try #require(NSImage(data: bytes))
         let image = AttachmentMetadata(id: String(repeating: "abcd", count: 16), filename: "review-layout.png", mimeType: "image/png", byteCount: Int64(bytes.count), kind: .image)
         let output = ProcessInfo.processInfo.environment["FILICON_UI_REVIEW_OUTPUT"].map { URL(fileURLWithPath: $0) }
         let title = "Forward these images to the recipient model?"
         for language in ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"] {
-            try FiliconLocalization.$languageOverride.withValue(language) {
+            try await withUIRenderTurn(language: language) {
                 if language != "en" { #expect(FiliconLocalization.string(title) != title) }
                 let host = NSHostingView(rootView: VStack(alignment: .leading, spacing: 12) {
                     Text(FiliconLocalization.string(title)).font(.headline)

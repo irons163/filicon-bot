@@ -216,12 +216,12 @@ private struct WorkflowWritingProvider: InteractiveToolProvider {
         expectNoDifference(model.workflows.map(\.id), ["sender-layout"])
     }
 
-    @Test func fullApprovalRendersInSevenLanguagesAndBothAppearances() throws {
+    @Test func fullApprovalRendersInSevenLanguagesAndBothAppearances() async throws {
         let output = ProcessInfo.processInfo.environment["FILICON_UI_REVIEW_OUTPUT"].map { URL(fileURLWithPath: $0) }
         for language in ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"] {
             for action in ["create", "update", "delete"] {
                 for dark in [false, true] {
-                    try FiliconLocalization.$languageOverride.withValue(language) {
+                    try await withUIRenderTurn(language: language) {
                         let keys = ["Save reusable workflow", "Rewrite reusable workflow", "Current workflow", "Proposed workflow", "Full workflow body", "Known direct references", "Workflow enabled", "Workflow disabled", AgentWorkflowApprovalDetails.disclosure, AgentWorkflowApprovalDetails.referenceNotice,
                             AgentWorkflowWriteError.invalid.localizedDescription, AgentWorkflowWriteError.stale.localizedDescription, AgentWorkflowWriteError.unavailable.localizedDescription,
                             "Delete reusable workflow", AgentWorkflowApprovalDetails.deletionDisclosure, AgentWorkflowDeletionError.invalid.localizedDescription, AgentWorkflowDeletionError.unavailable.localizedDescription]

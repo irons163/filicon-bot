@@ -146,7 +146,10 @@ struct RoutineEditAppTests {
         }
     }
 
-    @Test func editorSheetRendersSupportedAndReadOnlyStatesInSevenLanguages() throws {
+    // Keep the existing language order, but give each language its own bounded
+    // test case instead of putting up to 161 renders under one timeout.
+    @Test(.serialized, arguments: ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"])
+    func editorSheetRendersSupportedAndReadOnlyStatesInSevenLanguages(language: String) async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-routine-edit-ui-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }
         let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
@@ -157,9 +160,9 @@ struct RoutineEditAppTests {
             routine(.platform(.slack(try .init(channel: "C123", match: .reaction(emoji: ["eyes"], bySelf: true))))),
             routine(.event(.init(connectorID: id, kind: "deploy", filtersJSON: Data(#"{"environment":"prod","approved":true}"#.utf8)))),
             routine(.event(.init(connectorID: id, kind: "deploy", filtersJSON: Data(#"{"environment":"prod","environment":"stage"}"#.utf8))))]
-        for language in ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"] {
-            for dark in [false, true] {
-                for (index, definition) in definitions.enumerated() {
+        for dark in [false, true] {
+            for (index, definition) in definitions.enumerated() {
+                try await withUIRenderTurn {
                     let host = NSHostingView(rootView: RoutineAutomationEditView(session: .init(automation: definition))
                         .environmentObject(model).environment(\.locale, Locale(identifier: language))
                         .environment(\.colorScheme, dark ? .dark : .light))

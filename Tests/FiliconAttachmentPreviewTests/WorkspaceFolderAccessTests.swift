@@ -320,7 +320,7 @@ struct WorkspaceFolderAccessTests {
     }
 
     @Test(arguments: [false, true])
-    func folderCardRendersAtChatWidths(requiresReauthorization: Bool) throws {
+    func folderCardRendersAtChatWidths(requiresReauthorization: Bool) async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-folder-render-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }
         let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
@@ -328,7 +328,7 @@ struct WorkspaceFolderAccessTests {
                                                runID: context.runID, toolCallID: "fixture", requestedRoot: requiresReauthorization ? "/Projects/example" : nil,
                                                requiresReauthorization: requiresReauthorization)]
         for (language, scheme, width) in [("zh-Hant", ColorScheme.dark, 520.0), ("zh-Hant", .light, 520.0), ("fr", .light, 360.0)] {
-            try FiliconLocalization.$languageOverride.withValue(language) {
+            try await withUIRenderTurn(language: language) {
                 let content = WorkspaceFolderAccessPanel(conversationID: context.conversationID)
                     .environmentObject(model).environment(\.locale, Locale(identifier: language))
                     .foregroundStyle(FiliconTheme.textPrimary).padding(20)

@@ -175,14 +175,17 @@ struct RoutineListenerEditorTests {
         }
     }
 
-    @Test func nativeEditorsRenderAcrossLanguagesAppearancesAndRetainedInvalidFilters() throws {
+    // Keep the existing language order, but give each language its own bounded
+    // test case instead of putting up to 161 renders under one timeout.
+    @Test(.serialized, arguments: ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"])
+    func nativeEditorsRenderAcrossLanguagesAppearancesAndRetainedInvalidFilters(language: String) async throws {
         let output = ProcessInfo.processInfo.environment["FILICON_UI_REVIEW_OUTPUT"].map { URL(fileURLWithPath: $0) }
         var invalid = configured(.linear, event: "statusChanged"); invalid.primary = "endOfCycle"
         let drafts = [configured(.linear, event: "issueCreated"), configured(.linear, event: "statusChanged"),
             configured(.linear, event: "endOfCycle"), configured(.sentry, event: "issueAny"), configured(.pagerDuty, event: "incidentAny"), invalid]
-        for language in ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"] {
-            for dark in [false, true] {
-                for (index, draft) in drafts.enumerated() {
+        for dark in [false, true] {
+            for (index, draft) in drafts.enumerated() {
+                try await withUIRenderTurn {
                     let host = NSHostingView(rootView: AutomationListenerEditor(listener: .constant(draft), canRemove: true, remove: {})
                         .padding(20).frame(width: 440).background(Color(nsColor: .windowBackgroundColor))
                         .environment(\.locale, Locale(identifier: language)).environment(\.colorScheme, dark ? .dark : .light))

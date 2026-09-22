@@ -8,29 +8,31 @@ import Testing
 
 @Suite("UI localization")
 struct LocalizationTests {
-    @MainActor @Test func teamsAvailabilityRendersInSevenLanguagesAndBothAppearances() throws {
+    @MainActor @Test func teamsAvailabilityRendersInSevenLanguagesAndBothAppearances() async throws {
         let output = ProcessInfo.processInfo.environment["FILICON_UI_REVIEW_OUTPUT"].map { URL(fileURLWithPath: $0) }
         for language in ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"] {
             for dark in [false, true] {
-                let host = NSHostingView(rootView: VStack(alignment: .leading, spacing: 16) {
-                    Text("Microsoft Teams").font(.headline)
-                    Text(FiliconLocalization.string(AutomationIngressProvider.microsoftTeams.authenticationSemantics, language: language))
-                        .font(.caption).fixedSize(horizontal: false, vertical: true)
-                    Divider()
-                    TeamsRoutineAvailabilityNotice()
-                }.padding(24).frame(width: 440).background(Color(nsColor: .windowBackgroundColor))
-                    .environment(\.locale, Locale(identifier: language)).environment(\.colorScheme, dark ? .dark : .light))
-                host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
-                host.frame = .init(x: 0, y: 0, width: 440, height: 480)
-                host.layoutSubtreeIfNeeded()
-                #expect(host.fittingSize.height <= 480)
-                let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
-                host.cacheDisplay(in: host.bounds, to: bitmap)
-                let png = try #require(bitmap.representation(using: .png, properties: [:]))
-                #expect(!png.isEmpty)
-                if let output {
-                    try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
-                    try png.write(to: output.appending(path: "teams-\(language)-\(dark ? "dark" : "light").png"))
+                try await withUIRenderTurn {
+                    let host = NSHostingView(rootView: VStack(alignment: .leading, spacing: 16) {
+                        Text("Microsoft Teams").font(.headline)
+                        Text(FiliconLocalization.string(AutomationIngressProvider.microsoftTeams.authenticationSemantics, language: language))
+                            .font(.caption).fixedSize(horizontal: false, vertical: true)
+                        Divider()
+                        TeamsRoutineAvailabilityNotice()
+                    }.padding(24).frame(width: 440).background(Color(nsColor: .windowBackgroundColor))
+                        .environment(\.locale, Locale(identifier: language)).environment(\.colorScheme, dark ? .dark : .light))
+                    host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+                    host.frame = .init(x: 0, y: 0, width: 440, height: 480)
+                    host.layoutSubtreeIfNeeded()
+                    #expect(host.fittingSize.height <= 480)
+                    let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                    host.cacheDisplay(in: host.bounds, to: bitmap)
+                    let png = try #require(bitmap.representation(using: .png, properties: [:]))
+                    #expect(!png.isEmpty)
+                    if let output {
+                        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+                        try png.write(to: output.appending(path: "teams-\(language)-\(dark ? "dark" : "light").png"))
+                    }
                 }
             }
         }

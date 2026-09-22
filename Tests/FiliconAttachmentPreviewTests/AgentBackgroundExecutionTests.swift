@@ -185,11 +185,11 @@ private struct PlainScheduledAgentProvider: AIProvider {
         expectNoDifference(model.agentMessages.first?.delivery?.state, .completed)
     }
 
-    @Test func priorityWarningRendersInSevenLanguages() throws {
+    @Test func priorityWarningRendersInSevenLanguages() async throws {
         let key = "Priority messages may stop background work after the current response ends. User turns are protected; interrupted work is not automatically resumed."
         let output = ProcessInfo.processInfo.environment["FILICON_UI_REVIEW_OUTPUT"].map { URL(fileURLWithPath: $0) }
         for language in ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"] {
-            try FiliconLocalization.$languageOverride.withValue(language) {
+            try await withUIRenderTurn(language: language) {
                 if language != "en" { #expect(FiliconLocalization.string(key) != key) }
                 let host = NSHostingView(rootView: AgentPriorityMessageNotice()
                     .environment(\.locale, Locale(identifier: language)).environment(\.colorScheme, .light)
@@ -508,7 +508,7 @@ private struct PlainScheduledAgentProvider: AIProvider {
         let output = ProcessInfo.processInfo.environment["FILICON_UI_REVIEW_OUTPUT"].map { URL(fileURLWithPath: $0, isDirectory: true) }
         if let output { try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true) }
         for language in ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"] {
-            try FiliconLocalization.$languageOverride.withValue(language) {
+            try await withUIRenderTurn(language: language) {
                 let host = NSHostingView(rootView: AgentMessagingView().environmentObject(model)
                     .environment(\.locale, Locale(identifier: language)).environment(\.colorScheme, .light))
                 host.appearance = NSAppearance(named: .aqua)

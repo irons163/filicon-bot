@@ -1,6 +1,28 @@
 # 協作能力核對紀錄（更新至 2026-09-22）
 
-## 本輪增量：轉向與完成交界、協作測試的受控時序（2026-09-22）
+## 本輪增量：並行 App 測試的渲染排程（2026-09-22）
+
+先提交上一批為 `448e187`（`fix: preserve subagent steering across completion`），提交前含取消／群組交接的 **35 Swift Testing／3 suites** 通過，diff check 通過。本輪只修改測試與文件，不改 App 行為、權限或功能 parity 狀態。
+
+- App-only 預設並行基準再次出現大量 60 秒逾時及 `GroupImageAppTests` 陣列越界（`/tmp/filicon-app-parallel-baseline.log`）。取樣顯示主執行緒長時間同步執行多語言渲染；單一排程核准測試就連續繪製 **7 語言 × 23 情境 = 161 張**。約執行 40 秒時，取樣記錄的峰值記憶體為 **2.0 GB**（`/tmp/filicon-app-parallel-baseline.sample.txt`）。診斷性排除渲染後，其餘 **293 項／45 suites** 在 **10.535 秒**通過；這只是對照實驗，最終驗收不排除畫面測試。
+- 新增測試專用 `withUIRenderTurn`：先檢查取消、每次只放行一個渲染 fixture、在主佇列下一輪恢復、再次檢查取消，再於 autorelease pool 內建立 host／bitmap／PNG。正常、拋錯或取消都歸還位置；不讓所有畫面測試一起恢復成主執行緒工作突發。測試本體及非渲染整合工作仍並行，不對整套測試加 serialized。
+- 保留七語言、明暗模式、情境、尺寸／內容斷言及輸出檔名。三個最大的 84／98／161 張渲染批次改為每語言一個參數化案例，只有同一測試的語言案例依原先順序執行，各案例沿用既有 60 秒上限；不同測試仍並行。沒有增加整合測試期限或刪掉情境。
+- 新增 **5 項**排程回歸，涵蓋並行／連續 fixture 之間主佇列能前進、取消不再繪圖、七語言 TaskLocal 在成功／拋錯後恢復，以及失敗後仍能繼續渲染。未新增依賴；依 Swift 測試／CustomDump 技能採受控事件與完整差異斷言。
+- MCP OAuth fixture 的固定兩秒輪詢曾在第一輪修正後單獨失敗（`/tmp/filicon-app-render-cooperative-1.log`）。改用有界單筆 AsyncStream 接收真正的 opener 事件，並在退出時取消 authentication task；整項測試明定一分鐘故障上限，仍驗證錯誤 state 與 logout 後回呼不能提交。未變動正式 OAuth 逾時、驗證或登入流程。
+- 圖片歷史測試在非致命 count 斷言後加上 `#require` 再索引，保留原有精確 count／附件斷言，避免逾時後被第二個 index trap 掩蓋。
+
+中間驗證：初版合作式渲染通過 App **328 項／46 suites** 及全專案 **135 XCTest、1,013 Swift Testing／113 suites**；但開啟大量 PNG 輸出的壓力測試仍逾時。加入單一渲染放行後，登入／核准／協作工作約 15 秒內完成，只剩上述三個大批次超時，據此再拆每語言案例。這些失敗紀錄保留在 `/tmp/filicon-render-artifacts.log`、`/tmp/filicon-render-admission-artifacts.log`，不以先前通過結果當成最終修正的驗收。
+
+最新驗證與限制：
+
+- 最終程式版本的 App 預設並行驗證（含大量 PNG 寫出）**329 Swift Testing／46 suites 全數通過，58.733 秒**，紀錄 `/tmp/filicon-render-final-artifacts.log`。產物為 `/tmp/filicon-render-final.KgVbOj/` 的 **789 張 PNG**：七語言各 112 張，另有 5 張 compact／narrow／dark／empty／direct layout。逐檔驗證 PNG 簽頭、每個 chunk CRC 與非零尺寸；目視抽查繁中唯讀 Teams sheet、法文暗色無效 connector 表單，未見內容被裁切。不是宣稱逐張人工比對或 pixel-perfect baseline 驗收。
+- 最新完整預設並行回歸**未通過**（`/tmp/filicon-render-final-parallel-1.log`）：多個儲存／附件／代理人測試收到 **Cocoa 257／POSIX 1 Operation not permitted**，並觸發其他既有未防護測試的索引越界。隨後只讀檢查確認 `CGSSessionScreenIsLocked=Yes`。沒有將鎖定造成的受保護檔案錯誤當成本輪渲染問題，也沒有弱化檔案保護；fail-fast 停止後，第二次完整並行及最新非並行回歸尚未執行，需解鎖後再驗證。中間版完整通過結果不可冒充最終版本已完整通過。
+- 不涉及受保護檔案的 **5 項 UI render scheduling 回歸，預設並行連續 20 輪全數通過**（`/tmp/filicon-render-scheduler-stress-1.log` 至 `-20.log`）。任一輪失敗即停止，不以重試隱藏失敗；此聚焦結果不代替待解鎖的完整驗證。
+- 七語言各 **1,624 keys／零缺漏**、`git diff --check` 通過。兩項 opt-in live Codex 測試未啟用；既有 CoreData NSXPC 診斷與編譯的 CKShareMetadata context 警告未列為本輪修復。未修改正式 UI／翻譯／封裝，未重跑 native App build／簽章／公證。
+
+新修改尚未提交；未 push、未啟動／重啟使用者 App／Xcode、未操作真實群組／排程／帳號／憑證。整體仍 **43 complete／4 partial／1 NA**，非 live 服務或 release 公證驗收。
+
+## 已提交增量：轉向與完成交界、協作測試的受控時序（2026-09-22）
 
 先提交上一批為 `3be702e`（`fix: verify macOS system aliases in debug packages`），提交前 Ruby **7 tests／80 assertions**、Python **11 項政策測試**、shell 語法與 diff check 通過。本輪處理先前完整並行回歸發現的協作時序問題，不提高功能 parity 狀態。
 
@@ -20,7 +42,7 @@
 - 最後補上啟動等待失敗時的 fixture 取消清理後，包含前述取消與群組交接的 **35 Swift Testing／3 suites** 聚焦通過，並以預設並行連續 **20 輪**全過（`/tmp/filicon-steering-final-focused.log`、`/tmp/filicon-steering-final-stress-1.log` 至 `-20.log`）。未用 retry 隱藏單次失敗，任一輪失敗即停止。
 - 七語言各 **1,624 keys／零缺漏**、`git diff --check` 通過。此輪未修改 UI、翻譯、Package.swift 或封裝設定；未重跑原生 App 封裝／簽章或操作 live runtime，不以先前封裝成果冒充本輪完整產品驗收。
 
-新修改尚未提交；未 push、未啟動／重啟使用者 App／Xcode、未操作真實群組／排程／帳號／憑證。整體仍 **43 complete／4 partial／1 NA**。
+本批已於下一輪提交為 `448e187`；未 push、未啟動／重啟使用者 App／Xcode、未操作真實群組／排程／帳號／憑證。整體仍 **43 complete／4 partial／1 NA**。
 
 ## 已提交增量：Debug 封裝驗證的系統路徑別名（2026-09-22）
 

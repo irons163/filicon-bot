@@ -56,25 +56,27 @@ struct ConnectorRoutineEditorTests {
         }
     }
 
-    @Test func validEmptyAndDuplicateFiltersRenderInSevenLanguages() throws {
+    @Test func validEmptyAndDuplicateFiltersRenderInSevenLanguages() async throws {
         let output = ProcessInfo.processInfo.environment["FILICON_UI_REVIEW_OUTPUT"].map { URL(fileURLWithPath: $0) }
         let drafts = [listener(), listener("{}"), listener(#"{"environment":"stage","environment":"prod"}"#)]
         for language in ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"] {
             for dark in [false, true] {
                 for (index, draft) in drafts.enumerated() {
-                    let host = NSHostingView(rootView: AutomationListenerEditor(listener: .constant(draft), canRemove: true, remove: {})
-                        .padding(20).frame(width: 440).background(Color(nsColor: .windowBackgroundColor))
-                        .environment(\.locale, Locale(identifier: language)).environment(\.colorScheme, dark ? .dark : .light))
-                    host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
-                    host.frame = .init(x: 0, y: 0, width: 440, height: 900); host.layoutSubtreeIfNeeded()
-                    #expect(host.fittingSize.height <= 900 && host.fittingSize.width <= 440)
-                    host.setFrameSize(.init(width: 440, height: ceil(host.fittingSize.height))); host.layoutSubtreeIfNeeded()
-                    let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
-                    host.cacheDisplay(in: host.bounds, to: bitmap)
-                    let png = try #require(bitmap.representation(using: .png, properties: [:]))
-                    if let output {
-                        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
-                        try png.write(to: output.appending(path: "connector-\(language)-\(dark ? "dark" : "light")-\(index).png"))
+                    try await withUIRenderTurn {
+                        let host = NSHostingView(rootView: AutomationListenerEditor(listener: .constant(draft), canRemove: true, remove: {})
+                            .padding(20).frame(width: 440).background(Color(nsColor: .windowBackgroundColor))
+                            .environment(\.locale, Locale(identifier: language)).environment(\.colorScheme, dark ? .dark : .light))
+                        host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+                        host.frame = .init(x: 0, y: 0, width: 440, height: 900); host.layoutSubtreeIfNeeded()
+                        #expect(host.fittingSize.height <= 900 && host.fittingSize.width <= 440)
+                        host.setFrameSize(.init(width: 440, height: ceil(host.fittingSize.height))); host.layoutSubtreeIfNeeded()
+                        let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                        host.cacheDisplay(in: host.bounds, to: bitmap)
+                        let png = try #require(bitmap.representation(using: .png, properties: [:]))
+                        if let output {
+                            try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+                            try png.write(to: output.appending(path: "connector-\(language)-\(dark ? "dark" : "light")-\(index).png"))
+                        }
                     }
                 }
             }
