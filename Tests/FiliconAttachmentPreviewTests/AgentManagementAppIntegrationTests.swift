@@ -509,28 +509,27 @@ private actor ManagementWakeProbe {
         expectNoDifference(restored.agents.first { $0.id == newAgent.id }?.notifyOnAgentUpdates, false)
     }
 
-    @Test func notificationApprovalRendersInSevenLanguagesAndBothAppearances() async throws {
+    @Test(.serialized, arguments: ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"])
+    func notificationApprovalRendersInSevenLanguagesAndBothAppearances(language: String) async throws {
         let output = ProcessInfo.processInfo.environment["FILICON_UI_REVIEW_OUTPUT"].map { URL(fileURLWithPath: $0) }
-        for language in ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"] {
-            for enabled in [false, true] {
-                for dark in [false, true] {
-                    try await withUIRenderTurn(language: language) {
-                        if language != "en" { #expect(FiliconLocalization.string("Agent update notifications") != "Agent update notifications") }
-                        let metadata = ["agentName": "Designer", "previousAgentNotifyOnUpdates": String(!enabled), "agentNotifyOnUpdates": String(enabled)]
-                        let host = NSHostingView(rootView: AgentSettingsApprovalDetails(metadata: metadata)
-                            .padding(20).frame(width: 380).background(FiliconTheme.canvas)
-                            .environment(\.locale, Locale(identifier: language)).environment(\.colorScheme, dark ? .dark : .light))
-                        host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
-                        host.frame = .init(x: 0, y: 0, width: 380, height: 440)
-                        host.layoutSubtreeIfNeeded()
-                        #expect(host.fittingSize.height <= 440)
-                        let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
-                        host.cacheDisplay(in: host.bounds, to: bitmap)
-                        let data = try #require(bitmap.representation(using: .png, properties: [:]))
-                        if let output {
-                            try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
-                            try data.write(to: output.appending(path: "settings-\(enabled)-\(language)-\(dark ? "dark" : "light").png"))
-                        }
+        for enabled in [false, true] {
+            for dark in [false, true] {
+                try await withUIRenderTurn(language: language) {
+                    if language != "en" { #expect(FiliconLocalization.string("Agent update notifications") != "Agent update notifications") }
+                    let metadata = ["agentName": "Designer", "previousAgentNotifyOnUpdates": String(!enabled), "agentNotifyOnUpdates": String(enabled)]
+                    let host = NSHostingView(rootView: AgentSettingsApprovalDetails(metadata: metadata)
+                        .padding(20).frame(width: 380).background(FiliconTheme.canvas)
+                        .environment(\.locale, Locale(identifier: language)).environment(\.colorScheme, dark ? .dark : .light))
+                    host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+                    host.frame = .init(x: 0, y: 0, width: 380, height: 440)
+                    host.layoutSubtreeIfNeeded()
+                    #expect(host.fittingSize.height <= 440)
+                    let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                    host.cacheDisplay(in: host.bounds, to: bitmap)
+                    let data = try #require(bitmap.representation(using: .png, properties: [:]))
+                    if let output {
+                        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+                        try data.write(to: output.appending(path: "settings-\(enabled)-\(language)-\(dark ? "dark" : "light").png"))
                     }
                 }
             }
@@ -790,101 +789,98 @@ private actor ManagementWakeProbe {
         expectNoDifference(model.agentMessages.first?.delivery?.state, .completed)
     }
 
-    // Keep the existing language order, but give each language its own bounded
-    // test case instead of putting up to 161 renders under one timeout.
-    @Test(.serialized, arguments: ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"])
-    func routinePreviewRendersInSevenLanguages(language: String) async throws {
+    @Test(.serialized, arguments: ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"],
+          ["pause", "resume", "delete", "create", "update", "create-github", "update-github", "create-slack", "update-slack", "create-group", "update-group", "create-mixed", "update-mixed", "create-linear", "update-linear", "create-cycle", "update-cycle", "create-sentry", "update-sentry", "create-pagerduty", "update-pagerduty", "create-teams", "update-teams"])
+    func routinePreviewRendersInSevenLanguages(language: String, scenario: String) async throws {
         let output = ProcessInfo.processInfo.environment["FILICON_UI_REVIEW_OUTPUT"].map { URL(fileURLWithPath: $0) }
-        for scenario in ["pause", "resume", "delete", "create", "update", "create-github", "update-github", "create-slack", "update-slack", "create-group", "update-group", "create-mixed", "update-mixed", "create-linear", "update-linear", "create-cycle", "update-cycle", "create-sentry", "update-sentry", "create-pagerduty", "update-pagerduty", "create-teams", "update-teams"] {
-            let github = scenario.hasSuffix("github"), slack = scenario.hasSuffix("slack"), linear = scenario.hasSuffix("linear"), cycle = scenario.hasSuffix("cycle"), sentry = scenario.hasSuffix("sentry"), pagerDuty = scenario.hasSuffix("pagerduty"), teams = scenario.hasSuffix("teams")
-            let mixed = scenario.hasSuffix("mixed")
-            let group = scenario.hasSuffix("group") || mixed
-            let action = scenario.replacingOccurrences(of: "-github", with: "").replacingOccurrences(of: "-slack", with: "").replacingOccurrences(of: "-group", with: "").replacingOccurrences(of: "-mixed", with: "").replacingOccurrences(of: "-linear", with: "").replacingOccurrences(of: "-cycle", with: "").replacingOccurrences(of: "-sentry", with: "").replacingOccurrences(of: "-pagerduty", with: "").replacingOccurrences(of: "-teams", with: "")
-            try await withUIRenderTurn(language: language) {
-                let titles = ["pause": "Pause own routine", "resume": "Resume own routine", "delete": "Delete own routine",
-                              "create": "Create own routine", "update": "Update own routine"]
-                let title = try #require(titles[action])
-                if language != "en" { #expect(FiliconLocalization.string(title) != title) }
-                var metadata = ["agentName": "Designer", "agentRoutineAction": action, "agentRoutineName": "Daily design review",
-                                "agentRoutineEnabled": "true",
-                                "agentRoutineID": "00000000-0000-0000-0000-000000000010",
-                                "agentRoutinePrompt": "Review accessible contrast. Do not publish.",
-                                "agentRoutineTrigger": "{\n  cron: {\n    expression: 0 9 * * *,\n    timeZoneIdentifier: Asia/Taipei\n  }\n}"]
-                if action == "update" {
-                    metadata["previousAgentRoutineName"] = "Weekly design review"
-                    metadata["previousAgentRoutineEnabled"] = "false"
-                    metadata["previousAgentRoutinePrompt"] = "Review previous layout. Do not publish."
-                    metadata["previousAgentRoutineTrigger"] = "{\n  cron: {\n    expression: @weekly,\n    timeZoneIdentifier: Asia/Taipei\n  }\n}"
-                }
-                if github {
-                    metadata["agentRoutineGitHubTrigger"] = "true"
-                    let trigger = AutomationTrigger.platform(.github(try .init(repo: "example/project", events: ["review-approved", "ci-failed"],
-                        ciBranch: "main", userAllowlist: ["author", "reviewer"])))
-                    metadata["agentRoutineTrigger"] = try AutomationStateChange(operation: .create, automation: .init(agentID: UUID(),
-                        name: "Review", prompt: "Review contrast", trigger: trigger)).triggerJSON
-                }
-                if slack {
-                    metadata["agentRoutineSlackTrigger"] = "true"
-                    let trigger = AutomationTrigger.platform(.slack(try .init(channel: "*", match: .reaction(emoji: ["eyes", "thumbsup"], bySelf: false))))
-                    metadata["agentRoutineTrigger"] = try AutomationStateChange(operation: .create, automation: .init(agentID: UUID(),
-                        name: "Review", prompt: "Review contrast", trigger: trigger)).triggerJSON
-                }
-                if linear || cycle || group {
-                    metadata["agentRoutineLinearTrigger"] = "true"
-                    let disclosure = "Linear requires existing authenticated ingress; no webhook or connection is installed or started. Supports issue creation, actual status changes and cycle completion. Completion requires completedAt changing from null to a valid time, including early completion; a scheduled end date alone does not trigger it. Filters use exact UUIDs, not names; empty means any. statusIds is only for statusChanged; cycleIds is only for endOfCycle. Cycles have no project relationship, so projectIds must be omitted or empty. Replay protection is bounded. Queued events may trigger after approval and incur model costs."
-                    if language != "en" { #expect(FiliconLocalization.string(disclosure) != disclosure) }
-                    metadata["agentRoutineTrigger"] = try AutomationStateChange(operation: .create, automation: .init(agentID: UUID(),
-                        name: "Review", prompt: "Review contrast", trigger: cycle ? cycleRoutineTrigger() : linearRoutineTrigger())).triggerJSON
-                }
-                if sentry || group {
-                    metadata["agentRoutineSentryTrigger"] = "true"
-                    let disclosure = "Sentry requires existing authenticated ingress; no webhook or connection is installed or started. Supports issue creation, resolution, assignment, archiving and reopening; issueAny matches these five cases, not all events. Project filters use exact decimal IDs, not names; empty means any project. Replay protection is bounded and signatures do not prove freshness. Queued events may trigger after approval and incur model costs."
-                    if language != "en" { #expect(FiliconLocalization.string(disclosure) != disclosure) }
-                    metadata["agentRoutineTrigger"] = try AutomationStateChange(operation: .create, automation: .init(agentID: UUID(),
-                        name: "Review", prompt: "Review contrast", trigger: sentryRoutineTrigger())).triggerJSON
-                }
-                if teams {
-                    metadata["agentRoutineTeamsTrigger"] = "true"
-                    metadata["agentRoutineTrigger"] = try AutomationStateChange(operation: .create, automation: .init(agentID: UUID(),
-                        name: "Review", prompt: "Review contrast", trigger: teamsRoutineTrigger())).triggerJSON
-                }
-                if pagerDuty || group {
-                    metadata["agentRoutinePagerDutyTrigger"] = "true"
-                    let disclosure = "PagerDuty requires existing authenticated ingress; no webhook or connection is installed or started. Supports incident triggering, acknowledgment, resolution and escalation; incidentAny matches these four cases only. Service filters use exact case-sensitive IDs with no name lookup; empty means any service. Replay protection is bounded; occurred_at is event time, not delivery freshness. Queued events may trigger after approval and incur model costs."
-                    if language != "en" { #expect(FiliconLocalization.string(disclosure) != disclosure) }
-                    metadata["agentRoutineTrigger"] = try AutomationStateChange(operation: .create, automation: .init(agentID: UUID(),
-                        name: "Review", prompt: "Review contrast", trigger: pagerDutyRoutineTrigger())).triggerJSON
-                }
-                if group {
-                    metadata["agentRoutineGitHubTrigger"] = "true"
-                    metadata["agentRoutineSlackTrigger"] = "true"
-                    metadata["agentRoutineAnyOfTrigger"] = "true"
-                    if mixed {
-                        metadata["agentRoutineTimeGroupTrigger"] = "true"
-                        let disclosure = "Time conditions use the earliest next run; simultaneous time matches run once without catch-up. Event and manual runs also reset interval timers. Each approved time zone stays fixed. More conditions may cause more runs and model costs."
-                        if language != "en" { #expect(FiliconLocalization.string(disclosure) != disclosure) }
-                    }
-                    metadata["agentRoutineTrigger"] = try AutomationStateChange(operation: .create, automation: .init(agentID: UUID(),
-                        name: "Review", prompt: "Review contrast", trigger: mixed ? mixedGroupTrigger() : eventGroupTrigger())).triggerJSON
-                    let disclosure = "Any one condition can trigger this same task (OR, not AND). A delivery matching several conditions is included once. Different deliveries may cause additional runs and model costs. Each condition keeps its own filters; no new connections or permissions are granted."
+        let github = scenario.hasSuffix("github"), slack = scenario.hasSuffix("slack"), linear = scenario.hasSuffix("linear"), cycle = scenario.hasSuffix("cycle"), sentry = scenario.hasSuffix("sentry"), pagerDuty = scenario.hasSuffix("pagerduty"), teams = scenario.hasSuffix("teams")
+        let mixed = scenario.hasSuffix("mixed")
+        let group = scenario.hasSuffix("group") || mixed
+        let action = scenario.replacingOccurrences(of: "-github", with: "").replacingOccurrences(of: "-slack", with: "").replacingOccurrences(of: "-group", with: "").replacingOccurrences(of: "-mixed", with: "").replacingOccurrences(of: "-linear", with: "").replacingOccurrences(of: "-cycle", with: "").replacingOccurrences(of: "-sentry", with: "").replacingOccurrences(of: "-pagerduty", with: "").replacingOccurrences(of: "-teams", with: "")
+        try await withUIRenderTurn(language: language) {
+            let titles = ["pause": "Pause own routine", "resume": "Resume own routine", "delete": "Delete own routine",
+                          "create": "Create own routine", "update": "Update own routine"]
+            let title = try #require(titles[action])
+            if language != "en" { #expect(FiliconLocalization.string(title) != title) }
+            var metadata = ["agentName": "Designer", "agentRoutineAction": action, "agentRoutineName": "Daily design review",
+                            "agentRoutineEnabled": "true",
+                            "agentRoutineID": "00000000-0000-0000-0000-000000000010",
+                            "agentRoutinePrompt": "Review accessible contrast. Do not publish.",
+                            "agentRoutineTrigger": "{\n  cron: {\n    expression: 0 9 * * *,\n    timeZoneIdentifier: Asia/Taipei\n  }\n}"]
+            if action == "update" {
+                metadata["previousAgentRoutineName"] = "Weekly design review"
+                metadata["previousAgentRoutineEnabled"] = "false"
+                metadata["previousAgentRoutinePrompt"] = "Review previous layout. Do not publish."
+                metadata["previousAgentRoutineTrigger"] = "{\n  cron: {\n    expression: @weekly,\n    timeZoneIdentifier: Asia/Taipei\n  }\n}"
+            }
+            if github {
+                metadata["agentRoutineGitHubTrigger"] = "true"
+                let trigger = AutomationTrigger.platform(.github(try .init(repo: "example/project", events: ["review-approved", "ci-failed"],
+                    ciBranch: "main", userAllowlist: ["author", "reviewer"])))
+                metadata["agentRoutineTrigger"] = try AutomationStateChange(operation: .create, automation: .init(agentID: UUID(),
+                    name: "Review", prompt: "Review contrast", trigger: trigger)).triggerJSON
+            }
+            if slack {
+                metadata["agentRoutineSlackTrigger"] = "true"
+                let trigger = AutomationTrigger.platform(.slack(try .init(channel: "*", match: .reaction(emoji: ["eyes", "thumbsup"], bySelf: false))))
+                metadata["agentRoutineTrigger"] = try AutomationStateChange(operation: .create, automation: .init(agentID: UUID(),
+                    name: "Review", prompt: "Review contrast", trigger: trigger)).triggerJSON
+            }
+            if linear || cycle || group {
+                metadata["agentRoutineLinearTrigger"] = "true"
+                let disclosure = "Linear requires existing authenticated ingress; no webhook or connection is installed or started. Supports issue creation, actual status changes and cycle completion. Completion requires completedAt changing from null to a valid time, including early completion; a scheduled end date alone does not trigger it. Filters use exact UUIDs, not names; empty means any. statusIds is only for statusChanged; cycleIds is only for endOfCycle. Cycles have no project relationship, so projectIds must be omitted or empty. Replay protection is bounded. Queued events may trigger after approval and incur model costs."
+                if language != "en" { #expect(FiliconLocalization.string(disclosure) != disclosure) }
+                metadata["agentRoutineTrigger"] = try AutomationStateChange(operation: .create, automation: .init(agentID: UUID(),
+                    name: "Review", prompt: "Review contrast", trigger: cycle ? cycleRoutineTrigger() : linearRoutineTrigger())).triggerJSON
+            }
+            if sentry || group {
+                metadata["agentRoutineSentryTrigger"] = "true"
+                let disclosure = "Sentry requires existing authenticated ingress; no webhook or connection is installed or started. Supports issue creation, resolution, assignment, archiving and reopening; issueAny matches these five cases, not all events. Project filters use exact decimal IDs, not names; empty means any project. Replay protection is bounded and signatures do not prove freshness. Queued events may trigger after approval and incur model costs."
+                if language != "en" { #expect(FiliconLocalization.string(disclosure) != disclosure) }
+                metadata["agentRoutineTrigger"] = try AutomationStateChange(operation: .create, automation: .init(agentID: UUID(),
+                    name: "Review", prompt: "Review contrast", trigger: sentryRoutineTrigger())).triggerJSON
+            }
+            if teams {
+                metadata["agentRoutineTeamsTrigger"] = "true"
+                metadata["agentRoutineTrigger"] = try AutomationStateChange(operation: .create, automation: .init(agentID: UUID(),
+                    name: "Review", prompt: "Review contrast", trigger: teamsRoutineTrigger())).triggerJSON
+            }
+            if pagerDuty || group {
+                metadata["agentRoutinePagerDutyTrigger"] = "true"
+                let disclosure = "PagerDuty requires existing authenticated ingress; no webhook or connection is installed or started. Supports incident triggering, acknowledgment, resolution and escalation; incidentAny matches these four cases only. Service filters use exact case-sensitive IDs with no name lookup; empty means any service. Replay protection is bounded; occurred_at is event time, not delivery freshness. Queued events may trigger after approval and incur model costs."
+                if language != "en" { #expect(FiliconLocalization.string(disclosure) != disclosure) }
+                metadata["agentRoutineTrigger"] = try AutomationStateChange(operation: .create, automation: .init(agentID: UUID(),
+                    name: "Review", prompt: "Review contrast", trigger: pagerDutyRoutineTrigger())).triggerJSON
+            }
+            if group {
+                metadata["agentRoutineGitHubTrigger"] = "true"
+                metadata["agentRoutineSlackTrigger"] = "true"
+                metadata["agentRoutineAnyOfTrigger"] = "true"
+                if mixed {
+                    metadata["agentRoutineTimeGroupTrigger"] = "true"
+                    let disclosure = "Time conditions use the earliest next run; simultaneous time matches run once without catch-up. Event and manual runs also reset interval timers. Each approved time zone stays fixed. More conditions may cause more runs and model costs."
                     if language != "en" { #expect(FiliconLocalization.string(disclosure) != disclosure) }
                 }
-                let host = NSHostingView(rootView: AgentRoutineApprovalDetails(metadata: metadata)
-                    .padding(20).frame(width: 380).background(FiliconTheme.canvas)
-                    .environment(\.locale, Locale(identifier: language)).environment(\.colorScheme, .light))
-                host.appearance = NSAppearance(named: .aqua)
-                let height: CGFloat = (action == "update" ? 830 : 570) + (mixed ? 5_000 : group ? 4_500 : linear || cycle || sentry || pagerDuty || teams ? 1_100 : github || slack ? 600 : 0)
-                host.frame = .init(x: 0, y: 0, width: 380, height: height)
-                host.layoutSubtreeIfNeeded()
-                #expect(host.fittingSize.height <= height)
-                host.frame.size.height = host.fittingSize.height
-                host.layoutSubtreeIfNeeded()
-                let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
-                host.cacheDisplay(in: host.bounds, to: bitmap)
-                if let output {
-                    try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
-                    try #require(bitmap.representation(using: .png, properties: [:])).write(to: output.appending(path: "routine-\(scenario)-\(language).png"))
-                }
+                metadata["agentRoutineTrigger"] = try AutomationStateChange(operation: .create, automation: .init(agentID: UUID(),
+                    name: "Review", prompt: "Review contrast", trigger: mixed ? mixedGroupTrigger() : eventGroupTrigger())).triggerJSON
+                let disclosure = "Any one condition can trigger this same task (OR, not AND). A delivery matching several conditions is included once. Different deliveries may cause additional runs and model costs. Each condition keeps its own filters; no new connections or permissions are granted."
+                if language != "en" { #expect(FiliconLocalization.string(disclosure) != disclosure) }
+            }
+            let host = NSHostingView(rootView: AgentRoutineApprovalDetails(metadata: metadata)
+                .padding(20).frame(width: 380).background(FiliconTheme.canvas)
+                .environment(\.locale, Locale(identifier: language)).environment(\.colorScheme, .light))
+            host.appearance = NSAppearance(named: .aqua)
+            let height: CGFloat = (action == "update" ? 830 : 570) + (mixed ? 5_000 : group ? 4_500 : linear || cycle || sentry || pagerDuty || teams ? 1_100 : github || slack ? 600 : 0)
+            host.frame = .init(x: 0, y: 0, width: 380, height: height)
+            host.layoutSubtreeIfNeeded()
+            #expect(host.fittingSize.height <= height)
+            host.frame.size.height = host.fittingSize.height
+            host.layoutSubtreeIfNeeded()
+            let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            if let output {
+                try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+                try #require(bitmap.representation(using: .png, properties: [:])).write(to: output.appending(path: "routine-\(scenario)-\(language).png"))
             }
         }
     }

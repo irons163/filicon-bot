@@ -1,6 +1,23 @@
 # 協作能力核對紀錄（更新至 2026-09-22）
 
-## 本輪增量：引用原文的選項式提問（2026-09-22）
+## 本輪增量：並行驗收的事件同步與渲染案例邊界（2026-09-22）
+
+先提交上一批為 `5dd0bb2`（`feat: support quoted choice questions in group conversations`）。本輪接續上一輪完整並行回歸的等待失敗，只調整測試 fixture／案例邊界與驗收文件，不改正式排程、權限、訊息路由或 UI。
+
+- `AgentExecutionSchedulerTests` 原本以三秒輪詢等工作進入 gate 或 transport 取消；上一輪核心套件在並行負載下出現啟動等待失敗。改為 gate 真正登記 continuation 後才通知、log 收到精確事件才喚醒。觀察者分別持有可取消的 AsyncStream，取消一個不會結束其他觀察者；收到通知不會開啟 gate 或提前釋放 lane。保留原有 FIFO／priority／帳號取消／工具清理／轉向／token 預算完整斷言。每項測試仍有一分鐘上限，入列 snapshot 的三秒故障上限與正式 turn timeout 未放寬；剩餘輪詢失敗現在指向實際呼叫行，而不是 helper。
+- 新增三項 fixture 回歸，檢查多個觀察者、已發生事件、取消後再次觀察、非目標 log 不喚醒，以及持有工作直到明確開 gate；使用受控開始事件而非 sleep。多觀察者測試另明確等待三者都已登記才觸發工作，避免工作先啟動、測試只覆蓋已發生事件。依 Swift 測試／依賴控制／CustomDump 技能保留隔離 fixture 與完整 log 差異；不新增套件或向正式排程加入測試 hook。
+- 通知核准的七語言迴圈改為 serialized 語言案例，每案例保留開／關與明／暗四張圖；routine 預覽改為語言 × 23 情境的 serialized 案例，每案例一張圖。原有主執行緒逐圖排隊、autoreleasepool、翻譯／高度斷言與輸出檔名均保留，不把整個測試套件改成序列，也不刪情境或增加每案例的 60 秒上限。
+
+驗收：
+
+- 聚焦 **21 Swift Testing／2 suites** 通過（`/tmp/filicon-wait-boundaries-focused-2.log`）：排程 19 項，以及通知／routine 兩項參數化測試。開發期新增測試 helper 曾漏一個結尾括號，修正後完成此輪編譯與執行。
+- `/tmp/filicon-wait-boundaries-ui/` 精確產出 **189 張 PNG**（通知 28、routine 161），依完整預期檔名集合檢查無缺漏／多餘，逐檔驗證簽頭、chunk CRC 與正尺寸。目視抽查繁中暗色通知卡及法文新增排程卡，文字完整。未宣稱逐張人工或新的 UI 設計驗收。七語言稽核仍為各 **1,637 keys／零缺漏**，本輪未改翻譯。
+- 調整過程中前兩輪完整預設並行回歸均通過 **135 XCTest、1,052 Swift Testing／118 suites**（`/tmp/filicon-wait-boundaries-full-parallel-1.log`、`/tmp/filicon-wait-boundaries-full-parallel-2.log`），App 均為 **341／48 suites**，分別 **68.611／99.396 秒**。多觀察者的準備通知強化後，最終版本再次完整通過相同數量（`/tmp/filicon-wait-boundaries-full-parallel-final.log`），App **58.657 秒**。三次均使用預設並行模式，未排除渲染或降低斷言；不再只有序列診斷通過。
+- 兩項 opt-in live Codex 測試仍跳過，既有 CoreData NSXPC 診斷仍在；不把套件通過當成真實帳號、原生 XPC、發佈簽章或所有未來並行負載的保證。剩餘三秒入列輪詢仍是已知的等待方式，這次沒有宣稱全部 fixture 都已改成事件同步。
+
+本批尚未提交。未更動正式 Swift 程式、套件依賴、Xcode 配置、資料格式或權限，未啟動／重啟使用者 App／Xcode、未 push；上一批原生建置證據保留，不能當成本輪重新執行。整體仍為 **43 complete／4 partial／1 NA**，原版其餘功能缺口沒有因此完成。
+
+## 已提交增量：引用原文的選項式提問（2026-09-22）
 
 先提交上一批為 `6058e93`（`feat: persist quoted replies in group conversations`）。對照本機非官方 reconstructed 的 `source/host/runner/tools/send-message-tool.ts`，原版 widget 也保存 `reply_to`；本輪把它接到一般群組既有的選項問題，而不是增加其他收件者或擴大工具權限。
 
@@ -23,7 +40,7 @@
 - 將上述排程及六項畫面測試獨立重跑，**22 Swift Testing／6 suites** 全部通過（`/tmp/filicon-question-reply-recheck.log`）。同時輸出 **371 張既有畫面 PNG** 至 `/tmp/filicon-question-reply-existing-ui/`，含四項調整過的 182 張、通知 28 張、routine 161 張；逐檔驗證簽頭、chunk CRC 及正尺寸。單獨通過與並行失敗不同，仍需後續處理等待／渲染壅塞。
 - 完整序列診斷 `swift test --no-parallel` 通過 **135 XCTest、1,049 Swift Testing／118 suites**（`/tmp/filicon-question-reply-full-serial.log`），App **341／48 suites，94.090 秒**。兩項 opt-in live Codex 測試仍跳過；既有 CoreData NSXPC 診斷未修復。內部 Task／gate 併發斷言保留，但序列通過不代表預設並行回歸已全綠；本輪未進一步改動排程正式碼或提高等待上限。
 
-邊界：仍只限一般群組的原生引用卡；原版 `reply_to` 會折疊子討論串，本輪未還原該 UI。原版短地址／`sand-msg` 連結、mailbox／單獨聊天／背景引用與提問、外部 `channel`、獨立附件、安全遮罩憑證請求及供應商 cloud-agent 卡仍缺。整體維持 **43 complete／4 partial／1 NA**，`AGENT-02` 維持 partial。本批尚未提交；未 push、未啟動／重啟使用者 App／Xcode、未操作真實群組／帳號／憑證。
+邊界：仍只限一般群組的原生引用卡；原版 `reply_to` 會折疊子討論串，本輪未還原該 UI。原版短地址／`sand-msg` 連結、mailbox／單獨聊天／背景引用與提問、外部 `channel`、獨立附件、安全遮罩憑證請求及供應商 cloud-agent 卡仍缺。整體維持 **43 complete／4 partial／1 NA**，`AGENT-02` 維持 partial。本批已於下一輪提交為 `5dd0bb2`；未 push、未啟動／重啟使用者 App／Xcode、未操作真實群組／帳號／憑證。
 
 ## 已提交增量：一般群組的引用回覆（2026-09-22）
 

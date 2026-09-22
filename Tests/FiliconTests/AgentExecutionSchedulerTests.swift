@@ -9,10 +9,34 @@ import FiliconProviderKit
 private actor ExecutionGate {
     private var opened = false
     private var waiters: [CheckedContinuation<Void, Never>] = []
+    private var entered = false
+    private var nextObserver = 0
+    private var entryObservers: [Int: AsyncStream<Void>.Continuation] = [:]
     var isWaiting: Bool { !waiters.isEmpty }
     func wait() async {
         if opened { return }
-        await withCheckedContinuation { waiters.append($0) }
+        await withCheckedContinuation {
+            waiters.append($0)
+            entered = true
+            let observers = entryObservers.values
+            entryObservers.removeAll()
+            for observer in observers { observer.yield(()); observer.finish() }
+        }
+    }
+    func waitForEntry(onWaiting: @Sendable () -> Void = {}) async throws {
+        try Task.checkCancellation()
+        if entered { return }
+        let token = nextObserver
+        nextObserver += 1
+        let entry = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        entryObservers[token] = entry.continuation
+        defer { entryObservers[token] = nil; entry.continuation.finish() }
+        onWaiting()
+        for await _ in entry.stream {
+            try Task.checkCancellation()
+            return
+        }
+        throw CancellationError()
     }
     func open() {
         opened = true
@@ -23,7 +47,32 @@ private actor ExecutionGate {
 
 private actor ExecutionLog {
     var values: [String] = []
-    func append(_ value: String) { values.append(value) }
+    private var nextObserver = 0
+    private var observers: [Int: (String, AsyncStream<Void>.Continuation)] = [:]
+    func append(_ value: String) {
+        values.append(value)
+        let matches = observers.filter { $0.value.0 == value }
+        for (token, observer) in matches {
+            observers[token] = nil
+            observer.1.yield(())
+            observer.1.finish()
+        }
+    }
+    func waitFor(_ value: String, onWaiting: @Sendable () -> Void = {}) async throws {
+        try Task.checkCancellation()
+        if values.contains(value) { return }
+        let token = nextObserver
+        nextObserver += 1
+        let events = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        observers[token] = (value, events.continuation)
+        defer { observers[token] = nil; events.continuation.finish() }
+        onWaiting()
+        for await _ in events.stream {
+            try Task.checkCancellation()
+            return
+        }
+        throw CancellationError()
+    }
 }
 
 private struct ScheduledProvider: AIProvider {
@@ -92,10 +141,68 @@ struct AgentExecutionSchedulerTests {
     private let agentID = UUID(uuidString: "11111111-1111-1111-1111-111111111111")!
     private let otherID = UUID(uuidString: "22222222-2222-2222-2222-222222222222")!
 
-    private func waitUntil(_ predicate: @Sendable () async -> Bool) async throws {
+    private func waitUntil(sourceLocation: SourceLocation = #_sourceLocation, _ predicate: @Sendable () async -> Bool) async throws {
         let deadline = ContinuousClock.now.advanced(by: .seconds(3))
         while !(await predicate()), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
-        try #require(await predicate())
+        try #require(await predicate(), sourceLocation: sourceLocation)
+    }
+
+    @Test func entryObserversWaitWithoutReleasingTheHeldOperation() async throws {
+        let gate = ExecutionGate()
+        let (ready, signal) = AsyncStream<Void>.makeStream()
+        let observers = (0..<3).map { _ in Task { try await gate.waitForEntry { signal.yield(()) } } }
+        defer {
+            observers.forEach { $0.cancel() }
+            Task { await gate.open() }
+        }
+        var readiness = ready.makeAsyncIterator()
+        for _ in 0..<3 { try #require(await readiness.next() != nil) }
+        signal.finish()
+        let operation = Task { await gate.wait() }
+        for observer in observers { try await observer.value }
+        #expect(await gate.isWaiting)
+        try await gate.waitForEntry()
+        #expect(await gate.isWaiting)
+        await gate.open()
+        await operation.value
+        #expect(await gate.isWaiting == false)
+    }
+
+    @Test func cancellingEntryObservationDoesNotCancelTheGateOrOtherObservers() async throws {
+        let gate = ExecutionGate()
+        let (ready, signal) = AsyncStream<Void>.makeStream()
+        let cancelled = Task { try await gate.waitForEntry { signal.yield(()); signal.finish() } }
+        for await _ in ready { break }
+        cancelled.cancel()
+        await #expect(throws: CancellationError.self) { try await cancelled.value }
+        let (nextReady, nextSignal) = AsyncStream<Void>.makeStream()
+        let survivor = Task { try await gate.waitForEntry { nextSignal.yield(()); nextSignal.finish() } }
+        defer { survivor.cancel(); Task { await gate.open() } }
+        for await _ in nextReady { break }
+        let operation = Task { await gate.wait() }
+        try await survivor.value
+        #expect(await gate.isWaiting)
+        await gate.open()
+        await operation.value
+    }
+
+    @Test func logObservationRequiresExactEventAndSurvivesObserverCancellation() async throws {
+        let log = ExecutionLog()
+        let (ready, signal) = AsyncStream<Void>.makeStream()
+        let cancelled = Task { try await log.waitFor("expected") { signal.yield(()); signal.finish() } }
+        for await _ in ready { break }
+        await log.append("other")
+        cancelled.cancel()
+        await #expect(throws: CancellationError.self) { try await cancelled.value }
+        let (nextReady, nextSignal) = AsyncStream<Void>.makeStream()
+        let survivor = Task { try await log.waitFor("expected") { nextSignal.yield(()); nextSignal.finish() } }
+        defer { survivor.cancel() }
+        for await _ in nextReady { break }
+        await log.append("expected")
+        try await survivor.value
+        try await log.waitFor("expected")
+        let values = await log.values
+        expectNoDifference(values, ["other", "expected"])
     }
 
     @Test func sameAgentIsFIFOWhileOtherAgentsCanRun() async throws {
@@ -103,7 +210,7 @@ struct AgentExecutionSchedulerTests {
         let first = Task { try await scheduler.withExclusiveAccess(agentID: agentID) {
             await log.append("first start"); await gate.wait(); await log.append("first end")
         } }
-        try await waitUntil { await gate.isWaiting }
+        try await gate.waitForEntry()
         let second = Task { try await scheduler.withExclusiveAccess(agentID: agentID) { await log.append("second") } }
         try await waitUntil { await scheduler.snapshot(agentID: agentID).queuedCount == 1 }
         let third = Task { try await scheduler.withExclusiveAccess(agentID: agentID) { await log.append("third") } }
@@ -124,7 +231,7 @@ struct AgentExecutionSchedulerTests {
             #expect(Task.isCancelled)
             await log.append("cleanup")
         } }
-        try await waitUntil { await gate.isWaiting }
+        try await gate.waitForEntry()
         let ordinary = Task { try await scheduler.withExclusiveAccess(agentID: agentID, lane: .background) { await log.append("ordinary") } }
         try await waitUntil { await scheduler.snapshot(agentID: agentID).queuedCount == 1 }
         let urgent = Task { try await scheduler.withExclusiveAccess(agentID: agentID, lane: .background, priority: true) { await log.append("priority") } }
@@ -143,7 +250,7 @@ struct AgentExecutionSchedulerTests {
         let owner = Task { try await scheduler.withExclusiveAccess(agentID: agentID) {
             await gate.wait(); #expect(!Task.isCancelled); await log.append("user")
         } }
-        try await waitUntil { await gate.isWaiting }
+        try await gate.waitForEntry()
         let queuedUser = Task { try await scheduler.withExclusiveAccess(agentID: agentID) { await log.append("queued user") } }
         try await waitUntil { await scheduler.snapshot(agentID: agentID).queuedCount == 1 }
         let ordinary = Task { try await scheduler.withExclusiveAccess(agentID: agentID, lane: .background) { await log.append("ordinary") } }
@@ -163,7 +270,7 @@ struct AgentExecutionSchedulerTests {
         let owner = Task { try await scheduler.withExclusiveAccess(agentID: otherID, lane: .background) {
             await gate.wait(); #expect(!Task.isCancelled)
         } }
-        try await waitUntil { await gate.isWaiting }
+        try await gate.waitForEntry()
         let cancelled = Task {
             await gate.wait()
             try await scheduler.withExclusiveAccess(agentID: otherID, lane: .background, priority: true) { await log.append("stale priority") }
@@ -179,7 +286,7 @@ struct AgentExecutionSchedulerTests {
     @Test func cancellingQueuedWorkDoesNotCancelTheActiveOwner() async throws {
         let scheduler = AgentExecutionScheduler(), gate = ExecutionGate(), log = ExecutionLog()
         let first = Task { try await scheduler.withExclusiveAccess(agentID: agentID) { await gate.wait() } }
-        try await waitUntil { await gate.isWaiting }
+        try await gate.waitForEntry()
         let cancelled = Task { try await scheduler.withExclusiveAccess(agentID: agentID) { await log.append("must not run") } }
         try await waitUntil { await scheduler.snapshot(agentID: agentID).queuedCount == 1 }
         cancelled.cancel()
@@ -199,7 +306,7 @@ struct AgentExecutionSchedulerTests {
             await gate.wait() // Deliberately ignores cancellation until released.
             await log.append("cleanup finished")
         } }
-        try await waitUntil { await gate.isWaiting }
+        try await gate.waitForEntry()
         first.cancel()
         let second = Task { try await scheduler.withExclusiveAccess(agentID: agentID) { await log.append("next") } }
         try await waitUntil { await scheduler.snapshot(agentID: agentID).queuedCount == 1 }
@@ -218,7 +325,7 @@ struct AgentExecutionSchedulerTests {
             try await scheduler.withExclusiveAccess(agentID: agentID) { throw ProviderError.invalidResponse }
         }
         let first = Task { try await scheduler.withExclusiveAccess(agentID: agentID) { await gate.wait() } }
-        try await waitUntil { await gate.isWaiting }
+        try await gate.waitForEntry()
         let queued = Task { try await scheduler.withExclusiveAccess(agentID: agentID) { await log.append("stale account") } }
         try await waitUntil { await scheduler.snapshot(agentID: agentID).queuedCount == 1 }
         await scheduler.cancelAll()
@@ -238,7 +345,7 @@ struct AgentExecutionSchedulerTests {
             await gate.wait()
             try await scheduler.withExclusiveAccess(agentID: agentID) { await log.append("must not run") }
         }
-        try await waitUntil { await gate.isWaiting }
+        try await gate.waitForEntry()
         task.cancel(); await gate.open()
         await #expect(throws: CancellationError.self) { try await task.value }
         let entries = await log.values
@@ -251,7 +358,7 @@ struct AgentExecutionSchedulerTests {
         await registry.register(ScheduledProvider(log: log))
         let coordinator = TurnCoordinator(registry: registry, agentScheduler: scheduler)
         let owner = Task { try await scheduler.withExclusiveAccess(agentID: agentID) { await gate.wait() } }
-        try await waitUntil { await gate.isWaiting }
+        try await gate.waitForEntry()
         let turn = Task {
             try await coordinator.send(request: .init(conversationID: otherID, modelID: "test", messages: []),
                 providerID: "scheduled-test", agentID: agentID, executionTimeout: .milliseconds(200),
@@ -272,7 +379,7 @@ struct AgentExecutionSchedulerTests {
         await registry.register(ScheduledProvider(log: log))
         let coordinator = TurnCoordinator(registry: registry, agentScheduler: scheduler)
         let owner = Task { try await scheduler.withExclusiveAccess(agentID: agentID) { await gate.wait() } }
-        try await waitUntil { await gate.isWaiting }
+        try await gate.waitForEntry()
         let cancelled = Task {
             try await coordinator.send(request: .init(conversationID: agentID, modelID: "test", messages: []),
                                        providerID: "scheduled-test", agentID: agentID) { _ in }
@@ -299,14 +406,14 @@ struct AgentExecutionSchedulerTests {
             try await coordinator.send(request: .init(conversationID: agentID, modelID: "test", messages: [.init(role: .user, text: "first")]),
                                        providerID: "cleanup-test", agentID: agentID, agentLane: .background) { _ in }
         }
-        try await waitUntil { await gate.isWaiting }
+        try await gate.waitForEntry()
         let next = Task {
             try await coordinator.send(request: .init(conversationID: otherID, modelID: "test", messages: [.init(role: .user, text: "next")]),
                                        providerID: "cleanup-test", agentID: agentID, agentLane: .background, priority: priority) { _ in }
         }
         try await waitUntil { await scheduler.snapshot(agentID: agentID).queuedCount == 1 }
         if !priority { await coordinator.cancel(conversationID: agentID) }
-        try await waitUntil { await log.values.contains("transport cancelled") }
+        try await log.waitFor("transport cancelled")
         let blocked = await scheduler.snapshot(agentID: agentID)
         expectNoDifference(blocked.queuedCount, 1)
         await gate.open()
@@ -336,7 +443,7 @@ struct AgentExecutionSchedulerTests {
         let scheduler = AgentExecutionScheduler(), gate = ExecutionGate(), log = ExecutionLog()
         let service = SubagentService(agents: agents, scheduler: scheduler)
         let owner = Task { try await scheduler.withExclusiveAccess(agentID: profile.id) { await gate.wait() } }
-        try await waitUntil { await gate.isWaiting }
+        try await gate.waitForEntry()
         let runtime = AgentAsyncTaskRuntimeAdapter(taskKind: .subagent, operation: { prompt, _ in
             await log.append(prompt)
             return .completed(text: "done", usage: .init())
@@ -377,7 +484,7 @@ struct AgentExecutionSchedulerTests {
         }, interruption: { _ in await log.append("interrupt"); await gate.open() })
         let first = try await service.launch(.init(agentID: profile.id, title: "First", prompt: "first", parentToolCallID: "first", depth: 0),
                                              parentRunID: agentID, parentScope: .init(), runtime: runtime)
-        try await waitUntil { await gate.isWaiting }
+        try await gate.waitForEntry()
         let queued = try await service.launch(.init(agentID: profile.id, title: "Queued", prompt: "must not start", parentToolCallID: "queued", depth: 0),
                                               parentRunID: agentID, parentScope: .init(), runtime: runtime)
         try await waitUntil { await scheduler.snapshot(agentID: profile.id).queuedCount == 1 }
@@ -408,7 +515,7 @@ struct AgentExecutionSchedulerTests {
                                                 maximumTokens: exhaustBudget ? 2 : 10),
                                           parentRunID: agentID, parentScope: .init(), runtime: runtime)
         do {
-            try await waitUntil { await gate.isWaiting }
+            try await gate.waitForEntry()
             try await service.steer(id, message: "change course")
         } catch {
             await service.cancel(id); await gate.open(); await service.drain()
@@ -442,7 +549,7 @@ struct AgentExecutionSchedulerTests {
         let id = try await service.launch(.init(agentID: profile.id, title: "Fixture", prompt: "original", parentToolCallID: "test", depth: 0),
                                           parentRunID: agentID, parentScope: .init(), runtime: runtime)
         do {
-            try await waitUntil { await gate.isWaiting }
+            try await gate.waitForEntry()
             try await service.steer(id, message: "must not run")
         } catch {
             await service.cancel(id); await gate.open(); await service.drain()

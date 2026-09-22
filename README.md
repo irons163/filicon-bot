@@ -840,7 +840,11 @@ Keep the Mac unlocked while running persistence/attachment tests: fixtures use
 protected files, and reopening them while the session is locked can fail with
 Cocoa 257 / POSIX 1. Do not disable file protection to make tests pass. UI render
 fixtures yield between images; the default parallel run includes the complete
-rendering matrix. For a serial diagnostic comparison, use:
+rendering matrix. Keep large render matrices parameterized by language and, when
+needed, scenario so each bounded case does not include many rounds of main-queue
+waiting. Concurrency fixtures should signal readiness explicitly, while retaining
+the actual cancellation, ordering and timeout assertions. For a serial diagnostic
+comparison, use:
 
 ```sh
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test --no-parallel
