@@ -35,15 +35,31 @@ private actor TypedImmediateRuntime: AgentAsyncTaskRuntime {
 
 private actor InterruptibleSubagentRuntime: SubagentRuntime {
     private var firstContinuation: CheckedContinuation<SubagentTurnOutcome, Never>?
+    private let started = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
     private(set) var prompts: [String] = []
     private(set) var interruptReasons: [String] = []
 
     func run(prompt: String, scope: SubagentExecutionScope) async throws -> SubagentTurnOutcome {
+        try Task.checkCancellation()
         prompts.append(prompt)
         if prompts.count > 1 {
             return .completed(text: "redirected", usage: .init(inputTokens: 2, outputTokens: 1))
         }
-        return await withCheckedContinuation { firstContinuation = $0 }
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation {
+                if Task.isCancelled { $0.resume(returning: .interrupted); return }
+                firstContinuation = $0
+                started.continuation.yield(())
+                started.continuation.finish()
+            }
+        } onCancel: {
+            Task { await self.interrupt(reason: "Task cancelled") }
+        }
+    }
+
+    func waitUntilStarted() async throws {
+        for await _ in started.stream { return }
+        throw CancellationError()
     }
 
     func interrupt(reason: String) async {
@@ -70,8 +86,22 @@ private actor GroupMessageRecorder {
 
 private actor BlockingGroupResponder: GroupAgentResponder {
     private var continuation: CheckedContinuation<[String], Never>?
+    private let started = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
     func respond(agent: AgentProfile, history: [RoomMessage]) async throws -> [String] {
-        await withCheckedContinuation { continuation = $0 }
+        await withTaskCancellationHandler {
+            await withCheckedContinuation {
+                if Task.isCancelled { $0.resume(returning: []); return }
+                continuation = $0
+                started.continuation.yield(())
+                started.continuation.finish()
+            }
+        } onCancel: {
+            Task { await self.release([]) }
+        }
+    }
+    func waitUntilStarted() async throws {
+        for await _ in started.stream { return }
+        throw CancellationError()
     }
     func release(_ output: [String]) {
         continuation?.resume(returning: output)
@@ -257,7 +287,7 @@ struct AgentTests {
         await #expect(throws: AgentServiceError.self) { _ = try await groups.create(name: "Dup", memberIDs: [a.id, a.id]) }
     }
 
-    @Test func groupMentionsBoundariesRotationCapsAndEpochStop() async throws {
+    @Test(.timeLimit(.minutes(1))) func groupMentionsBoundariesRotationCapsAndEpochStop() async throws {
         let (root, service) = try sandbox(); defer { try? FileManager.default.removeItem(at: root) }
         let alpha = try await service.create(name: "Alpha Agent")
         let beta = try await service.create(name: "Beta")
@@ -287,7 +317,8 @@ struct AgentTests {
         _ = try await groups.postUserMessage("late", groupID: group.id)
         let blocker = BlockingGroupResponder()
         let running = Task { try await groups.run(groupID: group.id, responder: blocker) }
-        try await Task.sleep(for: .milliseconds(10))
+        defer { running.cancel() }
+        try await blocker.waitUntilStarted()
         await groups.stop(groupID: group.id)
         await blocker.release(["must not publish"])
         #expect(try await running.value.isEmpty)
@@ -344,7 +375,7 @@ struct AgentTests {
         #expect(await agents.pendingWakes(parentRunID: parent).isEmpty)
     }
 
-    @Test func subagentSteerInterruptsAndContinuesWhileCancelIsTerminal() async throws {
+    @Test(.timeLimit(.minutes(1))) func subagentSteerInterruptsAndContinuesWhileCancelIsTerminal() async throws {
         let (root, agents) = try sandbox(); defer { try? FileManager.default.removeItem(at: root) }
         let profile = try await agents.create(name: "Worker")
         let service = SubagentService(agents: agents)
@@ -356,8 +387,13 @@ struct AgentTests {
             parentScope: .init(),
             runtime: runtime
         )
-        try await Task.sleep(for: .milliseconds(10))
-        try await service.steer(id, message: "change course")
+        do {
+            try await runtime.waitUntilStarted()
+            try await service.steer(id, message: "change course")
+        } catch {
+            await service.cancelAll(); await service.drain()
+            throw error
+        }
         await service.drain()
         #expect(await service.status(id)?.status == .succeeded)
         #expect(await runtime.prompts.count == 2)
@@ -370,7 +406,11 @@ struct AgentTests {
             parentScope: .init(),
             runtime: cancelRuntime
         )
-        try await Task.sleep(for: .milliseconds(10))
+        do { try await cancelRuntime.waitUntilStarted() }
+        catch {
+            await service.cancelAll(); await service.drain()
+            throw error
+        }
         await service.cancel(cancelledID)
         await service.drain()
         #expect(await service.status(cancelledID)?.status == .cancelled)

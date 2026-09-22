@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import CustomDump
 import FiliconDomain
 import FiliconProviderKit
 import FiliconAppServices
@@ -39,10 +40,28 @@ actor ConcurrencyProbe {
     var maximumByConversation: [UUID: Int] = [:]
     var totalActive = 0
     var maximumTotal = 0
+    private var released = false
+    private var waiters: [UUID: CheckedContinuation<Void, any Error>] = [:]
     func begin(_ id: UUID) {
         activeByConversation[id, default: 0] += 1; maximumByConversation[id] = max(maximumByConversation[id, default: 0], activeByConversation[id]!); totalActive += 1; maximumTotal = max(maximumTotal, totalActive)
     }
     func end(_ id: UUID) { activeByConversation[id, default: 1] -= 1; totalActive -= 1 }
+    func hold() async throws {
+        let token = UUID()
+        try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            if released { return }
+            try await withCheckedThrowingContinuation { waiters[token] = $0 }
+        } onCancel: {
+            Task { await self.cancelWait(token) }
+        }
+    }
+    func release() {
+        released = true
+        let pending = waiters; waiters.removeAll()
+        for waiter in pending.values { waiter.resume() }
+    }
+    private func cancelWait(_ token: UUID) { waiters.removeValue(forKey: token)?.resume(throwing: CancellationError()) }
 }
 
 struct ProbedProvider: AIProvider {
@@ -53,16 +72,21 @@ struct ProbedProvider: AIProvider {
         AsyncThrowingStream { continuation in
             let task = Task {
                 await probe.begin(request.conversationID)
-                try? await Task.sleep(for: .milliseconds(80))
-                await probe.end(request.conversationID)
-                continuation.yield(.completed(.stop)); continuation.finish()
+                do {
+                    try await probe.hold()
+                    await probe.end(request.conversationID)
+                    continuation.yield(.completed(.stop)); continuation.finish()
+                } catch {
+                    await probe.end(request.conversationID)
+                    continuation.finish(throwing: error)
+                }
             }
             continuation.onTermination = { @Sendable _ in task.cancel() }
         }
     }
 }
 
-@Test func coordinatorSerializesOneConversationButAllowsDifferentOnes() async throws {
+@Test(.timeLimit(.minutes(1))) func coordinatorSerializesOneConversationButAllowsDifferentOnes() async throws {
     let probe = ConcurrencyProbe(), registry = ProviderRegistry()
     await registry.register(ProbedProvider(probe: probe))
     let coordinator = TurnCoordinator(registry: registry)
@@ -71,7 +95,20 @@ struct ProbedProvider: AIProvider {
     async let a: Void = coordinator.send(request: request(first), providerID: "probe") { _ in }
     async let b: Void = coordinator.send(request: request(first), providerID: "probe") { _ in }
     async let c: Void = coordinator.send(request: request(second), providerID: "probe") { _ in }
+    // Hold both transports until the duplicate conversation is observably
+    // queued. No assumption about how much work the machine can start in 80 ms.
+    let deadline = ContinuousClock.now + .seconds(10)
+    while ContinuousClock.now < deadline {
+        if await probe.totalActive == 2, await coordinator.queuedCount(conversationID: first) == 1 { break }
+        try await Task.sleep(for: .milliseconds(5))
+    }
+    try #require(await probe.totalActive == 2)
+    try #require(await coordinator.queuedCount(conversationID: first) == 1)
+    await probe.release()
     _ = try await (a, b, c)
-    #expect(await probe.maximumByConversation[first] == 1)
-    #expect(await probe.maximumTotal >= 2)
+    let maxima = await probe.maximumByConversation, total = await probe.maximumTotal
+    expectNoDifference(maxima, [first: 1, second: 1])
+    expectNoDifference(total, 2)
+    let remaining = await probe.totalActive
+    expectNoDifference(remaining, 0)
 }

@@ -193,26 +193,31 @@ public actor SubagentService {
                     await finish(id: id, status: .cancelled, result: "Stopped by the parent agent.", usage: cumulativeUsage)
                     return
                 }
-                switch outcome {
-                case .interrupted:
-                    guard let steer = pendingSteers.removeValue(forKey: id) else {
-                        await finish(id: id, status: .interrupted, result: "The subagent was interrupted before it finished.", usage: cumulativeUsage)
-                        return
-                    }
-                    prompt = "A parent agent sent this steering message. Preserve prior context and continue:\n\n\(steer)"
-                    try await agents.updateSubagent(id: id, status: .queued)
-                case .completed(let text, let usage):
+                if case .completed(_, let usage) = outcome {
                     cumulativeUsage.inputTokens += usage.inputTokens
                     cumulativeUsage.outputTokens += usage.outputTokens
                     if let maximum = spec.maximumTokens,
                        cumulativeUsage.inputTokens + cumulativeUsage.outputTokens > maximum {
                         await finish(id: id, status: .failed, result: AgentServiceError.tokenBudgetExceeded.localizedDescription, usage: cumulativeUsage)
-                    } else {
-                        let result = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                        await finish(id: id, status: .succeeded, result: result.isEmpty ? "(the task finished without producing any text output)" : result, usage: cumulativeUsage)
+                        return
                     }
-                    return
                 }
+                // Interruption is cooperative: the transport may already have
+                // completed. Accepted steering still needs a turn, but cannot
+                // bypass cancellation or the cumulative token budget above.
+                if let steer = pendingSteers.removeValue(forKey: id) {
+                    prompt = "A parent agent sent this steering message. Preserve prior context and continue:\n\n\(steer)"
+                    try await agents.updateSubagent(id: id, status: .queued)
+                    continue
+                }
+                switch outcome {
+                case .interrupted:
+                    await finish(id: id, status: .interrupted, result: "The subagent was interrupted before it finished.", usage: cumulativeUsage)
+                case .completed(let text, _):
+                    let result = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    await finish(id: id, status: .succeeded, result: result.isEmpty ? "(the task finished without producing any text output)" : result, usage: cumulativeUsage)
+                }
+                return
             } catch is CancellationError {
                 await finish(id: id, status: .cancelled, result: "Stopped by the parent agent.", usage: cumulativeUsage)
                 return

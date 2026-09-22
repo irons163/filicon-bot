@@ -191,14 +191,19 @@ struct GroupToolApprovalIntegrationTests {
         }
         defer { run.cancel() }
         var approvals: [LocalToolAction] = []
+        var handledApprovalIDs: Set<UUID> = []
         let deadline = ContinuousClock.now.advanced(by: .seconds(20))
         while !finished && ContinuousClock.now < deadline {
             if let review = model.pendingAutoReviewApprovals.first {
                 await model.resolveGroupApproval(review, groupID: groupID, approve: true)
             }
-            if let approval = model.pendingToolApprovals.first {
+            // Resolution and the published UI snapshot are asynchronous. The
+            // same card can still be visible on the next poll; count decisions,
+            // not renders. A second request with a new ID must still be counted.
+            if let approval = model.pendingToolApprovals.first(where: { !handledApprovalIDs.contains($0.id) }) {
                 let allowed = approval.action == .readFile || approval.action == .writeFile
                 #expect(allowed)
+                handledApprovalIDs.insert(approval.id)
                 approvals.append(approval.action)
                 model.resolveLocalToolApproval(id: approval.id, allowed: allowed)
             }

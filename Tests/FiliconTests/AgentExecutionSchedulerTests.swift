@@ -390,4 +390,69 @@ struct AgentExecutionSchedulerTests {
         expectNoDifference(queuedState?.status, .cancelled)
         expectNoDifference(entries, ["first", "interrupt"])
     }
+
+    @Test(arguments: [false, true]) func steeringAtCompletionIsNotLostAndStillHonorsTokenBudget(exhaustBudget: Bool) async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "filicon-steering-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let agents = try AgentService(storeURL: root.appending(path: "agents.json"))
+        let profile = try await agents.create(name: "Worker")
+        let service = SubagentService(agents: agents), gate = ExecutionGate(), log = ExecutionLog()
+        let runtime = AgentAsyncTaskRuntimeAdapter(taskKind: .subagent, operation: { prompt, _ in
+            await log.append(prompt)
+            if prompt == "original" { await gate.wait() }
+            // A transport may already have produced its final response when
+            // interruption arrives. Completion must not discard accepted steering.
+            return .completed(text: prompt == "original" ? "old result" : "redirected", usage: .init(inputTokens: 2, outputTokens: 1))
+        }, interruption: { _ in await log.append("interrupt") })
+        let id = try await service.launch(.init(agentID: profile.id, title: "Fixture", prompt: "original", parentToolCallID: "test", depth: 0,
+                                                maximumTokens: exhaustBudget ? 2 : 10),
+                                          parentRunID: agentID, parentScope: .init(), runtime: runtime)
+        do {
+            try await waitUntil { await gate.isWaiting }
+            try await service.steer(id, message: "change course")
+        } catch {
+            await service.cancel(id); await gate.open(); await service.drain()
+            throw error
+        }
+        await gate.open(); await service.drain()
+        let result = await service.status(id), entries = await log.values
+        let prompts = entries.filter { $0 != "interrupt" }
+        expectNoDifference(result?.status, exhaustBudget ? .failed : .succeeded)
+        expectNoDifference(prompts.count, exhaustBudget ? 1 : 2)
+        expectNoDifference(result?.usage, exhaustBudget ? .init(inputTokens: 2, outputTokens: 1) : .init(inputTokens: 4, outputTokens: 2))
+        if !exhaustBudget {
+            #expect(prompts.last?.contains("change course") == true)
+            expectNoDifference(result?.result, "redirected")
+        }
+        let wakes = await agents.pendingWakes(parentRunID: agentID)
+        expectNoDifference(wakes.map(\.workID), [id])
+        expectNoDifference(wakes.map(\.status), [exhaustBudget ? .failed : .succeeded])
+    }
+
+    @Test func cancellationWinsOverPendingSteeringEvenIfTransportCompletes() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "filicon-steering-cancel-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let agents = try AgentService(storeURL: root.appending(path: "agents.json"))
+        let profile = try await agents.create(name: "Worker")
+        let service = SubagentService(agents: agents), gate = ExecutionGate(), log = ExecutionLog()
+        let runtime = AgentAsyncTaskRuntimeAdapter(taskKind: .subagent, operation: { prompt, _ in
+            await log.append(prompt); await gate.wait()
+            return .completed(text: "must not publish", usage: .init())
+        }, interruption: { _ in })
+        let id = try await service.launch(.init(agentID: profile.id, title: "Fixture", prompt: "original", parentToolCallID: "test", depth: 0),
+                                          parentRunID: agentID, parentScope: .init(), runtime: runtime)
+        do {
+            try await waitUntil { await gate.isWaiting }
+            try await service.steer(id, message: "must not run")
+        } catch {
+            await service.cancel(id); await gate.open(); await service.drain()
+            throw error
+        }
+        await service.cancel(id); await gate.open(); await service.drain()
+        let result = await service.status(id), entries = await log.values
+        expectNoDifference(result?.status, .cancelled)
+        expectNoDifference(entries, ["original"])
+        let wakes = await agents.pendingWakes(parentRunID: agentID)
+        expectNoDifference(wakes.map(\.workID), [])
+    }
 }

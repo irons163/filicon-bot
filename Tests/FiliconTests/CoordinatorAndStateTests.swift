@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import CustomDump
 import FiliconDomain
 import FiliconProviderKit
 import FiliconAppServices
@@ -8,22 +9,54 @@ private actor CancellationProbe {
     private(set) var starts = 0
     private(set) var cancellations = 0
     private(set) var sendCompletions = 0
+    private let startSignal = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+    private let cancellationSignal = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+    private var transports: [UUID: CheckedContinuation<Void, any Error>] = [:]
 
-    func started() { starts += 1 }
-    func cancelled() { cancellations += 1 }
+    func started() { starts += 1; startSignal.continuation.yield(()); startSignal.continuation.finish() }
+    func cancelled() { cancellations += 1; cancellationSignal.continuation.yield(()); cancellationSignal.continuation.finish() }
     func sendCompleted() { sendCompletions += 1 }
+    func waitUntilStarted() async throws {
+        for await _ in startSignal.stream { return }
+        throw CancellationError()
+    }
+    func waitUntilCancelled() async throws {
+        for await _ in cancellationSignal.stream { return }
+        throw CancellationError()
+    }
+    func holdTransport() async throws {
+        let token = UUID()
+        try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            try await withCheckedThrowingContinuation { transports[token] = $0 }
+        } onCancel: {
+            Task { await self.cancelTransport(token) }
+        }
+    }
+    private func cancelTransport(_ token: UUID) { transports.removeValue(forKey: token)?.resume(throwing: CancellationError()) }
 }
 
 private actor ManualGate {
     private var waiter: CheckedContinuation<Void, Never>?
-
-    var isWaiting: Bool { waiter != nil }
+    private var opened = false
+    private let started = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
 
     func wait() async {
-        await withCheckedContinuation { waiter = $0 }
+        if opened { return }
+        await withCheckedContinuation {
+            waiter = $0
+            started.continuation.yield(())
+            started.continuation.finish()
+        }
+    }
+
+    func waitUntilWaiting() async throws {
+        for await _ in started.stream { return }
+        throw CancellationError()
     }
 
     func open() {
+        opened = true
         waiter?.resume()
         waiter = nil
     }
@@ -40,7 +73,7 @@ private struct CancellableProbeProvider: AIProvider {
             let task = Task {
                 await probe.started()
                 do {
-                    try await Task.sleep(for: .seconds(5))
+                    try await probe.holdTransport()
                     continuation.yield(.completed(.stop))
                     continuation.finish()
                 } catch {
@@ -89,19 +122,19 @@ private struct NoToolCallingProvider: AIProvider {
 }
 
 private func waitUntil(
-    timeout: Duration = .seconds(1),
+    timeout: Duration = .seconds(10),
     condition: @escaping @Sendable () async -> Bool
 ) async -> Bool {
     let clock = ContinuousClock()
     let deadline = clock.now.advanced(by: timeout)
     while clock.now < deadline {
         if await condition() { return true }
-        try? await Task.sleep(for: .milliseconds(5))
+        do { try await Task.sleep(for: .milliseconds(5)) } catch { return false }
     }
     return await condition()
 }
 
-@Test func cancellingConversationCancelsActiveTransportAndClearsQueuedTurn() async throws {
+@Test(.timeLimit(.minutes(1))) func cancellingConversationCancelsActiveTransportAndClearsQueuedTurn() async throws {
     let probe = CancellationProbe()
     let registry = ProviderRegistry()
     await registry.register(CancellableProbeProvider(probe: probe))
@@ -113,24 +146,28 @@ private func waitUntil(
         do { try await coordinator.send(request: request, providerID: "cancellable") { _ in } } catch {}
         await probe.sendCompleted()
     }
-    #expect(await waitUntil { await probe.starts == 1 })
+    defer { first.cancel() }
+    try await probe.waitUntilStarted()
 
     let second = Task {
         do { try await coordinator.send(request: request, providerID: "cancellable") { _ in } } catch {}
         await probe.sendCompleted()
     }
-    #expect(await waitUntil { await coordinator.queuedCount(conversationID: conversationID) == 1 })
+    defer { second.cancel() }
+    try #require(await waitUntil { await coordinator.queuedCount(conversationID: conversationID) == 1 })
     await coordinator.cancel(conversationID: conversationID)
 
-    #expect(await waitUntil { await probe.sendCompletions == 2 })
-    #expect(await probe.starts == 1)
-    #expect(await probe.cancellations == 1)
-    #expect(await coordinator.isActive(conversationID: conversationID) == false)
-    first.cancel()
-    second.cancel()
+    await first.value; await second.value
+    try await probe.waitUntilCancelled()
+    let completions = await probe.sendCompletions, starts = await probe.starts, cancellations = await probe.cancellations
+    expectNoDifference(completions, 2)
+    expectNoDifference(starts, 1)
+    expectNoDifference(cancellations, 1)
+    let active = await coordinator.isActive(conversationID: conversationID)
+    expectNoDifference(active, false)
 }
 
-@Test func callerCancelledBeforeEnqueueNeverStartsProvider() async {
+@Test(.timeLimit(.minutes(1))) func callerCancelledBeforeEnqueueNeverStartsProvider() async throws {
     let probe = CancellationProbe()
     let registry = ProviderRegistry()
     await registry.register(CancellableProbeProvider(probe: probe))
@@ -144,14 +181,17 @@ private func waitUntil(
         do { try await coordinator.send(request: request, providerID: "cancellable") { _ in } } catch {}
         await probe.sendCompleted()
     }
-    #expect(await waitUntil { await gate.isWaiting })
+    do { try await gate.waitUntilWaiting() }
+    catch { send.cancel(); await gate.open(); await send.value; throw error }
     send.cancel()
     await gate.open()
 
-    #expect(await waitUntil { await probe.sendCompletions == 1 })
-    #expect(await probe.starts == 0)
-    #expect(await coordinator.isActive(conversationID: conversationID) == false)
-    send.cancel()
+    await send.value
+    let completions = await probe.sendCompletions, starts = await probe.starts
+    expectNoDifference(completions, 1)
+    expectNoDifference(starts, 0)
+    let active = await coordinator.isActive(conversationID: conversationID)
+    expectNoDifference(active, false)
 }
 
 @Test func coordinatorDoesNotInjectToolSchemasIntoProvidersThatOptOut() async throws {

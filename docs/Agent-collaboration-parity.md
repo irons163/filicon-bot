@@ -1,6 +1,28 @@
 # 協作能力核對紀錄（更新至 2026-09-22）
 
-## 本輪增量：Debug 封裝驗證的系統路徑別名（2026-09-22）
+## 本輪增量：轉向與完成交界、協作測試的受控時序（2026-09-22）
+
+先提交上一批為 `3be702e`（`fix: verify macOS system aliases in debug packages`），提交前 Ruby **7 tests／80 assertions**、Python **11 項政策測試**、shell 語法與 diff check 通過。本輪處理先前完整並行回歸發現的協作時序問題，不提高功能 parity 狀態。
+
+- `SubagentService` 原先只有 `.interrupted` 才處理 pending steer；若中斷到達時 transport 已正常完成，已接受的轉向會被丟棄並回報舊結果。以受控 gate 先讓 runtime 啟動、接受轉向、再返回 `.completed`，舊碼穩定出現四項斷言失敗（`/tmp/filicon-steering-red.log`）。現在先累計 usage、檢查原有 token 預算，再處理待續指令；正常完成不再忽略它。取消仍優先，不新增權限或解除費用限制。
+- 新增完成交界／預算不足的參數化回歸及「取消優先於轉向」回歸，檢查實際 prompt 次數、結果、累計 usage、唯一 wake／取消無 wake。不是宣稱所有 runtime 的啟動、中斷或後端停止時序都已重新驗證。
+- 將原本等 10 ms 的群組 Stop／子代理 steer 測試改成 runtime 準備好 continuation 後才送出的啟動事件。跨對話並行測試不再假設 80 ms 內能重疊：明確 hold transport，確認另一對話已開始、同對話第二回合已排隊，再釋放；仍精確檢查同對話最高 1、全域最高 2。fixture 等待支援取消，不以擴大延遲作為同步。
+- 第二次完整預設並行回歸另重現取消測試的 1 秒啟動輪詢失敗（`/tmp/filicon-steering-full-parallel-final.log`）。該測試改為等待啟動／取消事件及 send task 完成，transport 不再五秒後自行完成；排隊可見性仍有 10 秒故障上限，測試有 1 分鐘上限。保留精確啟動次數、取消次數、完成次數及排隊清空檢查。
+- 第一次完整回歸的群組交接驗收多記一次 `.writeFile`（`/tmp/filicon-steering-full-parallel.log`）。`resolveLocalToolApproval` 與 UI snapshot 更新為非同步，broker 會原子移除 request，輪詢可能重複看到同一 ID。測試現在每個 ID 只決定一次；**仍要求完整「寫、讀、寫、讀」及工程／設計／工程／設計四回合**，新 ID 的多餘請求仍會失敗。不修改正式核准政策、UI 或 broker。
+
+依 Swift 測試／CustomDump 技能採用隔離 store、受控 continuation／事件與完整值差異斷言。未新增套件依賴、未將測試全面標記 serialized、未提高 App 整合套件的逾時限制。
+
+驗證與剩餘限制：
+
+- 修正後協作聚焦 **32 Swift Testing／2 suites** 通過，預設並行連續 **20 輪**通過（`/tmp/filicon-steering-focused-final.log`、`/tmp/filicon-steering-stress-1.log` 至 `-20.log`）。此輪次在後續取消 fixture 與群組核准輪詢調整前執行，不當作這兩項修改的重複驗收。
+- 最新完整預設並行回歸中，核心 **480 Swift Testing／43 suites** 與 agents **36／3 suites** 通過；App 整合測試仍大量 60 秒逾時，隨後既有測試索引越界中止（`/tmp/filicon-steering-full-parallel-verified.log`）。沒有找到此輪 Cocoa 257／受保護檔案錯誤證據，不歸因於鎖屏。整套並行穩定性仍未解，不能以聚焦測試或非並行通過代替。
+- 完整 `swift test --no-parallel` **135 XCTest、1,009 Swift Testing／112 suites 全數通過**（`/tmp/filicon-steering-full-serial.log`）；兩項 opt-in live Codex 測試未啟用，既有 CoreData NSXPC 診斷仍在。
+- 最後補上啟動等待失敗時的 fixture 取消清理後，包含前述取消與群組交接的 **35 Swift Testing／3 suites** 聚焦通過，並以預設並行連續 **20 輪**全過（`/tmp/filicon-steering-final-focused.log`、`/tmp/filicon-steering-final-stress-1.log` 至 `-20.log`）。未用 retry 隱藏單次失敗，任一輪失敗即停止。
+- 七語言各 **1,624 keys／零缺漏**、`git diff --check` 通過。此輪未修改 UI、翻譯、Package.swift 或封裝設定；未重跑原生 App 封裝／簽章或操作 live runtime，不以先前封裝成果冒充本輪完整產品驗收。
+
+新修改尚未提交；未 push、未啟動／重啟使用者 App／Xcode、未操作真實群組／排程／帳號／憑證。整體仍 **43 complete／4 partial／1 NA**。
+
+## 已提交增量：Debug 封裝驗證的系統路徑別名（2026-09-22）
 
 先提交上一批為 `7cfd698`（`fix: track resource-only Xcode signing inputs`），提交前 Ruby **7 tests／80 assertions**、七語言 audit 與 diff check 通過。本輪接續修正上一輪完整封裝檢查的 `/var`／`/private/var` 路徑誤判，不提高功能 parity 狀態。
 
@@ -17,7 +39,7 @@
 - **13 次原生 Debug build／deep strict／完整 package verifier 全過**，包含七語言更新後的 built strings 內容、資源新增／移除與 no-op。fixture 位於 `/var/folders/…/filicon-resource-signing.TGyLa6/`，來源與 DerivedData 名稱含空白，逐步 package log 隨同保留（總紀錄：`/tmp/filicon-package-alias-smoke.log`）。
 - 同一隔離副本的 **Release arm64＋x86_64 原生 build 與 shipping 模式完整 verifier 全過**（`/tmp/filicon-package-alias-release-build.log`、`/tmp/filicon-package-alias-release-verify.log`）。Release 不含開發例外；錯用 Debug 模式也會被拒絕（`/tmp/filicon-package-alias-debug-mode-rejection.log`），與前述 Debug 不得通過 shipping 檢查形成雙向回歸。僅 ad-hoc 簽章 fixture，未用 Developer ID／notary、未產生可發布版本或執行 App。
 
-本輪只有打包／驗證腳本與文件變更，不宣稱修復既有並行測試時序問題；未重跑 Swift 套件，上一輪非並行完整結果保留為歷史證據。新修改尚未提交，未 push、未啟動／重啟使用者 App／Xcode、未操作真實群組／排程／連線／憑證。整體仍 **43 complete／4 partial／1 NA**。
+本輪只有打包／驗證腳本與文件變更，不宣稱修復既有並行測試時序問題；未重跑 Swift 套件，上一輪非並行完整結果保留為歷史證據。本批已於下一輪提交為 `3be702e`；未 push、未啟動／重啟使用者 App／Xcode、未操作真實群組／排程／連線／憑證。整體仍 **43 complete／4 partial／1 NA**。
 
 ## 已提交增量：Xcode 資源增量建置的簽章依賴（2026-09-22）
 
