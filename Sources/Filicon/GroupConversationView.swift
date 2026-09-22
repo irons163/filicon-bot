@@ -183,7 +183,9 @@ struct GroupConversationView: View {
                         }
                     }
                     if folderRequests.isEmpty {
-                        if let agentID = model.thinkingGroupMembers[group.id],
+                        if model.reviewingMemoryGroups.contains(group.id) {
+                            AgentMemoryReviewProgress()
+                        } else if let agentID = model.thinkingGroupMembers[group.id],
                            let agent = model.agents.first(where: { $0.id == agentID }) {
                             GroupThinkingIndicator(agentName: agent.name)
                         } else if isRunning {

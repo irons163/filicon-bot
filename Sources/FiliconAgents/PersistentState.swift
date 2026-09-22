@@ -11,9 +11,13 @@ struct AgentPersistentState: Codable, Sendable {
     var reactions: [MessageReaction] = []
     var memories: [AgentMemory] = []
     var projects: [AgentProject] = []
+    var memorySuggestionSettings: [AgentMemorySuggestionSettings] = []
+    var memorySuggestions: [AgentMemorySuggestion] = []
+    var memorySuggestionReceipts: [AgentMemorySuggestionReceipt] = []
 
     private enum CodingKeys: String, CodingKey {
         case schemaVersion, agents, subagents, wakes, messages, groups, roomMessages, reactions, memories, projects
+        case memorySuggestionSettings, memorySuggestions, memorySuggestionReceipts
     }
 
     init() {}
@@ -30,6 +34,9 @@ struct AgentPersistentState: Codable, Sendable {
         reactions = try values.decodeIfPresent([MessageReaction].self, forKey: .reactions) ?? []
         memories = try values.decodeIfPresent([AgentMemory].self, forKey: .memories) ?? []
         projects = try values.decodeIfPresent([AgentProject].self, forKey: .projects) ?? []
+        memorySuggestionSettings = try values.decodeIfPresent([AgentMemorySuggestionSettings].self, forKey: .memorySuggestionSettings) ?? []
+        memorySuggestions = try values.decodeIfPresent([AgentMemorySuggestion].self, forKey: .memorySuggestions) ?? []
+        memorySuggestionReceipts = try values.decodeIfPresent([AgentMemorySuggestionReceipt].self, forKey: .memorySuggestionReceipts) ?? []
         schemaVersion = 2
     }
 }

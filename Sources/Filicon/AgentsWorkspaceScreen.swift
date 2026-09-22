@@ -338,6 +338,7 @@ struct AgentEditorView: View {
                     .accessibilityIdentifier("agent-editor-error")
             }
             if !isNew {
+                AgentMemorySuggestionsSection(agentID: profile.id)
                 AgentMemorySection(agentID: profile.id, scope: .agent)
                 AgentMemorySection(agentID: profile.id, scope: .user)
                 AgentMemorySection(agentID: profile.id, scope: .project)

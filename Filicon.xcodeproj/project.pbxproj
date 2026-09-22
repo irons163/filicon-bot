@@ -37,6 +37,7 @@
 		4A7AACB812A0597B25CFDF080E2D7A15 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0387FCF422D3F18A6098A5D1D598D92C /* main.swift */; };
 		4B55E3817FD7EA8728BC35A96A6A9D65 /* FiliconLocalTools in Frameworks */ = {isa = PBXBuildFile; productRef = 6575CCE65B21B635D556E4219B67D115 /* FiliconLocalTools */; };
 		4C7B212585BCFC13897A73AFD3B79A6C /* AgentsWorkspaceScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = AFC4B544D33DEA599FF5653B8E2F2AFE /* AgentsWorkspaceScreen.swift */; };
+		3EAA00000000000000000002 /* AgentMemorySuggestionsSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3EAA00000000000000000001 /* AgentMemorySuggestionsSection.swift */; };
 		50407655E842720EE7A171AD68759155 /* FiliconVoice in Frameworks */ = {isa = PBXBuildFile; productRef = 54CB5783D3CB4B652DD093657868BA32 /* FiliconVoice */; };
 		50DC94B791C338E835D257340EF940B1 /* FiliconWorkspaceShell.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47D191729BD917C88A29FBAF11099791 /* FiliconWorkspaceShell.swift */; };
 		536D89542195F80F8640817F127B2376 /* FiliconUpdater in Frameworks */ = {isa = PBXBuildFile; productRef = 3F4FA491A7E2F70BAA804EF4576DCFC5 /* FiliconUpdater */; };
@@ -206,6 +207,7 @@
 		A9385C72DB3C2474C548A3EADA7AFC1A /* main.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
 		AAF73D0B8DB1ADF68A782D0D484886E8 /* LocalToolService-Debug.entitlements */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.entitlements; path = "LocalToolService-Debug.entitlements"; sourceTree = "<group>"; };
 		AFC4B544D33DEA599FF5653B8E2F2AFE /* AgentsWorkspaceScreen.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AgentsWorkspaceScreen.swift; sourceTree = "<group>"; };
+		3EAA00000000000000000001 /* AgentMemorySuggestionsSection.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AgentMemorySuggestionsSection.swift; sourceTree = "<group>"; };
 		B1778F0C132CF620FC26AB3C89A022EB /* main.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
 		B551F2516F0464C9342690279D7B9838 /* en */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/Localizable.strings; sourceTree = "<group>"; };
 		B61B1F6C70914192ECEE06C3831DB12A /* MCPApprovalView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MCPApprovalView.swift; sourceTree = "<group>"; };
@@ -396,6 +398,7 @@
 				8DAD592594C2A916EB769203BA06C074 /* AgentNotificationProjection.swift */,
 				AB9020100011000022000033 /* AgentWorkflowApprovalDetails.swift */,
 				AFC4B544D33DEA599FF5653B8E2F2AFE /* AgentsWorkspaceScreen.swift */,
+				3EAA00000000000000000001 /* AgentMemorySuggestionsSection.swift */,
 				DE46E2BA4D41B05F5984AFBBCC352B36 /* AppModel.swift */,
 				92F3FFC9B0692FDE981007ECE4C11572 /* AttachmentMediaViewer.swift */,
 				84A144A222772E41F3D506153F8F2305 /* AttachmentQuickLook.swift */,
@@ -693,6 +696,7 @@
 				E78F64D096C0C305E790863A7F517F44 /* AgentNotificationProjection.swift in Sources */,
 				AB9020100011000022000044 /* AgentWorkflowApprovalDetails.swift in Sources */,
 				4C7B212585BCFC13897A73AFD3B79A6C /* AgentsWorkspaceScreen.swift in Sources */,
+				3EAA00000000000000000002 /* AgentMemorySuggestionsSection.swift in Sources */,
 				369CCF477A63B6BF019EC4E2ECFE4A32 /* AppModel.swift in Sources */,
 				F49C98B5DD6D5FF25070D93399E14AB6 /* AttachmentMediaViewer.swift in Sources */,
 				BF21C4339DB2B5520E468A30565C6A94 /* AttachmentQuickLook.swift in Sources */,

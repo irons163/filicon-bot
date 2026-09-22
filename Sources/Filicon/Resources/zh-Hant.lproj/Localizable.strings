@@ -1655,3 +1655,17 @@
 "Kept open while a question or tool is pending." = "問題或工具尚在等待處理，暫時保持展開。";
 "Cancel reply" = "取消回覆";
 "Replies stay in this group. @mentions choose responders; replying is not tool approval." = "回覆仍在此群組中，透過 @提及選擇回覆成員；回覆不代表核准工具。";
+"Memory suggestions" = "記憶建議";
+"Disable suggestions" = "關閉建議";
+"Enable suggestions…" = "啟用建議⋯";
+"No memory suggestions to review." = "沒有待審核的記憶建議。";
+"Enable memory suggestions?" = "啟用記憶建議？";
+"Save as private memory?" = "儲存為私人記憶？";
+"Only this agent in this account will recall the saved fact. No tool permission is granted." = "只有此帳號中的這位代理人會召回儲存的事實，不會授予工具權限。";
+"Optional extra model requests after completed group turns may incur costs. Only this agent's current human request, reply and private facts are sent to its selected model. Suggestions are not recalled until you approve each fact. No peer wakes, old images or shared memories are scanned. Disabling clears unapproved suggestions, not saved facts." = "可選的額外模型請求會在群組回合完成後執行，可能產生費用。只將這位代理人當次收到的人類請求、回覆及私人事實送至所選模型。逐筆核准前，候選記憶不會被召回。不掃描同儕喚醒、舊圖片或共享記憶。關閉時會清除未核准建議，不會刪除已儲存事實。";
+"Evidence from your message" = "你訊息中的依據";
+"Save as private memory…" = "儲存為私人記憶⋯";
+"Dismiss suggestion" = "略過建議";
+"Reviewing memory suggestions…" = "正在整理記憶建議⋯";
+"Memory suggestions changed or are no longer available. Refresh and try again." = "記憶建議已變更或無法使用。請重新整理後再試。";
+"The memory suggestion response was invalid. No facts were saved." = "記憶建議的回應格式無效，未儲存任何事實。";

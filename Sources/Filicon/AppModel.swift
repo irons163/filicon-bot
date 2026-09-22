@@ -109,6 +109,7 @@ final class AppModel: ObservableObject {
     private var stoppingGroups: Set<UUID> = []
     private var cancelledGroupRuns: Set<UUID> = []
     @Published var thinkingGroupMembers: [UUID: UUID] = [:]
+    @Published var reviewingMemoryGroups: Set<UUID> = []
     @Published var automations: [Automation] = []
     @Published var automationHistory: [UUID: [AutomationRun]] = [:]
     @Published var automationWakes: [AutomationWake] = []
@@ -269,6 +270,7 @@ final class AppModel: ObservableObject {
     private var agentMessageTasks: [UUID: Task<Void, Never>] = [:]
     private var agentMessagingAccountTransition = false
     private var agentMemoryUILifetime = AgentMemoryChangeLifetime()
+    private var agentMemorySuggestionUILifetime = AgentMemorySuggestionLifetime()
     private let subagentService: SubagentService?
     private let agentAvatarStore: AgentAvatarStore
     private let groupService: GroupService?
@@ -2621,6 +2623,12 @@ final class AppModel: ObservableObject {
             originConversationID: originID, agents: agentService, messenger: agentMessenger,
             registry: registry, coordinator: coordinator, conversations: agentConversations,
             accountID: settings.accountScope ?? "local", management: management,
+            memoryExtractor: AgentMemorySuggestionExtractor(agents: agentService, registry: registry, scheduler: agentExecutionScheduler,
+                record: { [weak self] suggestions, settings, exchangeID, lifetime in
+                    guard let self else { throw CancellationError() }
+                    try await self.recordMemorySuggestions(suggestions, settings: settings, exchangeID: exchangeID,
+                        lifetime: lifetime, originID: originID, generation: generation)
+                }),
             groups: groupService,
             authorizeGroup: { [weak self] sender, audience, text, call, context in
                 guard let self else { throw CancellationError() }
@@ -2759,6 +2767,42 @@ final class AppModel: ObservableObject {
         else { values = await agentService.memories(accountID: settings.accountScope ?? "local", agentID: agentID) }
         guard generation == autoReviewAccountGeneration else { throw CancellationError() }
         return values
+    }
+
+    func memorySuggestionSnapshot(agentID: UUID) async throws -> AgentMemorySuggestionSnapshot {
+        let generation = autoReviewAccountGeneration
+        guard let agentService, !agentMessagingAccountTransition else { throw CancellationError() }
+        let value = try await agentService.memorySuggestions(accountID: settings.accountScope ?? "local", agentID: agentID)
+        guard generation == autoReviewAccountGeneration else { throw CancellationError() }
+        return value
+    }
+
+    func setMemorySuggestionsEnabled(_ enabled: Bool, expected: AgentMemorySuggestionSettings) async throws {
+        guard let agentService, !agentMessagingAccountTransition,
+              expected.accountID == (settings.accountScope ?? "local") else { throw CancellationError() }
+        let lifetime = agentMemorySuggestionUILifetime
+        try await quotaWrite(scope: "workflow", key: "memory-suggestions-\(expected.agentID)", data: try JSONEncoder().encode(expected)) {
+            try await agentService.setMemorySuggestionsEnabled(enabled, expected: expected, lifetime: lifetime)
+        }
+    }
+
+    func reviewMemorySuggestion(_ suggestion: AgentMemorySuggestion, accept: Bool) async throws {
+        guard let agentService, !agentMessagingAccountTransition,
+              suggestion.accountID == (settings.accountScope ?? "local") else { throw CancellationError() }
+        let lifetime = agentMemorySuggestionUILifetime
+        try await quotaWrite(scope: "workflow", key: "memory-suggestion-\(suggestion.id)", data: accept ? try JSONEncoder().encode(suggestion) : Data()) {
+            try await agentService.reviewMemorySuggestion(suggestion, accept: accept, lifetime: lifetime)
+        }
+    }
+
+    private func recordMemorySuggestions(_ suggestions: [AgentMemorySuggestion], settings: AgentMemorySuggestionSettings,
+                                        exchangeID: UUID, lifetime: AgentMemorySuggestionLifetime,
+                                        originID: UUID, generation: UInt64) async throws {
+        guard let agentService, generation == autoReviewAccountGeneration, isAgentMessagingScopeActive(originID),
+              settings.accountID == (self.settings.accountScope ?? "local") else { throw CancellationError() }
+        try await quotaWrite(scope: "workflow", key: "memory-suggestions-\(settings.agentID)", data: try JSONEncoder().encode(suggestions)) {
+            try await agentService.recordMemorySuggestions(suggestions, settings: settings, exchangeID: exchangeID, lifetime: lifetime)
+        }
     }
 
     func forgetAgentMemory(_ memory: AgentMemory) async throws {
@@ -3475,6 +3519,7 @@ final class AppModel: ObservableObject {
             runningGroups.remove(groupID)
             cancelledGroupRuns.remove(groupID)
             thinkingGroupMembers[groupID] = nil
+            reviewingMemoryGroups.remove(groupID)
         }
         do {
             guard text.count <= 8_000 else { throw AgentServiceError.messageTooLong }
@@ -3535,6 +3580,11 @@ final class AppModel: ObservableObject {
                 })
             }
             groupMessages[groupID] = await groupService.messages(groupID: groupID)
+            if !cancelledGroupRuns.contains(groupID), !produced.contains(where: { $0.question != nil }) {
+                if await messaging?.hasMemorySuggestionsToProcess == true { reviewingMemoryGroups.insert(groupID) }
+                await messaging?.suggestMemories()
+                reviewingMemoryGroups.remove(groupID)
+            }
         } catch is CancellationError {
             let messages = await groupService.messages(groupID: groupID)
             if generation == autoReviewAccountGeneration { groupMessages[groupID] = messages }
@@ -4874,6 +4924,8 @@ final class AppModel: ObservableObject {
         routineEditSessions.removeAll()
         agentMemoryUILifetime.close()
         agentMemoryUILifetime = AgentMemoryChangeLifetime()
+        agentMemorySuggestionUILifetime.close()
+        agentMemorySuggestionUILifetime = AgentMemorySuggestionLifetime()
         for session in agentMessagingSessions.values { session.revokeProfileChanges() }
         autoReviewAccountGeneration &+= 1
         defer { agentMessagingAccountTransition = false }

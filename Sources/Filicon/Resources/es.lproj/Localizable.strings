@@ -1655,3 +1655,17 @@
 "Kept open while a question or tool is pending." = "Se mantiene abierto mientras haya una pregunta o herramienta pendiente.";
 "Cancel reply" = "Cancelar respuesta";
 "Replies stay in this group. @mentions choose responders; replying is not tool approval." = "Las respuestas permanecen en este grupo. Las @menciones eligen quién responde; responder no autoriza herramientas.";
+"Memory suggestions" = "Sugerencias de memoria";
+"Disable suggestions" = "Desactivar sugerencias";
+"Enable suggestions…" = "Activar sugerencias…";
+"No memory suggestions to review." = "No hay sugerencias de memoria para revisar.";
+"Enable memory suggestions?" = "¿Activar las sugerencias de memoria?";
+"Save as private memory?" = "¿Guardar como memoria privada?";
+"Only this agent in this account will recall the saved fact. No tool permission is granted." = "Solo este agente de esta cuenta recordará el dato guardado. No se otorgan permisos de herramientas.";
+"Optional extra model requests after completed group turns may incur costs. Only this agent's current human request, reply and private facts are sent to its selected model. Suggestions are not recalled until you approve each fact. No peer wakes, old images or shared memories are scanned. Disabling clears unapproved suggestions, not saved facts." = "Las solicitudes adicionales opcionales al modelo tras los turnos de grupo completados pueden generar costes. Solo se envían al modelo elegido la solicitud humana actual de este agente, su respuesta y sus datos privados. Las sugerencias no se recuerdan hasta que apruebes cada dato. No se analizan activaciones de otros agentes, imágenes antiguas ni memorias compartidas. Al desactivar se borran las sugerencias no aprobadas, no los datos guardados.";
+"Evidence from your message" = "Evidencia de tu mensaje";
+"Save as private memory…" = "Guardar como memoria privada…";
+"Dismiss suggestion" = "Descartar sugerencia";
+"Reviewing memory suggestions…" = "Preparando sugerencias de memoria…";
+"Memory suggestions changed or are no longer available. Refresh and try again." = "Las sugerencias de memoria han cambiado o ya no están disponibles. Actualiza e inténtalo de nuevo.";
+"The memory suggestion response was invalid. No facts were saved." = "La respuesta de sugerencias de memoria no era válida. No se guardó ningún dato.";

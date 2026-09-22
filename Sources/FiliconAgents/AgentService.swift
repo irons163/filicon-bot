@@ -195,6 +195,82 @@ public actor AgentService {
     }
 
     /// Only the specified writer's records; models cannot forget another writer's shard.
+    public func memorySuggestions(accountID: String, agentID: UUID) throws -> AgentMemorySuggestionSnapshot {
+        guard !accountID.isEmpty, accountID.count <= 512,
+              state.agents.contains(where: { $0.id == agentID && $0.archivedAt == nil }) else { throw AgentMemoryError.unavailable }
+        return .init(settings: state.memorySuggestionSettings.first { $0.accountID == accountID && $0.agentID == agentID }
+            ?? .init(accountID: accountID, agentID: agentID),
+            suggestions: state.memorySuggestions.filter { $0.accountID == accountID && $0.agentID == agentID })
+    }
+
+    public func setMemorySuggestionsEnabled(_ enabled: Bool, expected: AgentMemorySuggestionSettings,
+                                           lifetime: AgentMemorySuggestionLifetime) throws {
+        try lifetime.commit {
+            guard try memorySuggestions(accountID: expected.accountID, agentID: expected.agentID).settings == expected else {
+                throw AgentMemorySuggestionError.stale
+            }
+            var next = expected; next.enabled = enabled; next.revision = UUID()
+            state.memorySuggestionSettings.removeAll { $0.accountID == expected.accountID && $0.agentID == expected.agentID }
+            state.memorySuggestionSettings.append(next)
+            // Disabling clears unapproved candidates. Approved facts remain and
+            // are still managed with Forget. Keep receipts to avoid re-extraction.
+            if !enabled { state.memorySuggestions.removeAll { $0.accountID == expected.accountID && $0.agentID == expected.agentID } }
+            try persist()
+        }
+    }
+
+    public func shouldSuggestMemory(settings: AgentMemorySuggestionSettings, exchangeID: UUID) throws -> Bool {
+        let current = try memorySuggestions(accountID: settings.accountID, agentID: settings.agentID)
+        return settings.enabled && current.settings == settings && current.suggestions.count < 12
+            && !state.memorySuggestionReceipts.contains { $0.accountID == settings.accountID && $0.agentID == settings.agentID && $0.exchangeID == exchangeID }
+    }
+
+    public func recordMemorySuggestions(_ suggestions: [AgentMemorySuggestion], settings: AgentMemorySuggestionSettings,
+                                        exchangeID: UUID, lifetime: AgentMemorySuggestionLifetime) throws {
+        try lifetime.commit {
+            guard try shouldSuggestMemory(settings: settings, exchangeID: exchangeID) else { throw AgentMemorySuggestionError.stale }
+            guard suggestions.count <= 4, Set(suggestions.map(\.id)).count == suggestions.count,
+                  suggestions.allSatisfy({ candidate in
+                    candidate.accountID == settings.accountID && candidate.agentID == settings.agentID && candidate.exchangeID == exchangeID
+                        && candidate.isValid && !state.memorySuggestions.contains(where: { $0.id == candidate.id })
+                  }) else {
+                throw AgentMemorySuggestionError.invalid
+            }
+            let pending = state.memorySuggestions.filter { $0.accountID == settings.accountID && $0.agentID == settings.agentID }
+            var known = Set((memories(accountID: settings.accountID, agentID: settings.agentID).map(\.fact) + pending.map(\.fact)).map(AgentMemorySuggestionParser.key))
+            let additions = suggestions.filter { known.insert(AgentMemorySuggestionParser.key($0.fact)).inserted }
+            state.memorySuggestions.append(contentsOf: additions.prefix(12 - pending.count))
+            var receipts = state.memorySuggestionReceipts.filter { $0.accountID == settings.accountID && $0.agentID == settings.agentID }
+            receipts.append(.init(accountID: settings.accountID, agentID: settings.agentID, exchangeID: exchangeID))
+            state.memorySuggestionReceipts.removeAll { $0.accountID == settings.accountID && $0.agentID == settings.agentID }
+            state.memorySuggestionReceipts.append(contentsOf: receipts.suffix(32))
+            try persist()
+        }
+    }
+
+    /// Human-only review. Atomic removal+write: failed approval cannot lose the
+    /// suggestion, and a repeated/stale action cannot recreate a forgotten fact.
+    public func reviewMemorySuggestion(_ suggestion: AgentMemorySuggestion, accept: Bool,
+                                       lifetime: AgentMemorySuggestionLifetime) throws {
+        try lifetime.commit {
+            let current = try memorySuggestions(accountID: suggestion.accountID, agentID: suggestion.agentID)
+            guard current.settings.enabled, current.suggestions.contains(suggestion) else { throw AgentMemorySuggestionError.stale }
+            guard suggestion.isValid else { throw AgentMemorySuggestionError.invalid }
+            if accept {
+                let saved = memories(accountID: suggestion.accountID, agentID: suggestion.agentID)
+                let duplicate = saved.contains { AgentMemorySuggestionParser.key($0.fact) == AgentMemorySuggestionParser.key(suggestion.fact) }
+                if !duplicate {
+                    guard saved.count < 48, saved.reduce(0, { $0 + $1.fact.count }) + suggestion.fact.count <= 12_000,
+                          suggestion.tier != .profile || saved.filter({ $0.tier == .profile }).count < 8 else { throw AgentMemoryError.limit }
+                    state.memories.append(.init(accountID: suggestion.accountID, agentID: suggestion.agentID,
+                        fact: suggestion.fact, tier: suggestion.tier))
+                }
+            }
+            state.memorySuggestions.removeAll { $0.id == suggestion.id && $0.accountID == suggestion.accountID && $0.agentID == suggestion.agentID }
+            try persist()
+        }
+    }
+
     public func memories(accountID: String, agentID: UUID, scope: AgentMemory.Scope = .agent, project: String? = nil) -> [AgentMemory] {
         sortedMemories(state.memories.filter { $0.accountID == accountID && $0.agentID == agentID && $0.scope == scope && $0.project == project })
     }

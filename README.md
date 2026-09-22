@@ -712,8 +712,22 @@ lets the user inspect and forget records, including shared facts from another
 agent. Forgetting stops future injection, not already-sent messages or in-flight
 requests. Each private agent store and the entire shared account store have
 separate limits of 48 facts / 8 foundational facts / 12,000 characters. This is
-bounded `profile`/`log`/`note` memory, not automatic transcript capture,
-memory in other execution entry points, or full parity with the reference runtime.
+bounded `profile`/`log`/`note` memory. It does not automatically capture the
+transcript or cover every execution entry point.
+
+For a separate, optional follow-up, open **Agents → Edit → Memory suggestions**
+and enable suggestions for that agent in the current account. After a completed
+foreground group request, Filicon makes one additional, tool-free request to
+that agent's selected model. It includes only that agent's current human request,
+latest useful reply and existing private facts. The model can suggest up to four
+facts, each tied to an exact excerpt from the human request. Suggestions are
+kept in a private review queue and are never recalled as memory until you
+explicitly save each one. You can dismiss them; disabling the feature clears
+unapproved suggestions while keeping approved facts. The extra request may
+incur model costs and can take up to 30 seconds per participating agent. Failed
+extraction does not turn an already completed group reply into a failure. This
+is a bounded, reviewed alternative to part of the reference's post-turn memory
+flow, not its automatic edits, episode summaries, archive search or full runtime.
 
 Explicit `scope:"project"` additionally requires `project:"exact-slug"` and
 current membership. Facts are shared only with current and future members of
@@ -746,7 +760,7 @@ common English/French/Spanish stopwords excluded) and adjacent Han/kana/Hangul
 pairs, ignoring case, accents and character width. Repetition does not increase
 the overlap score. This is a native adaptation of the reconstructed reference's
 keyword selection, which was used to gather archived facts for extraction; it
-does **not** implement that extraction pipeline, semantic/vector search or
+does **not** implement archive-backed extraction, semantic/vector search or
 cross-language synonym matching. Relevance is not proof of truth or permission
 to share, and cannot bypass the current task's approval gates.
 
@@ -760,7 +774,7 @@ an additional aggregate pool: at most 8 foundational / 15 recent facts and
 4,000 / 2,000 JSON bytes **across all joined projects**, not per project.
 Oversized records are
 omitted intact, never truncated. This is not semantic conflict resolution,
-automatic transcript extraction, or arbitrary archival file access.
+automatic transcript capture, or arbitrary archival file access.
 
 In these same group/mailbox turns, agents can call the read-only `SearchMemory`
 tool to find **already approved saved facts** that were omitted from automatic

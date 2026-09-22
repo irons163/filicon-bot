@@ -81,10 +81,21 @@ public actor AgentMessagingSession {
     private var reservations: Set<CallKey> = []
     private var hostEnqueueReserved = false
     private var userMessageID: UUID?
+    private let memoryExtractor: AgentMemorySuggestionExtractor?
+    private let memorySuggestionLifetime = AgentMemorySuggestionLifetime()
+    private struct MemoryExchange {
+        let settings: AgentMemorySuggestionSettings
+        let profile: AgentProfile
+        let exchangeID: UUID
+        let user: String
+        var response = ""
+    }
+    private var memoryExchanges: [UUID: MemoryExchange] = [:]
 
     public init(id: UUID = UUID(), originConversationID: UUID, agents: AgentService, messenger: AgentMessenger,
                 registry: ProviderRegistry, coordinator: TurnCoordinator, turnTimeout: Duration = .seconds(180),
                 conversations: AgentConversationStore? = nil, accountID: String = "local", management: AgentManagementSession? = nil,
+                memoryExtractor: AgentMemorySuggestionExtractor? = nil,
                 groups: GroupService? = nil,
                 authorizeGroup: @escaping GroupAuthorizer = { _, _, _, _, _ in throw AgentMessagingError.approvalRequired },
                 postGroup: GroupPoster? = nil, runGroup: GroupRunner? = nil,
@@ -98,6 +109,7 @@ public actor AgentMessagingSession {
         self.agents = agents; self.messenger = messenger; self.registry = registry; self.coordinator = coordinator
         self.conversations = conversations; self.accountID = accountID
         self.management = management
+        self.memoryExtractor = memoryExtractor
         self.groups = groups; self.authorizeGroup = authorizeGroup; self.postGroup = postGroup
         self.runGroup = runGroup; self.finishGroup = finishGroup
         self.authorize = authorize; self.onChange = onChange; self.turnTimeout = turnTimeout
@@ -190,7 +202,37 @@ public actor AgentMessagingSession {
 
     /// Revoke profile writes, shared-room posts and user publications before the caller's first
     /// suspension on Stop/account transition, even while this actor unwinds.
-    public nonisolated func revokeProfileChanges() { management?.close(); groupLifetime.close(); publicationLifetime.close() }
+    public nonisolated func revokeProfileChanges() {
+        management?.close(); groupLifetime.close(); publicationLifetime.close(); memorySuggestionLifetime.close()
+    }
+
+    /// Only the foreground group responder supplies an actual current human
+    /// request. Peer wakes/background tasks do not invent human memory evidence.
+    public func prepareMemorySuggestion(profile: AgentProfile, exchangeID: UUID, user: String) async {
+        guard !closed, memoryExtractor != nil, memoryExchanges[profile.id] == nil else { return }
+        guard let settings = try? await agents.memorySuggestions(accountID: accountID, agentID: profile.id).settings,
+              settings.enabled, !closed, !Task.isCancelled else { return }
+        memoryExchanges[profile.id] = .init(settings: settings, profile: profile, exchangeID: exchangeID,
+                                           user: String(user.prefix(8_000)))
+    }
+
+    /// Called only after the group turn and its saved replies settled. This is
+    /// opportunistic: errors leave the successful conversation unchanged.
+    public var hasMemorySuggestionsToProcess: Bool { memoryExchanges.values.contains { !$0.response.isEmpty } }
+
+    public func suggestMemories() async {
+        guard let memoryExtractor else { return }
+        let exchanges = memoryExchanges.values.sorted { $0.profile.id.uuidString < $1.profile.id.uuidString }
+        memoryExchanges.removeAll()
+        for exchange in exchanges {
+            guard !closed, !Task.isCancelled else { return }
+            do {
+                try await memoryExtractor.extract(settings: exchange.settings, profile: exchange.profile,
+                    exchangeID: exchange.exchangeID, sessionID: id, user: exchange.user, response: exchange.response,
+                    lifetime: memorySuggestionLifetime)
+            } catch { /* No automatic retry or change to the settled answer. */ }
+        }
+    }
 
     /// Only the host's explicit Send button may call this entry point. Model
     /// tools always use `send`, including its recipient/payload approval gate.
@@ -223,6 +265,9 @@ public actor AgentMessagingSession {
     /// history/persona into another member's independent inference context.
     public func remember(agentID: UUID, messages: [ChatMessage], response: String) {
         guard !closed else { return }
+        if !["PASS", "(PASS)", ""].contains(response.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()) {
+            memoryExchanges[agentID]?.response = String(response.prefix(8_000))
+        }
         // Remember text, not attachment handles whose bytes are authorized only
         // for the current turn. A later peer wake must not replay group images.
         ownHistories[agentID] = messages.map { message in
@@ -517,6 +562,8 @@ public actor AgentMessagingSession {
     public func close() async throws {
         closed = true
         revokeProfileChanges()
+        memoryExchanges.removeAll()
+        await memoryExtractor?.cancel(sessionID: id)
         queue.removeAll()
         let pendingGroups = groupQueue
         groupQueue.removeAll()

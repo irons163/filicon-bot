@@ -1655,3 +1655,17 @@
 "Kept open while a question or tool is pending." = "Kept open while a question or tool is pending.";
 "Cancel reply" = "Cancel reply";
 "Replies stay in this group. @mentions choose responders; replying is not tool approval." = "Replies stay in this group. @mentions choose responders; replying is not tool approval.";
+"Memory suggestions" = "Memory suggestions";
+"Disable suggestions" = "Disable suggestions";
+"Enable suggestions…" = "Enable suggestions…";
+"No memory suggestions to review." = "No memory suggestions to review.";
+"Enable memory suggestions?" = "Enable memory suggestions?";
+"Save as private memory?" = "Save as private memory?";
+"Only this agent in this account will recall the saved fact. No tool permission is granted." = "Only this agent in this account will recall the saved fact. No tool permission is granted.";
+"Optional extra model requests after completed group turns may incur costs. Only this agent's current human request, reply and private facts are sent to its selected model. Suggestions are not recalled until you approve each fact. No peer wakes, old images or shared memories are scanned. Disabling clears unapproved suggestions, not saved facts." = "Optional extra model requests after completed group turns may incur costs. Only this agent's current human request, reply and private facts are sent to its selected model. Suggestions are not recalled until you approve each fact. No peer wakes, old images or shared memories are scanned. Disabling clears unapproved suggestions, not saved facts.";
+"Evidence from your message" = "Evidence from your message";
+"Save as private memory…" = "Save as private memory…";
+"Dismiss suggestion" = "Dismiss suggestion";
+"Reviewing memory suggestions…" = "Reviewing memory suggestions…";
+"Memory suggestions changed or are no longer available. Refresh and try again." = "Memory suggestions changed or are no longer available. Refresh and try again.";
+"The memory suggestion response was invalid. No facts were saved." = "The memory suggestion response was invalid. No facts were saved.";

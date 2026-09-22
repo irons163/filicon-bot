@@ -1655,3 +1655,17 @@
 "Kept open while a question or tool is pending." = "질문에 대한 답변이나 도구 실행이 대기 중이면 펼쳐진 상태를 유지합니다.";
 "Cancel reply" = "답글 취소";
 "Replies stay in this group. @mentions choose responders; replying is not tool approval." = "답글은 이 그룹에 남습니다. @멘션으로 응답할 멤버를 선택하며, 답글은 도구 승인이 아닙니다.";
+"Memory suggestions" = "기억 제안";
+"Disable suggestions" = "제안 끄기";
+"Enable suggestions…" = "제안 켜기…";
+"No memory suggestions to review." = "검토할 기억 제안이 없습니다.";
+"Enable memory suggestions?" = "기억 제안을 켤까요?";
+"Save as private memory?" = "비공개 기억으로 저장할까요?";
+"Only this agent in this account will recall the saved fact. No tool permission is granted." = "이 계정의 해당 에이전트만 저장된 사실을 기억합니다. 도구 권한은 부여되지 않습니다.";
+"Optional extra model requests after completed group turns may incur costs. Only this agent's current human request, reply and private facts are sent to its selected model. Suggestions are not recalled until you approve each fact. No peer wakes, old images or shared memories are scanned. Disabling clears unapproved suggestions, not saved facts." = "완료된 그룹 대화 후 선택적으로 추가 모델 요청을 수행하므로 비용이 발생할 수 있습니다. 이 에이전트의 현재 사용자 요청, 답변, 비공개 사실만 선택한 모델에 전송됩니다. 각 사실을 승인하기 전에는 제안을 기억에 사용하지 않습니다. 다른 에이전트의 호출, 과거 이미지, 공유 기억은 분석하지 않습니다. 끄면 미승인 제안만 삭제되고 저장된 사실은 유지됩니다.";
+"Evidence from your message" = "사용자 메시지의 근거";
+"Save as private memory…" = "비공개 기억으로 저장…";
+"Dismiss suggestion" = "제안 무시";
+"Reviewing memory suggestions…" = "기억 제안 정리 중…";
+"Memory suggestions changed or are no longer available. Refresh and try again." = "기억 제안이 변경되었거나 더 이상 사용할 수 없습니다. 새로고침 후 다시 시도하세요.";
+"The memory suggestion response was invalid. No facts were saved." = "기억 제안 응답이 올바르지 않습니다. 저장된 사실이 없습니다.";

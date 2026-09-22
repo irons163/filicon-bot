@@ -194,6 +194,9 @@ public struct GroupConversationResponder: GroupAgentResponder {
                 replyHistory: replyHistory, publishReply: reply) { try await onPublication(.init(text: $0)) }
         } else { publisher = onMessage.map { AgentUserMessageTool(conversationID: toolScopeID, publish: $0) } }
         if let publisher { additionalTools.append(publisher) }
+        if delegatedMessage == nil, let latestUser {
+            await messaging?.prepareMemorySuggestion(profile: agent, exchangeID: latestUser.id, user: latestUser.text)
+        }
         do {
             try await coordinator.send(request: request, providerID: agent.providerID, additionalTools: additionalTools,
                                        toolContext: ToolContext(conversationID: toolScopeID), agentID: agent.id,
