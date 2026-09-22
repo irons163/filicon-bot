@@ -54,6 +54,46 @@ private func collectToolLoop(_ loop: ToolLoop, request: InferenceRequest = .init
 
 private let objectSchema = Data("{\"type\":\"object\",\"properties\":{\"value\":{\"type\":\"string\"}},\"required\":[\"value\"],\"additionalProperties\":false}".utf8)
 
+private struct QuestionAuditFailure: ToolLoopTransactionHook {
+    struct Failure: Error {}
+    func persist(step: Int, calls: [NormalizedToolCall], results: [NormalizedToolResult], context: ToolContext) async throws { throw Failure() }
+}
+
+@Test(arguments: [false, true])
+func questionSuspensionPersistsCompletedPrefixAndNeverExecutesRemainingBatch(auditFails: Bool) async throws {
+    let scope = UUID()
+    let before = try toolCall("before", "work")
+    let question = try toolCall("question", "SendMessage", #"{"type":"widget","widget":{"prompt":"Choose?","options":[{"label":"Yes"}]}}"#)
+    let after = try toolCall("after", "work")
+    let probe = ToolExecutionProbe(), audit = ToolAuditProbe()
+    let work = ClosureToolExecutor(descriptor: .init(name: "work", inputSchema: Data(#"{"type":"object"}"#.utf8))) { call, _ in
+        expectNoDifference(call.id, before.id)
+        await probe.begin()
+        return .init(callID: call.id, content: [.text("Done")])
+    }
+    let ask = AgentUserMessageTool(conversationID: scope, publishQuestion: { _ in }) { _ in Issue.record("Not text") }
+    let provider = ScriptedToolProvider { step, _ in
+        expectNoDifference(step, 0)
+        return [before, question, after].flatMap { [.toolCallStarted(id: $0.id, name: $0.name), .toolCallCompleted($0)] } + [.completed(.toolUse)]
+    }
+    let hook: any ToolLoopTransactionHook = auditFails ? QuestionAuditFailure() : audit
+    let loop = ToolLoop(provider: provider, catalog: ToolCatalog([work, ask]), transactionHook: hook)
+    var results: [NormalizedToolResult] = []
+    do {
+        for try await event in await loop.run(.init(conversationID: scope, modelID: "scripted", messages: []), context: .init(conversationID: scope)) {
+            if case .toolResult(let result) = event { results.append(result) }
+        }
+        Issue.record("Question must suspend the loop")
+    } catch is ToolTurnSuspension {}
+    expectNoDifference(results.map(\.callID), [before.id, question.id])
+    expectNoDifference(results.map(\.isError), [false, auditFails])
+    let executions = await probe.active
+    expectNoDifference(executions, 1)
+    let records = await audit.records
+    expectNoDifference(records.count, auditFails ? 0 : 1)
+    if !auditFails { expectNoDifference(records.first?.0.map(\.id), [before.id, question.id]) }
+}
+
 private struct PolicyContextExecutor: ToolExecutor, ToolRuntimeContextProviding {
     let descriptor = ToolDescriptor(name: "fixture", inputSchema: Data(#"{"type":"object","properties":{},"additionalProperties":false}"#.utf8))
     let policy: ToolPermissionPolicy

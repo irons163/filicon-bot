@@ -1,3 +1,12 @@
+"Waiting for your answer" = "답변을 기다리는 중";
+"Your answer" = "답변";
+"Send answer" = "답변 보내기";
+"Answered" = "답변 완료";
+"Question unavailable" = "답변할 수 없는 질문";
+"Question dismissed without an answer." = "답변 없이 질문을 닫았습니다.";
+"Answers do not approve tool access. Do not enter passwords or API keys." = "답변은 도구 접근 승인이 아닙니다. 비밀번호나 API 키를 입력하지 마세요.";
+"The question or answer is invalid. Nothing was sent." = "질문 또는 답변이 유효하지 않습니다. 아무것도 전송되지 않았습니다.";
+"This question is no longer available in this account or group." = "현재 계정 또는 그룹에서는 이 질문에 더 이상 답변할 수 없습니다.";
 "Linear supports issueCreated, statusChanged and endOfCycle. Use up to 50 UUIDs per list; empty means any. statusIds is only for statusChanged; cycleIds is only for endOfCycle. Cycles have no project relationship, so projectIds must be omitted or empty. Names, unknown fields and invalid filters are rejected." = "Linear는 issueCreated, statusChanged, endOfCycle을 지원합니다. 목록당 최대 50개의 UUID를 지정할 수 있으며, 비어 있으면 제한하지 않습니다. statusIds는 statusChanged에만, cycleIds는 endOfCycle에만 사용할 수 있습니다. 주기는 프로젝트와 연결되지 않으므로 projectIds는 생략하거나 비워야 합니다. 이름, 알 수 없는 필드 및 잘못된 필터는 거부됩니다.";
 "Linear requires existing authenticated ingress; no webhook or connection is installed or started. Supports issue creation, actual status changes and cycle completion. Completion requires completedAt changing from null to a valid time, including early completion; a scheduled end date alone does not trigger it. Filters use exact UUIDs, not names; empty means any. statusIds is only for statusChanged; cycleIds is only for endOfCycle. Cycles have no project relationship, so projectIds must be omitted or empty. Replay protection is bounded. Queued events may trigger after approval and incur model costs." = "Linear에는 기존의 인증된 이벤트 수신 경로가 필요합니다. webhook이나 연결을 설치하거나 시작하지 않습니다. 이슈 생성, 실제 상태 변경 및 주기 완료를 지원합니다. 완료 시 completedAt이 null에서 유효한 시간으로 바뀌어야 하며 조기 완료도 포함됩니다. 예정된 종료 날짜에 도달하는 것만으로는 실행되지 않습니다. 이름이 아닌 정확한 UUID로 필터링하며 빈 목록은 제한 없음을 뜻합니다. statusIds는 statusChanged에만, cycleIds는 endOfCycle에만 사용할 수 있습니다. 주기는 프로젝트와 연결되지 않으므로 projectIds는 생략하거나 비워야 합니다. 재전송 방지는 범위가 제한됩니다. 대기 중인 이벤트가 승인 후 실행을 유발하여 모델 비용이 발생할 수 있습니다.";
 "sentry-hook-signature: HMAC(rawBody), optionally prefixed sha256=; body digest identifies events and prevents replay within the cache window; Request-ID is diagnostic only; no signed timestamp proves freshness" = "sentry-hook-signature: HMAC(rawBody), sha256= 접두사는 선택 사항입니다. 본문 해시로 이벤트를 식별하고 캐시 기간 내 재전송을 막습니다. Request-ID는 진단용으로만 사용됩니다. 서명된 타임스탬프가 없어 요청이 최근에 전송되었는지 증명할 수 없습니다";

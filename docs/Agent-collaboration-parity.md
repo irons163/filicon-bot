@@ -1,5 +1,25 @@
 # 協作能力核對紀錄（更新至 2026-09-22）
 
+## 本輪增量：一般群組的選項式提問與續接（2026-09-22）
+
+先提交上一輪驗收文件為 `e1e9799`（`docs: record complete parallel regression and remaining message gaps`）。本輪接續本機非官方 reconstructed 的 `send-message-schema.ts`、`send-message-tool.ts`、`sand-widgets.ts` 所定義的選項提問，不把原版所有訊息型態一併列為完成。
+
+- 一般群組的 `SendMessage(type:"widget", widget:...)` 支援 1–6 個選項、`label`／`value`／`description`／`style`、`helpText`、選用自訂回答及 `dismissOnMoveOn`。嚴格驗證欄位、型別、總量、字串大小與重複值；拒絕混入文字、圖片、作者或其他路由。未提供的兩個旗標預設 false。具 incoming 圖片的工具仍可提問，但提問本身不發布或轉交圖片。
+- host 將問題、作者、帳號、成員快照保存至群組，再以明確 suspension 結束工具回合；streamed batch 只保存／回傳已執行前綴，不執行後續呼叫。interactive provider 即使吞掉 suspension，也不能在回呼結束後繼續呼叫工具；coordinator 等待清理後釋放 agent lane。工具紀錄保存失敗仍會停下，不因模型忽略錯誤而繼續。已核准排入本輪的 peer 工作不在等待問題期間自動 drain。
+- 回答或略過只續接原提問成員，選項／自訂文字中的 `@everyone` 或非成員名稱不擴大收件者。回答與原問題狀態以同次保存提交；失敗回復記憶體，重複送出不新增訊息。重啟後從保存的卡片續接；其他帳號、封存作者、已異動成員或已回覆卡片不可再回答。成員異動會持久失效舊卡片，移除後再加入也不復活。`dismissOnMoveOn:true` 才在新的一般訊息到達時自動失效。
+- 卡片可選擇後明確送出、自訂回答或關閉；完整顯示選項實際值，不把點選當成工具核准。問題／回答文字是資料，不提升為 system 指令；不支援秘密欄位，也不提示輸入密碼／API key。既有寫檔、圖片、委派審批仍獨立。依 SwiftUI／狀態模型技能將送出、帳號／成員驗證與保存放在 model/service，View 僅持有選項草稿；依測試技能使用隔離 store、fixture provider 與完整值差異斷言。
+
+最終驗收：
+
+- 新增聚焦 **16 Swift Testing／2 suites** 通過，含 suite 外的工具迴圈測試；紀錄 `/tmp/filicon-question-final-ui.log`。涵蓋暫停、僅續接原作者、選項／自訂／略過、重啟、重複回答、帳號／成員／封存失效、保存失敗回滾，以及 provider 吞掉 suspension 後不得再呼叫工具。
+- 完整預設並行回歸 **135 XCTest、1,030 Swift Testing／115 suites** 通過，App **334／47 suites，61.998 秒**；紀錄 `/tmp/filicon-question-final-parallel.log`。未排除畫面測試或增加時間上限；兩項 opt-in live Codex 測試仍跳過，既有 CoreData NSXPC 診斷仍在，不算 live 模型驗收。
+- 七語言各 **1,633 keys／零缺漏**；七語言 × 明暗 × 等待／回答／略過／失效共 **56 張 PNG**，位於 `/tmp/filicon-question-ui-final/`。逐檔驗證簽頭、chunk CRC 與非零尺寸；目視抽查繁中等待／略過及法文暗色失效卡，未見裁切。fixture 的問題／選項維持原文，並非待翻譯 UI。不是逐張人工或 pixel-perfect baseline 驗收。
+- 原生 `Filicon App` Debug 建置、`codesign --verify --deep --strict` 與 `scripts/verify-package.sh --xcode-debug` 通過，App／XPC entitlements 與 `Support/*.entitlements` 一致。紀錄 `/tmp/filicon-question-native-final.log`，產物 `/tmp/filicon-question-native.l2MIZt/Build/Products/Debug/Filicon.app`；未執行 App。資源簽章 Ruby **7 runs／84 assertions**、封裝權限 Python **11 tests** 通過。未做 Developer ID 發佈簽章、公證或 live XPC 操作。
+
+原生建置另查出資源摘要腳本的目錄授權問題：原先生成的 sandbox profile 把已宣告的 `Sources/Filicon/Resources` 當作 `literal`，無法讀取子目錄中的翻譯與頭像；單加結尾斜線仍失敗。依 [Swift Build 的 shell script input 實作](https://github.com/swiftlang/swift-build/blob/main/Sources/SWBTaskConstruction/TaskProducers/BuildPhaseTaskProducers/ShellScriptTaskProducer.swift)，在 App 的 Debug／Release 及專案產生器加入 `USE_RECURSIVE_SCRIPT_INPUTS_IN_SCRIPT_PHASES=YES`，實際生成的同一路徑改為 `subpath`；不關閉腳本沙箱，也不放寬 App／XPC 權限。上述最終建置未另帶此旗標的命令列 override。Xcode 同時將 workspace lockfile 對齊原已提交的根目錄 `Package.resolved`：CustomDump 仍 1.7.3、IssueReporting 2.1.0；未改 Package.swift 或新增依賴，完整 Swift 測試也使用這兩版。
+
+邊界：此提問續接僅限一般群組，不含 mailbox、私人單獨聊天、背景 peer／跨群組 wake；獨立附件、安全遮罩憑證請求、`reply_to`／`channel` 路由及原版供應商 cloud-agent 卡仍未還原。仍 **43 complete／4 partial／1 NA**，`AGENT-02` 維持 partial。本批新增程式尚未提交；未 push、未啟動／重啟使用者 App／Xcode、未操作真實群組／帳號／憑證。
+
 ## 本輪驗收：完整並行與非並行回歸（2026-09-22）
 
 先提交上一批為 `2433983`（`test: keep UI rendering from starving parallel integration tests`）。提交前渲染排程、MCP OAuth 與群組圖片的 **20 Swift Testing／3 suites** 通過；此次受保護檔案可正常讀取，沒有修改或關閉檔案保護。以下驗收皆針對該 commit，未排除渲染或整合測試、未增加時間上限，也未在失敗後自動重試。
@@ -16,7 +36,7 @@
 
 接續核對的具體功能缺口：本機非官方 reconstructed 的 `source/host/runner/tools/send-message-schema.ts` 與 `send-message-tool.ts` 定義 `text`、`attachment`、`widget`、`cursor-agent`、`secret-request` 五種訊息；Filicon 的 `Sources/FiliconAppServices/AgentUserMessageTool.swift` 目前只接受文字與本輪 host 提供的圖片 ID。**選項式提問及其回覆／取消續接、獨立附件、安全遮罩憑證請求仍未接在這個代理人工具上**；原版 `reply_to`／`channel` 路由亦不能因 App 另有一般回覆／頻道功能就視為已對等。原版 cloud-agent 卡屬不同供應商 runtime，不以假卡片冒充。上述為缺口確認，本輪沒有實作、登入服務或要求任何憑證；後續可先獨立處理不涉及外部帳號的選項式提問。
 
-整體仍 **43 complete／4 partial／1 NA**。本輪驗收文件尚未提交；未 push、未啟動／重啟使用者 App／Xcode、未操作真實群組／排程／帳號／憑證。
+整體仍 **43 complete／4 partial／1 NA**。此批驗收文件已於下一輪提交為 `e1e9799`；未 push、未啟動／重啟使用者 App／Xcode、未操作真實群組／排程／帳號／憑證。
 
 ## 已提交增量：並行 App 測試的渲染排程（2026-09-22）
 

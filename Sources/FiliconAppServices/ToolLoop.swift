@@ -152,7 +152,7 @@ public actor ToolLoop {
                 return (call, executor)
             }
             let allParallelSafe = work.allSatisfy { $0.1.descriptor.parallelSafe }
-            let results = try await (allParallelSafe ? executeParallel(work, context: context) : executeSequential(work, context: context))
+            let results = try await (allParallelSafe ? executeParallel(work, context: context) : executeSequential(work, step: step, context: context, continuation: continuation))
             try Task.checkCancellation()
             try await transactionHook.persist(step: step, calls: calls, results: results, context: context)
             for result in results { continuation.yield(.toolResult(result)) }
@@ -176,7 +176,11 @@ public actor ToolLoop {
                     let result = try await executeInteractiveCall(call, step: step, snapshot: snapshot, context: context, continuation: continuation)
                     await calls.finishCall()
                     return result
-                } catch { await calls.finishCall(); throw error }
+                } catch {
+                    await calls.finishCall(suspend: error is ToolTurnSuspension)
+                    if error is ToolTurnSuspension { continuation.finish(throwing: error) }
+                    throw error
+                }
             }) {
                 try Task.checkCancellation()
                 // All tool events come from the host callback, not provider assertions.
@@ -201,7 +205,12 @@ public actor ToolLoop {
         try validate(arguments: call.argumentsJSON, schema: executor.descriptor.inputSchema, callID: call.id)
         continuation.yield(.toolCallStarted(id: call.id, name: call.name))
         continuation.yield(.toolCallCompleted(call))
-        let result = try await executor.execute(call, context: context)
+        let result: NormalizedToolResult
+        do { result = try await executor.execute(call, context: context) }
+        catch let pause as ToolTurnSuspension {
+            guard pause.result.callID == call.id else { throw ToolLoopError.resultCallIDMismatch(expected: call.id, actual: pause.result.callID) }
+            try await suspend(pause, step: step, calls: [call], results: [pause.result], context: context, continuation: continuation)
+        }
         try Task.checkCancellation()
         guard result.callID == call.id else { throw ToolLoopError.resultCallIDMismatch(expected: call.id, actual: result.callID) }
         try await transactionHook.persist(step: step, calls: [call], results: [result], context: context)
@@ -209,15 +218,37 @@ public actor ToolLoop {
         return result
     }
 
-    private func executeSequential(_ work: [(NormalizedToolCall, any ToolExecutor)], context: ToolContext) async throws -> [NormalizedToolResult] {
+    private func executeSequential(_ work: [(NormalizedToolCall, any ToolExecutor)], step: Int, context: ToolContext,
+                                   continuation: AsyncThrowingStream<InferenceEvent, Error>.Continuation) async throws -> [NormalizedToolResult] {
         var results: [NormalizedToolResult] = []
         for (call, executor) in work {
             try Task.checkCancellation()
-            let result = try await executor.execute(call, context: context)
+            let result: NormalizedToolResult
+            do { result = try await executor.execute(call, context: context) }
+            catch let pause as ToolTurnSuspension {
+                guard pause.result.callID == call.id else { throw ToolLoopError.resultCallIDMismatch(expected: call.id, actual: pause.result.callID) }
+                results.append(pause.result)
+                try await suspend(pause, step: step, calls: work.prefix(results.count).map(\.0), results: results,
+                                  context: context, continuation: continuation)
+            }
             guard result.callID == call.id else { throw ToolLoopError.resultCallIDMismatch(expected: call.id, actual: result.callID) }
             results.append(result)
         }
         return results
+    }
+
+    private func suspend(_ pause: ToolTurnSuspension, step: Int, calls: [NormalizedToolCall], results: [NormalizedToolResult],
+                         context: ToolContext, continuation: AsyncThrowingStream<InferenceEvent, Error>.Continuation) async throws -> Never {
+        do { try await transactionHook.persist(step: step, calls: calls, results: results, context: context) }
+        catch {
+            for result in results.dropLast() { continuation.yield(.toolResult(result)) }
+            let failed = NormalizedToolResult(callID: pause.result.callID,
+                content: [.text("Question saved, but its tool execution record could not be saved. The turn is paused. \(error.localizedDescription)")], isError: true)
+            continuation.yield(.toolResult(failed))
+            throw ToolTurnSuspension(result: failed)
+        }
+        for result in results { continuation.yield(.toolResult(result)) }
+        throw pause
     }
 
     private func executeParallel(_ work: [(NormalizedToolCall, any ToolExecutor)], context: ToolContext) async throws -> [NormalizedToolResult] {
@@ -278,7 +309,8 @@ private actor InteractiveCallLedger {
         active += 1
         return seen.count
     }
-    func finishCall() {
+    func finishCall(suspend: Bool = false) {
+        if suspend { closed = true }
         active -= 1
         if active == 0 {
             let pending = waiters; waiters.removeAll()

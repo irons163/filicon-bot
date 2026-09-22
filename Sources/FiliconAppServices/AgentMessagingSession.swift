@@ -114,6 +114,7 @@ public actor AgentMessagingSession {
     }
 
     public func groupPublisher(for senderID: UUID, userMessageID: UUID,
+                               publishQuestion: AgentUserMessageTool.QuestionPublisher? = nil,
                                publish: @escaping @Sendable (GroupAgentPublication) async throws -> Void) async throws -> AgentUserMessageTool {
         let images = try await availableImages(senderID: senderID, replyTo: nil, groupUserMessageID: userMessageID)
         guard let sender = await agents.profile(id: senderID), sender.archivedAt == nil else { throw AgentMessagingError.invalidRecipient }
@@ -123,7 +124,7 @@ public actor AgentMessagingSession {
                 try await checkOpen()
                 try await authorizePublication(sender, text, images, call, context)
                 try await checkOpen()
-            }) { [self, publicationLifetime] text, images in
+            }, publishQuestion: publishQuestion) { [self, publicationLifetime] text, images in
                 try await checkOpen()
                 if !images.isEmpty {
                     let current = try await availableImages(senderID: senderID, replyTo: nil, groupUserMessageID: userMessageID)

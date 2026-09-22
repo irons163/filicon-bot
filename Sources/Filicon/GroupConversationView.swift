@@ -167,6 +167,10 @@ struct GroupConversationView: View {
                             message: message,
                             agent: model.agents.first { $0.id == message.senderID },
                             waitingForFolderCallIDs: Set(folderRequests.map { $0.toolCallID.rawValue }),
+                            questionEnabled: model.canAnswerGroupQuestion(message),
+                            onQuestionAnswer: { answer in
+                                Task { await model.groupQuestionAnswered(message, answer: answer) }
+                            },
                             onReaction: { Task { await model.toggleGroupReaction(groupID: group.id, messageID: message.id, emoji: "👍") } }
                         ).id(message.id)
                     }
@@ -401,6 +405,8 @@ struct GroupMessageBubble: View {
     let message: RoomMessage
     let agent: AgentProfile?
     var waitingForFolderCallIDs: Set<String> = []
+    var questionEnabled = false
+    var onQuestionAnswer: ((AgentQuestionAnswer) -> Void)?
     let onReaction: () -> Void
     @State private var hovering = false
     private var isUser: Bool { message.senderID == nil }
@@ -416,9 +422,16 @@ struct GroupMessageBubble: View {
                             .font(.system(size: 10.5, weight: .semibold)).foregroundStyle(FiliconTheme.textSecondary)
                     }
                 }
-                if !message.text.isEmpty {
+                if let question = message.question {
+                    GroupQuestionCard(card: question, enabled: questionEnabled, onAnswer: onQuestionAnswer ?? { _ in })
+                        .accessibilityIdentifier("group-question-\(message.id)")
+                }
+                if !message.text.isEmpty && message.question == nil {
                     Group {
-                        if isUser { Text(message.text) }
+                        if isUser {
+                            Text(message.questionReplyTo != nil && message.text == "Question dismissed without an answer."
+                                 ? l10n("Question dismissed without an answer.") : message.text)
+                        }
                         else { RichMarkdownView(source: message.text, fillsWidth: false) }
                     }.font(.system(size: 13)).lineSpacing(4).textSelection(.enabled)
                     .foregroundStyle(isUser ? FiliconTheme.userBubbleText : FiliconTheme.textPrimary)
@@ -452,7 +465,7 @@ struct GroupMessageBubble: View {
                     )
                     .font(.caption).foregroundStyle(FiliconTheme.textSecondary)
                     .accessibilityIdentifier("group-member-outcome-\(outcome.rawValue)")
-                } else if !isUser && message.toolActivities.isEmpty {
+                } else if !isUser && message.toolActivities.isEmpty && message.question == nil {
                     Text(l10n("Text reply · no tools used"))
                         .font(.system(size: 10)).foregroundStyle(FiliconTheme.textTertiary)
                 }
@@ -484,6 +497,100 @@ struct GroupMessageBubble: View {
         case .cancelled: l10n("Cancelled")
         }
     }
+}
+
+struct GroupQuestionCard: View {
+    let card: GroupQuestion
+    let enabled: Bool
+    let onAnswer: (AgentQuestionAnswer) -> Void
+    @State private var selectedIndex: Int?
+    @State private var customAnswer = ""
+
+    private var answer: AgentQuestionAnswer? {
+        if let selectedIndex { return .option(selectedIndex) }
+        if card.question.allowCustom == true, AgentQuestion.validText(customAnswer, maximum: 2_000) {
+            return .custom(customAnswer)
+        }
+        return nil
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label(l10n(card.isPending ? "Waiting for your answer" : card.retired ? "Question unavailable" : card.answer == .dismissed ? "Cancelled" : "Answered"),
+                  systemImage: card.isPending ? "questionmark.bubble" : card.retired || card.answer == .dismissed ? "xmark.bubble" : "checkmark.bubble")
+                .font(.caption.weight(.semibold)).foregroundStyle(FiliconTheme.textSecondary)
+            Text(card.question.prompt).font(.headline).fixedSize(horizontal: false, vertical: true)
+            if let help = card.question.helpText {
+                Text(help).font(.callout).foregroundStyle(FiliconTheme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if card.isPending {
+                ForEach(card.question.options.indices, id: \.self) { index in
+                    option(index)
+                }
+                if card.question.allowCustom == true {
+                    TextField(l10n("Your answer"), text: $customAnswer, axis: .vertical)
+                        .lineLimit(2...5).textFieldStyle(.roundedBorder).disabled(!enabled)
+                        .accessibilityIdentifier("group-question-custom")
+                        .onChange(of: customAnswer) {
+                            if !customAnswer.isEmpty { selectedIndex = nil }
+                        }
+                    if !customAnswer.isEmpty && !AgentQuestion.validText(customAnswer, maximum: 2_000) {
+                        Text(l10n("The question or answer is invalid. Nothing was sent."))
+                            .font(.caption).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                Text(l10n("Answers do not approve tool access. Do not enter passwords or API keys."))
+                    .font(.caption).foregroundStyle(FiliconTheme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                ViewThatFits(in: .horizontal) {
+                    HStack { actions }
+                    VStack(alignment: .leading) { actions }
+                }
+            } else if let answer = card.answer, let reply = try? card.question.reply(for: answer) {
+                Text(answer == .dismissed ? l10n("Question dismissed without an answer.") : reply).textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(14).frame(maxWidth: .infinity, alignment: .leading)
+        .foregroundStyle(FiliconTheme.textPrimary)
+        .background(FiliconTheme.incomingBubble, in: RoundedRectangle(cornerRadius: 16))
+    }
+
+    private func option(_ index: Int) -> some View {
+        let option = card.question.options[index]
+        return Button { select(index) } label: {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: selectedIndex == index ? "largecircle.fill.circle" : "circle")
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(option.label).font(.callout.weight(.semibold))
+                    if option.reply != option.label { Text(option.reply).font(.caption).textSelection(.enabled) }
+                    if let description = option.description { Text(description).font(.caption) }
+                }.fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+                if option.style == .primary { Image(systemName: "star").accessibilityHidden(true) }
+                if option.style == .danger { Image(systemName: "exclamationmark.triangle").accessibilityHidden(true) }
+            }
+            .padding(10).frame(maxWidth: .infinity, alignment: .leading)
+            .background(FiliconTheme.input, in: RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(selectedIndex == index ? FiliconTheme.textPrimary : .clear))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain).disabled(!enabled)
+        .accessibilityIdentifier("group-question-option-\(index)")
+        .accessibilityAddTraits(selectedIndex == index ? .isSelected : [])
+    }
+
+    @ViewBuilder private var actions: some View {
+        Button(l10n("Send answer"), action: submit).buttonStyle(.borderedProminent)
+            .disabled(!enabled || answer == nil).accessibilityIdentifier("group-question-submit")
+        Button(l10n("Dismiss"), action: dismiss).buttonStyle(.bordered)
+            .disabled(!enabled).accessibilityIdentifier("group-question-dismiss")
+    }
+
+    private func select(_ index: Int) { customAnswer = ""; selectedIndex = index }
+    private func submit() { if let answer, enabled { onAnswer(answer) } }
+    private func dismiss() { if enabled { onAnswer(.dismissed) } }
 }
 
 struct GroupToolApprovalPanel: View {

@@ -1,3 +1,12 @@
+"Waiting for your answer" = "等待你的回答";
+"Your answer" = "你的回答";
+"Send answer" = "送出回答";
+"Answered" = "已回答";
+"Question unavailable" = "問題已失效";
+"Question dismissed without an answer." = "已略過問題，未提供回答。";
+"Answers do not approve tool access. Do not enter passwords or API keys." = "回答不代表核准工具存取。請勿輸入密碼或 API 金鑰。";
+"The question or answer is invalid. Nothing was sent." = "問題或回答無效。未送出任何內容。";
+"This question is no longer available in this account or group." = "此問題在目前帳號或群組中已無法回答。";
 "Linear supports issueCreated, statusChanged and endOfCycle. Use up to 50 UUIDs per list; empty means any. statusIds is only for statusChanged; cycleIds is only for endOfCycle. Cycles have no project relationship, so projectIds must be omitted or empty. Names, unknown fields and invalid filters are rejected." = "Linear 支援 issueCreated、statusChanged 及 endOfCycle。每份清單最多 50 個 UUID；空清單代表不限。statusIds 僅適用於 statusChanged；cycleIds 僅適用於 endOfCycle。週期沒有專案關聯，因此 projectIds 必須省略或留空。名稱、未知欄位及無效篩選條件皆會被拒絕。";
 "Linear requires existing authenticated ingress; no webhook or connection is installed or started. Supports issue creation, actual status changes and cycle completion. Completion requires completedAt changing from null to a valid time, including early completion; a scheduled end date alone does not trigger it. Filters use exact UUIDs, not names; empty means any. statusIds is only for statusChanged; cycleIds is only for endOfCycle. Cycles have no project relationship, so projectIds must be omitted or empty. Replay protection is bounded. Queued events may trigger after approval and incur model costs." = "Linear 需要既有且通過驗證的事件入口；不會安裝或啟動 webhook 或連線。支援建立 Issue、實際狀態變更及週期完成。完成事件必須是 completedAt 從 null 變為有效時間，也包含提前完成；僅到達預定結束日期不會觸發。篩選須使用確切 UUID，不能使用名稱；空清單代表不限。statusIds 僅適用於 statusChanged；cycleIds 僅適用於 endOfCycle。週期沒有專案關聯，因此 projectIds 必須省略或留空。重放防護有範圍限制。已排入佇列的事件可能在核准後觸發，並產生模型費用。";
 "sentry-hook-signature: HMAC(rawBody), optionally prefixed sha256=; body digest identifies events and prevents replay within the cache window; Request-ID is diagnostic only; no signed timestamp proves freshness" = "sentry-hook-signature：HMAC(rawBody)，可加上 sha256= 前綴；以本文摘要識別事件，並在快取時限內防止重播；Request-ID 僅供診斷；沒有已簽章的時間戳可證明請求是新近發送";

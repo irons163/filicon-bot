@@ -122,7 +122,10 @@ class ResourceSigningTest < Minitest::Test
     configurations.each do |id|
       settings = objects.fetch(id).fetch('buildSettings')
       assert_equal 'YES', settings.fetch('ENABLE_USER_SCRIPT_SANDBOXING')
+      assert_equal 'YES', settings.fetch('USE_RECURSIVE_SCRIPT_INPUTS_IN_SCRIPT_PHASES')
       assert_equal 'Support/Filicon.entitlements', settings.fetch('CODE_SIGN_ENTITLEMENTS')
     end
+    assert_includes File.read(File.join(ROOT, 'scripts', 'generate-xcode-project.rb')),
+                    "'USE_RECURSIVE_SCRIPT_INPUTS_IN_SCRIPT_PHASES' => 'YES'"
   end
 end

@@ -272,6 +272,7 @@ final class AppModel: ObservableObject {
     private let subagentService: SubagentService?
     private let agentAvatarStore: AgentAvatarStore
     private let groupService: GroupService?
+    private var groupQuestionLifetimes: [UUID: AgentPublicationLifetime] = [:]
     private let automationService: AutomationService?
     private var routineEditSessions: [UUID: RoutineEditSession] = [:]
     var workflowService: WorkflowService? = nil
@@ -3428,6 +3429,7 @@ final class AppModel: ObservableObject {
             if runningGroups.contains(groupID) { await stopGroup(id: groupID) }
             try await groupService.update(groupID: groupID, name: name, summary: summary, memberIDs: memberIDs)
             groups = await groupService.list()
+            groupMessages[groupID] = await groupService.messages(groupID: groupID)
             return true
         } catch {
             errorMessage = error.localizedDescription
@@ -3438,18 +3440,26 @@ final class AppModel: ObservableObject {
     func updateGroupMembers(groupID: UUID, memberIDs: [UUID]) async {
         guard let groupService else { return }
         if runningGroups.contains(groupID) { await stopGroup(id: groupID) }
-        do { try await groupService.updateMembers(groupID: groupID, memberIDs: memberIDs); groups = await groupService.list() }
+        do {
+            try await groupService.updateMembers(groupID: groupID, memberIDs: memberIDs)
+            groups = await groupService.list()
+            groupMessages[groupID] = await groupService.messages(groupID: groupID)
+        }
         catch { errorMessage = error.localizedDescription }
     }
 
     func sendGroupMessage(groupID: UUID, text: String, images: [AttachmentMetadata] = [],
+                          questionReply: (UUID, AgentQuestionAnswer)? = nil,
                           onPosted: @MainActor () -> Void = {}) async {
         guard let groupService, !agentMessagingAccountTransition,
               !runningGroups.contains(groupID), !stoppingGroups.contains(groupID) else { return }
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty || !images.isEmpty,
+        guard !text.isEmpty || !images.isEmpty || questionReply != nil,
               let group = groups.first(where: { $0.id == groupID }), !group.memberIDs.isEmpty else { return }
+        guard questionReply == nil || images.isEmpty else { return }
         let generation = autoReviewAccountGeneration
+        let questionLifetime = AgentPublicationLifetime()
+        groupQuestionLifetimes[groupID] = questionLifetime
         // Reserve before the first suspension so two sends cannot race.
         runningGroups.insert(groupID)
         workspaceFolders.beginTurn(conversationID: groupID)
@@ -3458,6 +3468,8 @@ final class AppModel: ObservableObject {
         var imageRecipientName: String?
         var imageRecipientIDs: Set<UUID> = []
         defer {
+            questionLifetime.close()
+            groupQuestionLifetimes[groupID] = nil
             agentMessagingSessions[groupID] = nil
             runningGroups.remove(groupID)
             cancelledGroupRuns.remove(groupID)
@@ -3484,16 +3496,23 @@ final class AppModel: ObservableObject {
             guard generation == autoReviewAccountGeneration, !agentMessagingAccountTransition,
                   !cancelledGroupRuns.contains(groupID) else { throw CancellationError() }
             try Task.checkCancellation()
-            let posted = try await groupService.postUserMessage(text, groupID: groupID, images: images, expectedMemberIDs: group.memberIDs)
+            let posted: RoomMessage
+            if let (messageID, answer) = questionReply {
+                posted = try await groupService.answerQuestion(groupID: groupID, messageID: messageID, answer: answer,
+                    accountID: settings.accountScope ?? "local", lifetime: questionLifetime)
+            } else {
+                posted = try await groupService.postUserMessage(text, groupID: groupID, images: images, expectedMemberIDs: group.memberIDs)
+            }
             guard generation == autoReviewAccountGeneration, !agentMessagingAccountTransition else { throw CancellationError() }
             onPosted()
             groupMessages[groupID] = await groupService.messages(groupID: groupID)
             guard generation == autoReviewAccountGeneration, !agentMessagingAccountTransition,
                   !cancelledGroupRuns.contains(groupID) else { throw CancellationError() }
-            _ = try await groupService.run(
+            let produced = try await groupService.run(
                 groupID: groupID,
                 responder: GroupConversationResponder(groupID: groupID, registry: registry, coordinator: coordinator, messaging: messaging,
-                    userMessageID: posted.id, userImages: loadedImages, imageRecipientIDs: imageRecipientIDs),
+                    userMessageID: posted.id, userImages: loadedImages, imageRecipientIDs: imageRecipientIDs,
+                    questionAccountID: settings.accountScope ?? "local", questionLifetime: questionLifetime),
                 onAgentChange: { [weak self] agentID in
                     await MainActor.run { self?.thinkingGroupMembers[groupID] = agentID }
                 }
@@ -3505,7 +3524,7 @@ final class AppModel: ObservableObject {
                     } else { self.groupMessages[groupID, default: []].append(message) }
                 }
             }
-            if !cancelledGroupRuns.contains(groupID) {
+            if !cancelledGroupRuns.contains(groupID), !produced.contains(where: { $0.question != nil }) {
                 try await messaging?.drain(onAgentChange: { [weak self] agentID in
                     await MainActor.run { self?.thinkingGroupMembers[groupID] = agentID }
                 }, onUpdate: { [weak self] message in
@@ -3537,6 +3556,7 @@ final class AppModel: ObservableObject {
             return
         }
         guard runningGroups.contains(id), stoppingGroups.insert(id).inserted else { return }
+        groupQuestionLifetimes[id]?.close()
         agentMessagingSessions[id]?.revokeProfileChanges()
         cancelledGroupRuns.insert(id)
         workspaceFolders.cancel(conversationID: id)
@@ -3551,6 +3571,20 @@ final class AppModel: ObservableObject {
         await localToolRuntime.cancel(conversationID: id)
         await invalidateMCPAuthorization(conversationID: id)
         thinkingGroupMembers[id] = nil
+    }
+
+    func canAnswerGroupQuestion(_ message: RoomMessage) -> Bool {
+        guard !agentMessagingAccountTransition, !runningGroups.contains(message.groupID), !stoppingGroups.contains(message.groupID),
+              groupMessages[message.groupID]?.contains(message) == true,
+              let card = message.question, card.isPending, card.accountID == (settings.accountScope ?? "local"),
+              groups.first(where: { $0.id == message.groupID })?.memberIDs == card.memberIDs,
+              agents.contains(where: { $0.id == message.senderID && $0.archivedAt == nil }) else { return false }
+        return true
+    }
+
+    func groupQuestionAnswered(_ message: RoomMessage, answer: AgentQuestionAnswer) async {
+        guard canAnswerGroupQuestion(message) else { return }
+        await sendGroupMessage(groupID: message.groupID, text: "", questionReply: (message.id, answer))
     }
 
     private func recordDelegatedGroupMessage(_ message: RoomMessage) async throws {
@@ -4833,6 +4867,7 @@ final class AppModel: ObservableObject {
     func cancelAutoReviewApprovals(nextAccountID: String) async {
         // Queued peer work is scoped to the account that approved the exchange.
         agentMessagingAccountTransition = true
+        for lifetime in groupQuestionLifetimes.values { lifetime.close() }
         for session in routineEditSessions.values { session.lifetime.close() }
         routineEditSessions.removeAll()
         agentMemoryUILifetime.close()

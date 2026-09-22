@@ -52,6 +52,24 @@ responders or automatically resend images to other models. Group-target image
 broadcasts, arbitrary paths, URLs and generated images remain unsupported.
 Imported blobs are not yet automatically cleaned up when removed from a draft.
 
+In **normal group chats**, `SendMessage(type:"widget", widget:...)` can now ask
+one choice question with 1–6 options, optional help/option descriptions, and an
+optional custom answer. The chat shows the actual option value as well as its
+label; select a choice and press **Send answer**, or **Dismiss** without answering.
+Publishing the question ends the current tool turn and pauses further group
+responses. Answering or dismissing resumes only the asking member, even when the
+answer contains `@everyone` or another name. Questions and answers survive restart;
+duplicate submissions, another account, archived askers, and changed group
+membership cannot reuse a stale question. With `dismissOnMoveOn:true`, a newer
+ordinary user message retires the question; the default is false.
+
+A question answer is **not tool approval** and must not contain passwords or
+API keys. Writes, image publication and delegation retain their separate gates.
+Question widgets are not yet available in mailbox/direct-chat/background peer
+wakes. Standalone attachments, masked secret requests, `reply_to`/`channel`
+routing and the reference's vendor-specific cloud-agent cards remain outside
+this `SendMessage` implementation; this is not complete reference parity.
+
 In group and mailbox turns, an agent can also propose changing **its own avatar**
 with `update_state(target:"avatar", action:"set", pet_id:"hoots")`, or restore
 the default Codex companion with `action:"clear"` and no `pet_id`. Each change

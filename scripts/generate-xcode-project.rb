@@ -94,6 +94,7 @@ app.build_configurations.each do |config|
     'INFOPLIST_FILE' => 'Support/Info.plist',
     'PRODUCT_BUNDLE_IDENTIFIER' => 'com.filicon.app',
     'CODE_SIGN_ENTITLEMENTS' => 'Support/Filicon.entitlements',
+    'USE_RECURSIVE_SCRIPT_INPUTS_IN_SCRIPT_PHASES' => 'YES',
     'GENERATE_INFOPLIST_FILE' => 'NO',
     'ENABLE_DEBUG_DYLIB' => 'NO',
   })

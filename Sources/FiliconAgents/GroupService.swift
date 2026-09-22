@@ -34,11 +34,13 @@ public struct GroupAgentPublication: Sendable {
     public let images: [AttachmentMetadata]
     public let sourceUserMessageID: UUID?
     public let lifetime: AgentPublicationLifetime?
+    public let question: GroupQuestion?
 
     public init(text: String, images: [AttachmentMetadata] = [], sourceUserMessageID: UUID? = nil,
-                lifetime: AgentPublicationLifetime? = nil) {
+                lifetime: AgentPublicationLifetime? = nil, question: GroupQuestion? = nil) {
         self.text = text; self.images = images
         self.sourceUserMessageID = sourceUserMessageID; self.lifetime = lifetime
+        self.question = question
     }
 }
 
@@ -148,7 +150,8 @@ public actor GroupService {
                                  lifetime: AgentGroupPostLifetime) async throws {
         guard let senderID = message.senderID, message.groupID == expected.id,
               !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, message.text.count <= 8_000,
-              message.toolActivities.isEmpty, message.memberOutcome == nil else { throw AgentGroupPostError.unavailable }
+              message.toolActivities.isEmpty, message.memberOutcome == nil,
+              message.question == nil, message.questionReplyTo == nil else { throw AgentGroupPostError.unavailable }
         let current = try await audience(groupID: expected.id, senderID: senderID)
         guard current == expected else { throw AgentGroupPostError.changed }
         try lifetime.commit {
@@ -163,6 +166,7 @@ public actor GroupService {
     /// Host-only reports from approved cross-agent wakes. The app fences these
     /// to the originating request; they are not new user messages or @mentions.
     public func recordDelegatedMessage(_ message: RoomMessage) throws {
+        guard message.question == nil, message.questionReplyTo == nil else { throw AgentQuestionError.unavailable }
         guard message.senderID != nil, state.groups.contains(where: { $0.id == message.groupID }) else {
             throw AgentServiceError.unknownGroup(message.groupID)
         }
@@ -182,28 +186,24 @@ public actor GroupService {
         for id in memberIDs where await agents.profile(id: id) == nil { throw AgentServiceError.unknownAgent(id) }
         guard let index = state.groups.firstIndex(where: { $0.id == groupID }) else { throw AgentServiceError.unknownGroup(groupID) }
         let previous = state.groups[index]
+        let previousMessages = state.roomMessages
         var updated = previous
         updated.name = String(name.prefix(120))
         updated.summary = String(summary.prefix(2_000))
         updated.memberIDs = memberIDs
         if previous.memberIDs != memberIDs { updated.nextSpeakerOffset = 0 }
         state.groups[index] = updated
+        if previous.memberIDs != memberIDs { retireQuestions(groupID: groupID) }
         do { try persist() }
-        catch { state.groups[index] = previous; throw error }
+        catch { state.groups[index] = previous; state.roomMessages = previousMessages; throw error }
         if previous.memberIDs != memberIDs { stop(groupID: groupID) }
     }
 
     public func updateMembers(groupID: UUID, memberIDs: [UUID]) async throws {
-        guard let index = state.groups.firstIndex(where: { $0.id == groupID }) else {
+        guard let group = state.groups.first(where: { $0.id == groupID }) else {
             throw AgentServiceError.unknownGroup(groupID)
         }
-        guard memberIDs.count <= Self.maximumMembers else { throw AgentServiceError.groupMemberLimit }
-        guard Set(memberIDs).count == memberIDs.count else { throw AgentServiceError.duplicateMember }
-        for id in memberIDs where await agents.profile(id: id) == nil { throw AgentServiceError.unknownAgent(id) }
-        state.groups[index].memberIDs = memberIDs
-        state.groups[index].nextSpeakerOffset = 0
-        stop(groupID: groupID)
-        try persist()
+        try await update(groupID: groupID, name: group.name, summary: group.summary, memberIDs: memberIDs)
     }
 
     public func postUserMessage(_ text: String, groupID: UUID, images: [AttachmentMetadata] = [],
@@ -223,10 +223,46 @@ public actor GroupService {
             throw AgentServiceError.unknownGroupMention(unknown)
         }
         let message = RoomMessage(groupID: groupID, senderID: nil, text: text, images: images)
+        let previous = state.roomMessages
+        retireQuestions(groupID: groupID, onlyMoveOn: true)
         state.roomMessages.append(message)
         do { try persist() }
-        catch { state.roomMessages.removeAll { $0.id == message.id }; throw error }
+        catch { state.roomMessages = previous; throw error }
         return message
+    }
+
+    public func answerQuestion(groupID: UUID, messageID: UUID, answer: AgentQuestionAnswer,
+                               accountID: String, lifetime: AgentPublicationLifetime) async throws -> RoomMessage {
+        guard let original = state.roomMessages.first(where: { $0.groupID == groupID && $0.id == messageID }),
+              let card = original.question, card.isPending, card.accountID == accountID,
+              let senderID = original.senderID,
+              state.groups.first(where: { $0.id == groupID })?.memberIDs == card.memberIDs,
+              card.memberIDs.contains(senderID) else { throw AgentQuestionError.unavailable }
+        let text = try card.question.reply(for: answer)
+        let epoch = epochs[groupID]
+        guard let agent = await agents.profile(id: senderID), agent.archivedAt == nil else { throw AgentQuestionError.unavailable }
+        try Task.checkCancellation()
+        guard epochs[groupID] == epoch,
+              state.groups.first(where: { $0.id == groupID })?.memberIDs == card.memberIDs,
+              let index = state.roomMessages.firstIndex(where: { $0 == original }) else { throw AgentQuestionError.unavailable }
+        var reply = RoomMessage(groupID: groupID, senderID: nil, text: text)
+        reply.questionReplyTo = original.id
+        try lifetime.commit {
+            let previous = state.roomMessages
+            state.roomMessages[index].question?.answer = answer
+            state.roomMessages[index].question?.responseMessageID = reply.id
+            state.roomMessages.append(reply)
+            do { try persist() } catch { state.roomMessages = previous; throw error }
+        }
+        return reply
+    }
+
+    private func retireQuestions(groupID: UUID, onlyMoveOn: Bool = false) {
+        for index in state.roomMessages.indices where state.roomMessages[index].groupID == groupID {
+            guard let question = state.roomMessages[index].question, question.isPending,
+                  !onlyMoveOn || question.question.dismissOnMoveOn == true else { continue }
+            state.roomMessages[index].question?.retired = true
+        }
     }
 
     public func run(
@@ -257,9 +293,16 @@ public actor GroupService {
         var publishedTexts: [UUID: Set<String>] = [:]
         var firstFailure: (any Error)?
         let initialHistory = state.roomMessages.filter { $0.groupID == groupID }
+        let questionRecipient: UUID? = initialHistory.last(where: { $0.senderID == nil }).flatMap { reply in
+            guard let questionID = reply.questionReplyTo,
+                  let question = initialHistory.first(where: { $0.id == questionID }),
+                  question.question?.responseMessageID == reply.id else { return nil }
+            return question.senderID
+        }
         let responderIDs = delegatedAudience.map { audience in
             members.filter { agent in audience.members.contains(where: { $0.id == agent.id }) && agent.id != delegatedSenderID }.map(\.id)
-        } ?? Self.resolveResponderIDs(members: members, history: initialHistory)
+        } ?? questionRecipient.map { recipient in members.filter { $0.id == recipient }.map(\.id) }
+          ?? Self.resolveResponderIDs(members: members, history: initialHistory)
         guard !responderIDs.isEmpty else { return [] }
         // Rotate the starting member between requests as well as between rounds.
         state.groups[groupIndex].nextSpeakerOffset = (group.nextSpeakerOffset + 1) % responderIDs.count
@@ -324,6 +367,7 @@ public actor GroupService {
                     await onAgentChange(nil)
                     guard epochs[groupID] == epoch, !Task.isCancelled else { return produced }
                     activeResponses[groupID] = nil
+                    if published.contains(where: { $0.question != nil }) { return produced }
                     failedMemberIDs.insert(memberID)
                     try await recordOutcome(.failed, message: activityMessage, onMessage: onMessage)
                     if firstFailure == nil { firstFailure = error }
@@ -338,6 +382,10 @@ public actor GroupService {
                 guard epochs[groupID] == epoch, !Task.isCancelled else { return produced }
                 let published = explicitReplies[activityMessage.id] ?? []
                 produced += published
+                if published.contains(where: { $0.question != nil }) {
+                    try await finishPendingTools(messageID: activityMessage.id, cancelled: true, onMessage: onMessage)
+                    return produced
+                }
                 total += published.count
                 messagesThisRound += published.count
                 for message in published {
@@ -397,6 +445,14 @@ public actor GroupService {
         try Task.checkCancellation()
         guard epochs[activity.groupID] == epoch else { throw CancellationError() }
         let text = publication.text, images = publication.images
+        if let card = publication.question {
+            try card.question.validate()
+            guard publication.lifetime != nil, images.isEmpty, card.isPending, card.responseMessageID == nil,
+                  text == card.question.prompt,
+                  state.groups.first(where: { $0.id == activity.groupID })?.memberIDs == card.memberIDs else {
+                throw AgentQuestionError.unavailable
+            }
+        }
         if !images.isEmpty {
             guard publication.lifetime != nil, images.count <= 4, Set(images.map(\.id)).count == images.count,
                   let user = state.roomMessages.last(where: { $0.groupID == activity.groupID && $0.senderID == nil }),
@@ -414,7 +470,9 @@ public actor GroupService {
               !previousTexts.contains(fingerprint), !replies.contains(where: { Self.replyFingerprint($0.text) == fingerprint }) else {
             throw AgentServiceError.invalidName
         }
-        let message = RoomMessage(groupID: activity.groupID, senderID: activity.senderID, text: text, images: images)
+        var draft = RoomMessage(groupID: activity.groupID, senderID: activity.senderID, text: text, images: images)
+        draft.question = publication.question
+        let message = draft
         let commit = {
             self.state.roomMessages.append(message)
             do { try self.persist() } catch { self.state.roomMessages.removeLast(); throw error }
