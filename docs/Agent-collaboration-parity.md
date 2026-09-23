@@ -1,5 +1,11 @@
 # 協作能力核對紀錄（更新至 2026-09-23）
 
+## 本輪增量：群組行內訊息引用樣式與缺口校正（2026-09-23）
+
+檢查現有程式與測試後，`sand-msg:<shortAddress>` 的**同群組安全跳轉**早已存在：只有保存且唯一、位於本文之前的有效位址可開啟；缺失連結只留下標籤，不開外部 App。較早段落把「chip」統稱為缺口，容易誤解成無法跳轉。本批只將有效引用改為有底色、加重字重的行內強調；一般 HTTPS 連結、無效引用和 code／math／table 不套用。這是原生 `Text` 內的 chip-like 樣式，**不是** reconstructed 的圓角 chip 像素一致實作，也沒有新增 mailbox 引用能力。mailbox 的內部 `AgentMessage` 與使用者聊天的 `RoomMessage` 分開保存，不能直接沿用群組位址而產生無法定位的假引用。
+
+聚焦 Rich Markdown **19 項／2 suites** 與群組七語言 × 明暗畫面 **7 項／1 suite** 通過；抽看繁中暗色、法文淺色，標籤完整且無效位址不突出。原生 Debug 建置、deep strict codesign、package verifier 通過。完整非並行回歸此次**未通過**：多個無關持久化測試在 macOS 系統暫存目錄新寫的 JSON 重讀時收到 `EPERM`；以工作區 `TMPDIR` 重跑受影響的 Agent workflow suite 仍落到系統目錄並重現。這次不能宣稱全套回歸通過或判定為本批 UI 改動造成；待系統檔案存取恢復後需重跑。未啟動／重啟使用者 App 或 Xcode、未 push。整體仍 **43 complete／4 partial／1 NA**；圓角 chip 樣式、mailbox／單獨聊天引用與提問、跨 session/fork、外部 channel、獨立附件、安全憑證請求、cloud-agent 卡及其他 partial 缺口仍未完成。
+
 ## 本輪增量：來源對話授權下的群組背景引用（2026-09-23）
 
 接續 `1f0e4c1` 的記憶建議，對照本機非官方 reconstructed `source/host/runner/tools/send-message-tool.ts` 的一般 `reply_to`：Filicon 先前只有前景人類群組回合可由 SendMessage 引用，透過 `SendToAgent` 發到群組後喚醒的其他代理人只能送純文字。本批讓**已核准、受督導的群組 peer-message wake** 也能引用同一目標群組最近 40 筆可用訊息，包含剛收到的同伴發文；來源對話 ID 仍用於工具權限與 Stop，引用目標和保存回條則固定在群組 ID。不能以來源對話的其他群組位址猜測或引用。

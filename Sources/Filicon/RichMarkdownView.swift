@@ -296,13 +296,22 @@ struct RichMarkdownView: View {
 
     func attributedProse(_ prose: String) -> AttributedString? {
         guard var attributed = RichMarkdownProseLayout.make(prose) else { return nil }
-        // Keep the author's label, but don't display a dead internal link as clickable.
-        let unavailable = attributed.runs.compactMap { run -> Range<AttributedString.Index>? in
-            guard let url = run.link, url.scheme?.lowercased() == "sand-msg",
-                  messageReferences?.target(url) == nil else { return nil }
-            return run.range
+        // Only host-resolved message links get the inline reference treatment.
+        // An unavailable address keeps its author's label, never a tappable chip.
+        let references = attributed.runs.compactMap { run -> (Range<AttributedString.Index>, Bool)? in
+            guard let url = run.link, url.scheme?.lowercased() == "sand-msg" else { return nil }
+            return (run.range, messageReferences?.target(url) != nil)
         }
-        for range in unavailable { attributed[range].link = nil }
+        for (range, available) in references {
+            if available {
+                attributed[range].foregroundColor = Color.accentColor
+                attributed[range].backgroundColor = Color.accentColor.opacity(0.14)
+                attributed[range].font = .system(.callout, design: .rounded).weight(.semibold)
+                attributed[range].underlineStyle = nil
+            } else {
+                attributed[range].link = nil
+            }
+        }
         return attributed
     }
 

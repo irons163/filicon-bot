@@ -2,6 +2,8 @@
 
 本矩陣保留固定的 48 個 parity ID，對照目前 macOS Swift 實作。`complete` 表示該列所述能力有歷史實作證據，不代表原版所有細項均已重新核驗；`partial` 表示仍有功能、接線或驗證缺口；`NA` 表示該列是來源 runtime 的實作細節，不是 macOS 產品行為。這不是「原版功能全部都有」的保證。
 
+最新校正（2026-09-23）：`AGENT-02` 的群組 `sand-msg` 連結早已有安全跳轉，本輪加上有效引用的 chip-like 行內底色／字重；原版圓角 chip 的精確樣式仍未還原。`ba6b915` 已補群組背景 peer wake 引用，`5b90593` 已補其選項問題，因此下方較早快照所列的「背景引用／提問」或把所有 chip 當成功能缺口，應按此段修正。mailbox／單獨聊天引用與提問仍缺。這批聚焦測試和原生 Debug 建置／簽章／封裝通過；完整回歸因 macOS 暫存檔 `EPERM` 未通過，不能當成全套驗證成功。矩陣仍為 **43 complete／4 partial／1 NA**；詳見[最新協作核對](Agent-collaboration-parity.md)。
+
 最新驗收（2026-09-23）：群組引用回覆已提交 `e5cad3c`。本輪接上可選的代理人記憶建議：只在完成的前景群組回合做額外無工具模型請求；候選事實逐筆審核，核准後才進入該帳號／代理人的私人記憶，預設關閉。停止、帳號／成員切換、封存或停用時拒收遲到候選；舊 store 可省略新欄位。完整預設並行 **135 XCTest、1,107 Swift Testing／125 suites**（App 363／49 suites，42.129 秒）通過；七語言各 **1,660 keys／零缺漏**，14 張審核卡預覽及繁中／法文抽查通過。原生 Debug 建置、deep strict codesign、package verifier 通過；兩項 opt-in live Codex 仍跳過，沒有真實 App 點擊、付費模型或 live 帳號驗收。原版自動記憶改寫／episode／archive、跨 session/fork、chip、背景引用／提問、外部 channel、獨立附件與安全憑證請求等仍缺，整體 **43 complete／4 partial／1 NA**。詳見 [協作核對紀錄](Agent-collaboration-parity.md)。
 
 接續驗收（2026-09-23）：`AGENT-02` 的**群組背景 peer-message wake** 現可在來源對話工具權限下，引用目標群組最近 40 筆可用訊息並取得保存後的 messageID／shortAddress 回條。不可引用來源其他群組，不能繼承人類串接目標或讀歷史圖片；接續增量亦已接上背景群組選項問題，回答時在新的人類群組回合僅續接原提問者。mailbox／單獨聊天引用及提問仍缺。本次完整非並行回歸 **135 XCTest、1,110 Swift Testing／125 suites** 通過；原生 Debug 建置、嚴格簽章與封裝檢查通過。前批一次並行聚焦跑法的既有圖片暫存檔 `EPERM` 與後續重開失敗另記，不當作通過。整體仍 **43 complete／4 partial／1 NA**。實作與測試範圍見 [協作核對紀錄](Agent-collaboration-parity.md)。

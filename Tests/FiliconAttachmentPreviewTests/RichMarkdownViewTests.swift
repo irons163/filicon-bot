@@ -69,6 +69,12 @@ struct RichMarkdownViewTests {
         expectNoDifference(String(value.characters), "原始需求 👩🏽‍💻\n\nFollow-up missing.\n\n[literal](sand-msg:t0u)")
         expectNoDifference(value.runs.compactMap(\.link), [original])
         expectNoDifference(value.runs.filter { $0.link != nil }.map { String(value[$0.range].characters) }, ["原始需求 👩🏽‍💻"])
+        let reference = try #require(value.runs.first { $0.link == original })
+        #expect(reference.backgroundColor != nil)
+        #expect(reference.foregroundColor != nil)
+        #expect(reference.font != nil)
+        #expect(reference.underlineStyle == nil)
+        #expect(value.runs.first { String(value[$0.range].characters) == "missing" }?.backgroundColor == nil)
         #expect(value.runs.contains { $0.inlinePresentationIntent?.contains(.code) == true })
     }
 
@@ -140,6 +146,7 @@ struct RichMarkdownViewTests {
         #expect(String(attributed.characters).contains("Unavailable"))
         #expect(String(attributed.characters).contains("[code](sand-msg:t0u)"))
         expectNoDifference(try #require(plain.attributedProse(prose)).runs.compactMap(\.link), [https])
+        #expect(try #require(plain.attributedProse(prose)).runs.allSatisfy { $0.backgroundColor == nil })
         expectNoDifference(RichMarkdownProjection.make(source: prose).safeHTTPLinks(maximum: 3), [https])
     }
 
