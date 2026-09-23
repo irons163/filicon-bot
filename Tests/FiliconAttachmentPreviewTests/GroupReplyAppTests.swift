@@ -687,6 +687,10 @@ private struct GroupReplyAppProvider: InteractiveToolProvider {
             #expect(request.messages.first?.text.contains(asker.id.uuidString) == true)
             if step == 1 {
                 #expect(request.messages.contains { $0.text.contains("peer-message wake") })
+                #expect(request.messages.contains { $0.role == .system
+                    && $0.text.contains("including a supervised background group peer wake")
+                    && $0.text.contains("Mailbox and direct chats do not support widgets")
+                    && !$0.text.contains("No background/mailbox widgets are supported") })
                 let call = try NormalizedToolCall(id: "background-choice", name: "SendMessage",
                     argumentsJSON: Data(#"{"type":"widget","reply_to":"\#(incoming.id.uuidString)","widget":{"prompt":"Which layout?","options":[{"label":"Grid","value":"Use a grid"},{"label":"List","value":"Use a list"}]}}"#.utf8))
                 do { _ = try await execute(call); Issue.record("A saved choice must pause the peer wake") }

@@ -6,6 +6,8 @@
 
 聚焦 Rich Markdown **19 項／2 suites** 與群組七語言 × 明暗畫面 **7 項／1 suite** 通過；抽看繁中暗色、法文淺色，標籤完整且無效位址不突出。原生 Debug 建置、deep strict codesign、package verifier 通過。完整非並行回歸此次**未通過**：多個無關持久化測試在 macOS 系統暫存目錄新寫的 JSON 重讀時收到 `EPERM`；以工作區 `TMPDIR` 重跑受影響的 Agent workflow suite 仍落到系統目錄並重現。這次不能宣稱全套回歸通過或判定為本批 UI 改動造成；待系統檔案存取恢復後需重跑。未啟動／重啟使用者 App 或 Xcode、未 push。整體仍 **43 complete／4 partial／1 NA**；圓角 chip 樣式、mailbox／單獨聊天引用與提問、跨 session/fork、外部 channel、獨立附件、安全憑證請求、cloud-agent 卡及其他 partial 缺口仍未完成。
 
+接續校正：背景群組問題卡已可用，但 `SendMessage` 的模型說明殘留「背景不支援 widget」一句；已改為明示受督導的群組 peer wake 可以送一張問題卡、該 wake 結束後由人類在**新群組回合**回答，mailbox／單獨聊天則仍不支援。App 測試核對實際送入模型的 system 提示與保存／恢復路徑。先前 `EPERM` 的同一暫存檔後來可以正常讀取，完整**非並行**回歸重新執行為 exit 0，原生 Debug 建置、deep strict codesign 與 package verifier 再次通過；最初失敗仍保留為環境事件，並非隱去。沒有啟動／重啟使用者 App 或 Xcode、沒有 push 或碰真實資料。
+
 ## 本輪增量：來源對話授權下的群組背景引用（2026-09-23）
 
 接續 `1f0e4c1` 的記憶建議，對照本機非官方 reconstructed `source/host/runner/tools/send-message-tool.ts` 的一般 `reply_to`：Filicon 先前只有前景人類群組回合可由 SendMessage 引用，透過 `SendToAgent` 發到群組後喚醒的其他代理人只能送純文字。本批讓**已核准、受督導的群組 peer-message wake** 也能引用同一目標群組最近 40 筆可用訊息，包含剛收到的同伴發文；來源對話 ID 仍用於工具權限與 Stop，引用目標和保存回條則固定在群組 ID。不能以來源對話的其他群組位址猜測或引用。
