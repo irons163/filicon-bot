@@ -1,5 +1,6 @@
 import CryptoKit
 import CustomDump
+import Darwin
 import Foundation
 import Testing
 import FiliconDomain
@@ -7,6 +8,32 @@ import FiliconDomain
 
 @Suite("Native attachment viewers")
 struct AttachmentViewerTests {
+    @Test func thumbnailVerifiesBytesAndRejectsReplacedFiles() throws {
+        let sandbox = FileManager.default.temporaryDirectory.appending(path: "thumbnail-\(UUID())", directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: sandbox) }
+        try FileManager.default.createDirectory(at: sandbox, withIntermediateDirectories: true)
+        let path = sandbox.appending(path: "image.png")
+        let bytes = Data("original".utf8)
+        let metadata = AttachmentMetadata(id: SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined(),
+            filename: "image.png", mimeType: "image/png", byteCount: Int64(bytes.count), kind: .image)
+        let file = AttachmentPreviewFile(filename: "image.png", fileURL: path, metadata: metadata)
+        try bytes.write(to: path)
+        expectNoDifference(try AttachmentThumbnail.verifiedImageData(for: file), bytes)
+        try Data("tampered".utf8).write(to: path)
+        #expect(throws: AttachmentFileIntegrityError.changed) { try AttachmentThumbnail.verifiedImageData(for: file) }
+        try FileManager.default.removeItem(at: path)
+        let target = sandbox.appending(path: "target.png")
+        try bytes.write(to: target)
+        try FileManager.default.createSymbolicLink(at: path, withDestinationURL: target)
+        #expect(throws: AttachmentFileIntegrityError.unsafeFile) { try AttachmentThumbnail.verifiedImageData(for: file) }
+        try FileManager.default.removeItem(at: path)
+        #expect(mkfifo(path.path, 0o600) == 0)
+        #expect(throws: AttachmentFileIntegrityError.unsafeFile) { try AttachmentThumbnail.verifiedImageData(for: file) }
+        expectNoDifference(try Data(contentsOf: target), bytes)
+        let nonimage = AttachmentPreviewFile(filename: "missing.txt", fileURL: sandbox.appending(path: "missing"))
+        #expect(try AttachmentThumbnail.verifiedImageData(for: nonimage) == nil)
+    }
+
     @Test func imageZoomAccumulatesAndBoundsRepeatedGestures() {
         var zoom = AttachmentImageZoom()
         expectDifference(zoom) { zoom.finishGesture(2) } changes: { $0.scale = 2 }

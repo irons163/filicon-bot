@@ -1,7 +1,9 @@
 import AppKit
 import AVKit
 import CryptoKit
+import Darwin
 import Foundation
+import FiliconDomain
 import PDFKit
 import SwiftUI
 import UniformTypeIdentifiers
@@ -45,11 +47,21 @@ enum AttachmentFileIntegrityError: LocalizedError, Equatable {
 
 struct AttachmentFileIntegrity {
     func verifiedData(for file: AttachmentPreviewFile) throws -> Data {
-        let values = try file.fileURL.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
-        guard values.isRegularFile == true, values.isSymbolicLink != true else {
+        guard file.fileURL.isFileURL else { throw AttachmentFileIntegrityError.unsafeFile }
+        let descriptor = open(file.fileURL.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
+        guard descriptor >= 0 else { throw AttachmentFileIntegrityError.unsafeFile }
+        let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+        defer { try? handle.close() }
+        var info = stat()
+        guard fstat(descriptor, &info) == 0, (info.st_mode & S_IFMT) == S_IFREG,
+              info.st_size >= 0, info.st_size <= AttachmentLimits.videoBytes else {
             throw AttachmentFileIntegrityError.unsafeFile
         }
-        let data = try Data(contentsOf: file.fileURL, options: [.mappedIfSafe])
+        if let metadata = file.metadata, info.st_size != metadata.byteCount {
+            throw AttachmentFileIntegrityError.changed
+        }
+        let data = try handle.read(upToCount: Int(info.st_size) + 1) ?? Data()
+        guard data.count == info.st_size else { throw AttachmentFileIntegrityError.changed }
         if let metadata = file.metadata {
             let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
             guard digest == metadata.id, Int64(data.count) == metadata.byteCount else {
@@ -258,17 +270,45 @@ private struct AttachmentMetadataView: View {
     }
 }
 
-private struct AttachmentThumbnail: View {
+struct AttachmentThumbnail: View {
     @Environment(\.locale) private var uiLocale
     let file: AttachmentPreviewFile
+    @State private var preview: NSImage?
+    @State private var failed = false
 
     var body: some View {
         let _ = uiLocale.identifier
-        if AttachmentViewerKind.classify(filename: file.filename, mimeType: file.metadata?.mimeType) == .image,
-           let image = NSImage(contentsOf: file.fileURL) {
-            Image(nsImage: image).resizable().scaledToFit()
-        } else {
-            Image(systemName: icon).resizable().scaledToFit().padding(12).foregroundStyle(.secondary)
+        Group {
+            if let image = preview {
+                Image(nsImage: image).resizable().scaledToFit()
+            } else {
+                Image(systemName: failed ? "photo.badge.exclamationmark" : icon)
+                    .resizable().scaledToFit().padding(12).foregroundStyle(.secondary)
+            }
+        }
+        .accessibilityLabel(failed ? l10n("Image preview unavailable") : file.filename)
+        .task(id: file.id) { await loadThumbnail() }
+    }
+
+    nonisolated static func verifiedImageData(for file: AttachmentPreviewFile) throws -> Data? {
+        guard AttachmentViewerKind.classify(filename: file.filename, mimeType: file.metadata?.mimeType) == .image else { return nil }
+        return try AttachmentFileIntegrity().verifiedData(for: file)
+    }
+
+    private func loadThumbnail() async {
+        preview = nil
+        failed = false
+        do {
+            let snapshot = file
+            let bytes = try await Task.detached(priority: .utility) {
+                try Self.verifiedImageData(for: snapshot)
+            }.value
+            guard !Task.isCancelled else { return }
+            preview = bytes.flatMap { NSImage(data: $0) }
+            failed = bytes != nil && preview == nil
+        } catch {
+            guard !Task.isCancelled else { return }
+            failed = true
         }
     }
 
