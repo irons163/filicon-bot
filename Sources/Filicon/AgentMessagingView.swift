@@ -278,7 +278,9 @@ struct AgentPublishedResponses: View {
             Label(l10n("Published response"), systemImage: "bubble.left.and.text.bubble.right").font(.caption).foregroundStyle(.secondary)
             ForEach(publications) { publication in
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(verbatim: publication.text).font(.callout).textSelection(.enabled)
+                    if !publication.text.isEmpty {
+                        Text(verbatim: publication.text).font(.callout).textSelection(.enabled)
+                    }
                     if let images = publication.images, !images.isEmpty { AgentMessageImagePreviews(images: images) }
                 }
             }

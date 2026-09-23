@@ -8,6 +8,12 @@
 
 接續校正：背景群組問題卡已可用，但 `SendMessage` 的模型說明殘留「背景不支援 widget」一句；已改為明示受督導的群組 peer wake 可以送一張問題卡、該 wake 結束後由人類在**新群組回合**回答，mailbox／單獨聊天則仍不支援。App 測試核對實際送入模型的 system 提示與保存／恢復路徑。先前 `EPERM` 的同一暫存檔後來可以正常讀取，完整**非並行**回歸重新執行為 exit 0，原生 Debug 建置、deep strict codesign 與 package verifier 再次通過；最初失敗仍保留為環境事件，並非隱去。沒有啟動／重啟使用者 App 或 Xcode、沒有 push 或碰真實資料。
 
+## 本輪增量：本輪圖片的無文字發布（2026-09-23）
+
+對照非官方 reconstructed 的 `SendMessage(type:"attachment")`，本批只接上**目前使用者／同伴送入的單張 PNG/JPEG**：模型使用 host 提供的精確 `image_id`，不能指定路徑、URL、歷史圖片或自行選收件者。已存在的圖片儲存與預覽授權仍是必經路徑；核准前後重新載入驗證，群組另檢查來源人類訊息、成員、回合及 publication lifetime，信箱檢查當前 incoming 圖片、作者和對話。文字空白但圖片存在才視為有效發布；兩則上限、同回合去重、Stop／拒絕／過期防護不變。
+
+群組保存後可取得 host 回條，只有圖片的列亦能作 `reply_to` 目標；討論串可顯示圖片且不誤標「文字回覆」。信箱在原 delivery 內原子保存，來源畫面顯示圖片，不出現空白文段，模型 final 不重複發布。隔離測試涵蓋無效 ID／路徑／URL、混合欄位、重播、預覽批准／拒絕、過期、群組與信箱重開、App 核准卡與停止；本批聚焦測試及完整非並行 `swift test` 均 exit 0。`Filicon App` Debug build、deep strict codesign 與 package verifier 亦通過。沒有啟動／重啟使用者 App 或 Xcode、沒有 push 或操作真實群組／帳號。這不是任意本機或網路附件、影片，也不是來源完整外部 channel 附件；`AGENT-02` 仍為 partial，整體 **43 complete／4 partial／1 NA**。
+
 ## 本輪增量：來源對話授權下的群組背景引用（2026-09-23）
 
 接續 `1f0e4c1` 的記憶建議，對照本機非官方 reconstructed `source/host/runner/tools/send-message-tool.ts` 的一般 `reply_to`：Filicon 先前只有前景人類群組回合可由 SendMessage 引用，透過 `SendToAgent` 發到群組後喚醒的其他代理人只能送純文字。本批讓**已核准、受督導的群組 peer-message wake** 也能引用同一目標群組最近 40 筆可用訊息，包含剛收到的同伴發文；來源對話 ID 仍用於工具權限與 Stop，引用目標和保存回條則固定在群組 ID。不能以來源對話的其他群組位址猜測或引用。

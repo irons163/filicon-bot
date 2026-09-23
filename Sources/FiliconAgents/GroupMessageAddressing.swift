@@ -59,7 +59,8 @@ public enum GroupMessageAddressing {
                     turnKnown = false
                 }
             } else if message.memberOutcome == nil,
-                      message.senderID == nil || !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                      message.senderID == nil || !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                          || !(message.images ?? []).isEmpty {
                 if message.senderID == nil {
                     while nextTurn < limit, reserved.contains("t\(nextTurn)u") { nextTurn += 1 }
                     if nextTurn < limit {

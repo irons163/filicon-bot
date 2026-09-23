@@ -628,7 +628,8 @@ struct GroupMessageBubble: View {
                     )
                     .font(.caption).foregroundStyle(FiliconTheme.textSecondary)
                     .accessibilityIdentifier("group-member-outcome-\(outcome.rawValue)")
-                } else if !isUser && message.toolActivities.isEmpty && message.question == nil {
+                } else if !isUser && message.toolActivities.isEmpty && message.question == nil
+                            && message.images?.isEmpty != false && !message.text.isEmpty {
                     Text(l10n("Text reply · no tools used"))
                         .font(.system(size: 10)).foregroundStyle(FiliconTheme.textTertiary)
                 }
@@ -818,7 +819,7 @@ struct GroupToolApprovalPanel: View {
                     AgentMessageImagePreviews(images: images)
                 }
                 if ["SendToAgent", "SendMessage"].contains(approval.action.context.metadata["tool"] ?? ""),
-                   let text = approval.action.context.metadata["agentMessage"] {
+                   let text = approval.action.context.metadata["agentMessage"], !text.isEmpty {
                     // The summary is bounded to 2,000 characters; the actual
                     // outgoing payload must be visible in full before approval.
                     Text(verbatim: text).font(.callout).textSelection(.enabled)

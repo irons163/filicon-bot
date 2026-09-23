@@ -138,6 +138,51 @@ private actor AppImageProbe {
         }
     }
 
+    @Test(arguments: ["approve", "deny", "stop"])
+    func standaloneGroupImageShowsPreviewBeforePublication(mode: String) async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "filicon-standalone-image-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+        let sender = try #require(await model.createAgent(name: "Designer", summary: "", instructions: "", providerID: "app-image", modelID: "vision"))
+        #expect(await model.createGroup(name: "Design review", summary: "", memberIDs: [sender.id]))
+        let group = try #require(model.groups.first)
+        let file = root.appending(path: "review.png"), bytes = try imageData()
+        try bytes.write(to: file)
+        let image = try #require(await model.importAgentMessageImages([file]).first)
+        await model.setAutoReviewEnabled(true)
+        await model.setAutoReviewRules(allow: ["SendMessage"], ask: [])
+        await model.registry.register(AppImageProvider { _, execute in
+            let raw: [String: Any] = ["type": "attachment", "image_id": image.id]
+            let call = try NormalizedToolCall(id: "standalone-image", name: "SendMessage",
+                argumentsJSON: JSONSerialization.data(withJSONObject: raw))
+            let result = try await execute(call)
+            expectNoDifference(result.isError, mode != "approve")
+            return "Do not repeat this final text"
+        })
+        let send = Task { await model.sendGroupMessage(groupID: group.id, text: "Return the image", images: [image]) }
+        try await waitUntil { !model.pendingAutoReviewApprovals.isEmpty }
+        let approval = try #require(model.pendingAutoReviewApprovals.first)
+        expectNoDifference(approval.action.context.metadata["agentImagePublication"], "true")
+        expectNoDifference(approval.action.context.metadata["agentMessage"], "")
+        let encoded = try #require(approval.action.context.metadata["agentImages"])
+        let proposed = try JSONDecoder().decode([AttachmentMetadata].self, from: Data(encoded.utf8))
+        expectNoDifference(proposed.map(\.id), [image.id])
+        if mode == "stop" { await model.stopGroup(id: group.id) }
+        else { await model.resolveGroupApproval(approval, groupID: group.id, approve: mode == "approve") }
+        await send.value
+        #expect(model.pendingAutoReviewApprovals.isEmpty && model.runningGroups.isEmpty)
+        let published = model.groupMessages[group.id, default: []].filter { $0.senderID == sender.id && $0.images?.isEmpty == false }
+        expectNoDifference(published.count, mode == "approve" ? 1 : 0)
+        if mode == "approve" {
+            expectNoDifference(published.first?.text, "")
+            expectNoDifference(published.first?.images?.map(\.id), [image.id])
+            #expect(model.groupMessages[group.id, default: []].allSatisfy { !$0.text.contains("Do not repeat this final text") })
+            let restarted = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+            await restarted.reloadWorkspaceData()
+            expectNoDifference(restarted.groupMessages[group.id, default: []].first { $0.senderID == sender.id && $0.images?.isEmpty == false }?.images?.map(\.id), [image.id])
+        }
+    }
+
     @Test func groupPublicationAudienceRendersInSevenLanguages() async throws {
         let bytes = try imageData(), preview = try #require(NSImage(data: bytes))
         let image = AttachmentMetadata(id: String(repeating: "abcd", count: 16), filename: "review-layout.png", mimeType: "image/png", byteCount: Int64(bytes.count), kind: .image)

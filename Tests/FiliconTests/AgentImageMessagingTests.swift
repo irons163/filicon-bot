@@ -67,9 +67,27 @@ private struct ImageGroupPublicationResponder: GroupAgentResponder {
     }
 }
 
+private struct ImageGroupSavedPublicationResponder: GroupAgentResponder {
+    let run: @Sendable (@escaping @Sendable (GroupAgentPublication) async throws -> RoomMessage?) async throws -> [String]
+    func respond(agent: AgentProfile, history: [RoomMessage]) async throws -> [String] {
+        Issue.record("GroupService must use the saved publication callback")
+        return []
+    }
+    func respond(agent: AgentProfile, history: [RoomMessage], context: GroupTurnContext,
+                 onTools: @escaping @Sendable ([RoomToolActivity]) async throws -> Void,
+                 onSavedPublication: @escaping @Sendable (GroupAgentPublication) async throws -> RoomMessage?) async throws -> [String] {
+        try await run(onSavedPublication)
+    }
+}
+
 private func publishImage(_ ids: [String], text: String = "Reviewed layout", id: ToolCallID = "publish") throws -> NormalizedToolCall {
     struct Payload: Encodable { let text: String; let images: [String] }
     return try .init(id: id, name: "SendMessage", argumentsJSON: JSONEncoder().encode(Payload(text: text, images: ids)))
+}
+
+private func publishStandaloneImage(_ imageID: String, id: ToolCallID = "standalone") throws -> NormalizedToolCall {
+    struct Payload: Encodable { let type = "attachment"; let image_id: String }
+    return try .init(id: id, name: "SendMessage", argumentsJSON: JSONEncoder().encode(Payload(image_id: imageID)))
 }
 
 private func forwardImage(_ target: UUID, ids: [String], id: ToolCallID = "forward", priority: Bool = false) throws -> NormalizedToolCall {
@@ -322,6 +340,123 @@ struct AgentImageMessagingTests {
         expectNoDifference(approvals, [images])
         expectNoDifference(values.map(\.text), ["Reviewed layout", "Final report"])
         expectNoDifference(values.map { $0.images?.map(\.id) ?? [] }, [images.map(\.id), []])
+    }
+
+    @Test func standaloneImageRequiresCurrentHandleApprovalAndKeepsEmptyTextDistinct() async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let image = try await f.store.importImage(data: peerImageBytes(), filename: "current.png")
+        let foreign = try await f.store.importImage(data: peerImageBytes(shade: 0.75), filename: "foreign.png")
+        let output = ImagePublicationProbe(), context = ToolContext(conversationID: f.origin)
+        let tool = AgentUserMessageTool(conversationID: f.origin, availableImages: [image], imageStore: f.store,
+            authorizeImages: { text, values, _, _ in
+                expectNoDifference(text, "")
+                await f.probe.approve(values)
+            }) { text, values in
+                await output.append(.init(groupID: f.origin, senderID: f.recipient.id, text: text, images: values))
+            }
+        let schema = try #require(JSONSerialization.jsonObject(with: tool.descriptor.inputSchema) as? [String: Any])
+        let properties = try #require(schema["properties"] as? [String: Any])
+        #expect(properties["image_id"] != nil && properties["type"] != nil)
+        for invalid in [foreign.id, "file:///private.png", "https://example.invalid/private.png"] {
+            #expect(try await tool.execute(publishStandaloneImage(invalid, id: ToolCallID(rawValue: invalid)), context: context).isError)
+        }
+        let mixed = try NormalizedToolCall(id: "mixed", name: "SendMessage",
+            argumentsJSON: Data("{\"type\":\"attachment\",\"image_id\":\"\(image.id)\",\"text\":\"hidden\"}".utf8))
+        #expect(try await tool.execute(mixed, context: context).isError)
+        let call = try publishStandaloneImage(image.id)
+        let result = try await tool.execute(call, context: context)
+        #expect(!result.isError)
+        let replay = try await tool.execute(call, context: context)
+        expectNoDifference(replay, result)
+        #expect(try await tool.execute(publishStandaloneImage(image.id, id: "repeat"), context: context).isError)
+        let approvals = await f.probe.approvals, values = await output.values
+        expectNoDifference(approvals, [[image]])
+        expectNoDifference(values.map(\.text), [""])
+        expectNoDifference(values.first?.images, [image])
+        let publishedTexts = await tool.publishedTexts
+        expectNoDifference(publishedTexts, [""])
+    }
+
+    @Test(arguments: ["approved", "denied", "stale"])
+    func standaloneGroupImagePersistsOnlyAfterCurrentTurnApproval(mode: String) async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let groups = try GroupService(agents: f.agents, storeURL: f.root.appending(path: "groups.json"))
+        let group = try await groups.create(name: "Review", memberIDs: [f.sender.id])
+        let image = try await f.store.importImage(data: peerImageBytes(), filename: "current.png")
+        let user = try await groups.postUserMessage("Show the image", groupID: group.id, images: [image])
+        let session = AgentMessagingSession(originConversationID: group.id, agents: f.agents, messenger: f.messenger,
+            registry: f.registry, coordinator: TurnCoordinator(registry: f.registry, toolCatalog: ToolCatalog()),
+            groups: groups, imageStore: f.store, authorizePublication: { _, text, values, _, _ in
+                expectNoDifference(text, "")
+                await f.probe.approve(values)
+                if mode == "denied" { throw AgentMessagingError.approvalRequired }
+                if mode == "stale" { _ = try await groups.postUserMessage("New request", groupID: group.id) }
+            })
+        let responder = ImageGroupSavedPublicationResponder { publish in
+            let tool = try await session.savedGroupPublisher(for: f.sender.id, userMessageID: user.id,
+                replyHistory: [user], questionAccountID: nil, memberIDs: [f.sender.id], publish: publish)
+            let call = try publishStandaloneImage(image.id)
+            let result = try await tool.execute(call, context: .init(conversationID: group.id))
+            expectNoDifference(result.isError, mode != "approved")
+            if mode == "approved" {
+                #expect(result.wireText.contains("t0s0"))
+                let publishedTexts = await tool.publishedTexts
+                expectNoDifference(publishedTexts, [""])
+            }
+            return ["PASS"]
+        }
+        _ = try await groups.run(groupID: group.id, responder: responder)
+        let history = await groups.messages(groupID: group.id)
+        let saved = history.filter { $0.senderID == f.sender.id && $0.images?.isEmpty == false }
+        expectNoDifference(saved.count, mode == "approved" ? 1 : 0)
+        if mode == "approved" {
+            expectNoDifference(saved.first?.text, "")
+            expectNoDifference(saved.first?.images, [image])
+            expectNoDifference(saved.first?.shortAddress, "t0s0")
+            let reopened = try GroupService(agents: f.agents, storeURL: f.root.appending(path: "groups.json"))
+            let restored = await reopened.messages(groupID: group.id).filter { $0.senderID == f.sender.id && $0.images?.isEmpty == false }
+            expectNoDifference(restored.map(\.id), saved.map(\.id))
+            expectNoDifference(restored.first?.images?.map(\.id), [image.id])
+            expectNoDifference(restored.first?.shortAddress, "t0s0")
+        }
+        let approvals = await f.probe.approvals
+        expectNoDifference(approvals, [[image]])
+        try await session.close()
+    }
+
+    @Test func standaloneMailboxImageIsDurableWithoutFallbackText() async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let image = try await f.store.importImage(data: peerImageBytes(), filename: "current.png")
+        let projected = ImagePublicationProbe()
+        let session = AgentMessagingSession(originConversationID: f.origin, agents: f.agents, messenger: f.messenger,
+            registry: f.registry, coordinator: TurnCoordinator(registry: f.registry, toolCatalog: ToolCatalog()),
+            imageStore: f.store, authorizePublication: { _, text, values, _, _ in
+                expectNoDifference(text, "")
+                await f.probe.approve(values)
+            })
+        await f.registry.register(ImagePeerProvider { _, execute in
+            let result = try await execute(publishStandaloneImage(image.id))
+            #expect(!result.isError)
+            return "Do not repeat this final text"
+        })
+        try await session.enqueueUserMessage(senderID: f.sender.id, recipientID: f.recipient.id,
+            text: "Return this image", images: [image])
+        try await session.drain(onUpdate: { await projected.append($0) })
+        let messages = await f.messenger.allMessages()
+        expectNoDifference(messages.count, 1)
+        let delivery = try #require(messages.first?.delivery)
+        expectNoDifference(delivery.state, .completed)
+        expectNoDifference(delivery.response, "")
+        expectNoDifference(delivery.publications?.map(\.text), [""])
+        expectNoDifference(delivery.publications?.first?.images, [image])
+        let approvals = await f.probe.approvals
+        expectNoDifference(approvals, [[image]])
+        let visible = await projected.values.filter { $0.images?.isEmpty == false }
+        expectNoDifference(visible.map(\.text), [""])
+        let reopened = try AgentMessenger(service: f.agents, storeURL: f.root.appending(path: "messages.json"))
+        let restored = await reopened.allMessages()
+        expectNoDifference(restored.first?.delivery?.publications?.first?.images?.map(\.id), [image.id])
+        try await session.close()
     }
 
     @Test func missingPublicationAuthorizerDeniesImages() async throws {

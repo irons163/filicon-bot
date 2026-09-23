@@ -59,7 +59,7 @@ public actor AgentMessenger {
                   delivery.state == .running,
                   publication.groupID == delivery.originConversationID,
                   publication.senderID == state.messages[index].recipientID,
-                  !publication.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  (!publication.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !(publication.images ?? []).isEmpty),
                   publication.text.count <= 8_000, publication.toolActivities.isEmpty,
                   publication.memberOutcome == nil else { throw AgentPublicationError.invalid }
             let images = publication.images ?? []

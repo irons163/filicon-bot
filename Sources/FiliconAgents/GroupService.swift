@@ -322,7 +322,7 @@ public actor GroupService {
         // new. Failed members are not retried automatically in the same run.
         var failedMemberIDs: Set<UUID> = []
         var seenMessageCounts: [UUID: Int] = [:]
-        var publishedTexts: [UUID: Set<String>] = [:]
+        var publishedTexts: [UUID: Set<ReplyFingerprint>] = [:]
         var firstFailure: (any Error)?
         let initialHistory = state.roomMessages.filter { $0.groupID == groupID }
         let threadTarget = delegatedAudience == nil
@@ -356,10 +356,10 @@ public actor GroupService {
                 guard epochs[groupID] == epoch, !Task.isCancelled else { return produced }
                 guard let agent = currentMembers.first(where: { $0.id == memberID }) else { continue }
                 let history = state.roomMessages.filter { $0.groupID == groupID }
-                let previousSpeech = history.lastIndex { $0.senderID == memberID && !$0.text.isEmpty }
+                let previousSpeech = history.lastIndex { $0.senderID == memberID && (!$0.text.isEmpty || !($0.images ?? []).isEmpty) }
                 let unread = history.dropFirst(seenMessageCounts[memberID] ?? previousSpeech.map { $0 + 1 } ?? 0)
                 if seenMessageCounts[memberID] != nil,
-                   !unread.contains(where: { $0.senderID != memberID && (!$0.text.isEmpty || !$0.toolActivities.isEmpty) }) {
+                   !unread.contains(where: { $0.senderID != memberID && (!$0.text.isEmpty || !($0.images ?? []).isEmpty || !$0.toolActivities.isEmpty) }) {
                     continue
                 }
                 let context = GroupTurnContext(
@@ -425,7 +425,7 @@ public actor GroupService {
                 total += published.count
                 messagesThisRound += published.count
                 for message in published {
-                    publishedTexts[memberID, default: []].insert(Self.replyFingerprint(message.text))
+                    publishedTexts[memberID, default: []].insert(Self.replyFingerprint(message.text, images: message.images ?? []))
                 }
                 var sentThisTurn = published.count
                 for text in responses.filter({ !Self.isPass($0) }).prefix(Self.maximumMessagesPerMemberTurn) {
@@ -433,7 +433,7 @@ public actor GroupService {
                     let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
                     guard !Self.isPass(trimmed) else { continue }
                     let boundedText = String(trimmed.prefix(8_000))
-                    let fingerprint = boundedText.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+                    let fingerprint = Self.replyFingerprint(boundedText, images: [])
                     guard publishedTexts[memberID, default: []].insert(fingerprint).inserted else { continue }
                     var message = RoomMessage(groupID: groupID, senderID: memberID, text: boundedText)
                     message.replyToMessageID = threadTarget
@@ -474,12 +474,18 @@ public actor GroupService {
         activeResponses.removeValue(forKey: groupID)?.cancel()
     }
 
-    private static func replyFingerprint(_ text: String) -> String {
-        text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+    private enum ReplyFingerprint: Hashable {
+        case text(String)
+        case imageIDs([String])
+    }
+
+    private static func replyFingerprint(_ text: String, images: [AttachmentMetadata]) -> ReplyFingerprint {
+        let normalized = text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        return normalized.isEmpty ? .imageIDs(images.map(\.id)) : .text(normalized)
     }
 
     private func recordExplicitReply(_ publication: GroupAgentPublication, activity: RoomMessage, epoch: UInt64, remainingBudget: Int,
-                                     previousTexts: Set<String>, onMessage: @Sendable (RoomMessage) async -> Void) async throws -> RoomMessage {
+                                     previousTexts: Set<ReplyFingerprint>, onMessage: @Sendable (RoomMessage) async -> Void) async throws -> RoomMessage {
         try Task.checkCancellation()
         guard epochs[activity.groupID] == epoch else { throw CancellationError() }
         let text = publication.text, images = publication.images
@@ -508,10 +514,10 @@ public actor GroupService {
             }
         }
         let replies = explicitReplies[activity.id] ?? []
-        let fingerprint = Self.replyFingerprint(text)
-        guard !fingerprint.isEmpty, text.count <= 8_000,
+        let fingerprint = Self.replyFingerprint(text, images: images)
+        guard (!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !images.isEmpty), text.count <= 8_000,
               replies.count < min(remainingBudget, Self.maximumMessagesPerMemberTurn),
-              !previousTexts.contains(fingerprint), !replies.contains(where: { Self.replyFingerprint($0.text) == fingerprint }) else {
+              !previousTexts.contains(fingerprint), !replies.contains(where: { Self.replyFingerprint($0.text, images: $0.images ?? []) == fingerprint }) else {
             throw AgentServiceError.invalidName
         }
         var draft = RoomMessage(groupID: activity.groupID, senderID: activity.senderID, text: text, images: images)
