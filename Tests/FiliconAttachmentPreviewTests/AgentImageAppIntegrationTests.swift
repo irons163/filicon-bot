@@ -53,6 +53,43 @@ private actor AppImageProbe {
         try #require(predicate())
     }
 
+    @Test func agentImageViewerUsesVerifiedStoreAndCleansUp() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "filicon-image-viewer-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let file = root.appending(path: "layout.png"), bytes = try imageData()
+        try bytes.write(to: file)
+        let images = try await model.importAgentMessageImages([file])
+        let image = try #require(images.first)
+        model.openAgentMessageImage(image, gallery: images)
+        try await waitUntil { model.attachmentPreview != nil }
+        let item = try #require(model.attachmentPreview)
+        expectNoDifference(item.metadata, image)
+        expectNoDifference(try AttachmentFileIntegrity().verifiedData(for: item.files[0]), bytes)
+        model.dismissAttachmentPreview()
+        #expect(model.attachmentPreview == nil)
+        #expect(!FileManager.default.fileExists(atPath: item.fileURL.path))
+
+        let blob = root.appending(path: "agent-message-images/\(image.id.prefix(2))/\(image.id)")
+        try Data(repeating: 0, count: Int(image.byteCount)).write(to: blob)
+        model.openAgentMessageImage(image, gallery: images)
+        try await waitUntil { model.errorMessage != nil }
+        #expect(model.attachmentPreview == nil)
+        try bytes.write(to: blob)
+        model.errorMessage = nil
+
+        model.openAgentMessageImage(image, gallery: images)
+        model.dismissAttachmentPreview()
+        // The newer opening supersedes the cancelled request.
+        model.openAgentMessageImage(image, gallery: images)
+        try await waitUntil { model.attachmentPreview != nil }
+        let accountItem = try #require(model.attachmentPreview)
+        await model.cancelAutoReviewApprovals(nextAccountID: "other")
+        #expect(model.attachmentPreview == nil)
+        #expect(!FileManager.default.fileExists(atPath: accountItem.fileURL.path))
+    }
+
     @Test(arguments: ["approve", "deny", "stop", "account", "members", "corrupt", "failure", "stop-after-publication"])
     func groupImagePublicationIsApprovedDurableAndDoesNotWakePeers(mode: String) async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-group-publication-\(UUID())")

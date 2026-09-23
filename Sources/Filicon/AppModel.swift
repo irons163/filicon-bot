@@ -1837,19 +1837,35 @@ final class AppModel: ObservableObject {
     }
 
     func openAttachment(_ metadata: AttachmentMetadata) {
-        attachmentPreviewGeneration += 1
-        let generation = attachmentPreviewGeneration
         let galleryMetadata = selectedConversation?.messages
             .first(where: { message in message.attachments.contains(where: { $0.id == metadata.id }) })?
             .attachments ?? [metadata]
+        openAttachmentGallery(metadata, gallery: galleryMetadata) { candidate in
+            try await self.attachmentStore.data(for: candidate)
+        }
+    }
+
+    func openAgentMessageImage(_ metadata: AttachmentMetadata, gallery: [AttachmentMetadata]) {
+        guard !agentMessagingAccountTransition, gallery.count <= 4, gallery.contains(metadata) else { return }
+        let accountGeneration = autoReviewAccountGeneration
+        openAttachmentGallery(metadata, gallery: gallery) { candidate in
+            guard accountGeneration == self.autoReviewAccountGeneration else { throw CancellationError() }
+            return try await self.agentMessageImageData(candidate)
+        }
+    }
+
+    private func openAttachmentGallery(_ metadata: AttachmentMetadata, gallery: [AttachmentMetadata],
+                                       load: @escaping @MainActor (AttachmentMetadata) async throws -> Data) {
+        attachmentPreviewGeneration += 1
+        let generation = attachmentPreviewGeneration
         Task {
             do {
                 var files: [AttachmentPreviewFile] = []
                 var selectedFileID: UUID?
                 do {
-                    for candidate in galleryMetadata.prefix(50) {
+                    for candidate in gallery.prefix(50) {
                         do {
-                            let data = try await attachmentStore.data(for: candidate)
+                            let data = try await load(candidate)
                             let materialized = try attachmentPreviewMaterializer.materialize(data: data, metadata: candidate)
                             guard let file = materialized.files.first else { continue }
                             files.append(file)
@@ -4919,6 +4935,7 @@ final class AppModel: ObservableObject {
     func cancelAutoReviewApprovals(nextAccountID: String) async {
         // Queued peer work is scoped to the account that approved the exchange.
         agentMessagingAccountTransition = true
+        dismissAttachmentPreview()
         for lifetime in groupQuestionLifetimes.values { lifetime.close() }
         for session in routineEditSessions.values { session.lifetime.close() }
         routineEditSessions.removeAll()

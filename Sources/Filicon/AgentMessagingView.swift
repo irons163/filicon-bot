@@ -290,11 +290,13 @@ struct AgentPublishedResponses: View {
 
 /// Reused by the draft, durable mailbox, and exact-payload approval card.
 struct AgentMessageImagePreviews: View {
+    @EnvironmentObject private var model: AppModel
     let images: [AttachmentMetadata]
     var compact = false
     var body: some View {
         AgentMessageImageGallery(images: images) { image in
-            AgentMessageImagePreview(image: image, compact: compact, expanded: images.count == 1)
+            AgentMessageImagePreview(image: image, compact: compact, expanded: images.count == 1,
+                                     onOpen: { model.openAgentMessageImage(image, gallery: images) })
         }
     }
 }
@@ -321,10 +323,12 @@ private struct AgentMessageImagePreview: View {
     let image: AttachmentMetadata
     var compact = false
     var expanded = false
+    let onOpen: () -> Void
     @State private var preview: NSImage?
     @State private var failed = false
     var body: some View {
-        AgentMessageImagePreviewContent(image: image, preview: preview, failed: failed, compact: compact, expanded: expanded)
+        AgentMessageImagePreviewContent(image: image, preview: preview, failed: failed, compact: compact, expanded: expanded,
+                                       onOpen: onOpen)
             .task(id: "\(model.settings.accountScope ?? "local"):\(image.id)") { await loadPreview() }
     }
     private func loadPreview() async {
@@ -343,14 +347,16 @@ struct AgentMessageImagePreviewContent: View {
     var failed = false
     var compact = false
     var expanded = false
+    var onOpen: (() -> Void)?
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             if let preview {
-                AgentImageFitLayout(imageSize: preview.size, maximumWidth: expanded ? 560 : 280,
-                                    maximumHeight: compact ? 96 : expanded ? 320 : 160) {
-                    Image(nsImage: preview).resizable().scaledToFit()
-                        .clipShape(RoundedRectangle(cornerRadius: 10))
-                        .accessibilityLabel(image.filename)
+                if let onOpen {
+                    Button(action: onOpen) { fittedImage(preview) }
+                        .buttonStyle(.plain)
+                        .help(image.filename)
+                } else {
+                    fittedImage(preview)
                 }
             } else if failed { Text(l10n("Image preview unavailable")).foregroundStyle(.secondary) }
             else { ProgressView().controlSize(.small) }
@@ -361,6 +367,15 @@ struct AgentMessageImagePreviewContent: View {
             }
         }
         .frame(maxWidth: expanded ? 560 : 280, alignment: .leading)
+    }
+
+    private func fittedImage(_ preview: NSImage) -> some View {
+        AgentImageFitLayout(imageSize: preview.size, maximumWidth: expanded ? 560 : 280,
+                            maximumHeight: compact ? 96 : expanded ? 320 : 160) {
+            Image(nsImage: preview).resizable().scaledToFit()
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+                .accessibilityLabel(image.filename)
+        }
     }
 }
 
