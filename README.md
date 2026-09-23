@@ -122,8 +122,13 @@ plain labels. Internal links never launch an external app, fetch previews, load
 attachments, route a message, or approve a tool. Code, math, tables and choice
 widgets do not activate these links. This is native inline-link navigation, not
 the reference app's exact chip styling.
-This native routing does not support mailbox/direct-chat/background peer wakes,
-or external `channel` destinations.
+This native routing does not support mailbox/direct-chat peer wakes or external
+`channel` destinations. A supervised peer-message wake **inside a group** can
+quote a listed earlier message from that same group, including the incoming peer
+post. The tool still runs under its originating conversation's permission scope;
+the saved quote and publication receipt belong to the destination group. This
+background route does not inherit a human-selected thread, ask choice questions,
+or borrow historical image handles. Stop or account cancellation revokes it.
 In the normal group timeline, quoted secondary discussions now fold beneath their
 original root message with a reply count. Nested replies share that root and keep
 their original quotes. Opening a quote or inline reference expands its thread

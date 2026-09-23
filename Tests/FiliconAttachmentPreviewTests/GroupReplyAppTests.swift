@@ -607,6 +607,87 @@ private struct GroupReplyAppProvider: InteractiveToolProvider {
         #expect(model.runningGroups.isEmpty)
     }
 
+    @Test func backgroundPeerReplyQuotesOnlyDestinationRoomWithDurableReceipt() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "filicon-background-group-reply-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let agents = try AgentService(storeURL: root.appending(path: "agents.json"))
+        let sender = try await agents.create(name: "Engineer", providerID: "group-reply-fixture", modelID: "test")
+        let peer = try await agents.create(name: "Designer", providerID: "group-reply-fixture", modelID: "test")
+        let groups = try GroupService(agents: agents, storeURL: root.appending(path: "groups.json"))
+        let group = try await groups.create(name: "Team", memberIDs: [sender.id, peer.id])
+        let other = try await groups.create(name: "Other team", memberIDs: [sender.id, peer.id])
+        let foreign = try await groups.postUserMessage("Private other-room text", groupID: other.id)
+        let audience = try await groups.audience(groupID: group.id, senderID: sender.id)
+        let incoming = RoomMessage(groupID: group.id, senderID: sender.id, text: "Please review the layout")
+        try await groups.postAgentMessage(incoming, audience: audience, lifetime: .init())
+        let savedIncoming = try #require(await groups.messages(groupID: group.id).first { $0.id == incoming.id })
+        let originID = UUID()
+        let registry = ProviderRegistry()
+        let coordinator = TurnCoordinator(registry: registry, toolCatalog: ToolCatalog())
+        let messenger = try AgentMessenger(service: agents, storeURL: root.appending(path: "mailbox.json"))
+        let session = AgentMessagingSession(originConversationID: originID, agents: agents, messenger: messenger,
+            registry: registry, coordinator: coordinator, groups: groups)
+        let probe = GroupReplyAppProbe()
+        await registry.register(GroupReplyAppProvider { request, execute in
+            _ = await probe.record(request)
+            #expect(request.messages.contains { $0.role == .system && $0.text.contains("Reply directory:")
+                && $0.text.contains(savedIncoming.id.uuidString) && !$0.text.contains(foreign.id.uuidString) })
+            #expect(request.attachmentsByMessageID.isEmpty)
+            let badQuote = try NormalizedToolCall(id: "foreign", name: "SendMessage",
+                argumentsJSON: JSONEncoder().encode(["text": "Wrong room", "reply_to": foreign.id.uuidString]))
+            #expect(try await execute(badQuote).isError)
+            let badQuestion = try NormalizedToolCall(id: "question", name: "SendMessage",
+                argumentsJSON: Data(#"{"type":"widget","widget":{"prompt":"Choose","options":[{"label":"Yes"}]}}"#.utf8))
+            do { #expect(try await execute(badQuestion).isError) }
+            catch { #expect(String(describing: error).contains("schemaMismatch")) }
+            let badImage = try NormalizedToolCall(id: "image", name: "SendMessage",
+                argumentsJSON: Data(#"{"text":"No borrowed images","images":["old"]}"#.utf8))
+            do { #expect(try await execute(badImage).isError) }
+            catch { #expect(String(describing: error).contains("schemaMismatch")) }
+            let target = try #require(savedIncoming.shortAddress)
+            let reply = try NormalizedToolCall(id: "quoted", name: "SendMessage",
+                argumentsJSON: JSONEncoder().encode(["text": "Increase button contrast", "reply_to": target]))
+            await probe.record(try GroupReplySavedReceipt.decode(try await execute(reply)))
+            return "Do not duplicate"
+        })
+        let produced = try await groups.run(groupID: group.id,
+            responder: GroupConversationResponder(groupID: group.id, registry: registry, coordinator: coordinator,
+                messaging: session, delegatedMessage: savedIncoming, toolScopeID: originID),
+            delegatedAudience: audience, delegatedSenderID: sender.id)
+        expectNoDifference(produced.map(\.text), ["Increase button contrast"])
+        let reply = try #require(produced.first)
+        expectNoDifference(reply.replyToMessageID, savedIncoming.id)
+        expectNoDifference(reply.senderID, peer.id)
+        let receipts = await probe.receipts
+        expectNoDifference(receipts.first?.messageID, reply.id)
+        expectNoDifference(receipts.first?.shortAddress, reply.shortAddress)
+        let restored = try GroupService(agents: agents, storeURL: root.appending(path: "groups.json"))
+        let persisted = await restored.messages(groupID: group.id)
+        expectNoDifference(persisted.first { $0.id == reply.id }?.replyToMessageID, savedIncoming.id)
+        let projection = GroupThreadProjection(history: persisted, groupID: group.id)
+        expectNoDifference(projection.root(containing: reply.id), savedIncoming.id)
+        try await session.close()
+    }
+
+    @Test func backgroundReplyRevokedBeforePublication() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "filicon-background-revoke-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let agents = try AgentService(storeURL: root.appending(path: "agents.json"))
+        let agent = try await agents.create(name: "Designer", providerID: "group-reply-fixture", modelID: "test")
+        let registry = ProviderRegistry()
+        let messenger = try AgentMessenger(service: agents, storeURL: root.appending(path: "mailbox.json"))
+        let originID = UUID(), groupID = UUID()
+        let session = AgentMessagingSession(originConversationID: originID, agents: agents, messenger: messenger,
+            registry: registry, coordinator: TurnCoordinator(registry: registry))
+        let target = RoomMessage(groupID: groupID, senderID: UUID(), text: "Earlier peer task")
+        let publisher = try await session.savedBackgroundGroupPublisher(for: agent.id, groupID: groupID,
+            replyHistory: [target]) { _ in Issue.record("Revoked turn must not publish"); return nil }
+        try await session.close()
+        let call = try NormalizedToolCall(id: "late", name: "SendMessage",
+            argumentsJSON: JSONEncoder().encode(["text": "Late", "reply_to": target.id.uuidString]))
+        #expect(try await publisher.execute(call, context: .init(conversationID: originID)).isError)
+    }
+
     @Test(arguments: [false, true])
     func delegatedRoomWakeDoesNotGainReplyRouting(quotedQuestion: Bool) async throws {
         let groupID = UUID()

@@ -13,6 +13,7 @@ public actor AgentUserMessageTool: ToolExecutor, ToolRuntimeContextProviding {
     public nonisolated let descriptor: ToolDescriptor
     public typealias ImageAuthorizer = @Sendable (String, [AttachmentMetadata], NormalizedToolCall, ToolContext) async throws -> Void
     private let conversationID: UUID
+    private let replyGroupID: UUID
     private let senderID: UUID?
     private let defaultReplyToMessageID: UUID?
     private let publish: @Sendable (String, [AttachmentMetadata]) async throws -> RoomMessage?
@@ -46,6 +47,7 @@ public actor AgentUserMessageTool: ToolExecutor, ToolRuntimeContextProviding {
                 replyHistory: [RoomMessage] = [], publishReply: ReplyPublisher? = nil,
                 publish: @escaping @Sendable (String) async throws -> Void) {
         self.conversationID = conversationID
+        replyGroupID = conversationID
         senderID = nil
         defaultReplyToMessageID = nil
         self.publish = { text, _ in try await publish(text); return nil }
@@ -74,6 +76,7 @@ public actor AgentUserMessageTool: ToolExecutor, ToolRuntimeContextProviding {
                 replyHistory: [RoomMessage] = [], publishReply: ReplyPublisher? = nil,
                 publish: @escaping @Sendable (String, [AttachmentMetadata]) async throws -> Void) {
         self.conversationID = conversationID; self.availableImages = availableImages
+        replyGroupID = conversationID
         senderID = nil
         defaultReplyToMessageID = nil
         self.imageStore = imageStore; self.authorizeImages = authorizeImages
@@ -96,11 +99,14 @@ public actor AgentUserMessageTool: ToolExecutor, ToolRuntimeContextProviding {
     }
 
     public init(conversationID: UUID, senderID: UUID, replyHistory: [RoomMessage], supportsQuestions: Bool,
+                replyGroupID: UUID? = nil,
                 defaultReplyToMessageID: UUID? = nil,
                 availableImages: [AttachmentMetadata] = [], imageStore: AgentImageStore? = nil,
                 authorizeImages: @escaping ImageAuthorizer = { _, _, _, _ in throw AgentMessagingError.approvalRequired },
                 publishGroup: @escaping GroupPublisher) {
+        let groupID = replyGroupID ?? conversationID
         self.conversationID = conversationID
+        self.replyGroupID = groupID
         self.senderID = senderID
         self.defaultReplyToMessageID = defaultReplyToMessageID
         self.availableImages = availableImages; self.imageStore = imageStore; self.authorizeImages = authorizeImages
@@ -111,9 +117,9 @@ public actor AgentUserMessageTool: ToolExecutor, ToolRuntimeContextProviding {
             publishQuestion = { try await publishGroup($0.prompt, [], nil, $0) }
             publishQuestionReply = { try await publishGroup($0.prompt, [], $1, $0) }
         } else { publishQuestion = nil; publishQuestionReply = nil }
-        replyTargets = Self.replyTargets(in: replyHistory, groupID: conversationID)
-        knownMessageIDs = Set(replyHistory.filter { $0.groupID == conversationID }.map(\.id))
-        knownShortAddresses = Set(replyHistory.filter { $0.groupID == conversationID }.compactMap(\.shortAddress))
+        replyTargets = Self.replyTargets(in: replyHistory, groupID: groupID)
+        knownMessageIDs = Set(replyHistory.filter { $0.groupID == groupID }.map(\.id))
+        knownShortAddresses = Set(replyHistory.filter { $0.groupID == groupID }.compactMap(\.shortAddress))
         descriptor = Self.makeDescriptor(supportsImages: supportsImages, supportsQuestions: supportsQuestions,
             supportsReplies: true, supportsTextReplies: true, supportsQuestionReplies: supportsQuestions)
     }
@@ -145,7 +151,7 @@ public actor AgentUserMessageTool: ToolExecutor, ToolRuntimeContextProviding {
 
     private func registerReceipt(_ message: RoomMessage?, text: String, images: [AttachmentMetadata],
                                  replyTo: UUID?, question: AgentQuestion? = nil) -> String {
-        guard var saved = message, saved.groupID == conversationID, let senderID, saved.senderID == senderID,
+        guard var saved = message, saved.groupID == replyGroupID, let senderID, saved.senderID == senderID,
               saved.text == text, saved.images ?? [] == images, saved.memberOutcome == nil,
               saved.replyToMessageID == replyTo, saved.question?.question == question,
               saved.questionReplyTo == nil, !knownMessageIDs.contains(saved.id) else { return "" }

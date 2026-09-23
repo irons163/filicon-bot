@@ -70,7 +70,9 @@ public struct GroupConversationResponder: GroupAgentResponder {
         let supportsTools = provider.descriptor.supportsToolCalling
         // Keep the reply bound on the actual stored log, before hiding status
         // rows from inference. Hidden rows must not mask an ambiguous address.
-        let replyHistory = delegatedMessage == nil && questionLifetime != nil ? history.filter { $0.groupID == groupID } : []
+        let canQuote = (delegatedMessage == nil && questionLifetime != nil)
+            || (delegatedMessage != nil && messaging != nil && onSavedPublication != nil)
+        let replyHistory = canQuote ? history.filter { $0.groupID == groupID } : []
         let threadProjection = GroupThreadProjection(history: replyHistory, groupID: groupID)
         // Exclude host-only PASS/error notices from the model's conversation.
         // Keep genuine tool activity even when the subsequent inference failed.
@@ -169,7 +171,10 @@ public struct GroupConversationResponder: GroupAgentResponder {
                 try await onPublication(.init(text: question.prompt, lifetime: questionLifetime, question: card, replyToMessageID: replyID))
             }
         } else { ask = nil; askReply = nil }
-        if delegatedMessage == nil, let onSavedPublication, let roomContext, let questionLifetime {
+        if delegatedMessage != nil, let onSavedPublication, let messaging {
+            publisher = try await messaging.savedBackgroundGroupPublisher(for: agent.id, groupID: groupID,
+                replyHistory: replyHistory, publish: onSavedPublication)
+        } else if delegatedMessage == nil, let onSavedPublication, let roomContext, let questionLifetime {
             if let messaging, let forwardingMessageID {
                 publisher = try await messaging.savedGroupPublisher(for: agent.id, userMessageID: forwardingMessageID,
                     replyHistory: replyHistory, questionAccountID: questionAccountID,

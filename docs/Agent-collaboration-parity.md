@@ -1,5 +1,14 @@
 # 協作能力核對紀錄（更新至 2026-09-23）
 
+## 本輪增量：來源對話授權下的群組背景引用（2026-09-23）
+
+接續 `1f0e4c1` 的記憶建議，對照本機非官方 reconstructed `source/host/runner/tools/send-message-tool.ts` 的一般 `reply_to`：Filicon 先前只有前景人類群組回合可由 SendMessage 引用，透過 `SendToAgent` 發到群組後喚醒的其他代理人只能送純文字。本批讓**已核准、受督導的群組 peer-message wake** 也能引用同一目標群組最近 40 筆可用訊息，包含剛收到的同伴發文；來源對話 ID 仍用於工具權限與 Stop，引用目標和保存回條則固定在群組 ID。不能以來源對話的其他群組位址猜測或引用。
+
+- 背景 SendMessage 只有文字及可選 `reply_to`；不繼承人類當前串接的預設引用，不取得歷史圖片 ID，不可送選項問題或變更作者／收件群組。跨群組 ID、圖片與 widget 均拒絕；無效引用不退回普通訊息。群組服務在落盤後才回傳 messageID／shortAddress；已保存的訊息與引用可重新讀取，群組討論串投影仍定位原文。Session 關閉與來源 Stop／帳號撤銷同步取消出版 lifetime；成員變更透過既有 App 停止群組工作。
+- App 層隔離 fixture 驗證跨對話來源、目標群組回條與重開、跨群組引用／圖片／widget 拒絕；另一測試驗證關閉 session 後遲到工具無法發布。舊相容 `onPublication` 的 delegated wake 無法提供 durable receipt，仍不獲得引用權限。沒有操作真實帳號、群組或模型。
+
+驗證：新增聚焦測試通過；完整**非並行**回歸 **135 XCTest、1,109 Swift Testing／125 suites**（App **365／49 suites**）通過。一次並行聚焦跑法的既有圖片／暫存檔測試發生 `EPERM` 與隨後資料重開失敗，未視為通過或歸因於此改動；非並行重跑皆通過，仍應另查測試環境並行穩定性。原生 Debug 建置、deep strict codesign 與 package verifier 通過，未啟動使用者 App／Xcode、未 push。來源完整自動記憶、episode、archive、跨 session/fork、chip、mailbox／單獨聊天引用與提問、背景群組提問、外部 channel、獨立附件、安全憑證請求及供應商 cloud-agent 卡仍缺；整體 **43 complete／4 partial／1 NA**。
+
 ## 本輪增量：逐筆審核的自動記憶建議（2026-09-23）
 
 上一批群組引用回覆已提交 `e5cad3c`。對照本機非官方 reconstructed 的 `source/host/runner/turn-memory.ts` 與 `sand-memory.ts`：來源在回合後嘗試抽取記憶及 episode；本批只做可審核、帳號隔離的原生候選，沒有自動改寫或刪除既有記憶。

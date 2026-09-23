@@ -172,6 +172,23 @@ public actor AgentMessagingSession {
             }
     }
 
+    /// A peer-message wake retains the originating conversation's tool scope,
+    /// but quotes only messages from the destination group. It has no current
+    /// human input, image handles, or permission to ask a choice question.
+    public func savedBackgroundGroupPublisher(for senderID: UUID, groupID: UUID, replyHistory: [RoomMessage],
+                                              publish: @escaping @Sendable (GroupAgentPublication) async throws -> RoomMessage?) async throws -> AgentUserMessageTool {
+        guard let sender = await agents.profile(id: senderID), sender.archivedAt == nil else {
+            throw AgentMessagingError.invalidRecipient
+        }
+        try checkOpen()
+        return AgentUserMessageTool(conversationID: originConversationID, senderID: senderID,
+            replyHistory: replyHistory, supportsQuestions: false, replyGroupID: groupID) { [self] text, images, replyID, question in
+            guard images.isEmpty, question == nil else { throw AgentImageError.unavailable }
+            try await checkOpen()
+            return try await publish(.init(text: text, lifetime: publicationLifetime, replyToMessageID: replyID))
+        }
+    }
+
     private func validateGroupPublication(images: [AttachmentMetadata], senderID: UUID, userMessageID: UUID) async throws {
         try checkOpen()
         if !images.isEmpty {
