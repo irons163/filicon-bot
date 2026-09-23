@@ -85,6 +85,8 @@ private actor AppImageProbe {
         model.openAgentMessageImage(image, gallery: images)
         try await waitUntil { model.attachmentPreview != nil }
         let accountItem = try #require(model.attachmentPreview)
+        model.dismissAttachmentPreview(id: item.id)
+        expectNoDifference(model.attachmentPreview?.id, accountItem.id)
         await model.cancelAutoReviewApprovals(nextAccountID: "other")
         #expect(model.attachmentPreview == nil)
         #expect(!FileManager.default.fileExists(atPath: accountItem.fileURL.path))

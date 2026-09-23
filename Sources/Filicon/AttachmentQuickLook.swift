@@ -138,6 +138,107 @@ struct AttachmentQuickLookSheet: View {
     }
 }
 
+/// Own a separate native window so the media viewer can enter macOS full screen.
+/// The model remains the owner of preview files and receives identity-bound closes.
+struct AttachmentPreviewWindowPresenter: NSViewRepresentable {
+    @Environment(\.locale) private var locale
+    @Environment(\.colorScheme) private var colorScheme
+    let item: AttachmentPreviewItem?
+    let onClose: (UUID) -> Void
+
+    func makeCoordinator() -> AttachmentPreviewWindowCoordinator { AttachmentPreviewWindowCoordinator() }
+    func makeNSView(context: Context) -> AttachmentPreviewAnchor {
+        let view = AttachmentPreviewAnchor(frame: .zero)
+        view.windowChanged = { [weak coordinator = context.coordinator] in coordinator?.observeParent($0) }
+        return view
+    }
+    func updateNSView(_ view: AttachmentPreviewAnchor, context: Context) {
+        context.coordinator.update(item: item, locale: locale, dark: colorScheme == .dark, onClose: onClose)
+    }
+    static func dismantleNSView(_ view: AttachmentPreviewAnchor, coordinator: AttachmentPreviewWindowCoordinator) {
+        coordinator.observeParent(nil)
+        coordinator.closeAndNotify()
+    }
+}
+
+final class AttachmentPreviewAnchor: NSView {
+    var windowChanged: ((NSWindow?) -> Void)?
+    override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); windowChanged?(window) }
+}
+
+@MainActor final class AttachmentPreviewWindowCoordinator: NSObject, NSWindowDelegate {
+    private(set) var window: NSWindow?
+    private(set) var itemID: UUID?
+    private var onClose: ((UUID) -> Void)?
+    private weak var parent: NSWindow?
+
+    func observeParent(_ parent: NSWindow?) {
+        if let old = self.parent { NotificationCenter.default.removeObserver(self, name: NSWindow.willCloseNotification, object: old) }
+        self.parent = parent
+        if let parent {
+            NotificationCenter.default.addObserver(self, selector: #selector(parentWillClose),
+                name: NSWindow.willCloseNotification, object: parent)
+        }
+    }
+
+    @objc private func parentWillClose(_ notification: Notification) { closeAndNotify() }
+
+    func update(item: AttachmentPreviewItem?, locale: Locale, dark: Bool,
+                show: Bool = true, onClose: @escaping (UUID) -> Void) {
+        self.onClose = onClose
+        guard let item else { dismiss(); return }
+        if itemID == item.id, let window {
+            window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+            (window.contentView as? NSHostingView<AnyView>)?.rootView = content(item: item, locale: locale, window: window)
+            return
+        }
+        dismiss()
+        itemID = item.id
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 980, height: 720),
+                              styleMask: [.titled, .closable, .miniaturizable, .resizable],
+                              backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.collectionBehavior = [.fullScreenPrimary]
+        window.title = item.filename
+        window.contentMinSize = NSSize(width: 760, height: 560)
+        window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+        window.delegate = self
+        window.contentView = NSHostingView(rootView: content(item: item, locale: locale, window: window))
+        self.window = window
+        window.center()
+        if show { window.makeKeyAndOrderFront(nil) }
+    }
+
+    private func content(item: AttachmentPreviewItem, locale: Locale, window: NSWindow) -> AnyView {
+        AnyView(AttachmentMediaViewerSheet(item: item,
+            onClose: { [weak self] in self?.closeAndNotify() },
+            onFullScreen: { [weak window] in window?.toggleFullScreen(nil) })
+            .environment(\.locale, locale).id(item.id))
+    }
+
+    func dismiss(closeWindow: Bool = true) {
+        let old = window
+        window = nil
+        itemID = nil
+        old?.delegate = nil
+        if closeWindow { old?.close() }
+        old?.contentView = nil
+    }
+
+    func closeAndNotify(closeWindow: Bool = true) {
+        let id = itemID, callback = onClose
+        dismiss(closeWindow: closeWindow)
+        // Dismantling may occur during a SwiftUI update. Identity checking in
+        // the model prevents this deferred close from dismissing a newer item.
+        if let id { Task { @MainActor in callback?(id) } }
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        guard let closing = notification.object as? NSWindow, closing === window else { return }
+        closeAndNotify(closeWindow: false)
+    }
+}
+
 struct AttachmentQuickLookView: NSViewRepresentable {
     let fileURL: URL
 

@@ -1669,3 +1669,4 @@
 "Reviewing memory suggestions…" = "メモリの候補を整理中…";
 "Memory suggestions changed or are no longer available. Refresh and try again." = "メモリの候補が変更されたか、利用できなくなりました。更新して再試行してください。";
 "The memory suggestion response was invalid. No facts were saved." = "メモリ候補の応答が無効でした。事実は保存されていません。";
+"Full Screen" = "フルスクリーン";

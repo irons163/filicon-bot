@@ -1,4 +1,5 @@
 import CryptoKit
+import AppKit
 import CustomDump
 import Darwin
 import Foundation
@@ -8,6 +9,36 @@ import FiliconDomain
 
 @Suite("Native attachment viewers")
 struct AttachmentViewerTests {
+    @Test @MainActor func previewWindowPreservesIdentityAndClosesWithParent() async throws {
+        let coordinator = AttachmentPreviewWindowCoordinator()
+        let first = AttachmentPreviewItem(filename: "first.png", fileURL: URL(fileURLWithPath: "/nonexistent/first.png"))
+        let second = AttachmentPreviewItem(filename: "second.png", fileURL: URL(fileURLWithPath: "/nonexistent/second.png"))
+        var closed: [UUID] = []
+        let parent = NSWindow(contentRect: .zero, styleMask: [.titled], backing: .buffered, defer: false)
+        parent.isReleasedWhenClosed = false
+        defer { coordinator.observeParent(nil); coordinator.dismiss(); parent.close() }
+        coordinator.observeParent(parent)
+        coordinator.update(item: first, locale: Locale(identifier: "en"), dark: false, show: false) { closed.append($0) }
+        let firstWindow = try #require(coordinator.window)
+        #expect(firstWindow.styleMask.contains(.resizable))
+        #expect(firstWindow.collectionBehavior.contains(.fullScreenPrimary))
+        #expect(!firstWindow.isVisible)
+        coordinator.update(item: first, locale: Locale(identifier: "fr"), dark: true, show: false) { closed.append($0) }
+        #expect(coordinator.window === firstWindow)
+        coordinator.update(item: second, locale: Locale(identifier: "en"), dark: false, show: false) { closed.append($0) }
+        #expect(firstWindow.contentView == nil)
+        #expect(closed.isEmpty)
+        coordinator.windowWillClose(Notification(name: NSWindow.willCloseNotification, object: firstWindow))
+        expectNoDifference(coordinator.itemID, second.id)
+        parent.close()
+        #expect(coordinator.window == nil)
+        for _ in 0..<20 where closed.isEmpty { await Task.yield() }
+        expectNoDifference(closed, [second.id])
+        coordinator.closeAndNotify()
+        await Task.yield()
+        expectNoDifference(closed, [second.id])
+    }
+
     @Test func thumbnailVerifiesBytesAndRejectsReplacedFiles() throws {
         let sandbox = FileManager.default.temporaryDirectory.appending(path: "thumbnail-\(UUID())", directoryHint: .isDirectory)
         defer { try? FileManager.default.removeItem(at: sandbox) }

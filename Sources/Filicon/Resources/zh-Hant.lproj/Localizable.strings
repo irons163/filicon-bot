@@ -1669,3 +1669,4 @@
 "Reviewing memory suggestions…" = "正在整理記憶建議⋯";
 "Memory suggestions changed or are no longer available. Refresh and try again." = "記憶建議已變更或無法使用。請重新整理後再試。";
 "The memory suggestion response was invalid. No facts were saved." = "記憶建議的回應格式無效，未儲存任何事實。";
+"Full Screen" = "全螢幕";

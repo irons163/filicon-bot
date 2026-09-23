@@ -76,14 +76,16 @@ struct AttachmentMediaViewerSheet: View {
     @Environment(\.locale) private var uiLocale
     let item: AttachmentPreviewItem
     let onClose: () -> Void
+    let onFullScreen: (() -> Void)?
 
     @State private var selectedFileID: UUID
     @State private var showsMetadata = false
     @State private var actionError: String?
 
-    init(item: AttachmentPreviewItem, onClose: @escaping () -> Void) {
+    init(item: AttachmentPreviewItem, onClose: @escaping () -> Void, onFullScreen: (() -> Void)? = nil) {
         self.item = item
         self.onClose = onClose
+        self.onFullScreen = onFullScreen
         _selectedFileID = State(initialValue: item.initialFileID)
     }
 
@@ -126,6 +128,12 @@ struct AttachmentMediaViewerSheet: View {
             }
             Text(selectedFile.filename).font(.headline).lineLimit(1)
             Spacer()
+            if let onFullScreen {
+                Button(action: onFullScreen) { Image(systemName: "arrow.up.left.and.arrow.down.right") }
+                    .help(l10n("Full Screen"))
+                    .accessibilityLabel(l10n("Full Screen"))
+                    .keyboardShortcut("f", modifiers: [.control, .command])
+            }
             Button { showsMetadata.toggle() } label: { Label(l10n("Info"), systemImage: "info.circle") }
                 .popover(isPresented: $showsMetadata) { AttachmentMetadataView(file: selectedFile) }
             Button(l10n("Save a Copy…"), action: saveOriginal)

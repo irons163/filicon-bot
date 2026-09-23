@@ -1669,3 +1669,4 @@
 "Reviewing memory suggestions…" = "기억 제안 정리 중…";
 "Memory suggestions changed or are no longer available. Refresh and try again." = "기억 제안이 변경되었거나 더 이상 사용할 수 없습니다. 새로고침 후 다시 시도하세요.";
 "The memory suggestion response was invalid. No facts were saved." = "기억 제안 응답이 올바르지 않습니다. 저장된 사실이 없습니다.";
+"Full Screen" = "전체 화면";

@@ -208,12 +208,8 @@ struct ContentView: View {
                 .environmentObject(model)
                 .interactiveDismissDisabled()
         }
-        .sheet(item: Binding(
-            get: { model.attachmentPreview },
-            set: { if $0 == nil { model.dismissAttachmentPreview() } }
-        ), onDismiss: model.dismissAttachmentPreview) { item in
-            AttachmentQuickLookSheet(item: item, onClose: model.dismissAttachmentPreview)
-        }
+        .background(AttachmentPreviewWindowPresenter(item: model.attachmentPreview,
+            onClose: model.dismissAttachmentPreview(id:)))
         .sheet(isPresented: $model.showingFeedback) { FeedbackView().environmentObject(model) }
         .sheet(isPresented: $model.showingOnboarding) { OnboardingView().environmentObject(model) }
         .overlay(alignment: .topTrailing) {

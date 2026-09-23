@@ -1909,6 +1909,11 @@ final class AppModel: ObservableObject {
         attachmentPreviewMaterializer.remove(item)
     }
 
+    func dismissAttachmentPreview(id: UUID) {
+        guard attachmentPreview?.id == id else { return }
+        dismissAttachmentPreview()
+    }
+
     private func scheduleGlobalSearch() {
         globalSearchGeneration += 1
         let generation = globalSearchGeneration

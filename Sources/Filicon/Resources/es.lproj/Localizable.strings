@@ -1669,3 +1669,4 @@
 "Reviewing memory suggestions…" = "Preparando sugerencias de memoria…";
 "Memory suggestions changed or are no longer available. Refresh and try again." = "Las sugerencias de memoria han cambiado o ya no están disponibles. Actualiza e inténtalo de nuevo.";
 "The memory suggestion response was invalid. No facts were saved." = "La respuesta de sugerencias de memoria no era válida. No se guardó ningún dato.";
+"Full Screen" = "Pantalla completa";
