@@ -2,6 +2,8 @@
 
 本矩陣保留固定的 48 個 parity ID，對照目前 macOS Swift 實作。`complete` 表示該列所述能力有歷史實作證據，不代表原版所有細項均已重新核驗；`partial` 表示仍有功能、接線或驗證缺口；`NA` 表示該列是來源 runtime 的實作細節，不是 macOS 產品行為。這不是「原版功能全部都有」的保證。
 
+圖片呈現增量（2026-09-23）：群組／信箱及核准預覽共用單張放大、多張雙欄圖集；圖片寬高共同限制，避免窄欄溢出，草稿仍保留捲動區。18 項圖片 App 聚焦測試與七語言渲染通過，原生 Debug 建置成功。這批只補呈現，不包含來源 alt caption／全螢幕檢視、任意檔案／URL／影片。`AGENT-02` 仍 partial，整體計數不變。
+
 再校正（2026-09-23）：`AGENT-02` 的 `SendMessage` 已可用 `{type:"attachment",image_id:"本輪ID"}` 發布**單張、無文字**的本輪輸入圖片，群組與代理人信箱均需即時圖片預覽核准；群組可取保存回條，信箱持久化於原 incoming delivery。拒絕、停止、過期圖片與非本輪 ID 不發布，圖片不被最後一段文字重複。下方較早快照的「均需文字／獨立附件全缺」以此段為準：任意檔案／URL、影片與來源原版完整附件語意仍缺。隔離聚焦、完整非並行回歸（exit 0）、原生 Debug 建置、deep strict codesign 與 package verifier 已通過；未做 live App 點擊或真實帳號／模型驗收。整體仍 **43 complete／4 partial／1 NA**。
 
 最新校正（2026-09-23）：`AGENT-02` 的群組 `sand-msg` 連結早已有安全跳轉，本輪加上有效引用的 chip-like 行內底色／字重；原版圓角 chip 的精確樣式仍未還原。`ba6b915` 已補群組背景 peer wake 引用，`5b90593` 已補其選項問題，因此下方較早快照所列的「背景引用／提問」或把所有 chip 當成功能缺口，應按此段修正。mailbox／單獨聊天引用與提問仍缺。這批聚焦測試和原生 Debug 建置／簽章／封裝通過；完整回歸因 macOS 暫存檔 `EPERM` 未通過，不能當成全套驗證成功。矩陣仍為 **43 complete／4 partial／1 NA**；詳見[最新協作核對](Agent-collaboration-parity.md)。

@@ -293,8 +293,25 @@ struct AgentMessageImagePreviews: View {
     let images: [AttachmentMetadata]
     var compact = false
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            ForEach(images) { image in AgentMessageImagePreview(image: image, compact: compact) }
+        AgentMessageImageGallery(images: images) { image in
+            AgentMessageImagePreview(image: image, compact: compact, expanded: images.count == 1)
+        }
+    }
+}
+
+struct AgentMessageImageGallery<Content: View>: View {
+    let images: [AttachmentMetadata]
+    @ViewBuilder var content: (AttachmentMetadata) -> Content
+
+    var body: some View {
+        if images.count == 1, let image = images.first {
+            content(image)
+        } else if !images.isEmpty {
+            LazyVGrid(columns: [GridItem(.flexible(), alignment: .topLeading),
+                                GridItem(.flexible(), alignment: .topLeading)], alignment: .leading, spacing: 12) {
+                ForEach(images) { image in content(image) }
+            }
+            .frame(maxWidth: 560, alignment: .leading)
         }
     }
 }
@@ -303,10 +320,11 @@ private struct AgentMessageImagePreview: View {
     @EnvironmentObject private var model: AppModel
     let image: AttachmentMetadata
     var compact = false
+    var expanded = false
     @State private var preview: NSImage?
     @State private var failed = false
     var body: some View {
-        AgentMessageImagePreviewContent(image: image, preview: preview, failed: failed, compact: compact)
+        AgentMessageImagePreviewContent(image: image, preview: preview, failed: failed, compact: compact, expanded: expanded)
             .task(id: "\(model.settings.accountScope ?? "local"):\(image.id)") { await loadPreview() }
     }
     private func loadPreview() async {
@@ -324,10 +342,16 @@ struct AgentMessageImagePreviewContent: View {
     let preview: NSImage?
     var failed = false
     var compact = false
+    var expanded = false
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             if let preview {
-                Image(nsImage: preview).resizable().scaledToFit().frame(maxWidth: 280, maxHeight: compact ? 96 : 160)
+                AgentImageFitLayout(imageSize: preview.size, maximumWidth: expanded ? 560 : 280,
+                                    maximumHeight: compact ? 96 : expanded ? 320 : 160) {
+                    Image(nsImage: preview).resizable().scaledToFit()
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                        .accessibilityLabel(image.filename)
+                }
             } else if failed { Text(l10n("Image preview unavailable")).foregroundStyle(.secondary) }
             else { ProgressView().controlSize(.small) }
             Text(verbatim: image.filename).font(.caption).textSelection(.enabled)
@@ -336,6 +360,27 @@ struct AgentMessageImagePreviewContent: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
+        .frame(maxWidth: expanded ? 560 : 280, alignment: .leading)
+    }
+}
+
+/// Negotiate both dimensions together, so a tall proposal cannot make the
+/// scaled image draw outside a narrower chat bubble or gallery cell.
+private struct AgentImageFitLayout: Layout {
+    let imageSize: CGSize
+    let maximumWidth: CGFloat
+    let maximumHeight: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard imageSize.width > 0, imageSize.height > 0 else { return .zero }
+        let ratio = imageSize.width / imageSize.height
+        let width = max(0, min(proposal.width ?? maximumWidth, maximumWidth, maximumHeight * ratio))
+        return CGSize(width: width, height: width / ratio)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        subviews.first?.place(at: bounds.origin, anchor: .topLeading,
+                             proposal: ProposedViewSize(width: bounds.width, height: bounds.height))
     }
 }
 

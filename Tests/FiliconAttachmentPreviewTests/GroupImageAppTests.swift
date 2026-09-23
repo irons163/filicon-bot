@@ -250,19 +250,30 @@ private struct GroupImageProvider: AIProvider {
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
         let output = ProcessInfo.processInfo.environment["FILICON_UI_REVIEW_OUTPUT"].map { URL(fileURLWithPath: $0) }
         let preview = try #require(NSImage(data: f.bytes))
+        let galleryImages = (0..<4).map { index in
+            AttachmentMetadata(id: "gallery-\(index)", filename: "layout-\(index + 1).png", mimeType: "image/png",
+                               byteCount: Int64(f.bytes.count), kind: .image)
+        }
         let title = "Images are saved in this group and sent to the responding members' configured models. @mentions limit this turn's recipients."
         for language in ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"] {
             try await withUIRenderTurn(language: language) {
                 if language != "en" { #expect(FiliconLocalization.string(title) != title) }
-                let host = NSHostingView(rootView: GroupImageDraftPreview(onRemove: {}) {
-                    AgentMessageImagePreviewContent(image: f.images[0], preview: preview, compact: true)
+                let host = NSHostingView(rootView: VStack(alignment: .leading, spacing: 20) {
+                    AgentMessageImageGallery(images: f.images) { image in
+                        AgentMessageImagePreviewContent(image: image, preview: preview, expanded: true)
+                    }
+                    GroupImageDraftPreview(onRemove: {}) {
+                        AgentMessageImageGallery(images: galleryImages) { image in
+                            AgentMessageImagePreviewContent(image: image, preview: preview, compact: true)
+                        }
+                    }
                 }
-                    .padding(16).frame(width: 380, height: 280).background(FiliconTheme.canvas)
+                    .padding(16).frame(width: 380, height: 660).background(FiliconTheme.canvas)
                     .environmentObject(f.model).environment(\.locale, Locale(identifier: language)).environment(\.colorScheme, .light))
                 host.appearance = NSAppearance(named: .aqua)
-                host.frame = .init(x: 0, y: 0, width: 380, height: 280)
+                host.frame = .init(x: 0, y: 0, width: 380, height: 660)
                 host.layoutSubtreeIfNeeded()
-                #expect(host.fittingSize.height <= 280)
+                #expect(host.fittingSize.height <= 660)
                 let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
                 host.cacheDisplay(in: host.bounds, to: bitmap)
                 if let output {
