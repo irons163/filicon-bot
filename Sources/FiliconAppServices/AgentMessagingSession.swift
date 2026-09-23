@@ -174,18 +174,20 @@ public actor AgentMessagingSession {
 
     /// A peer-message wake retains the originating conversation's tool scope,
     /// but quotes only messages from the destination group. It has no current
-    /// human input, image handles, or permission to ask a choice question.
-    public func savedBackgroundGroupPublisher(for senderID: UUID, groupID: UUID, replyHistory: [RoomMessage],
+    /// human input or image handles. A saved choice question waits for a new
+    /// human answer in that group; it does not resume this old peer wake.
+    public func savedBackgroundGroupPublisher(for senderID: UUID, groupID: UUID, memberIDs: [UUID], replyHistory: [RoomMessage],
                                               publish: @escaping @Sendable (GroupAgentPublication) async throws -> RoomMessage?) async throws -> AgentUserMessageTool {
         guard let sender = await agents.profile(id: senderID), sender.archivedAt == nil else {
             throw AgentMessagingError.invalidRecipient
         }
         try checkOpen()
         return AgentUserMessageTool(conversationID: originConversationID, senderID: senderID,
-            replyHistory: replyHistory, supportsQuestions: false, replyGroupID: groupID) { [self] text, images, replyID, question in
-            guard images.isEmpty, question == nil else { throw AgentImageError.unavailable }
+            replyHistory: replyHistory, supportsQuestions: true, replyGroupID: groupID) { [self] text, images, replyID, question in
+            guard images.isEmpty else { throw AgentImageError.unavailable }
             try await checkOpen()
-            return try await publish(.init(text: text, lifetime: publicationLifetime, replyToMessageID: replyID))
+            let card = question.map { GroupQuestion(question: $0, accountID: accountID, memberIDs: memberIDs) }
+            return try await publish(.init(text: text, lifetime: publicationLifetime, question: card, replyToMessageID: replyID))
         }
     }
 

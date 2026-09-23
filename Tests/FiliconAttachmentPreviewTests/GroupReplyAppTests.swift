@@ -636,10 +636,6 @@ private struct GroupReplyAppProvider: InteractiveToolProvider {
             let badQuote = try NormalizedToolCall(id: "foreign", name: "SendMessage",
                 argumentsJSON: JSONEncoder().encode(["text": "Wrong room", "reply_to": foreign.id.uuidString]))
             #expect(try await execute(badQuote).isError)
-            let badQuestion = try NormalizedToolCall(id: "question", name: "SendMessage",
-                argumentsJSON: Data(#"{"type":"widget","widget":{"prompt":"Choose","options":[{"label":"Yes"}]}}"#.utf8))
-            do { #expect(try await execute(badQuestion).isError) }
-            catch { #expect(String(describing: error).contains("schemaMismatch")) }
             let badImage = try NormalizedToolCall(id: "image", name: "SendMessage",
                 argumentsJSON: Data(#"{"text":"No borrowed images","images":["old"]}"#.utf8))
             do { #expect(try await execute(badImage).isError) }
@@ -669,7 +665,72 @@ private struct GroupReplyAppProvider: InteractiveToolProvider {
         try await session.close()
     }
 
-    @Test func backgroundReplyRevokedBeforePublication() async throws {
+    @Test func backgroundChoicePausesAndOnlyItsAskerResumesAfterHumanAnswer() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "filicon-background-choice-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let agents = try AgentService(storeURL: root.appending(path: "agents.json"))
+        let sender = try await agents.create(name: "Engineer", providerID: "group-reply-fixture", modelID: "test")
+        let asker = try await agents.create(name: "Designer", providerID: "group-reply-fixture", modelID: "test")
+        let groups = try GroupService(agents: agents, storeURL: root.appending(path: "groups.json"))
+        let group = try await groups.create(name: "Team", memberIDs: [sender.id, asker.id])
+        let audience = try await groups.audience(groupID: group.id, senderID: sender.id)
+        let incoming = RoomMessage(groupID: group.id, senderID: sender.id, text: "Ask the user which layout to use")
+        try await groups.postAgentMessage(incoming, audience: audience, lifetime: .init())
+        let registry = ProviderRegistry(), probe = GroupReplyAppProbe()
+        let coordinator = TurnCoordinator(registry: registry, toolCatalog: ToolCatalog())
+        let messenger = try AgentMessenger(service: agents, storeURL: root.appending(path: "mailbox.json"))
+        let originID = UUID()
+        let session = AgentMessagingSession(originConversationID: originID, agents: agents, messenger: messenger,
+            registry: registry, coordinator: coordinator, groups: groups)
+        await registry.register(GroupReplyAppProvider { request, execute in
+            let step = await probe.record(request)
+            #expect(request.messages.first?.text.contains(asker.id.uuidString) == true)
+            if step == 1 {
+                #expect(request.messages.contains { $0.text.contains("peer-message wake") })
+                let call = try NormalizedToolCall(id: "background-choice", name: "SendMessage",
+                    argumentsJSON: Data(#"{"type":"widget","reply_to":"\#(incoming.id.uuidString)","widget":{"prompt":"Which layout?","options":[{"label":"Grid","value":"Use a grid"},{"label":"List","value":"Use a list"}]}}"#.utf8))
+                do { _ = try await execute(call); Issue.record("A saved choice must pause the peer wake") }
+                catch let suspension as ToolTurnSuspension {
+                    await probe.record(try GroupReplySavedReceipt.decode(suspension.result))
+                    throw suspension
+                }
+                return "Must not duplicate"
+            }
+            expectNoDifference(step, 2)
+            #expect(request.messages.contains { $0.role == .system && $0.text.contains("answers or dismisses your saved question") })
+            return "Use the selected grid layout"
+        })
+        let first = try await groups.run(groupID: group.id,
+            responder: GroupConversationResponder(groupID: group.id, registry: registry, coordinator: coordinator,
+                messaging: session, delegatedMessage: incoming, toolScopeID: originID),
+            delegatedAudience: audience, delegatedSenderID: sender.id)
+        let question = try #require(first.first { $0.question != nil })
+        expectNoDifference(question.senderID, asker.id)
+        expectNoDifference(question.replyToMessageID, incoming.id)
+        #expect(question.question?.isPending == true)
+        let receipts = await probe.receipts
+        expectNoDifference(receipts.first?.messageID, question.id)
+        try await session.close()
+        let restored = try GroupService(agents: agents, storeURL: root.appending(path: "groups.json"))
+        do {
+            _ = try await restored.answerQuestion(groupID: group.id, messageID: question.id,
+                answer: .option(0), accountID: "other", lifetime: .init())
+            Issue.record("Another account must not answer a saved question")
+        } catch is AgentQuestionError {}
+        let answer = try await restored.answerQuestion(groupID: group.id, messageID: question.id,
+            answer: .option(0), accountID: "local", lifetime: .init())
+        expectNoDifference(answer.questionReplyTo, question.id)
+        expectNoDifference(answer.replyToMessageID, question.id)
+        let continued = try await restored.run(groupID: group.id,
+            responder: GroupConversationResponder(groupID: group.id, registry: registry, coordinator: coordinator,
+                questionAccountID: "local", questionLifetime: .init()))
+        expectNoDifference(continued.map(\.senderID), [asker.id])
+        expectNoDifference(continued.map(\.text), ["Use the selected grid layout"])
+        let persisted = await restored.messages(groupID: group.id)
+        #expect(persisted.first { $0.id == question.id }?.question?.isPending == false)
+    }
+
+    @Test(arguments: [false, true]) func backgroundReplyRevokedBeforePublication(widget: Bool) async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-background-revoke-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }
         let agents = try AgentService(storeURL: root.appending(path: "agents.json"))
@@ -680,11 +741,13 @@ private struct GroupReplyAppProvider: InteractiveToolProvider {
         let session = AgentMessagingSession(originConversationID: originID, agents: agents, messenger: messenger,
             registry: registry, coordinator: TurnCoordinator(registry: registry))
         let target = RoomMessage(groupID: groupID, senderID: UUID(), text: "Earlier peer task")
-        let publisher = try await session.savedBackgroundGroupPublisher(for: agent.id, groupID: groupID,
+        let publisher = try await session.savedBackgroundGroupPublisher(for: agent.id, groupID: groupID, memberIDs: [agent.id],
             replyHistory: [target]) { _ in Issue.record("Revoked turn must not publish"); return nil }
         try await session.close()
-        let call = try NormalizedToolCall(id: "late", name: "SendMessage",
-            argumentsJSON: JSONEncoder().encode(["text": "Late", "reply_to": target.id.uuidString]))
+        let payload = widget
+            ? Data(#"{"type":"widget","widget":{"prompt":"Late choice","options":[{"label":"Proceed"}]}}"#.utf8)
+            : try JSONEncoder().encode(["text": "Late", "reply_to": target.id.uuidString])
+        let call = try NormalizedToolCall(id: "late", name: "SendMessage", argumentsJSON: payload)
         #expect(try await publisher.execute(call, context: .init(conversationID: originID)).isError)
     }
 

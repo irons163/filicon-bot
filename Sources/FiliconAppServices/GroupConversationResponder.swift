@@ -171,9 +171,9 @@ public struct GroupConversationResponder: GroupAgentResponder {
                 try await onPublication(.init(text: question.prompt, lifetime: questionLifetime, question: card, replyToMessageID: replyID))
             }
         } else { ask = nil; askReply = nil }
-        if delegatedMessage != nil, let onSavedPublication, let messaging {
+        if delegatedMessage != nil, let onSavedPublication, let messaging, let roomContext {
             publisher = try await messaging.savedBackgroundGroupPublisher(for: agent.id, groupID: groupID,
-                replyHistory: replyHistory, publish: onSavedPublication)
+                memberIDs: roomContext.group.memberIDs, replyHistory: replyHistory, publish: onSavedPublication)
         } else if delegatedMessage == nil, let onSavedPublication, let roomContext, let questionLifetime {
             if let messaging, let forwardingMessageID {
                 publisher = try await messaging.savedGroupPublisher(for: agent.id, userMessageID: forwardingMessageID,

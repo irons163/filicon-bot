@@ -72,8 +72,9 @@ ordinary user message retires the question; the default is false.
 
 A question answer is **not tool approval** and must not contain passwords or
 API keys. Writes, image publication and delegation retain their separate gates.
-Question widgets are not yet available in mailbox/direct-chat/background peer
-wakes.
+Question widgets are not yet available in mailbox/direct-chat peer wakes. A
+supervised background wake **inside a group** may save one necessary choice
+question; answering later starts a new human group turn for its asker only.
 
 Normal group agents can quote a prior message with
 `SendMessage(text:"…", reply_to:"<shortAddress or UUID from the reply directory>")`.
@@ -127,8 +128,10 @@ This native routing does not support mailbox/direct-chat peer wakes or external
 quote a listed earlier message from that same group, including the incoming peer
 post. The tool still runs under its originating conversation's permission scope;
 the saved quote and publication receipt belong to the destination group. This
-background route does not inherit a human-selected thread, ask choice questions,
-or borrow historical image handles. Stop or account cancellation revokes it.
+background route does not inherit a human-selected thread or borrow historical
+image handles. A quoted choice question ends that background wake and waits for
+a new human answer in the group; it never resumes the old peer session. Stop or
+account cancellation revokes unpublished messages and questions.
 In the normal group timeline, quoted secondary discussions now fold beneath their
 original root message with a reply count. Nested replies share that root and keep
 their original quotes. Opening a quote or inline reference expands its thread
