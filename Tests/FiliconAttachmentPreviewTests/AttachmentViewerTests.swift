@@ -1,4 +1,5 @@
 import CryptoKit
+import CustomDump
 import Foundation
 import Testing
 import FiliconDomain
@@ -6,6 +7,27 @@ import FiliconDomain
 
 @Suite("Native attachment viewers")
 struct AttachmentViewerTests {
+    @Test func imageZoomAccumulatesAndBoundsRepeatedGestures() {
+        var zoom = AttachmentImageZoom()
+        expectDifference(zoom) { zoom.finishGesture(2) } changes: { $0.scale = 2 }
+        expectDifference(zoom) { zoom.finishGesture(1.5) } changes: { $0.scale = 3 }
+        expectNoDifference(zoom.effectiveScale(gesture: 2), 6)
+        expectDifference(zoom) { zoom.finishGesture(10) } changes: { $0.scale = 8 }
+        expectDifference(zoom) { zoom.finishGesture(0.001) } changes: { $0.scale = 0.1 }
+        expectNoDifference(zoom.effectiveScale(gesture: .nan), 0.1)
+    }
+
+    @Test func zoomedImageExpandsScrollableLayoutWithAspectRatio() {
+        let viewport = CGSize(width: 648, height: 448)
+        let image = CGSize(width: 1200, height: 800)
+        expectNoDifference(AttachmentImageZoom().displaySize(image: image, viewport: viewport),
+                           CGSize(width: 600, height: 400))
+        expectNoDifference(AttachmentImageZoom(scale: 2).displaySize(image: image, viewport: viewport), image)
+        expectNoDifference(AttachmentImageZoom().displaySize(image: CGSize(width: 400, height: 800), viewport: viewport),
+                           CGSize(width: 200, height: 400))
+        expectNoDifference(AttachmentImageZoom().displaySize(image: .zero, viewport: viewport), .zero)
+    }
+
     @Test func classifiesNativeAndFallbackFormats() {
         #expect(AttachmentViewerKind.classify(filename: "photo.HEIC", mimeType: nil) == .image)
         #expect(AttachmentViewerKind.classify(filename: "clip.bin", mimeType: "video/mp4") == .audiovisual)

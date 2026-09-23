@@ -283,21 +283,60 @@ private struct AttachmentThumbnail: View {
     }
 }
 
-private struct AttachmentImageView: View {
+struct AttachmentImageZoom: Equatable {
+    var scale = 1.0
+
+    func effectiveScale(gesture: Double) -> Double {
+        let proposed = scale * gesture
+        return proposed.isFinite ? min(8, max(0.1, proposed)) : scale
+    }
+
+    mutating func finishGesture(_ magnification: Double) {
+        scale = effectiveScale(gesture: magnification)
+    }
+
+    func displaySize(image: CGSize, viewport: CGSize, gesture: Double = 1) -> CGSize {
+        guard image.width > 0, image.height > 0 else { return .zero }
+        let fit = min(1, max(0, viewport.width - 48) / image.width,
+                      max(0, viewport.height - 48) / image.height)
+        let factor = fit * effectiveScale(gesture: gesture)
+        return CGSize(width: image.width * factor, height: image.height * factor)
+    }
+}
+
+struct AttachmentImageView: View {
     @Environment(\.locale) private var uiLocale
     let fileURL: URL
-    @State private var magnification = 1.0
+    @State private var zoom = AttachmentImageZoom()
+    @GestureState private var gestureScale = 1.0
 
     var body: some View {
         let _ = uiLocale.identifier
         if let image = NSImage(contentsOf: fileURL) {
-            ScrollView([.horizontal, .vertical]) {
-                Image(nsImage: image)
-                    .resizable()
-                    .scaledToFit()
-                    .scaleEffect(magnification)
-                    .padding(24)
-                    .gesture(MagnifyGesture().onChanged { magnification = min(8, max(0.1, $0.magnification)) })
+            VStack(spacing: 0) {
+                HStack {
+                    Slider(value: $zoom.scale, in: 0.1...8) { Text(l10n("Zoom")) }
+                        .frame(maxWidth: 280)
+                    Text(zoom.effectiveScale(gesture: gestureScale), format: .percent.precision(.fractionLength(0)))
+                        .monospacedDigit().frame(minWidth: 48)
+                    Button(l10n("Reset")) { zoom = AttachmentImageZoom() }
+                    Spacer()
+                }
+                .padding(8)
+                Divider()
+                GeometryReader { geometry in
+                    let size = zoom.displaySize(image: image.size, viewport: geometry.size, gesture: gestureScale)
+                    ScrollView([.horizontal, .vertical]) {
+                        Image(nsImage: image)
+                            .resizable()
+                            .frame(width: size.width, height: size.height)
+                            .padding(24)
+                            .frame(minWidth: geometry.size.width, minHeight: geometry.size.height)
+                    }
+                    .gesture(MagnifyGesture()
+                        .updating($gestureScale) { value, state, _ in state = value.magnification }
+                        .onEnded { zoom.finishGesture($0.magnification) })
+                }
             }
             .background(Color(nsColor: .windowBackgroundColor))
         } else {

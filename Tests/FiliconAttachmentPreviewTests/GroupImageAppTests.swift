@@ -279,6 +279,15 @@ private struct GroupImageProvider: AIProvider {
                 if let output {
                     try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
                     try #require(bitmap.representation(using: .png, properties: [:])).write(to: output.appending(path: "group-image-\(language).png"))
+                    let viewer = NSHostingView(rootView: AttachmentImageView(fileURL: f.root.appending(path: "layout.png"))
+                        .frame(width: 760, height: 560)
+                        .environment(\.locale, Locale(identifier: language)))
+                    viewer.frame = .init(x: 0, y: 0, width: 760, height: 560)
+                    viewer.layoutSubtreeIfNeeded()
+                    let viewerBitmap = try #require(viewer.bitmapImageRepForCachingDisplay(in: viewer.bounds))
+                    viewer.cacheDisplay(in: viewer.bounds, to: viewerBitmap)
+                    try #require(viewerBitmap.representation(using: .png, properties: [:]))
+                        .write(to: output.appending(path: "image-zoom-\(language).png"))
                 }
             }
         }
