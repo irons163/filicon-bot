@@ -507,7 +507,7 @@ public actor GroupService {
             guard publication.lifetime != nil, images.count <= 4, Set(images.map(\.id)).count == images.count,
                   let user = state.roomMessages.last(where: { $0.groupID == activity.groupID && $0.senderID == nil }),
                   user.id == publication.sourceUserMessageID,
-                  images.allSatisfy({ user.images?.contains($0) == true }),
+                  images.allSatisfy({ image in user.images?.contains(where: { image.isAnnotation(of: $0) }) == true }),
                   let senderID = activity.senderID,
                   state.groups.first(where: { $0.id == activity.groupID })?.memberIDs.contains(senderID) == true else {
                 throw AgentPublicationError.invalid

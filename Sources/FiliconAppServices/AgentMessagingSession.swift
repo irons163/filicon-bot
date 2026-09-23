@@ -195,7 +195,7 @@ public actor AgentMessagingSession {
         try checkOpen()
         if !images.isEmpty {
             let current = try await availableImages(senderID: senderID, replyTo: nil, groupUserMessageID: userMessageID)
-            guard images.allSatisfy(current.contains) else { throw AgentImageError.unavailable }
+            guard images.allSatisfy({ image in current.contains(where: { image.isAnnotation(of: $0) }) }) else { throw AgentImageError.unavailable }
         }
         try checkOpen()
     }

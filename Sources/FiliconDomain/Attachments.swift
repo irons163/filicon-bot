@@ -16,6 +16,8 @@ public struct AttachmentMetadata: Identifiable, Codable, Hashable, Sendable {
     public let byteCount: Int64
     public let kind: AttachmentKind
     public let createdAt: Date
+    /// Message-local description, not part of the content-addressed blob identity.
+    public var altText: String?
 
     public init(
         id: String,
@@ -23,7 +25,8 @@ public struct AttachmentMetadata: Identifiable, Codable, Hashable, Sendable {
         mimeType: String,
         byteCount: Int64,
         kind: AttachmentKind,
-        createdAt: Date = Date()
+        createdAt: Date = Date(),
+        altText: String? = nil
     ) {
         self.id = id
         self.filename = filename
@@ -31,6 +34,20 @@ public struct AttachmentMetadata: Identifiable, Codable, Hashable, Sendable {
         self.byteCount = byteCount
         self.kind = kind
         self.createdAt = createdAt
+        self.altText = altText
+    }
+
+    public var hasValidAltText: Bool {
+        guard let altText else { return true }
+        return !altText.isEmpty && altText.count <= 500 && altText.utf8.count <= 2_000
+            && !altText.unicodeScalars.contains { CharacterSet.controlCharacters.contains($0) }
+    }
+
+    /// Publication may annotate a current image, but cannot alter any source metadata.
+    public func isAnnotation(of source: Self) -> Bool {
+        var copy = self
+        copy.altText = source.altText
+        return hasValidAltText && copy == source
     }
 }
 

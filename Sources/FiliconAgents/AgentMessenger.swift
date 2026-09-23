@@ -64,7 +64,7 @@ public actor AgentMessenger {
                   publication.memberOutcome == nil else { throw AgentPublicationError.invalid }
             let images = publication.images ?? []
             guard images.count <= 4, Set(images.map(\.id)).count == images.count,
-                  images.allSatisfy({ state.messages[index].images?.contains($0) == true }) else {
+                  images.allSatisfy({ image in state.messages[index].images?.contains(where: { image.isAnnotation(of: $0) }) == true }) else {
                 throw AgentPublicationError.invalid
             }
             let prior = delivery.publications ?? []

@@ -252,7 +252,7 @@ private struct GroupImageProvider: AIProvider {
         let preview = try #require(NSImage(data: f.bytes))
         let galleryImages = (0..<4).map { index in
             AttachmentMetadata(id: "gallery-\(index)", filename: "layout-\(index + 1).png", mimeType: "image/png",
-                               byteCount: Int64(f.bytes.count), kind: .image)
+                               byteCount: Int64(f.bytes.count), kind: .image, altText: "商品卡片 \(index + 1) — Product layout")
         }
         let title = "Images are saved in this group and sent to the responding members' configured models. @mentions limit this turn's recipients."
         for language in ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"] {

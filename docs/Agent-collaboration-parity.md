@@ -1,4 +1,10 @@
-# 協作能力核對紀錄（更新至 2026-09-23）
+# 協作能力核對紀錄（更新至 2026-09-24）
+
+## 本輪增量：經核准的單張圖片描述（2026-09-24）
+
+對照 reconstructed 附件的 `alt`，單張無文字圖片發布可附上 500 字／2,000 UTF-8 bytes 以內的純文字描述，控制字元拒絕、空白正規化。描述在核准卡完整呈現，並提供懸停提示、圖片檢視說明與 accessibility label；不將描述解讀為 Markdown、工具指令或授權。群組與信箱只允許替目前 incoming 圖片加描述，ID、檔名、MIME、長度、種類與建立時間仍須符合來源；不放寬路徑、URL、歷史圖片或收件者。重新使用 call ID 但修改描述會拒絕，同圖片另換 call ID 亦不重複發布。舊資料缺少 `altText` 仍可解碼。
+
+21 項 storage/delivery 與 19 項 App 測試曾分別通過，涵蓋描述核准、拒絕、來源過期、重送、群組及信箱重開、來源 metadata 防竄改；七語言渲染並抽查繁中圖集，原生 Debug build、deep strict codesign 與 package verifier 通過。最初測試的 async autoclosure 編譯錯誤與日期序列化精度斷言已修正後重跑。七語言各 1,661 keys 零缺漏。完整非並行回歸仍失敗，包含 WorkflowService／AgentWorkflow 暫存 JSON 重讀 EPERM 以及 SharedRoom malformedState。最後一次圖片聚焦重跑亦出現圖片暫存檔 EPERM 與連帶斷言失敗，尚未得到最後一次全綠結果；不能宣稱全套成功或確定均由本次改動造成。沒有重啟使用者 App／Xcode、push 或操作真實帳號。多張圖片逐張描述、其他附件種類與其餘 partial 缺口仍未完成。
 
 ## 本輪增量：群組行內訊息引用樣式與缺口校正（2026-09-23）
 

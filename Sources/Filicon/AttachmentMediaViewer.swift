@@ -104,6 +104,11 @@ struct AttachmentMediaViewerSheet: View {
             Divider()
             viewer(for: selectedFile)
                 .id(selectedFile.id)
+                .accessibilityLabel(selectedFile.metadata?.altText ?? selectedFile.filename)
+            if let alt = selectedFile.metadata?.altText {
+                Text(verbatim: alt).textSelection(.enabled).padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
             if item.files.count > 1 {
                 Divider()
                 galleryStrip
@@ -294,7 +299,8 @@ struct AttachmentThumbnail: View {
                     .resizable().scaledToFit().padding(12).foregroundStyle(.secondary)
             }
         }
-        .accessibilityLabel(failed ? l10n("Image preview unavailable") : file.filename)
+        .accessibilityLabel(failed ? l10n("Image preview unavailable") : file.metadata?.altText ?? file.filename)
+        .help(file.metadata?.altText ?? file.filename)
         .task(id: file.id) { await loadThumbnail() }
     }
 

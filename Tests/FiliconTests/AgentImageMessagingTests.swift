@@ -85,9 +85,9 @@ private func publishImage(_ ids: [String], text: String = "Reviewed layout", id:
     return try .init(id: id, name: "SendMessage", argumentsJSON: JSONEncoder().encode(Payload(text: text, images: ids)))
 }
 
-private func publishStandaloneImage(_ imageID: String, id: ToolCallID = "standalone") throws -> NormalizedToolCall {
-    struct Payload: Encodable { let type = "attachment"; let image_id: String }
-    return try .init(id: id, name: "SendMessage", argumentsJSON: JSONEncoder().encode(Payload(image_id: imageID)))
+private func publishStandaloneImage(_ imageID: String, id: ToolCallID = "standalone", alt: String? = nil) throws -> NormalizedToolCall {
+    struct Payload: Encodable { let type = "attachment"; let image_id: String; let alt: String? }
+    return try .init(id: id, name: "SendMessage", argumentsJSON: JSONEncoder().encode(Payload(image_id: imageID, alt: alt)))
 }
 
 private func forwardImage(_ target: UUID, ids: [String], id: ToolCallID = "forward", priority: Bool = false) throws -> NormalizedToolCall {
@@ -377,13 +377,15 @@ struct AgentImageMessagingTests {
         expectNoDifference(publishedTexts, [""])
     }
 
-    @Test(arguments: ["approved", "denied", "stale"])
-    func standaloneGroupImagePersistsOnlyAfterCurrentTurnApproval(mode: String) async throws {
+    @Test(arguments: ["approved", "denied", "stale"], [nil, "版面配置：導覽與商品卡片"] as [String?])
+    func standaloneGroupImagePersistsOnlyAfterCurrentTurnApproval(mode: String, alt: String?) async throws {
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
         let groups = try GroupService(agents: f.agents, storeURL: f.root.appending(path: "groups.json"))
         let group = try await groups.create(name: "Review", memberIDs: [f.sender.id])
         let image = try await f.store.importImage(data: peerImageBytes(), filename: "current.png")
         let user = try await groups.postUserMessage("Show the image", groupID: group.id, images: [image])
+        var annotated = image
+        annotated.altText = alt
         let session = AgentMessagingSession(originConversationID: group.id, agents: f.agents, messenger: f.messenger,
             registry: f.registry, coordinator: TurnCoordinator(registry: f.registry, toolCatalog: ToolCatalog()),
             groups: groups, imageStore: f.store, authorizePublication: { _, text, values, _, _ in
@@ -395,7 +397,7 @@ struct AgentImageMessagingTests {
         let responder = ImageGroupSavedPublicationResponder { publish in
             let tool = try await session.savedGroupPublisher(for: f.sender.id, userMessageID: user.id,
                 replyHistory: [user], questionAccountID: nil, memberIDs: [f.sender.id], publish: publish)
-            let call = try publishStandaloneImage(image.id)
+            let call = try publishStandaloneImage(image.id, alt: alt)
             let result = try await tool.execute(call, context: .init(conversationID: group.id))
             expectNoDifference(result.isError, mode != "approved")
             if mode == "approved" {
@@ -411,22 +413,25 @@ struct AgentImageMessagingTests {
         expectNoDifference(saved.count, mode == "approved" ? 1 : 0)
         if mode == "approved" {
             expectNoDifference(saved.first?.text, "")
-            expectNoDifference(saved.first?.images, [image])
+            expectNoDifference(saved.first?.images, [annotated])
             expectNoDifference(saved.first?.shortAddress, "t0s0")
             let reopened = try GroupService(agents: f.agents, storeURL: f.root.appending(path: "groups.json"))
             let restored = await reopened.messages(groupID: group.id).filter { $0.senderID == f.sender.id && $0.images?.isEmpty == false }
             expectNoDifference(restored.map(\.id), saved.map(\.id))
             expectNoDifference(restored.first?.images?.map(\.id), [image.id])
+            expectNoDifference(restored.first?.images?.map(\.altText), [alt])
             expectNoDifference(restored.first?.shortAddress, "t0s0")
         }
         let approvals = await f.probe.approvals
-        expectNoDifference(approvals, [[image]])
+        expectNoDifference(approvals, [[annotated]])
         try await session.close()
     }
 
     @Test func standaloneMailboxImageIsDurableWithoutFallbackText() async throws {
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
         let image = try await f.store.importImage(data: peerImageBytes(), filename: "current.png")
+        var annotated = image
+        annotated.altText = "Mailbox image description"
         let projected = ImagePublicationProbe()
         let session = AgentMessagingSession(originConversationID: f.origin, agents: f.agents, messenger: f.messenger,
             registry: f.registry, coordinator: TurnCoordinator(registry: f.registry, toolCatalog: ToolCatalog()),
@@ -435,7 +440,7 @@ struct AgentImageMessagingTests {
                 await f.probe.approve(values)
             })
         await f.registry.register(ImagePeerProvider { _, execute in
-            let result = try await execute(publishStandaloneImage(image.id))
+            let result = try await execute(publishStandaloneImage(image.id, alt: "Mailbox image description"))
             #expect(!result.isError)
             return "Do not repeat this final text"
         })
@@ -448,15 +453,50 @@ struct AgentImageMessagingTests {
         expectNoDifference(delivery.state, .completed)
         expectNoDifference(delivery.response, "")
         expectNoDifference(delivery.publications?.map(\.text), [""])
-        expectNoDifference(delivery.publications?.first?.images, [image])
+        expectNoDifference(delivery.publications?.first?.images, [annotated])
         let approvals = await f.probe.approvals
-        expectNoDifference(approvals, [[image]])
+        expectNoDifference(approvals, [[annotated]])
         let visible = await projected.values.filter { $0.images?.isEmpty == false }
         expectNoDifference(visible.map(\.text), [""])
         let reopened = try AgentMessenger(service: f.agents, storeURL: f.root.appending(path: "messages.json"))
         let restored = await reopened.allMessages()
         expectNoDifference(restored.first?.delivery?.publications?.first?.images?.map(\.id), [image.id])
+        expectNoDifference(restored.first?.delivery?.publications?.first?.images?.map(\.altText), [annotated.altText])
         try await session.close()
+    }
+
+    @Test func standaloneDescriptionIsBoundedApprovedAndReplayProtected() async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let image = try await f.store.importImage(data: peerImageBytes(), filename: "current.png")
+        let output = ImagePublicationProbe(), context = ToolContext(conversationID: f.origin)
+        let tool = AgentUserMessageTool(conversationID: f.origin, availableImages: [image], imageStore: f.store,
+            authorizeImages: { _, values, _, _ in await f.probe.approve(values) }) { text, values in
+                await output.append(.init(groupID: f.origin, senderID: nil, text: text, images: values))
+            }
+        for invalid in [String(repeating: "a", count: 501), "line\nbreak", "hidden\u{0000}text"] {
+            #expect(try await tool.execute(publishStandaloneImage(image.id, alt: invalid), context: context).isError)
+        }
+        let call = try publishStandaloneImage(image.id, alt: "  商品卡片  ")
+        let result = try await tool.execute(call, context: context)
+        #expect(!result.isError)
+        let replay = try await tool.execute(call, context: context)
+        expectNoDifference(replay, result)
+        #expect(try await tool.execute(publishStandaloneImage(image.id, alt: "changed"), context: context).isError)
+        #expect(try await tool.execute(publishStandaloneImage(image.id, id: "repeat", alt: "changed"), context: context).isError)
+        var annotated = image
+        annotated.altText = "商品卡片"
+        let approvals = await f.probe.approvals, values = await output.values
+        expectNoDifference(approvals, [[annotated]])
+        expectNoDifference(values.first?.images, [annotated])
+        expectNoDifference(values.count, 1)
+        #expect(annotated.isAnnotation(of: image))
+        let altered = AttachmentMetadata(id: image.id, filename: "changed.png", mimeType: image.mimeType,
+            byteCount: image.byteCount, kind: image.kind, createdAt: image.createdAt, altText: "商品卡片")
+        #expect(!altered.isAnnotation(of: image))
+        annotated.altText = "invalid\ncaption"
+        #expect(!annotated.isAnnotation(of: image))
+        let legacy = try JSONEncoder().encode(image)
+        expectNoDifference(try JSONDecoder().decode(AttachmentMetadata.self, from: legacy).altText, nil)
     }
 
     @Test func missingPublicationAuthorizerDeniesImages() async throws {

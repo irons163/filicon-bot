@@ -354,13 +354,17 @@ struct AgentMessageImagePreviewContent: View {
                 if let onOpen {
                     Button(action: onOpen) { fittedImage(preview) }
                         .buttonStyle(.plain)
-                        .help(image.filename)
+                        .help(image.altText ?? image.filename)
                 } else {
                     fittedImage(preview)
                 }
             } else if failed { Text(l10n("Image preview unavailable")).foregroundStyle(.secondary) }
             else { ProgressView().controlSize(.small) }
             Text(verbatim: image.filename).font(.caption).textSelection(.enabled)
+            if let alt = image.altText {
+                Text(verbatim: alt).font(.caption).textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if !compact {
                 Text(verbatim: image.id).font(.caption2.monospaced()).textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
@@ -374,7 +378,7 @@ struct AgentMessageImagePreviewContent: View {
                             maximumHeight: compact ? 96 : expanded ? 320 : 160) {
             Image(nsImage: preview).resizable().scaledToFit()
                 .clipShape(RoundedRectangle(cornerRadius: 10))
-                .accessibilityLabel(image.filename)
+                .accessibilityLabel(image.altText ?? image.filename)
         }
     }
 }
