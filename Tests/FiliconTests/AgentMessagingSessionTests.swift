@@ -80,6 +80,27 @@ struct AgentMessagingSessionTests {
         }
     }
 
+    @Test(arguments: [true, false])
+    func mailboxReplyEntryIsHostGated(enabled: Bool) async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        await f.registry.register(MessagingProvider { _, execute in
+            let incoming = try #require(await f.messenger.allMessages().first)
+            let call = try NormalizedToolCall(id: "reply", name: "SendMessage", argumentsJSON:
+                JSONEncoder().encode(["text": "Quoted answer", "reply_to": incoming.id.uuidString]))
+            let result = try await execute(call)
+            expectNoDifference(result.isError, !enabled)
+            return "Done"
+        })
+        let session = f.session(questions: enabled)
+        try await session.enqueueUserMessage(senderID: f.sender.id, recipientID: f.recipient.id, text: "Question")
+        try await session.drain()
+        try await session.close()
+        let incoming = try #require(await f.messenger.allMessages().first)
+        expectNoDifference(incoming.delivery?.publications?.first?.replyToMessageID, enabled ? incoming.id : nil)
+        // Unsupported reply payloads are rejected by the tool router before provider continuation.
+        expectNoDifference(incoming.delivery?.state, enabled ? .completed : .failed)
+    }
+
     @Test(arguments: [AgentQuestionAnswer.option(0), .custom("Human clarification"), .dismissed])
     func mailboxQuestionPausesAndHumanAnswerStartsFreshTurn(answer: AgentQuestionAnswer) async throws {
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }

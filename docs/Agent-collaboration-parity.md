@@ -1,5 +1,11 @@
 # 協作能力核對紀錄（更新至 2026-09-25）
 
+## 獨立信箱引用模型接線（2026-09-25）
+
+host 開啟 supportsMailboxQuestions 的獨立信箱回合，現在將保存層引用目錄交給 SendMessage，text／image publication 可帶 reply_to UUID。輸出鏡像保留 replyToMessageID，保存時再次核對目標；背景及其他未開啟入口不提供引用。引用目錄無法取得時不提供候選，不猜測目標。端到端假 provider 測試覆蓋開啟時保存 inbound 引用、關閉時路由拒絕且無 publication。
+
+`mailbox-reply-wiring-tests.log`、`mailbox-reply-full-tests.log`、`mailbox-reply-native.log` 均 exit 0；封裝及 deep strict codesign 通過。未啟動使用者 App、未連接真實帳號。仍缺信箱引用視覺卡片、短地址、同回合新增 publication receipt 目錄、question 引用接線；不能宣稱原版 reply_to 全面對齊，AGENT-02 保持 partial。
+
 ## 信箱引用保存基礎（2026-09-25）
 
 AgentMessenger 新增同 sender／recipient／origin、截至目前 inbound 的引用目錄，最多 40 則，排除重複 ID 與空白內容。保存 replyToMessageID 時核對目錄並拒絕自我引用；既有兩則額度、停止 fence 與 exact replay 保留。隔離測試覆蓋保存／重載／重送、不同 sender／scope、未來及不存在目標、目前 inbound 與已保存 publication 引用。`mailbox-reply-tests.log` exit 0。這是保存層基礎，尚非完成模型入口、引用顯示或原版短地址；AGENT-02 仍 partial。測試使用 testing／CustomDump 技能，未碰真實資料。

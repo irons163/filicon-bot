@@ -1,5 +1,7 @@
 # Filicon / Grok Bot 0.18 功能 parity matrix（current implementation）
 
+信箱引用增量（2026-09-25）：獨立信箱 SendMessage 接入同參與者／origin 的 reply_to UUID 目錄及保存時重驗；跨範圍、未來、自我及未知引用拒絕。完整回歸、原生建置、封裝及 deep strict codesign 通過。引用卡片、短地址、同回合新增 receipt 及 question 引用仍待接線，AGENT-02 partial、complete 計數不變。
+
 模型斷線帳號隔離（2026-09-25）：own-channel disconnect 以 host 帳號＋agent 篩選，另一帳號不列入候選、不刪除；App 核准及提交重驗 owner。全域 channel UI／收送策略仍未宣稱全面隔離，complete 計數不變。
 
 完整驗收補跑（2026-09-25）：`channel-account-full-recheck.log` 完整非並行測試 exit 0，原生建置、封裝及 deep strict codesign 通過；下方 channel status／owner identity 的待解鎖補驗已完成。前一次 EPERM 保留紀錄，原因未完全確認，未降低檔案保護。

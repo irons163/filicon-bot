@@ -560,13 +560,25 @@ public actor AgentMessagingSession {
                     await onChange()
                 }
             } else { secretPublisher = nil }
+            let replyHistory = supportsMailboxQuestions
+                ? (try? await messenger.replyDirectory(replyingTo: inbound.id)) ?? [] : []
+            let replyPublisher: AgentUserMessageTool.ReplyPublisher?
+            if supportsMailboxQuestions {
+                replyPublisher = { [messenger, onChange, publicationLifetime] text, images, target in
+                    try await output.publish(text, images: images, replyTo: target) { publication in
+                        try await messenger.publish(publication, replyingTo: inbound.id, lifetime: publicationLifetime)
+                    }
+                    await onChange()
+                }
+            } else { replyPublisher = nil }
             let publisher = AgentUserMessageTool(conversationID: originConversationID,
                 availableImages: inbound.images ?? [], imageStore: imageStore,
                 authorizeImages: { [self] text, images, call, context in
                     try await checkOpen()
                     try await authorizePublication(agent, text, images, call, context)
                     try await checkOpen()
-                }, publishQuestion: questionPublisher, publishSecret: secretPublisher) { [messenger, onChange, publicationLifetime] text, images in
+                }, publishQuestion: questionPublisher, publishSecret: secretPublisher,
+                replyHistory: replyHistory, publishReply: replyPublisher) { [messenger, onChange, publicationLifetime] text, images in
                 try await output.publish(text, images: images) { publication in
                     try await messenger.publish(publication, replyingTo: inbound.id, lifetime: publicationLifetime)
                 }
@@ -749,9 +761,11 @@ private actor AgentInboundOutput {
         message = .init(groupID: groupID, senderID: agentID, text: "")
         self.onUpdate = onUpdate
     }
-    func publish(_ text: String, images: [AttachmentMetadata], persist: @Sendable (RoomMessage) async throws -> Void) async throws {
+    func publish(_ text: String, images: [AttachmentMetadata], replyTo: UUID? = nil,
+                 persist: @Sendable (RoomMessage) async throws -> Void) async throws {
         try Task.checkCancellation()
-        let publication = RoomMessage(groupID: message.groupID, senderID: message.senderID, text: text, images: images)
+        var publication = RoomMessage(groupID: message.groupID, senderID: message.senderID, text: text, images: images)
+        publication.replyToMessageID = replyTo
         try await persist(publication)
         publishedTexts.append(text)
         // Once the canonical mailbox commits, the tool must not invite a retry
