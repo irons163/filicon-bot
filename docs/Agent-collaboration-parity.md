@@ -1,5 +1,17 @@
 # 協作能力核對紀錄（更新至 2026-09-24）
 
+## 憑證請求第二步：值隔離與同步提交閘門（2026-09-24）
+
+新增 `AgentSecretValue` 作為短暫輸入：不提供 Codable／Hashable 或公開讀取值，description、debugDescription 與 reflection 隱藏內容；空白、控制字元與超過 16 KiB 的輸入拒絕。不宣稱 Swift String 記憶體零化，未來 UI 仍須在完成、取消及帳號切換時清空欄位。
+
+`AgentSecretSubmission` 只保存 pending／stored(value-free receipt)／dismissed／cancelled。提交使用 `ChannelService.withCredentialSnapshot`，在同一 actor turn 重驗固定目的地後執行同步 writer，並持有同步 lifetime fence，避免連線替換或 Stop 插在驗證和寫入之間。host 在 Stop／account／owner 變更前仍必須呼叫 close，App 接線尚待完成。並發或重複提交只寫一次，後續不同輸入不覆蓋同一請求已儲存的值；失敗只回傳 writeFailed，不洩漏底層錯誤中的輸入。取消已排隊的 Task 或關閉請求不會遲到寫入。
+
+新增 `KeychainCredentialStore.secretRequestWriter`，沿用 channel UUID 的既有 Keychain mapping 與 WhenUnlockedThisDeviceOnly 保護，使用非互動式 Security 呼叫，避免持有提交 fence 等待 Keychain dialog；鎖定／不可存取時失敗，可由人類解鎖後重試。一般 set 路徑保留原有行為。回條只包含 requestID，acknowledgement 明示「已儲存」不是遠端登入成功或額外工具核准。
+
+**仍不是可用的 secret-request 產品入口**：沒有 SecureField／tool schema、對話保存／暫停續接、新連線建立或外部登入驗收；receipt 目前由呼叫端取得，未與 transcript 持久化整合，不能宣稱跨程序 exactly-once。測試注入記憶體 writer，沒有讀寫真實 Keychain；生產 Security 寫入器只完成編譯／封裝驗證，不能把 mock 通過說成真實 Keychain round-trip。下一步需接完整 host UI 與持久化後續接，才可向模型公開。使用 Swift testing／CustomDump 技能、固定 scope／request／connection 識別碼驗證敏感值不出現在 public descriptions、回條、channel JSON，以及失敗重試、並發、失效與排隊取消。
+
+本批完整非並行回歸 exit 0（`.build/validation/secret-submission-full-tests.log`），原生 Debug build、deep strict codesign 與 package verifier 通過。新提交層 6 項測試含參數案例，與既有 metadata 9 項一起覆蓋安全契約。沒有 live 模型呼叫、UI 新字串、push、App／Xcode 啟動或真實帳號／群組變更。
+
 ## 憑證請求第一步：原版 metadata 與 host 目的地契約（2026-09-24）
 
 參考 `source/host/runner/tools/send-message-schema.ts`、`sand-secret-request.ts` 與 `send-message-tool.ts`：`secret-request` 是獨立於 widget 的遮罩輸入，包含 label／description／connector／field；模型只收到已提供的 acknowledgement，憑證值直接寫到目的地，不進對話。本輪新增 `AgentSecretRequest` 的嚴格解析／可編碼 metadata，拒絕 value、token、password、agent/account/connection ID、路徑或 Keychain reference 等額外欄位。label 單行 120、description 區塊 400 的顯示上限沿用來源意圖，Swift 以完整字元切割，避免切斷 emoji；16 KiB 輸入上限及控制／雙向字元防護為本機安全限制。解析錯誤不附輸入內容。

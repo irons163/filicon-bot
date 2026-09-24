@@ -68,6 +68,12 @@ public struct AgentSecretRequestDestination: Sendable, Equatable {
     public let displayName: String
     private let connection: ChannelConnection
 
+    // Only a successfully host-resolved destination can reach this mapping.
+    var credentialReference: CredentialRef {
+        let identifier = String(connection.secretReference.dropFirst("keychain://channels/".count))
+        return CredentialRef(providerID: .init(rawValue: "channel.\(identifier)"))
+    }
+
     public static func resolve(_ request: AgentSecretRequest, accountID: String, agentID: UUID,
                                conversationID: UUID, connections: [ChannelConnection]) throws -> Self {
         // These are Filicon's implemented token-based messaging connectors.

@@ -22,7 +22,25 @@ public actor KeychainCredentialStore {
 
     public func set(_ secret: String, for ref: CredentialRef) throws {
         let account = key(ref)
-        let base: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: account]
+        try Self.write(secret, service: service, account: account)
+    }
+
+    /// Used only by the host secure-input commit gate, never by a model tool.
+    /// The closure is synchronous so destination/lifetime validation stays held
+    /// across the Security framework call. It returns no credential material.
+    public nonisolated func secretRequestWriter() -> AgentSecretSubmission.Writer {
+        let service = service
+        return { value, reference in
+            try Self.write(value.rawValue, service: service,
+                           account: "\(reference.providerID.rawValue):\(reference.account)", noninteractive: true)
+        }
+    }
+
+    private nonisolated static func write(_ secret: String, service: String, account: String, noninteractive: Bool = false) throws {
+        var base: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: account]
+        // Do not hold the submission fence while waiting for a Keychain dialog.
+        // A locked or protected item fails; the user can retry after unlocking.
+        if noninteractive { base[kSecUseAuthenticationUI as String] = kSecUseAuthenticationUIFail }
         let attributes: [String: Any] = [
             kSecValueData as String: Data(secret.utf8),
             kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,

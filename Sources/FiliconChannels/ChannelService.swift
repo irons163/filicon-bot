@@ -107,6 +107,14 @@ public actor ChannelService {
         state.connections.sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
     }
 
+    /// Host credential commits must revalidate and perform their synchronous
+    /// write without an actor hop between them. Never run network work here.
+    public func withCredentialSnapshot<Result: Sendable>(
+        _ operation: @Sendable ([ChannelConnection]) throws -> Result
+    ) rethrows -> Result {
+        try operation(state.connections)
+    }
+
     public func proposeDisconnection(agentID: UUID, platform: String) throws -> ChannelDisconnection {
         guard ["slack", "discord"].contains(platform) else { throw ChannelDisconnectionError.invalid }
         let matches = state.connections.filter { $0.agentID == agentID && $0.connectorID == platform }
