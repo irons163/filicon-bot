@@ -85,8 +85,8 @@ private struct AppQuestionProvider: InteractiveToolProvider {
         }
     }
 
-    @Test(arguments: ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"])
-    func mailboxPublicationRendersQuestionInsteadOfDuplicatePrompt(language: String) throws {
+    @Test(arguments: ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"], [false, true])
+    func mailboxPublicationRendersQuestionInsteadOfDuplicatePrompt(language: String, dark: Bool) throws {
         try FiliconLocalization.$languageOverride.withValue(language) {
         let question = try AgentQuestion.parse(Data(#"{"prompt":"Which layout?","options":[{"label":"Compact"},{"label":"Spacious"}],"allowCustom":true}"#.utf8))
         var publication = RoomMessage(groupID: UUID(), senderID: UUID(), text: question.prompt)
@@ -97,8 +97,8 @@ private struct AppQuestionProvider: InteractiveToolProvider {
         let host = NSHostingView(rootView: AgentPublishedResponses(publications: [publication],
             replySource: { _ in original }, replyAuthor: { _ in "Designer / 設計師" }, canAnswer: { _ in true })
             .padding(16).frame(width: 420).background(FiliconTheme.canvas)
-            .environment(\.locale, Locale(identifier: language)).environment(\.colorScheme, .light))
-        host.appearance = NSAppearance(named: .aqua)
+            .environment(\.locale, Locale(identifier: language)).environment(\.colorScheme, dark ? .dark : .light))
+        host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
         let size = host.fittingSize
         #expect(size.height > 100 && size.height < 800)
         expectNoDifference(size.width, 420)
@@ -109,7 +109,7 @@ private struct AppQuestionProvider: InteractiveToolProvider {
         if let path = ProcessInfo.processInfo.environment["FILICON_UI_REVIEW_OUTPUT"] {
             let output = URL(fileURLWithPath: path)
             try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
-            try #require(bitmap.representation(using: .png, properties: [:])).write(to: output.appending(path: "mailbox-question-\(language).png"))
+            try #require(bitmap.representation(using: .png, properties: [:])).write(to: output.appending(path: "mailbox-question-\(language)-\(dark ? "dark" : "light").png"))
         }
         }
     }

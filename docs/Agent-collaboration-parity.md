@@ -1,5 +1,11 @@
 # 協作能力核對紀錄（更新至 2026-09-25）
 
+## 引用完整回歸與明暗驗收（2026-09-25）
+
+確認 IOConsoleLocked=No 後補跑 `mailbox-reply-complete-recheck.log`，完整非並行 swift test exit 0；前幾輪 mailbox receipt／question／quote UI 的待解鎖驗證已補齊，並非跳過失敗案例。未降低檔案保護。新增七語言明暗雙模式渲染，`mailbox-quote-dark-tests.log` 14 案例通過；人工檢視繁中、法文 dark 引用及問題卡片，未見裁切。測試使用 SwiftUI／testing 技能，沒有啟動使用者 App 或修改真實資料。
+
+重新查核原版 send-message-tool.ts：短地址同時供 reply_to 與 sand-msg 點擊導航使用；目前信箱只有 UUID 引用，不把摘要 UI 視為短地址完成。短地址持久化／編號、導航、展開互動與圖片引用驗收仍待處理；secret-request 的 reply_to 也是原版支援、目前 native 尚未接線的剩餘差異。AGENT-02 維持 partial。
+
 ## 信箱引用摘要畫面（2026-09-25）
 
 已保存的信箱 publication 現在顯示引用作者與最多 240 字摘要，可展開原文與圖片；不存在或重複 ID 顯示既有的「原訊息無法使用」。原訊息解析限制同 sender／recipient／origin、截至引用 publication 之前，不使用模型的 40 則目錄上限，避免較舊的合法引用失去顯示。未加入跨信箱跳轉或猜測來源。

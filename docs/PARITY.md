@@ -1,5 +1,7 @@
 # Filicon / Grok Bot 0.18 功能 parity matrix（current implementation）
 
+引用完整補驗（2026-09-25）：解鎖後 `mailbox-reply-complete-recheck.log` 完整測試 exit 0，先前信箱引用相關待補驗已完成。另七語言 light／dark 共 14 渲染案例通過，人工檢視繁中及法文 dark。短地址／sand-msg 導航、展開與圖片互動驗收、secret-request reply_to 仍待完成，不改 complete 計數。
+
 信箱引用 UI（2026-09-25）：新增同信箱引用摘要／展開內容與 unavailable 狀態，拒絕跨範圍、未來與重複目標；七語言 light 渲染與定向查找測試、原生建置及封裝通過。暗色／展開互動／圖片驗收、短地址與 sand-msg 導航仍待補，完整回歸亦待補驗；AGENT-02 partial。
 
 信箱問題引用（2026-09-25）：widget reply_to 已接模型至保存層，沿用範圍驗證及提問暫停／新回合回答。七個定向案例、原生建置、封裝通過；完整回歸仍待補驗。引用卡片與短地址仍未完成，AGENT-02 partial。
