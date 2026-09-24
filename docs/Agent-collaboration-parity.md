@@ -1,5 +1,13 @@
 # 協作能力核對紀錄（更新至 2026-09-24）
 
+## 本輪修正：主圖解碼使用已驗證快照（2026-09-24）
+
+延續先前縮圖的完整性防護，主圖先前仍在 gate 驗證後使用 `NSImage(contentsOf:)` 重新讀路徑。本批讓 gate 將已驗證的圖片 Data 傳入 `AttachmentImageView`，由資料初始化 NSImage，縮放重繪不重新讀檔。只有圖片保留這份快照，其他媒體在檢查後不額外留存整份資料；取消的驗證不發佈結果，切換圖片沿用 preview identity 重建。按 SwiftUI 技能將驗證 task 行為移出 view action closure。
+
+新增主圖回歸測試：驗證後原路徑遭 atomic 替換／刪除，快照仍解碼原始尺寸，對已替換路徑重新驗證會拒絕；nil／無效圖片不能解碼。31 項附件與群組圖片聚焦測試通過，包含七語言圖片渲染；原生 Debug build、deep strict codesign 與 package verifier 通過。沒有重啟使用者 App／Xcode、push 或操作真實資料。這是圖片載入安全修正，不是新完成的 parity 列，也未修正 PDF／AV／Quick Look 各自的 URL 載入流程。
+
+本批完整非並行 `swift test` 亦 exit 0；live 模型 opt-in 測試仍跳過，未宣稱真實 App 點擊或外部服務驗收。
+
 ## 本輪增量：文字內圖片逐張描述（2026-09-24）
 
 依 reconstructed `SendMessage` 的 text/images/alt 行為，Filicon 的 `images` 現可混用精確本輪圖片 ID 字串與 `{image_id,alt}`。保留本機安全 ID 模型，不採用來源任意 URL／路徑；最多四張、ID 不重複，object 不接受未定義欄位。每張描述最多 500 字／2,000 UTF-8 bytes，拒絕控制字元與非字串，空白正規化。單張附件與文字內圖片共用驗證邏輯，全部描述包含在預覽核准與 replay payload 中；相同圖片不能只改描述再次發布。既有 metadata annotation 核對、當前來源限制、拒絕及停止流程不變，沿用上一批描述顯示，沒有新增 UI 或翻譯字串。

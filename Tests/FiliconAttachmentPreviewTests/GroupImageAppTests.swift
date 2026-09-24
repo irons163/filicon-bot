@@ -279,7 +279,7 @@ private struct GroupImageProvider: AIProvider {
                 if let output {
                     try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
                     try #require(bitmap.representation(using: .png, properties: [:])).write(to: output.appending(path: "group-image-\(language).png"))
-                    let viewer = NSHostingView(rootView: AttachmentImageView(fileURL: f.root.appending(path: "layout.png"))
+                    let viewer = NSHostingView(rootView: AttachmentImageView(verifiedData: f.bytes)
                         .frame(width: 760, height: 560)
                         .environment(\.locale, Locale(identifier: language)))
                     viewer.frame = .init(x: 0, y: 0, width: 760, height: 560)

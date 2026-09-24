@@ -2,6 +2,8 @@
 
 本矩陣保留固定的 48 個 parity ID，對照目前 macOS Swift 實作。`complete` 表示該列所述能力有歷史實作證據，不代表原版所有細項均已重新核驗；`partial` 表示仍有功能、接線或驗證缺口；`NA` 表示該列是來源 runtime 的實作細節，不是 macOS 產品行為。這不是「原版功能全部都有」的保證。
 
+圖片主檢視器安全修正（2026-09-24）：主圖不再於完整性 gate 通過後用 `NSImage(contentsOf:)` 重讀路徑，改以 gate 的已驗證 Data 快照解碼。圖片來源被替換／刪除不會讓解碼器讀到另一份內容；重新驗證竄改檔仍拒絕，空白／無效圖片維持錯誤狀態。非圖片不保留額外 Data，PDF／影音／Quick Look 的 URL API 仍有另外的核對範圍，不宣稱全部附件 parser 均無路徑競態。31 項聚焦測試、七語言圖片渲染測試、原生 Debug build 與 deep strict 封裝檢查通過；整體 parity 計數不變。
+
 文字內圖片描述（2026-09-24）：`SendMessage.images` 現可混用舊版 ID 字串與 `{image_id,alt}`，每張描述沿用 500 字／2,000 UTF-8 bytes 與控制字元限制；整批圖片和描述經預覽核准，回條重播驗證全部描述，不能藉換描述重複發布。信箱重開保留描述，群組沿用已驗證的 annotation 保存路徑。完整非並行回歸 exit 0，原生 Debug 建置、deep strict 簽章與封裝通過。這取代下方歷史紀錄的「inline 逐張 alt 尚缺」；任意 URL／本機檔案、影片等附件語意仍未完成，矩陣計數不變。
 
 解鎖後驗證（2026-09-24）：確認 macOS `IOConsoleLocked = No` 後，對 `fcc8354` 重跑完整非並行 `swift test`，exit 0。先前圖片、工作流程 EPERM 與共享聊天室 malformedState 未再出現，圖片描述增量的最終回歸阻礙已解除；下方失敗紀錄保留為前次鎖定時的結果。沒有降低檔案保護、重啟使用者 App／Xcode、push 或真實帳號操作。測試通過不代表其餘 parity 缺口完成，矩陣仍 43 complete／4 partial／1 NA。

@@ -149,9 +149,9 @@ struct AttachmentMediaViewerSheet: View {
     }
 
     @ViewBuilder private func viewer(for file: AttachmentPreviewFile) -> some View {
-        AttachmentIntegrityGate(file: file) {
+        AttachmentIntegrityGate(file: file) { verifiedImageData in
             switch AttachmentViewerKind.classify(filename: file.filename, mimeType: file.metadata?.mimeType) {
-            case .image: AttachmentImageView(fileURL: file.fileURL)
+            case .image: AttachmentImageView(verifiedData: verifiedImageData)
             case .audiovisual: AttachmentAVPlayerView(fileURL: file.fileURL)
             case .pdf: AttachmentPDFView(file: file)
             case .spreadsheet: AttachmentSpreadsheetView(file: file)
@@ -211,18 +211,21 @@ struct AttachmentMediaViewerSheet: View {
 /// No native parser or Quick Look generator receives a materialized CAS file
 /// until its digest and byte count have been checked again. This closes the
 /// gap between the store check in `AppModel` and opening the preview sheet.
+/// Image decoding consumes the verified snapshot, never a second path read.
+/// Other native parsers still use their URL APIs after the initial check.
 private struct AttachmentIntegrityGate<Content: View>: View {
     @Environment(\.locale) private var uiLocale
     let file: AttachmentPreviewFile
-    @ViewBuilder let content: () -> Content
+    @ViewBuilder let content: (Data?) -> Content
     @State private var isVerified = false
+    @State private var verifiedImageData: Data?
     @State private var error: String?
 
     var body: some View {
         let _ = uiLocale.identifier
         Group {
             if isVerified {
-                content()
+                content(verifiedImageData)
             } else if let error {
                 ContentUnavailableView(
                     l10n("Attachment unavailable"),
@@ -233,20 +236,26 @@ private struct AttachmentIntegrityGate<Content: View>: View {
                 ProgressView("Verifying attachment…")
             }
         }
-        .task(id: file.id) {
-            isVerified = false
-            error = nil
-            do {
-                let previewFile = file
-                _ = try await Task.detached(priority: .userInitiated) {
-                    try AttachmentFileIntegrity().verifiedData(for: previewFile)
-                }.value
-                guard !Task.isCancelled else { return }
-                isVerified = true
-            } catch {
-                guard !Task.isCancelled else { return }
-                self.error = error.localizedDescription
+        .task(id: file.id) { await verifyAttachment() }
+    }
+
+    private func verifyAttachment() async {
+        isVerified = false
+        verifiedImageData = nil
+        error = nil
+        do {
+            let previewFile = file
+            let data = try await Task.detached(priority: .userInitiated) {
+                try AttachmentFileIntegrity().verifiedData(for: previewFile)
+            }.value
+            guard !Task.isCancelled else { return }
+            if AttachmentViewerKind.classify(filename: file.filename, mimeType: file.metadata?.mimeType) == .image {
+                verifiedImageData = data
             }
+            isVerified = true
+        } catch {
+            guard !Task.isCancelled else { return }
+            self.error = error.localizedDescription
         }
     }
 }
@@ -360,13 +369,17 @@ struct AttachmentImageZoom: Equatable {
 
 struct AttachmentImageView: View {
     @Environment(\.locale) private var uiLocale
-    let fileURL: URL
+    let image: NSImage?
     @State private var zoom = AttachmentImageZoom()
     @GestureState private var gestureScale = 1.0
 
+    init(verifiedData: Data?) {
+        image = verifiedData.flatMap { NSImage(data: $0) }
+    }
+
     var body: some View {
         let _ = uiLocale.identifier
-        if let image = NSImage(contentsOf: fileURL) {
+        if let image {
             VStack(spacing: 0) {
                 HStack {
                     Slider(value: $zoom.scale, in: 0.1...8) { Text(l10n("Zoom")) }

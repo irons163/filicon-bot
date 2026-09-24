@@ -9,6 +9,32 @@ import FiliconDomain
 
 @Suite("Native attachment viewers")
 struct AttachmentViewerTests {
+    @Test @MainActor func mainImageDecodesVerifiedSnapshotAfterPathReplacement() throws {
+        let sandbox = FileManager.default.temporaryDirectory.appending(path: "image-snapshot-\(UUID())", directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: sandbox) }
+        try FileManager.default.createDirectory(at: sandbox, withIntermediateDirectories: true)
+        let bitmap = try #require(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 2, pixelsHigh: 3,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+        let bytes = try #require(bitmap.representation(using: .png, properties: [:]))
+        let path = sandbox.appending(path: "image.png")
+        try bytes.write(to: path)
+        let metadata = AttachmentMetadata(id: SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined(),
+            filename: "image.png", mimeType: "image/png", byteCount: Int64(bytes.count), kind: .image,
+            createdAt: Date(timeIntervalSince1970: 1))
+        let file = AttachmentPreviewFile(filename: metadata.filename, fileURL: path, metadata: metadata)
+        let verified = try AttachmentFileIntegrity().verifiedData(for: file)
+        try Data("replaced".utf8).write(to: path, options: .atomic)
+        #expect(throws: AttachmentFileIntegrityError.changed) { try AttachmentFileIntegrity().verifiedData(for: file) }
+        let view = AttachmentImageView(verifiedData: verified)
+        let image = try #require(view.image)
+        expectNoDifference(image.size, CGSize(width: 2, height: 3))
+        try FileManager.default.removeItem(at: path)
+        #expect(AttachmentImageView(verifiedData: verified).image != nil)
+        #expect(AttachmentImageView(verifiedData: nil).image == nil)
+        #expect(AttachmentImageView(verifiedData: Data("invalid image".utf8)).image == nil)
+    }
+
     @Test @MainActor func previewWindowPreservesIdentityAndClosesWithParent() async throws {
         let coordinator = AttachmentPreviewWindowCoordinator()
         let first = AttachmentPreviewItem(filename: "first.png", fileURL: URL(fileURLWithPath: "/nonexistent/first.png"))
