@@ -1,5 +1,11 @@
 # 協作能力核對紀錄（更新至 2026-09-24）
 
+## 本輪增量：文字內圖片逐張描述（2026-09-24）
+
+依 reconstructed `SendMessage` 的 text/images/alt 行為，Filicon 的 `images` 現可混用精確本輪圖片 ID 字串與 `{image_id,alt}`。保留本機安全 ID 模型，不採用來源任意 URL／路徑；最多四張、ID 不重複，object 不接受未定義欄位。每張描述最多 500 字／2,000 UTF-8 bytes，拒絕控制字元與非字串，空白正規化。單張附件與文字內圖片共用驗證邏輯，全部描述包含在預覽核准與 replay payload 中；相同圖片不能只改描述再次發布。既有 metadata annotation 核對、當前來源限制、拒絕及停止流程不變，沿用上一批描述顯示，沒有新增 UI 或翻譯字串。
+
+測試涵蓋新舊項目混用、核准／拒絕、超長字數／UTF-8 bytes、控制字元、非字串、URL／路徑、重複 ID、同 call ID 改描述與不同 call ID 重複發布。信箱測試同時驗證 standalone／inline 保存重開與不重複 final。完整非並行 `swift test` exit 0，原生 `Filicon App` Debug build、deep strict codesign 與 package verifier 通過；live 模型 opt-in 測試仍跳過。沒有重啟使用者 App／Xcode、push 或真實帳號操作。其他附件種類、安全憑證請求等既有 partial 缺口未完成，整體 43 complete／4 partial／1 NA。
+
 ## 解鎖後完整回歸（2026-09-24）
 
 使用者解鎖後確認 `IOConsoleLocked = No`，在 `fcc8354` 重跑完整非並行 `swift test --scratch-path .build/validation/markdown-prose.SDrQnO/spm --no-parallel`，exit 0。圖片 storage/delivery、App 圖片、WorkflowService／AgentWorkflow 與 SharedRoom 均通過；前次 EPERM／malformedState 未重現。工作流程與共享聊天室落盤使用 `.completeFileProtectionUnlessOpen`，前次失敗期間系統確實鎖定；此次沒有修改或降低檔案保護。前次失敗保留於下文作為驗證歷程，不再是目前圖片描述功能的未通過狀態。沒有啟動／重啟使用者 App、Xcode、真實模型或帳號，也沒有 push。原版逐張 inline image alt、其他附件種類及既有 partial 項目仍待完成，不能把回歸全綠當成功能全對等。

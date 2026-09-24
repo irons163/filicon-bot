@@ -427,7 +427,8 @@ struct AgentImageMessagingTests {
         try await session.close()
     }
 
-    @Test func standaloneMailboxImageIsDurableWithoutFallbackText() async throws {
+    @Test(arguments: [false, true])
+    func mailboxImageDescriptionIsDurableWithoutDuplicateFinalText(inline: Bool) async throws {
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
         let image = try await f.store.importImage(data: peerImageBytes(), filename: "current.png")
         var annotated = image
@@ -436,11 +437,17 @@ struct AgentImageMessagingTests {
         let session = AgentMessagingSession(originConversationID: f.origin, agents: f.agents, messenger: f.messenger,
             registry: f.registry, coordinator: TurnCoordinator(registry: f.registry, toolCatalog: ToolCatalog()),
             imageStore: f.store, authorizePublication: { _, text, values, _, _ in
-                expectNoDifference(text, "")
+                expectNoDifference(text, inline ? "Reviewed image" : "")
                 await f.probe.approve(values)
             })
         await f.registry.register(ImagePeerProvider { _, execute in
-            let result = try await execute(publishStandaloneImage(image.id, alt: "Mailbox image description"))
+            let call: NormalizedToolCall
+            if inline {
+                call = try .init(id: "inline", name: "SendMessage", argumentsJSON: JSONSerialization.data(withJSONObject: [
+                    "text": "Reviewed image", "images": [["image_id": image.id, "alt": "Mailbox image description"]],
+                ]))
+            } else { call = try publishStandaloneImage(image.id, alt: "Mailbox image description") }
+            let result = try await execute(call)
             #expect(!result.isError)
             return "Do not repeat this final text"
         })
@@ -451,13 +458,13 @@ struct AgentImageMessagingTests {
         expectNoDifference(messages.count, 1)
         let delivery = try #require(messages.first?.delivery)
         expectNoDifference(delivery.state, .completed)
-        expectNoDifference(delivery.response, "")
-        expectNoDifference(delivery.publications?.map(\.text), [""])
+        expectNoDifference(delivery.response, inline ? "Reviewed image" : "")
+        expectNoDifference(delivery.publications?.map(\.text), [inline ? "Reviewed image" : ""])
         expectNoDifference(delivery.publications?.first?.images, [annotated])
         let approvals = await f.probe.approvals
         expectNoDifference(approvals, [[annotated]])
         let visible = await projected.values.filter { $0.images?.isEmpty == false }
-        expectNoDifference(visible.map(\.text), [""])
+        expectNoDifference(visible.map(\.text), [inline ? "Reviewed image" : ""])
         let reopened = try AgentMessenger(service: f.agents, storeURL: f.root.appending(path: "messages.json"))
         let restored = await reopened.allMessages()
         expectNoDifference(restored.first?.delivery?.publications?.first?.images?.map(\.id), [image.id])
@@ -508,6 +515,55 @@ struct AgentImageMessagingTests {
         }
         #expect(try await tool.execute(publishImage([image.id]), context: .init(conversationID: f.origin)).isError)
         let values = await output.values; expectNoDifference(values, [])
+    }
+
+    @Test(arguments: [true, false])
+    func inlineDescriptionsRequireApprovalAndPreserveLegacyEntries(approved: Bool) async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let first = try await f.store.importImage(data: peerImageBytes(), filename: "first.png")
+        let second = try await f.store.importImage(data: peerImageBytes(shade: 0.75), filename: "second.png")
+        let output = ImagePublicationProbe(), context = ToolContext(conversationID: f.origin)
+        let tool = AgentUserMessageTool(conversationID: f.origin, availableImages: [first, second], imageStore: f.store,
+            authorizeImages: { _, values, _, _ in
+                await f.probe.approve(values)
+                if !approved { throw AgentMessagingError.approvalRequired }
+            }) { text, values in
+                await output.append(.init(groupID: f.origin, senderID: nil, text: text, images: values))
+            }
+        func call(_ entries: [Any], id: ToolCallID = "inline") throws -> NormalizedToolCall {
+            try .init(id: id, name: "SendMessage", argumentsJSON: JSONSerialization.data(withJSONObject: [
+                "text": "Review these layouts", "images": entries,
+            ]))
+        }
+        let invalid: [[Any]] = [
+            [["image_id": first.id, "alt": String(repeating: "a", count: 501)]],
+            [["image_id": first.id, "alt": String(repeating: "\u{0301}", count: 1001)]],
+            [["image_id": first.id, "alt": "line\nbreak"]],
+            [["image_id": first.id, "alt": 42]],
+            [["image_id": first.id, "url": "https://example.invalid/a.png"]],
+            [["image_id": "file:///private.png", "alt": "outside"]],
+            [first.id, ["image_id": first.id, "alt": "duplicate"]],
+        ]
+        for entries in invalid {
+            #expect(try await tool.execute(call(entries), context: context).isError)
+        }
+        let before = await f.probe.approvals
+        expectNoDifference(before, [])
+        let request = try call([["image_id": first.id, "alt": "  商品卡片  "], second.id])
+        let result = try await tool.execute(request, context: context)
+        expectNoDifference(result.isError, !approved)
+        if approved {
+            let replay = try await tool.execute(request, context: context)
+            expectNoDifference(replay, result)
+            #expect(try await tool.execute(call([["image_id": first.id, "alt": "changed"], second.id]), context: context).isError)
+            #expect(try await tool.execute(call([["image_id": first.id, "alt": "changed"], second.id], id: "repeat"), context: context).isError)
+        }
+        var annotated = first
+        annotated.altText = "商品卡片"
+        let approvals = await f.probe.approvals, values = await output.values
+        expectNoDifference(approvals, [[annotated, second]])
+        expectNoDifference(values.count, approved ? 1 : 0)
+        if approved { expectNoDifference(values.first?.images, [annotated, second]) }
     }
 
     @Test(arguments: ["completed", "failure", "projection"])

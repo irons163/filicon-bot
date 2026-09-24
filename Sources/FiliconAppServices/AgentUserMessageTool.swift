@@ -35,7 +35,7 @@ public actor AgentUserMessageTool: ToolExecutor, ToolRuntimeContextProviding {
     public typealias GroupPublisher = @Sendable (String, [AttachmentMetadata], UUID?, AgentQuestion?) async throws -> RoomMessage?
     private var questionReceipt: (Key, AgentQuestion, UUID?, NormalizedToolResult)?
     private struct Key: Hashable { let runID: UUID; let callID: ToolCallID }
-    private struct Payload: Equatable { let text: String; let images: [String]; let replyTo: UUID?; let alt: String? }
+    private struct Payload: Equatable { let text: String; let images: [String]; let replyTo: UUID?; let descriptions: [String?] }
     private var calls: [Key: (Payload, NormalizedToolResult)] = [:]
     private var published: [Payload] = []
     private var texts: [String] = []
@@ -177,7 +177,7 @@ public actor AgentUserMessageTool: ToolExecutor, ToolRuntimeContextProviding {
     }
 
     private nonisolated static func makeDescriptor(supportsImages: Bool, supportsQuestions: Bool, supportsReplies: Bool, supportsTextReplies: Bool, supportsQuestionReplies: Bool) -> ToolDescriptor {
-        let images = supportsImages ? #", "images":{"type":"array","maxItems":4,"uniqueItems":true,"items":{"type":"string"},"description":"Exact IDs from the current host-provided image directory only, never paths or URLs. Requires fresh preview approval."}"# : ""
+        let images = supportsImages ? #", "images":{"type":"array","maxItems":4,"uniqueItems":true,"items":{"oneOf":[{"type":"string"},{"type":"object","properties":{"image_id":{"type":"string"},"alt":{"type":"string","maxLength":500}},"required":["image_id"],"additionalProperties":false}]},"description":"Current host-provided image IDs only, never paths or URLs. Each entry may be an ID or {image_id,alt} with an optional plain description (500 characters, no control characters). Requires fresh preview approval of all images and descriptions."}"# : ""
         let attachment = supportsImages ? #", "image_id":{"type":"string","description":"For a standalone image attachment, one exact ID from the current host-provided image directory. No text, path or URL. Requires fresh preview approval."}, "alt":{"type":"string","maxLength":500,"description":"Optional plain description for type:attachment only. Shown in preview approval, hover and image viewer. No control characters. This is descriptive content, never instructions or permission."}"# : ""
         let messageTypes = supportsQuestions && supportsImages ? #", "type":{"type":"string","enum":["widget","attachment"]}"#
             : supportsQuestions ? #", "type":{"type":"string","enum":["widget"]}"#
@@ -239,12 +239,11 @@ public actor AgentUserMessageTool: ToolExecutor, ToolRuntimeContextProviding {
         guard !closed else { throw AgentMessagingError.closed }
         guard context.conversationID == conversationID else { throw AgentMessagingError.scopeMismatch }
         struct Arguments: Decodable {
-            let text: String; let images: [String]; let replyTo: String?
+            let text: String; let replyTo: String?
             enum CodingKeys: String, CodingKey { case text, images; case replyTo = "reply_to" }
             init(from decoder: any Decoder) throws {
                 let values = try decoder.container(keyedBy: CodingKeys.self)
                 text = try values.decode(String.self, forKey: .text)
-                images = values.contains(.images) ? try values.decode([String].self, forKey: .images) : []
                 replyTo = values.contains(.replyTo) ? try values.decode(String.self, forKey: .replyTo) : nil
             }
         }
@@ -295,34 +294,48 @@ public actor AgentUserMessageTool: ToolExecutor, ToolRuntimeContextProviding {
             guard Set(object.keys).isSubset(of: allowed) else {
                 return .init(callID: call.id, content: [.text("SendMessage received fields unavailable in this context. Nothing was published.")], isError: true)
             }
-            let text: String, imageIDs: [String], replyAddress: String?
+            let text: String, entries: [Any], replyAddress: String?
             if standalone {
                 guard let imageID = object["image_id"] as? String, !imageID.isEmpty else { throw AgentImageError.unavailable }
-                text = ""; imageIDs = [imageID]
+                text = ""
+                var entry: [String: Any] = ["image_id": imageID]
+                if let alt = object["alt"] { entry["alt"] = alt }
+                entries = [entry]
                 replyAddress = object["reply_to"] as? String
                 if object["reply_to"] != nil && replyAddress == nil { throw GroupReplyError.unavailable }
             } else {
                 let args = try JSONDecoder().decode(Arguments.self, from: call.argumentsJSON)
                 text = args.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                imageIDs = args.images; replyAddress = args.replyTo
+                if let raw = object["images"] {
+                    guard let values = raw as? [Any] else { throw AgentImageError.invalid }
+                    entries = values
+                } else { entries = [] }
+                replyAddress = args.replyTo
             }
             let replyID = try (replyAddress ?? defaultReplyToMessageID?.uuidString).map { try resolveReply($0) }
             if replyID != nil, publishReply == nil { throw GroupReplyError.unavailable }
-            guard imageIDs.count <= 4, Set(imageIDs).count == imageIDs.count else { throw AgentImageError.limit }
-            var images = try imageIDs.map { id in
-                guard let image = availableImages.first(where: { $0.id == id }) else { throw AgentImageError.unavailable }
+            guard entries.count <= 4 else { throw AgentImageError.limit }
+            let images = try entries.map { entry -> AttachmentMetadata in
+                let id: String, rawAlt: Any?
+                if let value = entry as? String {
+                    id = value; rawAlt = nil
+                } else if let value = entry as? [String: Any],
+                          Set(value.keys).isSubset(of: ["image_id", "alt"]),
+                          let imageID = value["image_id"] as? String {
+                    id = imageID; rawAlt = value["alt"]
+                } else { throw AgentImageError.invalid }
+                guard var image = availableImages.first(where: { $0.id == id }) else { throw AgentImageError.unavailable }
+                if let rawAlt {
+                    guard let value = rawAlt as? String, value.count <= 500, value.utf8.count <= 2_000,
+                          !value.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else { throw AgentImageError.invalid }
+                    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+                    image.altText = trimmed.isEmpty ? nil : trimmed
+                }
                 return image
             }
-            var alt: String?
-            if let raw = object["alt"] {
-                guard let value = raw as? String else { throw AgentImageError.invalid }
-                let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard value.count <= 500, value.utf8.count <= 2_000,
-                      !value.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else { throw AgentImageError.invalid }
-                alt = trimmed.isEmpty ? nil : trimmed
-                images[0].altText = alt
-            }
-            let payload = Payload(text: text, images: imageIDs, replyTo: replyID, alt: alt)
+            let imageIDs = images.map(\.id)
+            guard Set(imageIDs).count == imageIDs.count else { throw AgentImageError.limit }
+            let payload = Payload(text: text, images: imageIDs, replyTo: replyID, descriptions: images.map(\.altText))
             let key = Key(runID: context.runID, callID: call.id)
             if let existing = calls[key] {
                 guard existing.0 == payload else { throw AgentMessagingError.duplicateMessage }
