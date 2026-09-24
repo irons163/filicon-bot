@@ -28,7 +28,7 @@ private struct AppQuestionProvider: InteractiveToolProvider {
             let task = Task {
                 await probe.record(request)
                 do {
-                    if request.messages.contains(where: { $0.role == .system && $0.text.contains("answers or dismisses your saved question") }) {
+                    if request.messages.contains(where: { $0.role == .system && ($0.text.contains("answers or dismisses your saved question") || $0.text.contains("answers or dismisses your saved mailbox question")) }) {
                         continuation.yield(.textDelta("The answer was received."))
                         continuation.yield(.completed(.stop)); continuation.finish()
                         return
@@ -46,6 +46,71 @@ private struct AppQuestionProvider: InteractiveToolProvider {
             }
             continuation.onTermination = { _ in task.cancel() }
         }
+    }
+}
+
+@Suite("Mailbox question app integration", .timeLimit(.minutes(1)))
+@MainActor struct MailboxQuestionAppTests {
+    @Test(arguments: ["answer", "account", "archived"])
+    func mailboxCardResumesOnlyItsAskerWithFreshApprovals(mode: String) async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "filicon-mailbox-question-app-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+        let sender = try #require(await model.createAgent(name: "Sender", summary: "", instructions: "", providerID: "question-fixture", modelID: "test"))
+        let asker = try #require(await model.createAgent(name: "Asker", summary: "", instructions: "", providerID: "question-fixture", modelID: "test"))
+        let probe = AppQuestionProbe()
+        await model.registry.register(AppQuestionProvider(probe: probe))
+        #expect(await model.sendAgentMessage(senderID: sender.id, recipientID: asker.id, text: "Discuss layout"))
+        try await waitForMailbox(model)
+        let incoming = try #require(model.agentMessages.first)
+        let publication = try #require(incoming.delivery?.publications?.first)
+        #expect(model.canAnswerMailboxQuestion(incoming, publication: publication))
+        let permissions = await model.localToolPermissionPolicy.effectivePermission(for: .writeFile)
+        if mode == "account" { model.settings.accountScope = "other" }
+        if mode == "archived" { await model.archiveAgent(id: asker.id) }
+        await model.answerMailboxQuestion(incomingID: incoming.id, publicationID: publication.id, answer: .option(0))
+        try await waitForMailbox(model)
+        await model.answerMailboxQuestion(incomingID: incoming.id, publicationID: publication.id, answer: .option(0))
+        try await waitForMailbox(model)
+        let requestCount = await probe.requests.count
+        expectNoDifference(requestCount, mode == "answer" ? 2 : 1)
+        expectNoDifference(model.agentMessages.count, mode == "answer" ? 2 : 1)
+        let afterPermissions = await model.localToolPermissionPolicy.effectivePermission(for: .writeFile)
+        expectNoDifference(afterPermissions, permissions)
+        if mode == "answer" {
+            expectNoDifference(model.agentMessages.last?.recipientID, asker.id)
+            expectNoDifference(model.agentMessages.last?.delivery?.state, .completed)
+            expectNoDifference(model.agentMessages.first?.delivery?.publications?.first?.question?.answer, .option(0))
+            #expect(!model.canAnswerMailboxQuestion(incoming, publication: publication))
+        }
+    }
+
+    @Test(arguments: ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"])
+    func mailboxPublicationRendersQuestionInsteadOfDuplicatePrompt(language: String) throws {
+        let question = try AgentQuestion.parse(Data(#"{"prompt":"Which layout?","options":[{"label":"Compact"},{"label":"Spacious"}],"allowCustom":true}"#.utf8))
+        var publication = RoomMessage(groupID: UUID(), senderID: UUID(), text: question.prompt)
+        publication.question = GroupQuestion(question: question, accountID: "local", memberIDs: [])
+        let host = NSHostingView(rootView: AgentPublishedResponses(publications: [publication], canAnswer: { _ in true })
+            .padding(16).frame(width: 420).background(FiliconTheme.canvas)
+            .environment(\.locale, Locale(identifier: language)).environment(\.colorScheme, .light))
+        host.appearance = NSAppearance(named: .aqua)
+        let size = host.fittingSize
+        #expect(size.height > 100 && size.height < 800)
+        expectNoDifference(size.width, 420)
+        host.frame = .init(origin: .zero, size: size)
+        host.layoutSubtreeIfNeeded()
+        let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        if let path = ProcessInfo.processInfo.environment["FILICON_UI_REVIEW_OUTPUT"] {
+            let output = URL(fileURLWithPath: path)
+            try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+            try #require(bitmap.representation(using: .png, properties: [:])).write(to: output.appending(path: "mailbox-question-\(language).png"))
+        }
+    }
+
+    private func waitForMailbox(_ model: AppModel) async throws {
+        for _ in 0..<600 where !model.runningAgentMessageScopes.isEmpty { try await Task.sleep(for: .milliseconds(5)) }
+        try #require(model.runningAgentMessageScopes.isEmpty)
     }
 }
 

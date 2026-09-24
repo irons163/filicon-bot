@@ -23,6 +23,21 @@ public actor AgentMessenger {
     }
 
     public func send(_ message: AgentMessage) async throws {
+        try await sendValidated(message, movingOnAccount: nil, lifetime: .init())
+    }
+
+    /// Only a new human message retires dismiss-on-move-on questions. Peer sends
+    /// never do. Retirement and enqueue share one atomic write and stop fence.
+    public func sendUserMessage(_ message: AgentMessage, accountID: String,
+                                lifetime: AgentPublicationLifetime) async throws {
+        guard !accountID.isEmpty, message.delivery?.originConversationID != nil else {
+            throw AgentQuestionError.unavailable
+        }
+        try await sendValidated(message, movingOnAccount: accountID, lifetime: lifetime)
+    }
+
+    private func sendValidated(_ message: AgentMessage, movingOnAccount: String?,
+                               lifetime: AgentPublicationLifetime) async throws {
         guard message.questionResponse == nil else { throw AgentQuestionError.unavailable }
         guard message.senderID != message.recipientID else { throw AgentServiceError.selfMessage }
         guard message.text.count <= 8_000 else { throw AgentServiceError.messageTooLong }
@@ -31,8 +46,24 @@ public actor AgentMessenger {
         guard let recipient = await service.profile(id: message.recipientID), recipient.archivedAt == nil else { throw AgentServiceError.unknownAgent(message.recipientID) }
         try Task.checkCancellation()
         guard !state.messages.contains(where: { $0.id == message.id }) else { throw AgentServiceError.duplicateMessage(message.id) }
-        state.messages.append(message)
-        do { try persist() } catch { state.messages.removeLast(); throw error }
+        try lifetime.commit {
+            var next = state
+            if let movingOnAccount {
+                for index in next.messages.indices where next.messages[index].delivery?.originConversationID == message.delivery?.originConversationID {
+                    guard var publications = next.messages[index].delivery?.publications else { continue }
+                    for item in publications.indices {
+                        if let question = publications[item].question, question.isPending,
+                           question.accountID == movingOnAccount, question.question.dismissOnMoveOn == true {
+                            publications[item].question?.retired = true
+                        }
+                    }
+                    next.messages[index].delivery?.publications = publications
+                }
+            }
+            next.messages.append(message)
+            try Self.save(next, to: storeURL)
+            state = next
+        }
     }
 
     public func dequeue(recipientID: UUID, at: Date = Date()) throws -> AgentMessage? {

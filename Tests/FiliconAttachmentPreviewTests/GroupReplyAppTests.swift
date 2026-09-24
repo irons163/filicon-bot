@@ -688,8 +688,8 @@ private struct GroupReplyAppProvider: InteractiveToolProvider {
             if step == 1 {
                 #expect(request.messages.contains { $0.text.contains("peer-message wake") })
                 #expect(request.messages.contains { $0.role == .system
-                    && $0.text.contains("including a supervised background group peer wake")
-                    && $0.text.contains("Mailbox and direct chats do not support widgets")
+                    && $0.text.contains("This ends the current turn until a human responds in a new host-controlled turn")
+                    && $0.text.contains("Widgets are available only where this host tool explicitly advertises them")
                     && !$0.text.contains("No background/mailbox widgets are supported") })
                 let call = try NormalizedToolCall(id: "background-choice", name: "SendMessage",
                     argumentsJSON: Data(#"{"type":"widget","reply_to":"\#(incoming.id.uuidString)","widget":{"prompt":"Which layout?","options":[{"label":"Grid","value":"Use a grid"},{"label":"List","value":"Use a list"}]}}"#.utf8))

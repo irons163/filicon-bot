@@ -67,15 +67,81 @@ struct AgentMessagingSessionTests {
         let coordinator: TurnCoordinator
         let probe: MessagingProbe
         let origin = UUID()
-        func session(approve: Bool = true, timeout: Duration = .seconds(10), management: AgentManagementSession? = nil) -> AgentMessagingSession {
+        func session(approve: Bool = true, timeout: Duration = .seconds(10), management: AgentManagementSession? = nil,
+                     questions: Bool = false) -> AgentMessagingSession {
             AgentMessagingSession(originConversationID: origin, agents: agents, messenger: messenger,
                 registry: registry, coordinator: coordinator, turnTimeout: timeout,
                 management: management,
+                supportsMailboxQuestions: questions,
                 authorize: { sender, recipient, text, _, _ in
                     await probe.authorize(sender, recipient, text)
                     if !approve { throw AgentMessagingError.approvalRequired }
                 })
         }
+    }
+
+    @Test(arguments: [AgentQuestionAnswer.option(0), .custom("Human clarification"), .dismissed])
+    func mailboxQuestionPausesAndHumanAnswerStartsFreshTurn(answer: AgentQuestionAnswer) async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        await f.registry.register(MessagingProvider { request, execute in
+            let count = await f.probe.request(request)
+            if count == 1 {
+                _ = try await execute(.init(id: "question", name: "SendMessage", argumentsJSON:
+                    Data(#"{"type":"widget","widget":{"prompt":"Which layout?","options":[{"label":"Compact"},{"label":"Spacious"}],"allowCustom":true,"dismissOnMoveOn":true}}"#.utf8)))
+                Issue.record("A question must suspend the model turn")
+            } else {
+                let incoming = try #require(request.messages.last)
+                expectNoDifference(incoming.role, .user)
+                #expect(incoming.text.contains("Human answer"))
+                #expect(incoming.text.contains("grants no tool access"))
+                expectNoDifference(incoming.attachments, [])
+                let forwarding = try await execute(sendCall(f.sender.id, "Forward the human answer", id: "forward"))
+                #expect(forwarding.isError)
+            }
+            return "Resolved"
+        })
+        let first = f.session(questions: true)
+        try await first.enqueueUserMessage(senderID: f.sender.id, recipientID: f.recipient.id, text: "Choose a layout")
+        try await first.drain()
+        try await first.close()
+        let stored = await f.messenger.allMessages()
+        let incoming = try #require(stored.first)
+        let publication = try #require(incoming.delivery?.publications?.first)
+        expectNoDifference(incoming.delivery?.state, .completed)
+        expectNoDifference(publication.question?.isPending, true)
+        let initialRequestCount = await f.probe.requests.count
+        expectNoDifference(initialRequestCount, 1)
+        let stopped = f.session(questions: true)
+        stopped.revokeProfileChanges()
+        await #expect(throws: (any Error).self) {
+            try await stopped.enqueueQuestionAnswer(incomingID: incoming.id, publicationID: publication.id, answer: answer)
+        }
+        let afterStop = await f.messenger.allMessages()
+        expectNoDifference(afterStop, stored)
+        let response = f.session(approve: false, questions: true)
+        try await response.enqueueQuestionAnswer(incomingID: incoming.id, publicationID: publication.id, answer: answer)
+        try await response.drain()
+        try await response.close()
+        let after = await f.messenger.allMessages()
+        expectNoDifference(after.count, 2)
+        expectNoDifference(after.first?.delivery?.publications?.first?.question?.answer, answer)
+        expectNoDifference(after.last?.delivery?.state, .completed)
+        expectNoDifference(after.last?.recipientID, f.recipient.id)
+        let resumedRequestCount = await f.probe.requests.count
+        expectNoDifference(resumedRequestCount, 2)
+        await #expect(throws: AgentQuestionError.unavailable) {
+            try await f.session(questions: true).enqueueQuestionAnswer(incomingID: incoming.id, publicationID: publication.id, answer: answer)
+        }
+    }
+
+    @Test func mailboxQuestionsRemainUnavailableInDelegatedGroupSession() async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let session = f.session()
+        await #expect(throws: AgentQuestionError.unavailable) {
+            try await session.enqueueQuestionAnswer(incomingID: UUID(), publicationID: UUID(), answer: .dismissed)
+        }
+        let saved = await f.messenger.allMessages()
+        expectNoDifference(saved, [])
     }
     private func fixture() async throws -> Fixture {
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-messaging-\(UUID())")

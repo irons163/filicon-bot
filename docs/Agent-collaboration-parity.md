@@ -1,5 +1,17 @@
 # 協作能力核對紀錄（更新至 2026-09-24）
 
+## 信箱提問接線第二步：模型暫停、回答 UI 與新回合（2026-09-24）
+
+獨立信箱的 host session 現在明確啟用 widget；一般群組來源的 peer session 預設仍不藉此啟用信箱卡片，群組提問維持原本的群組路徑。SendMessage 保存問題後的 ToolTurnSuspension 成為正常暫停，delivery 完成並保留問題，不再標為執行失敗。App 信箱已發布回覆區沿用七語言 GroupQuestionCard，提供選項、自訂回答、略過與已回答狀態，不重複顯示 prompt。
+
+人類回答入口先保留作用域，使用全新 session／工具核准回合，原子解答後只採納 host 返回的新訊息，不經普通 send 偽造 provenance。只有提問者收到結構化的人類回答；提示明示問題與選項是 assistant-authored data，並非工具權限。答案不保留舊圖片、priority 或 peer 回信豁免；再轉交給原寄件者仍需新核准。帳號切換、Stop、封存、失效與重複回答維持拒絕。普通人類訊息與同帳號／scope 的 dismissOnMoveOn 問題退休一次落盤；其他帳號、scope、peer send 不退休，保存失敗不留半個更新。
+
+新增 session 選項／自訂／略過續接、停止 fence、禁止未啟用入口、轉交核准測試；App 回答、帳號／封存與寫入權限不擴張測試；move-on 六種情境；七語言 mailbox 卡片渲染。已目視檢查繁體中文 fixture，選項內容是模型原文，控制項與安全提示已本地化。使用 Swift testing／CustomDump 與 SwiftUI 技能；無真實帳號／群組操作，未啟動 App 或 Xcode。首輪完整回歸僅舊測試的「mailbox 不支援 widget」文字斷言失敗，更新為明確 host capability 後重跑。
+
+最終完整非並行回歸 exit 0（`.build/validation/mailbox-question-wiring-final-tests.log`）；原生 Debug build、deep strict codesign、package verifier 通過。七語言各 1,661 keys 零缺漏，未新增 UI 字串。live 模型 opt-in 未啟用，未 push。
+
+這只補齊獨立信箱 widget 接線，不代表原版所有卡片／跨 session／外部 channel 能力完成；AGENT-03 仍 partial，整體計數不變。下方「第一步尚未接線」是前一提交歷史，已由本節取代。
+
 ## 信箱提問接線第一步：原子保存與回答續接契約（2026-09-24）
 
 `AgentMessenger` 新增 host 專用 `publishQuestion`／`answerQuestion`，沿用 `AgentQuestion` 的有界選項、自訂回答與略過語意。問題保存進既有 delivery publications，與文字共用兩則上限，保存問題後不再接受後續發文。帳號、原對話、提問代理人與兩位參與者由 host 固定；一般 `publish` 不能夾帶 question／群組引用 metadata，普通 `send` 也不能注入 human-answer provenance。

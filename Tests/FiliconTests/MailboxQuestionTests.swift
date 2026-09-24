@@ -196,4 +196,39 @@ struct MailboxQuestionTests {
         expectNoDifference(after, before)
         expectNoDifference(try Data(contentsOf: f.file), bytes)
     }
+
+    @Test(arguments: ["human", "peer", "other-account", "other-scope", "closed", "save-failure"])
+    func moveOnRetirementIsScopedAndAtomic(mode: String) async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let moving = try AgentQuestion.parse(Data(#"{"prompt":"Continue?","options":[{"label":"Yes"}],"dismissOnMoveOn":true}"#.utf8))
+        _ = try await f.messenger.publishQuestion(moving, replyingTo: f.incoming.id, accountID: "account-A",
+            originID: scope, publicationID: publicationID, at: date, lifetime: .init())
+        try await f.messenger.updateDelivery(id: f.incoming.id, state: .completed)
+        let before = await f.messenger.allMessages()
+        let newer = AgentMessage(senderID: f.incoming.senderID, recipientID: f.incoming.recipientID,
+            text: "Another task", createdAt: date, delivery: .init(chainID: responseID,
+                originConversationID: mode == "other-scope" ? responseID : scope))
+        let lifetime = AgentPublicationLifetime()
+        if mode == "closed" { lifetime.close() }
+        if mode == "save-failure" {
+            try FileManager.default.moveItem(at: f.file, to: f.root.appending(path: "backup.json"))
+            try FileManager.default.createDirectory(at: f.file, withIntermediateDirectories: false)
+        }
+        if mode == "closed" || mode == "save-failure" {
+            await #expect(throws: (any Error).self) {
+                try await f.messenger.sendUserMessage(newer, accountID: "account-A", lifetime: lifetime)
+            }
+            let after = await f.messenger.allMessages()
+            expectNoDifference(after, before)
+        } else {
+            if mode == "peer" { try await f.messenger.send(newer) }
+            else { try await f.messenger.sendUserMessage(newer,
+                accountID: mode == "other-account" ? "account-B" : "account-A", lifetime: lifetime) }
+            var expected = before
+            if mode == "human" { expected[0].delivery?.publications?[0].question?.retired = true }
+            expected.append(newer)
+            let after = await f.messenger.allMessages()
+            expectNoDifference(after, expected)
+        }
+    }
 }

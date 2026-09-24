@@ -2497,7 +2497,7 @@ final class AppModel: ObservableObject {
             guard generation == autoReviewAccountGeneration,
                   accountID == (settings.accountScope ?? "local"), !Task.isCancelled,
                   !runningAgentMessageScopes.contains(scopeID),
-                  let session = makeAgentMessagingSession(originID: scopeID) else { return false }
+                  let session = makeAgentMessagingSession(originID: scopeID, supportsMailboxQuestions: true) else { return false }
             // Reserve before enqueue's first suspension. One conversation owns
             // its context and approval cards until its entire reply chain ends.
             runningAgentMessageScopes.insert(scopeID)
@@ -2522,6 +2522,46 @@ final class AppModel: ObservableObject {
             errorMessage = l10n("Message not sent: \(error.localizedDescription)")
             await reloadAgentMessages()
             return false
+        }
+    }
+
+    func canAnswerMailboxQuestion(_ incoming: AgentMessage, publication: RoomMessage) -> Bool {
+        guard !agentMessagingAccountTransition,
+              let current = agentMessages.first(where: { $0.id == incoming.id }),
+              current.delivery?.publications?.first(where: { $0.id == publication.id }) == publication,
+              let delivery = incoming.delivery, delivery.state == .completed,
+              !runningAgentMessageScopes.contains(delivery.originConversationID),
+              let question = publication.question, question.isPending,
+              question.accountID == (settings.accountScope ?? "local"),
+              agents.contains(where: { $0.id == incoming.senderID && $0.archivedAt == nil }),
+              agents.contains(where: { $0.id == incoming.recipientID && $0.archivedAt == nil }) else { return false }
+        return true
+    }
+
+    func answerMailboxQuestion(incomingID: UUID, publicationID: UUID, answer: AgentQuestionAnswer) async {
+        guard let incoming = agentMessages.first(where: { $0.id == incomingID }),
+              let publication = incoming.delivery?.publications?.first(where: { $0.id == publicationID }),
+              canAnswerMailboxQuestion(incoming, publication: publication),
+              let scopeID = incoming.delivery?.originConversationID,
+              let session = makeAgentMessagingSession(originID: scopeID, supportsMailboxQuestions: true) else { return }
+        let generation = autoReviewAccountGeneration
+        runningAgentMessageScopes.insert(scopeID)
+        agentMessagingSessions[scopeID] = session
+        workspaceFolders.beginTurn(conversationID: scopeID)
+        do {
+            try await session.enqueueQuestionAnswer(incomingID: incomingID, publicationID: publicationID, answer: answer)
+            guard generation == autoReviewAccountGeneration, !Task.isCancelled,
+                  runningAgentMessageScopes.contains(scopeID) else { throw CancellationError() }
+            agentMessageTasks[scopeID] = Task { [weak self] in
+                await self?.runAgentMessages(scopeID: scopeID, session: session)
+            }
+        } catch {
+            try? await session.close()
+            await cancelAgentMessageTools(scopeID: scopeID)
+            agentMessagingSessions[scopeID] = nil
+            runningAgentMessageScopes.remove(scopeID)
+            if !(error is CancellationError) { errorMessage = FiliconLocalization.string(error.localizedDescription) }
+            await reloadAgentMessages()
         }
     }
 
@@ -2579,7 +2619,7 @@ final class AppModel: ObservableObject {
         await invalidateMCPAuthorization(conversationID: scopeID)
     }
 
-    private func makeAgentMessagingSession(originID: UUID) -> AgentMessagingSession? {
+    private func makeAgentMessagingSession(originID: UUID, supportsMailboxQuestions: Bool = false) -> AgentMessagingSession? {
         guard let agentService, let agentMessenger, let agentConversations else { return nil }
         let generation = autoReviewAccountGeneration
         let management = AgentManagementSession(originID: originID, agents: agentService,
@@ -2650,6 +2690,7 @@ final class AppModel: ObservableObject {
                     try await self.recordMemorySuggestions(suggestions, settings: settings, exchangeID: exchangeID,
                         lifetime: lifetime, originID: originID, generation: generation)
                 }),
+            supportsMailboxQuestions: supportsMailboxQuestions,
             groups: groupService,
             authorizeGroup: { [weak self] sender, audience, text, call, context in
                 guard let self else { throw CancellationError() }

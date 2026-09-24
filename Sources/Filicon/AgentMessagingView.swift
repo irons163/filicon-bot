@@ -176,7 +176,11 @@ struct AgentMessagingView: View {
                 if let delivery = message.delivery {
                     Text(deliveryTitle(delivery.state)).font(.caption).foregroundStyle(.secondary)
                     if let publications = delivery.publications, !publications.isEmpty {
-                        AgentPublishedResponses(publications: publications)
+                        AgentPublishedResponses(publications: publications,
+                            canAnswer: { model.canAnswerMailboxQuestion(message, publication: $0) },
+                            onAnswer: { publication, answer in
+                                Task { await model.answerMailboxQuestion(incomingID: message.id, publicationID: publication.id, answer: answer) }
+                            })
                     } else if let response = delivery.response, !response.isEmpty, response.uppercased() != "PASS" {
                         Text((delivery.state == .cancelled && response == AgentExecutionSuperseded().localizedDescription)
                              || AgentImageError(rawValue: response) != nil
@@ -273,12 +277,18 @@ struct AgentMessagingView: View {
 
 struct AgentPublishedResponses: View {
     let publications: [RoomMessage]
+    var canAnswer: (RoomMessage) -> Bool = { _ in false }
+    var onAnswer: (RoomMessage, AgentQuestionAnswer) -> Void = { _, _ in }
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Label(l10n("Published response"), systemImage: "bubble.left.and.text.bubble.right").font(.caption).foregroundStyle(.secondary)
             ForEach(publications) { publication in
                 VStack(alignment: .leading, spacing: 6) {
-                    if !publication.text.isEmpty {
+                    if let question = publication.question {
+                        GroupQuestionCard(card: question, enabled: canAnswer(publication)) { answer in
+                            onAnswer(publication, answer)
+                        }
+                    } else if !publication.text.isEmpty {
                         Text(verbatim: publication.text).font(.callout).textSelection(.enabled)
                     }
                     if let images = publication.images, !images.isEmpty { AgentMessageImagePreviews(images: images) }
