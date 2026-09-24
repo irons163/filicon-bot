@@ -36,6 +36,28 @@ struct AgentPublicationReceiptTests {
     private let secondID = UUID(uuidString: "44444444-4444-4444-8444-444444444444")!
     private let date = Date(timeIntervalSince1970: 1_000)
 
+    @Test func mailboxReceiptAdapterSupportsSameTurnReferences() async throws {
+        let probe = ReceiptProbe()
+        let tool = AgentUserMessageTool(conversationID: groupID, availableImages: [], imageStore: nil,
+            receiptSenderID: senderID, publishReceipt: { text, images, reply in
+                var saved = RoomMessage(id: reply == nil ? messageID : secondID, groupID: groupID,
+                    senderID: senderID, text: text, createdAt: date, images: images)
+                saved.replyToMessageID = reply
+                return try await probe.append(saved)
+            }, publish: { _, _ in Issue.record("Receipt transport must handle publication") })
+        let context = ToolContext(conversationID: groupID)
+        let first = try call("first", text: "Progress")
+        let receipt = try await tool.execute(first, context: context)
+        #expect(!receipt.isError && text(receipt).contains(messageID.uuidString))
+        let replay = try await tool.execute(first, context: context)
+        expectNoDifference(replay, receipt)
+        #expect(try await !tool.execute(call("second", text: "Details", target: messageID.uuidString), context: context).isError)
+        #expect(try await tool.execute(call("third", text: "Too many"), context: context).isError)
+        let messages = await probe.messages
+        expectNoDifference(messages.map(\.replyToMessageID), [nil, messageID])
+        await tool.close()
+    }
+
     private func call(_ id: ToolCallID, text: String, target: String? = nil) throws -> NormalizedToolCall {
         var fields = ["text": text]
         fields["reply_to"] = target

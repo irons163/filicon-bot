@@ -562,15 +562,16 @@ public actor AgentMessagingSession {
             } else { secretPublisher = nil }
             let replyHistory = supportsMailboxQuestions
                 ? (try? await messenger.replyDirectory(replyingTo: inbound.id)) ?? [] : []
-            let replyPublisher: AgentUserMessageTool.ReplyPublisher?
+            let receiptPublisher: (@Sendable (String, [AttachmentMetadata], UUID?) async throws -> RoomMessage)?
             if supportsMailboxQuestions {
-                replyPublisher = { [messenger, onChange, publicationLifetime] text, images, target in
-                    try await output.publish(text, images: images, replyTo: target) { publication in
+                receiptPublisher = { [messenger, onChange, publicationLifetime] text, images, target in
+                    let saved = try await output.publish(text, images: images, replyTo: target) { publication in
                         try await messenger.publish(publication, replyingTo: inbound.id, lifetime: publicationLifetime)
                     }
                     await onChange()
+                    return saved
                 }
-            } else { replyPublisher = nil }
+            } else { receiptPublisher = nil }
             let publisher = AgentUserMessageTool(conversationID: originConversationID,
                 availableImages: inbound.images ?? [], imageStore: imageStore,
                 authorizeImages: { [self] text, images, call, context in
@@ -578,7 +579,8 @@ public actor AgentMessagingSession {
                     try await authorizePublication(agent, text, images, call, context)
                     try await checkOpen()
                 }, publishQuestion: questionPublisher, publishSecret: secretPublisher,
-                replyHistory: replyHistory, publishReply: replyPublisher) { [messenger, onChange, publicationLifetime] text, images in
+                replyHistory: replyHistory, receiptSenderID: supportsMailboxQuestions ? agent.id : nil,
+                publishReceipt: receiptPublisher) { [messenger, onChange, publicationLifetime] text, images in
                 try await output.publish(text, images: images) { publication in
                     try await messenger.publish(publication, replyingTo: inbound.id, lifetime: publicationLifetime)
                 }
@@ -761,8 +763,9 @@ private actor AgentInboundOutput {
         message = .init(groupID: groupID, senderID: agentID, text: "")
         self.onUpdate = onUpdate
     }
+    @discardableResult
     func publish(_ text: String, images: [AttachmentMetadata], replyTo: UUID? = nil,
-                 persist: @Sendable (RoomMessage) async throws -> Void) async throws {
+                 persist: @Sendable (RoomMessage) async throws -> Void) async throws -> RoomMessage {
         try Task.checkCancellation()
         var publication = RoomMessage(groupID: message.groupID, senderID: message.senderID, text: text, images: images)
         publication.replyToMessageID = replyTo
@@ -771,6 +774,7 @@ private actor AgentInboundOutput {
         // Once the canonical mailbox commits, the tool must not invite a retry
         // of an already-published message. Surface mirror failure on turn finish.
         do { try await onUpdate(publication) } catch { projectionFailure = error }
+        return publication
     }
     func recordQuestion(_ publication: RoomMessage) async {
         publishedTexts.append(publication.text)

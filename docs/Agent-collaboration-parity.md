@@ -1,5 +1,11 @@
 # 協作能力核對紀錄（更新至 2026-09-25）
 
+## 信箱同回合發布回條（2026-09-25）
+
+獨立信箱使用 host 提供的 receiptSenderID／publishReceipt，只有正式保存後才回傳 RoomMessage。共用工具重驗 sender、scope、內容、圖片及 reply target，將新 UUID 加入本回合目錄；模型可先發布進度，再以 UUID 引用該訊息。鏡像顯示失敗仍不要求重發已保存訊息。非獨立信箱入口保留原 transport，不自動增加能力；secret／question 暫停流程不變。
+
+testing／CustomDump 測試驗證回條、工具層重送與兩則額度，以及假模型兩次不同 call 的保存引用。`mailbox-receipt-unit-tests.log` 8 tests 通過、`mailbox-receipt-session-tests.log` 通過，原生建置及 package／deep strict codesign 通過。首輪廣泛回歸 `mailbox-receipt-tests.log` 有鎖定狀態（IOConsoleLocked=Yes）的 protected-file EPERM；另新測試原本用重複 call ID，被既有 ToolLoop 拒絕，已改為工具層驗證重送並單獨通過整合測試。不把所有失敗歸因於鎖定；完整回歸仍待解鎖補驗。未改檔案保護、真實資料或重啟 App。引用 UI、短地址與 question 引用仍未完成，AGENT-02 partial。
+
 ## 獨立信箱引用模型接線（2026-09-25）
 
 host 開啟 supportsMailboxQuestions 的獨立信箱回合，現在將保存層引用目錄交給 SendMessage，text／image publication 可帶 reply_to UUID。輸出鏡像保留 replyToMessageID，保存時再次核對目標；背景及其他未開啟入口不提供引用。引用目錄無法取得時不提供候選，不猜測目標。端到端假 provider 測試覆蓋開啟時保存 inbound 引用、關閉時路由拒絕且無 publication。

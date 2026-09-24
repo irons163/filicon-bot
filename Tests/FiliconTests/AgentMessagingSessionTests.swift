@@ -80,6 +80,32 @@ struct AgentMessagingSessionTests {
         }
     }
 
+    @Test func mailboxCanReplyToItsOwnSavedPublicationInTheSameTurn() async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        await f.registry.register(MessagingProvider { _, execute in
+            let first = try NormalizedToolCall(id: "first", name: "SendMessage", argumentsJSON: Data(#"{"text":"Progress"}"#.utf8))
+            let receipt = try await execute(first)
+            #expect(!receipt.isError)
+            let input = try #require(await f.messenger.allMessages().first)
+            let saved = try #require(input.delivery?.publications?.first)
+            let resultText = receipt.content.compactMap { if case .text(let text) = $0 { return text }; return nil }.joined()
+            #expect(resultText.contains(saved.id.uuidString))
+            let second = try NormalizedToolCall(id: "second", name: "SendMessage", argumentsJSON:
+                JSONEncoder().encode(["text": "Details", "reply_to": saved.id.uuidString]))
+            #expect(try await !execute(second).isError)
+            return "Done"
+        })
+        let session = f.session(questions: true)
+        try await session.enqueueUserMessage(senderID: f.sender.id, recipientID: f.recipient.id, text: "Explain")
+        try await session.drain()
+        try await session.close()
+        let input = try #require(await f.messenger.allMessages().first)
+        let publications = try #require(input.delivery?.publications)
+        expectNoDifference(publications.count, 2)
+        expectNoDifference(publications.last?.replyToMessageID, publications.first?.id)
+        expectNoDifference(input.delivery?.state, .completed)
+    }
+
     @Test(arguments: [true, false])
     func mailboxReplyEntryIsHostGated(enabled: Bool) async throws {
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }

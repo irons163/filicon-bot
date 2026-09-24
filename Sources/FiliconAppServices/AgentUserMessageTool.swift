@@ -79,29 +79,36 @@ public actor AgentUserMessageTool: ToolExecutor, ToolRuntimeContextProviding {
                 publishSecret: SecretPublisher? = nil,
                 publishQuestionReply: QuestionReplyPublisher? = nil,
                 replyHistory: [RoomMessage] = [], publishReply: ReplyPublisher? = nil,
+                receiptSenderID: UUID? = nil,
+                publishReceipt: (@Sendable (String, [AttachmentMetadata], UUID?) async throws -> RoomMessage)? = nil,
                 publish: @escaping @Sendable (String, [AttachmentMetadata]) async throws -> Void) {
         self.conversationID = conversationID; self.availableImages = availableImages
         self.publishSecret = publishSecret
         replyGroupID = conversationID
-        senderID = nil
+        senderID = receiptSenderID
         defaultReplyToMessageID = nil
         self.imageStore = imageStore; self.authorizeImages = authorizeImages
-        self.publish = { try await publish($0, $1); return nil }
+        if let publishReceipt, receiptSenderID != nil {
+            self.publish = { try await publishReceipt($0, $1, nil) }
+        } else { self.publish = { try await publish($0, $1); return nil } }
         supportsImages = imageStore != nil && !availableImages.isEmpty
         if let publishQuestion { self.publishQuestion = { try await publishQuestion($0); return nil } }
         else { self.publishQuestion = nil }
         if publishQuestion != nil, let publishQuestionReply {
             self.publishQuestionReply = { try await publishQuestionReply($0, $1); return nil }
         } else { self.publishQuestionReply = nil }
-        if let publishReply { self.publishReply = { try await publishReply($0, $1, $2); return nil } }
+        let hasReceipts = publishReceipt != nil && receiptSenderID != nil
+        if let publishReceipt, hasReceipts {
+            self.publishReply = { try await publishReceipt($0, $1, $2) }
+        } else if let publishReply { self.publishReply = { try await publishReply($0, $1, $2); return nil } }
         else { self.publishReply = nil }
         let questionReplies = publishQuestion != nil && publishQuestionReply != nil
-        let targets = publishReply == nil && !questionReplies ? [] : Self.replyTargets(in: replyHistory, groupID: conversationID)
+        let targets = publishReply == nil && !questionReplies && !hasReceipts ? [] : Self.replyTargets(in: replyHistory, groupID: conversationID)
         replyTargets = targets
         knownMessageIDs = Set(replyHistory.filter { $0.groupID == conversationID }.map(\.id))
         knownShortAddresses = Set(replyHistory.filter { $0.groupID == conversationID }.compactMap(\.shortAddress))
         descriptor = Self.makeDescriptor(supportsImages: supportsImages, supportsQuestions: publishQuestion != nil,
-            supportsReplies: !targets.isEmpty, supportsTextReplies: publishReply != nil, supportsQuestionReplies: questionReplies,
+            supportsReplies: hasReceipts || !targets.isEmpty, supportsTextReplies: hasReceipts || publishReply != nil, supportsQuestionReplies: questionReplies,
             supportsSecrets: publishSecret != nil)
     }
 
