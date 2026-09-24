@@ -67,19 +67,19 @@ public final class AgentSecretSubmission: @unchecked Sendable {
         try Task.checkCancellation()
         // Connections cannot be replaced between validation and the Keychain
         // call. The synchronous lifetime fence also excludes Stop/account swaps.
-        return try await channels.withCredentialSnapshot { [self] connections in
+        return try await channels.commitCredential(connectionID: destination.connectionID) { [self] connections in
             try lock.withLock {
                 guard active else { throw AgentSecretSubmissionError.unavailable }
                 try Task.checkCancellation()
                 try destination.validate(accountID: accountID, agentID: agentID,
                     conversationID: conversationID, connections: connections)
-                if case .stored(let receipt) = current { return receipt }
+                if case .stored(let receipt) = current { return (receipt, false) }
                 guard current == .pending else { throw AgentSecretSubmissionError.unavailable }
                 do { try write(value, destination.credentialReference) }
                 catch { throw AgentSecretSubmissionError.writeFailed }
                 let receipt = AgentSecretReceipt(requestID: id)
                 current = .stored(receipt)
-                return receipt
+                return (receipt, true)
             }
         }
     }

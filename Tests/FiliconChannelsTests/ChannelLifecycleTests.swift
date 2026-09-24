@@ -50,6 +50,61 @@ struct ChannelLifecycleTests {
               text: "fixture", timestamp: date, cursor: "new-cursor")
     }
 
+    @Test(arguments: ["success", "replay", "failure", "stopped"])
+    func credentialCommitRebuildsOnlyAnActiveListener(mode: String) async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let probe = CredentialListenerProbe(), inbox = LifecycleInbox()
+        await f.service.register(probe)
+        try await f.service.start(connectionID: f.first.id) { await inbox.receive($0) }
+        for _ in 0..<200 where probe.count < 1 { try await Task.sleep(for: .milliseconds(5)) }
+        expectNoDifference(probe.count, 1)
+        if mode == "stopped" { await f.service.stop(connectionID: f.first.id) }
+        if mode == "failure" {
+            await #expect(throws: URLError.self) {
+                _ = try await f.service.commitCredential(connectionID: f.first.id) { _ -> (Int, Bool) in
+                    throw URLError(.cannotWriteToFile)
+                }
+            }
+        } else {
+            let result = await f.service.commitCredential(connectionID: f.first.id) { _ in
+                (42, mode != "replay")
+            }
+            expectNoDifference(result, 42)
+        }
+        if mode == "success" {
+            for _ in 0..<200 where probe.count < 2 { try await Task.sleep(for: .milliseconds(5)) }
+            expectNoDifference(probe.count, 2)
+        }
+        if mode != "stopped" {
+            probe.yield(envelope(f.first, event: "current"))
+            await inbox.waitForCount(1)
+            let events = await inbox.events
+            expectNoDifference(events, [envelope(f.first, event: "current")])
+        }
+        expectNoDifference(probe.count, mode == "success" ? 2 : 1)
+        let connections = await f.service.connections()
+        var expected = f.first
+        if mode != "stopped" {
+            expected.cursor = "new-cursor"
+            expected.lastActivityAt = date
+        }
+        expectNoDifference(connections, [expected, f.second])
+        await f.service.stop(connectionID: f.first.id)
+    }
+
+    @Test func credentialCommitInvalidatesInFlightProfile() async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let gate = ChannelLifecycleGate()
+        await f.service.register(LifecycleConnector(profileGate: gate))
+        let task = Task { try await f.service.refreshProfile(connectionID: f.first.id) }
+        await gate.waitForEntry()
+        _ = await f.service.commitCredential(connectionID: f.first.id) { _ in (true, true) }
+        await gate.release()
+        await #expect(throws: CancellationError.self) { _ = try await task.value }
+        let connections = await f.service.connections()
+        expectNoDifference(connections, [f.first, f.second])
+    }
+
     @Test func failedRemovalPreservesAllDurableState() async throws {
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
         try await f.service.ingest(envelope(f.first))
@@ -412,6 +467,24 @@ private struct LifecycleConnector: ChannelConnector {
         await profileGate?.hold()
         return profileValue
     }
+}
+
+private final class CredentialListenerProbe: ChannelConnector, @unchecked Sendable {
+    let descriptor = ChannelConnectorDescriptor(id: "probe", displayName: "Probe")
+    private let lock = NSLock()
+    private var streams: [LifecycleStream] = []
+    var count: Int { lock.withLock { streams.count } }
+    func inbound(connection: ChannelConnection) -> AsyncThrowingStream<ChannelEnvelope, Error> {
+        lock.withLock {
+            let stream = LifecycleStream()
+            streams.append(stream)
+            return stream.stream
+        }
+    }
+    func yield(_ event: ChannelEnvelope) {
+        lock.withLock { _ = streams.last?.continuation.yield(event) }
+    }
+    func send(_ message: ChannelOutbound, to address: ChannelAddress, connection: ChannelConnection, idempotencyKey: UUID) async throws {}
 }
 
 private struct LifecycleStream: Sendable {

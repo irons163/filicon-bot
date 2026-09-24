@@ -44,6 +44,7 @@ public actor ChannelService {
     private struct Listener {
         let token: UUID
         let task: Task<Void, Never>
+        let onInbound: @Sendable (ChannelEnvelope) async -> Void
     }
     private var listeners: [UUID: Listener] = [:]
     // Process-local fences: replacing a configuration, including remove/recreate
@@ -113,6 +114,25 @@ public actor ChannelService {
         _ operation: @Sendable ([ChannelConnection]) throws -> Result
     ) rethrows -> Result {
         try operation(state.connections)
+    }
+
+    public func commitCredential<Result: Sendable>(
+        connectionID: UUID,
+        _ operation: @Sendable ([ChannelConnection]) throws -> (result: Result, changed: Bool)
+    ) rethrows -> Result {
+        let outcome = try operation(state.connections)
+        if outcome.changed {
+            connectionRevisions[connectionID] = UUID()
+            profileRequests[connectionID] = nil
+            let callback = listeners[connectionID]?.onInbound
+            stop(connectionID: connectionID)
+            if let callback,
+               let connection = state.connections.first(where: { $0.id == connectionID }),
+               connection.enabled, let connector = connectors[connection.connectorID] {
+                launchListener(connection: connection, connector: connector, onInbound: callback)
+            }
+        }
+        return outcome.result
     }
 
     public func proposeDisconnection(agentID: UUID, platform: String) throws -> ChannelDisconnection {
@@ -203,6 +223,14 @@ public actor ChannelService {
             throw ChannelServiceError.unknownConnector(connection.connectorID)
         }
         stop(connectionID: connectionID)
+        launchListener(connection: connection, connector: connector, onInbound: onInbound)
+    }
+
+    private func launchListener(
+        connection: ChannelConnection, connector: any ChannelConnector,
+        onInbound: @escaping @Sendable (ChannelEnvelope) async -> Void
+    ) {
+        let connectionID = connection.id
         let token = UUID()
         let task = Task { [weak self] in
             do {
@@ -217,7 +245,7 @@ public actor ChannelService {
             }
             await self?.listenerFinished(connectionID: connectionID, token: token)
         }
-        listeners[connectionID] = Listener(token: token, task: task)
+        listeners[connectionID] = Listener(token: token, task: task, onInbound: onInbound)
     }
 
     public func stop(connectionID: UUID) {

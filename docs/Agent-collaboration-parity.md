@@ -1,5 +1,13 @@
 # 協作能力核對紀錄（更新至 2026-09-24）
 
+## 憑證更新後的監聽連線（2026-09-24）
+
+確認 Slack 輪詢在開始時解析 token 並持有至結束。安全提交現在透過 ChannelService 的同步 commit 操作，在成功寫入後使舊 profile 查詢失效，取消舊 listener，使用原 inbound callback 和最新 cursor 重建原本正在執行的 listener。寫入失敗或已提交 receipt 重送不重建；已停止的連線不會被自動啟用。此處只代表重新載入認證，不宣稱遠端登入成功；已開始的外部請求不能撤回。
+
+隔離測試覆蓋成功、重送、失敗、停止與舊 profile 結果拒收，使用假 connector／writer，不操作真實連線。此段取代下方「未重建既有 listener」缺口；新連線建立、登入狀態回報、群組／直接聊天入口與真實登入驗收仍未完成，AGENT-02 維持 partial。
+
+驗證：`credential-refresh-full-tests.log` 完整非並行測試 exit 0，`credential-refresh-native.log` 原生建置 exit 0，package verifier／deep strict codesign 通過。使用 testing／CustomDump 技能撰寫隔離生命週期測試，未啟動 App 或操作真實帳號。
+
 ## 憑證請求第五步：獨立信箱的模型／卡片／新回合接線（2026-09-24）
 
 獨立信箱的 `SendMessage` 現在可由 host 明確開啟 `type:secret-request`；一般直接聊天、群組與背景 wake 不因此自動取得這項能力。嚴格接受 type＋secret metadata，拒絕 value、text、reply_to 或額外欄位；共用兩則發布額度、重送 receipt 與停止 fence，保存後以 ToolTurnSuspension 結束回合。請求錯誤固定回應，不把底層 diagnostics 回傳模型。模型 runtime 說明目前只支援其同帳號、同 owner、唯一且 enabled 的既有 Slack／Discord bot token 連線，不能藉此建立新連線或選 Keychain key。
