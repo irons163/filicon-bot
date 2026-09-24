@@ -1,5 +1,9 @@
 # 協作能力核對紀錄（更新至 2026-09-25）
 
+## 信箱引用保存基礎（2026-09-25）
+
+AgentMessenger 新增同 sender／recipient／origin、截至目前 inbound 的引用目錄，最多 40 則，排除重複 ID 與空白內容。保存 replyToMessageID 時核對目錄並拒絕自我引用；既有兩則額度、停止 fence 與 exact replay 保留。隔離測試覆蓋保存／重載／重送、不同 sender／scope、未來及不存在目標、目前 inbound 與已保存 publication 引用。`mailbox-reply-tests.log` exit 0。這是保存層基礎，尚非完成模型入口、引用顯示或原版短地址；AGENT-02 仍 partial。測試使用 testing／CustomDump 技能，未碰真實資料。
+
 ## 模型斷線操作的帳號隔離（2026-09-25）
 
 `update_state(target:channel,action:disconnect)` 現在以 management session 的 host account 篩選 ownerAccountID，同 agent 在其他帳號下的連線不進候選，也不造成 ambiguous。舊無 owner 的連線只屬 local。提案保留 owner，App 在核准及提交時核對目前帳號；既有 lifetime／revision／完整 connection snapshot 仍拒絕等待期間的變更。測試覆蓋同 agent 跨帳號兩條連線只刪自己，以及只剩另一個帳號時不提出核准、不刪除；帳號由 host 提供，模型不能指定。

@@ -227,6 +227,30 @@ public actor AgentMessenger {
         }
     }
 
+    public func replyDirectory(replyingTo id: UUID) throws -> [RoomMessage] {
+        guard state.messages.filter({ $0.id == id }).count == 1,
+              let index = state.messages.firstIndex(where: { $0.id == id }),
+              let scope = state.messages[index].delivery?.originConversationID else {
+            throw AgentPublicationError.invalid
+        }
+        let inbound = state.messages[index]
+        let candidates = state.messages[...index].filter {
+            $0.senderID == inbound.senderID && $0.recipientID == inbound.recipientID
+                && $0.delivery?.originConversationID == scope
+        }.flatMap { item -> [RoomMessage] in
+            let input = RoomMessage(id: item.id, groupID: scope, senderID: item.senderID,
+                text: item.text, createdAt: item.createdAt, images: item.images ?? [])
+            let publications = (item.delivery?.publications ?? []).filter {
+                $0.groupID == scope && $0.senderID == inbound.recipientID && $0.memberOutcome == nil
+            }
+            return [input] + publications
+        }
+        let counts = Dictionary(grouping: candidates, by: \.id).mapValues(\.count)
+        return Array(candidates.filter {
+            counts[$0.id] == 1 && (!$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !($0.images ?? []).isEmpty)
+        }.suffix(40))
+    }
+
     private func publishValidated(_ publication: RoomMessage, replyingTo id: UUID, lifetime: AgentPublicationLifetime) throws {
         try lifetime.commit {
             guard let index = state.messages.firstIndex(where: { $0.id == id }),
@@ -236,8 +260,14 @@ public actor AgentMessenger {
                   publication.senderID == state.messages[index].recipientID,
                   (!publication.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !(publication.images ?? []).isEmpty),
                   publication.text.count <= 8_000, publication.toolActivities.isEmpty,
-                  publication.memberOutcome == nil, publication.replyToMessageID == nil,
+                  publication.memberOutcome == nil,
                   publication.shortAddress == nil else { throw AgentPublicationError.invalid }
+            if let target = publication.replyToMessageID {
+                guard target != publication.id,
+                      try replyDirectory(replyingTo: id).contains(where: { $0.id == target }) else {
+                    throw AgentPublicationError.invalid
+                }
+            }
             let images = publication.images ?? []
             guard images.count <= 4, Set(images.map(\.id)).count == images.count,
                   images.allSatisfy({ image in state.messages[index].images?.contains(where: { image.isAnnotation(of: $0) }) == true }) else {
