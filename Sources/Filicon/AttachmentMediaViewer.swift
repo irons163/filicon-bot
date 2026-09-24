@@ -154,7 +154,7 @@ struct AttachmentMediaViewerSheet: View {
             case .image: AttachmentImageView(verifiedData: verifiedData)
             case .audiovisual: AttachmentAVPlayerView(fileURL: file.fileURL)
             case .pdf: AttachmentPDFView(file: file, verifiedData: verifiedData)
-            case .spreadsheet: AttachmentSpreadsheetView(file: file)
+            case .spreadsheet: AttachmentSpreadsheetView(file: file, verifiedData: verifiedData)
             case .quickLook: AttachmentQuickLookView(fileURL: file.fileURL)
             }
         }
@@ -211,7 +211,7 @@ struct AttachmentMediaViewerSheet: View {
 /// No native parser or Quick Look generator receives a materialized CAS file
 /// until its digest and byte count have been checked again. This closes the
 /// gap between the store check in `AppModel` and opening the preview sheet.
-/// Image and PDF decoding consume the verified snapshot, never a second path read.
+/// Image, PDF and table decoding consume the verified snapshot, not the original path.
 /// Other native parsers still use their URL APIs after the initial check.
 private struct AttachmentIntegrityGate<Content: View>: View {
     @Environment(\.locale) private var uiLocale
@@ -250,7 +250,7 @@ private struct AttachmentIntegrityGate<Content: View>: View {
             }.value
             guard !Task.isCancelled else { return }
             let kind = AttachmentViewerKind.classify(filename: file.filename, mimeType: file.metadata?.mimeType)
-            if kind == .image || kind == .pdf {
+            if kind == .image || kind == .pdf || kind == .spreadsheet {
                 verifiedData = data
             }
             isVerified = true
@@ -535,6 +535,7 @@ struct PDFNativeView: NSViewRepresentable {
 private struct AttachmentSpreadsheetView: View {
     @Environment(\.locale) private var uiLocale
     let file: AttachmentPreviewFile
+    let verifiedData: Data?
     @State private var preview: SpreadsheetPreview?
     @State private var selectedSheetID: String?
     @State private var error: String?
@@ -545,10 +546,7 @@ private struct AttachmentSpreadsheetView: View {
             if let preview {
                 VStack(spacing: 0) {
                     if preview.sheets.count > 1 {
-                        Picker(l10n("Sheet"), selection: Binding(
-                            get: { selectedSheetID ?? preview.sheets.first?.id },
-                            set: { selectedSheetID = $0 }
-                        )) {
+                        Picker(l10n("Sheet"), selection: $selectedSheetID) {
                             ForEach(preview.sheets) { Text($0.name).tag(Optional($0.id)) }
                         }
                         .pickerStyle(.segmented).padding(8)
@@ -575,24 +573,22 @@ private struct AttachmentSpreadsheetView: View {
     }
 
     private func load() async {
-        let url = file.fileURL
+        preview = nil
+        selectedSheetID = nil
+        error = nil
         let name = file.filename
         do {
+            guard let data = verifiedData else { throw SpreadsheetPreviewError.malformedWorkbook }
             let result = try await Task.detached(priority: .userInitiated) {
-                switch url.pathExtension.lowercased() {
-                case "csv":
-                    return try DelimitedTextPreviewParser().parse(fileURL: url, delimiter: ",", name: name)
-                case "tsv":
-                    return try DelimitedTextPreviewParser().parse(fileURL: url, delimiter: "\t", name: name)
-                case "xlsx":
-                    return try XLSXPreviewParser().parse(fileURL: url)
-                default:
-                    throw SpreadsheetPreviewError.malformedWorkbook
-                }
+                try AttachmentSpreadsheetSnapshotParser().parse(data: data, filename: name)
             }.value
+            guard !Task.isCancelled else { return }
             preview = result
             selectedSheetID = result.sheets.first?.id
-        } catch { self.error = error.localizedDescription }
+        } catch {
+            guard !Task.isCancelled else { return }
+            self.error = error.localizedDescription
+        }
     }
 }
 

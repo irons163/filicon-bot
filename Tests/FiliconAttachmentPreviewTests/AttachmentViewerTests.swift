@@ -10,6 +10,27 @@ import FiliconDomain
 
 @Suite("Native attachment viewers")
 struct AttachmentViewerTests {
+    @Test(arguments: ["csv", "tsv"])
+    func tableSnapshotDoesNotReopenReplacedOriginal(extension suffix: String) throws {
+        let sandbox = FileManager.default.temporaryDirectory.appending(path: "table-snapshot-\(UUID())", directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: sandbox) }
+        try FileManager.default.createDirectory(at: sandbox, withIntermediateDirectories: true)
+        let separator = suffix == "csv" ? "," : "\t"
+        let bytes = Data("Name\(separator)Value\nOriginal\(separator)=2+2".utf8)
+        let path = sandbox.appending(path: "table.\(suffix)")
+        let metadata = AttachmentMetadata(id: SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined(),
+            filename: path.lastPathComponent, mimeType: "text/plain", byteCount: Int64(bytes.count), kind: .document,
+            createdAt: Date(timeIntervalSince1970: 1))
+        let file = AttachmentPreviewFile(filename: metadata.filename, fileURL: path, metadata: metadata)
+        try bytes.write(to: path)
+        let verified = try AttachmentFileIntegrity().verifiedData(for: file)
+        try Data("replacement".utf8).write(to: path, options: .atomic)
+        #expect(throws: AttachmentFileIntegrityError.changed) { try AttachmentFileIntegrity().verifiedData(for: file) }
+        try FileManager.default.removeItem(at: path)
+        let preview = try AttachmentSpreadsheetSnapshotParser().parse(data: verified, filename: metadata.filename)
+        expectNoDifference(preview.sheets.first?.rows, [["Name", "Value"], ["Original", "=2+2"]])
+    }
+
     @Test @MainActor func pdfPreviewAndSearchUseVerifiedSnapshotAfterReplacement() throws {
         let sandbox = FileManager.default.temporaryDirectory.appending(path: "pdf-snapshot-\(UUID())", directoryHint: .isDirectory)
         defer { try? FileManager.default.removeItem(at: sandbox) }
@@ -401,6 +422,10 @@ struct AttachmentViewerTests {
         let preview = try XLSXPreviewParser().parse(fileURL: archive)
         #expect(preview.sheets.map(\.name) == ["Data"])
         #expect(preview.sheets[0].rows == [["Name", "7"], ["Alice", "4"]])
+        let bytes = try Data(contentsOf: archive)
+        try Data("replaced".utf8).write(to: archive, options: .atomic)
+        let snapshot = try AttachmentSpreadsheetSnapshotParser().parse(data: bytes, filename: "fixture.xlsx")
+        expectNoDifference(snapshot, preview)
     }
 
     @Test func detectsMutationBeforeExportOrExternalOpen() throws {

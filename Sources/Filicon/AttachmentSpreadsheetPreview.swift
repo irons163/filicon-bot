@@ -60,6 +60,18 @@ enum SpreadsheetPreviewLimits {
     static let xmlBytes = 32 * 1_024 * 1_024
 }
 
+/// Parses a verified attachment snapshot without reopening its original path.
+struct AttachmentSpreadsheetSnapshotParser {
+    func parse(data: Data, filename: String) throws -> SpreadsheetPreview {
+        switch (filename as NSString).pathExtension.lowercased() {
+        case "csv": return try DelimitedTextPreviewParser().parse(data: data, delimiter: ",", name: filename)
+        case "tsv": return try DelimitedTextPreviewParser().parse(data: data, delimiter: "\t", name: filename)
+        case "xlsx": return try XLSXPreviewParser().parse(data: data)
+        default: throw SpreadsheetPreviewError.malformedWorkbook
+        }
+    }
+}
+
 struct DelimitedTextPreviewParser {
     func parse(fileURL: URL, delimiter: Character, name: String = "Table") throws -> SpreadsheetPreview {
         let values = try fileURL.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey])
@@ -217,6 +229,22 @@ struct XLSXArchivePolicy {
 struct XLSXPreviewParser {
     private let fileManager = FileManager.default
     private let policy = XLSXArchivePolicy()
+
+    func parse(data: Data) throws -> SpreadsheetPreview {
+        guard data.count <= SpreadsheetPreviewLimits.archiveBytes else { throw SpreadsheetPreviewError.archiveTooLarge }
+        var template = Array(fileManager.temporaryDirectory.appending(path: "FiliconXLSXSnapshot-XXXXXX").path.utf8CString)
+        let root = try template.withUnsafeMutableBufferPointer { buffer -> URL in
+            guard let pointer = buffer.baseAddress, mkdtemp(pointer) != nil else {
+                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            }
+            return URL(fileURLWithPath: String(cString: pointer), isDirectory: true)
+        }
+        defer { try? fileManager.removeItem(at: root) }
+        let archive = root.appending(path: "snapshot.xlsx")
+        try data.write(to: archive, options: [.atomic, .completeFileProtectionUnlessOpen])
+        try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: archive.path)
+        return try parse(fileURL: archive)
+    }
 
     func parse(fileURL: URL) throws -> SpreadsheetPreview {
         let values = try fileURL.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey])

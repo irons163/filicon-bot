@@ -1,5 +1,11 @@
 # 協作能力核對紀錄（更新至 2026-09-24）
 
+## 本輪修正：表格解析使用已驗證資料（2026-09-24）
+
+CSV／TSV 和 XLSX 預覽原先在 gate 後重新從原 URL 解析。本批 gate 保留表格快照，`AttachmentSpreadsheetSnapshotParser` 依檔名格式 dispatch，CSV／TSV 直接使用 Data parser；XLSX 先驗證 50 MB 上限，再於 mkdtemp 私有目錄建立 0600 archive 副本，交既有 ZIP preflight／展開／XML 安全解析流程，成功或失敗均 defer 清理快照。這避免原預覽路徑被替換影響資料來源，但不聲稱能隔離相同 UID 惡意程序，也沒有替換 XLSX 的系統工具實作。既有展開量、entry、路徑、列欄與文字限制保留，不執行公式、宏、外部連結。
+
+SwiftUI load 清除舊狀態並在結果返回時檢查取消，避免顯示遲到解析；按 SwiftUI 技能改用直接 sheet selection binding，選取值於解析完成時設定。23 項附件聚焦測試通過，涵蓋 CSV／TSV 原檔替換及刪除後仍解析原快照、XLSX 替換後快照值與公式快取一致，並重跑既有 archive 安全案例。完整非並行 swift test、原生 Debug build、deep strict codesign 及 package verifier 均 exit 0；live 模型 opt-in 測試仍跳過。沒有重啟使用者 App／Xcode、push 或碰真實資料。影音與 Quick Look 未在此批修正，沒有新增 complete parity 列。
+
 ## 本輪修正：PDF 共用已驗證文件快照（2026-09-24）
 
 PDF 原先在 gate 驗證後於 metadata loader 與 native view 各自 `PDFDocument(url:)` 重讀。本批使用 gate 已驗證 Data 初始化單一文件供預覽、頁數、文字擷取與搜尋使用；圖片快照防護保留，影音與其他格式不額外保留 Data。搜尋 coordinator 同時比較文件 identity 與字詞，換文件時即使查詢相同也更新高亮。匯出文字仍重驗預覽檔完整性，不因持有快照就放寬匯出政策。
