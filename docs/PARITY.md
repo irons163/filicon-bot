@@ -1,6 +1,8 @@
 # Filicon / Grok Bot 0.18 功能 parity matrix（current implementation）
 
-信箱提問接線（2026-09-24）：獨立 mailbox 已接上模型 widget、正常暫停、七語言回答卡片及新 session 續接。人類回答僅交回提問者，不繼承圖片、priority、工具權限或 peer 回信豁免；普通新訊息原子退休同帳號／scope 的 dismissOnMoveOn 問題。帳號／Stop／封存／重複回答、保存失敗及 UI fixture 已加入回歸。此項取代下方歷史段落與 AGENT-03 中「mailbox 提問未接線」的描述；mailbox 引用、直接聊天 widget、外部 channel 與其他卡片缺口仍在，complete 計數不變。詳見 [協作核對紀錄](Agent-collaboration-parity.md)。
+安全憑證請求契約（2026-09-24）：已核對原版 secret-request 的遮罩輸入／只回報已提供語意，新增不包含憑證值的嚴格 metadata 及同帳號／代理人既有連線目的地驗證。尚未接 SecureField、Keychain、暫停續接及新連線建立，工具仍不開放 secret-request，不能宣稱功能已完成。AGENT-02 維持 partial；詳見 [協作核對紀錄](Agent-collaboration-parity.md)。
+
+信箱提問接線（2026-09-24）：獨立 mailbox 已接上模型 widget、正常暫停、七語言回答卡片及新 session 續接。人類回答僅交回提問者，不繼承圖片、priority、工具權限或 peer 回信豁免；普通新訊息原子退休同帳號／scope 的 dismissOnMoveOn 問題。帳號／Stop／封存／重複回答、保存失敗及 UI fixture 已加入回歸。此項取代下方歷史段落與 AGENT-02 中「mailbox 提問未接線」的描述；mailbox 引用、直接聊天 widget、外部 channel 與其他卡片缺口仍在，complete 計數不變。詳見 [協作核對紀錄](Agent-collaboration-parity.md)。
 
 信箱提問底層（2026-09-24）：新增 host 問題保存與回答／queued 續接的原子契約，保留帳號／scope／提問者、一次回答、兩則發布上限與失敗回滾。模型入口、UI、move-on 與 App 續接尚未接線，**mailbox widget 仍未完成**，不改 complete 數。7 項底層測試與解鎖後完整非並行回歸、原生建置／嚴格簽章／封裝通過；首輪鎖定時圖片讀取拒絕另保留紀錄。詳見 [協作核對紀錄](Agent-collaboration-parity.md)。
 

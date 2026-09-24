@@ -1,5 +1,15 @@
 # 協作能力核對紀錄（更新至 2026-09-24）
 
+## 憑證請求第一步：原版 metadata 與 host 目的地契約（2026-09-24）
+
+參考 `source/host/runner/tools/send-message-schema.ts`、`sand-secret-request.ts` 與 `send-message-tool.ts`：`secret-request` 是獨立於 widget 的遮罩輸入，包含 label／description／connector／field；模型只收到已提供的 acknowledgement，憑證值直接寫到目的地，不進對話。本輪新增 `AgentSecretRequest` 的嚴格解析／可編碼 metadata，拒絕 value、token、password、agent/account/connection ID、路徑或 Keychain reference 等額外欄位。label 單行 120、description 區塊 400 的顯示上限沿用來源意圖，Swift 以完整字元切割，避免切斷 emoji；16 KiB 輸入上限及控制／雙向字元防護為本機安全限制。解析錯誤不附輸入內容。
+
+新增 host-only `AgentSecretRequestDestination`，只從既有連線選出同帳號／代理人的唯一目的地，不接受模型提供 Keychain key。目前僅辨識 Filicon 已實作的 Slack／Discord bot token；OAuth／不明 field／未實作平台／多個匹配連線不任選。提交前可重驗 account、agent、conversation、owner、名稱、credential reference、連線啟用與 auth kind 等，避免等待輸入期間被換目標；正常 cursor／lastActivity 更新不造成失效。
+
+**尚未向模型或使用者開放 secret-request**：目前只有契約，沒有 SecureField、Keychain 寫入、儲存回條、暫停／續接或新連線建立。既有連線的驗證不能代替原版「尚未連接時請求憑證」流程。下一步必須完成上述整條流程與密碼不入 transcript／log／model 的驗證，才可更新 tool schema。九項測試含參數案例涵蓋正規化／編碼、Unicode、額外憑證與目的地欄位、錯誤／過大輸入、唯一目的地、帳號／代理人隔離、目的地變更與不支援的 field。使用 Swift testing／CustomDump 技能、固定識別碼與日期；只用記憶體 fixture，未讀寫任何真實 Keychain／帳號。
+
+最終完整非並行測試 exit 0（`.build/validation/secret-request-contract-full-tests.log`）；原生 Debug build、deep strict codesign 與 package verifier 通過。早期聚焦測試指出 emoji 的 ZWJ 被控制字元檢查誤擋，以及 polling metadata 的舊編譯結果；修正後完整回歸已涵蓋兩者。沒有新增 UI 字串或 live 服務呼叫，未啟動 App／Xcode、未 push；尚未接線部分仍明列為缺口。
+
 ## 信箱提問接線第二步：模型暫停、回答 UI 與新回合（2026-09-24）
 
 獨立信箱的 host session 現在明確啟用 widget；一般群組來源的 peer session 預設仍不藉此啟用信箱卡片，群組提問維持原本的群組路徑。SendMessage 保存問題後的 ToolTurnSuspension 成為正常暫停，delivery 完成並保留問題，不再標為執行失敗。App 信箱已發布回覆區沿用七語言 GroupQuestionCard，提供選項、自訂回答、略過與已回答狀態，不重複顯示 prompt。
@@ -10,7 +20,7 @@
 
 最終完整非並行回歸 exit 0（`.build/validation/mailbox-question-wiring-final-tests.log`）；原生 Debug build、deep strict codesign、package verifier 通過。七語言各 1,661 keys 零缺漏，未新增 UI 字串。live 模型 opt-in 未啟用，未 push。
 
-這只補齊獨立信箱 widget 接線，不代表原版所有卡片／跨 session／外部 channel 能力完成；AGENT-03 仍 partial，整體計數不變。下方「第一步尚未接線」是前一提交歷史，已由本節取代。
+這只補齊獨立信箱 widget 接線，不代表原版所有卡片／跨 session／外部 channel 能力完成；AGENT-02 仍 partial，整體計數不變。下方「第一步尚未接線」是前一提交歷史，已由本節取代。
 
 ## 信箱提問接線第一步：原子保存與回答續接契約（2026-09-24）
 
