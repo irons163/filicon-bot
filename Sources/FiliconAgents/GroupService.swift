@@ -171,7 +171,7 @@ public actor GroupService {
         guard let senderID = message.senderID, message.groupID == expected.id,
               !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, message.text.count <= 8_000,
               message.toolActivities.isEmpty, message.memberOutcome == nil,
-              message.question == nil, message.questionReplyTo == nil, message.replyToMessageID == nil else { throw AgentGroupPostError.unavailable }
+              message.question == nil, message.secretRequest == nil, message.questionReplyTo == nil, message.replyToMessageID == nil else { throw AgentGroupPostError.unavailable }
         let current = try await audience(groupID: expected.id, senderID: senderID)
         guard current == expected else { throw AgentGroupPostError.changed }
         try lifetime.commit {
@@ -186,7 +186,7 @@ public actor GroupService {
     /// Host-only reports from approved cross-agent wakes. The app fences these
     /// to the originating request; they are not new user messages or @mentions.
     public func recordDelegatedMessage(_ message: RoomMessage) throws {
-        guard message.question == nil, message.questionReplyTo == nil, message.replyToMessageID == nil else { throw AgentQuestionError.unavailable }
+        guard message.question == nil, message.secretRequest == nil, message.questionReplyTo == nil, message.replyToMessageID == nil else { throw AgentQuestionError.unavailable }
         guard message.senderID != nil, state.groups.contains(where: { $0.id == message.groupID }) else {
             throw AgentServiceError.unknownGroup(message.groupID)
         }

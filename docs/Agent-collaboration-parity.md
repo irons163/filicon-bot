@@ -1,5 +1,19 @@
 # 協作能力核對紀錄（更新至 2026-09-24）
 
+## 憑證請求第四步：信箱保存與不含值的回條（2026-09-24）
+
+請求 metadata 移到 FiliconAgents 共用，AppServices 保留 typealias；新增嚴格 Codable 解碼，仍拒絕 value／額外欄位並只回傳固定錯誤。RoomMessage 的 optional `secretRequest` 和 AgentMessage 的 host-only `secretResponse` 保持舊資料相容。卡片只保存 label／description／connector／field、host account／member／connection ID、狀態與 response ID，沒有憑證欄位或 Keychain key。
+
+`AgentMessenger.publishSecretRequest` 使用同一兩則發布額度；已發布請求阻止後續新發布，相同 ID／內容的重送則回傳原卡片。一般 publish／send 與跨群組報告入口拒絕偽裝此卡片或人類回條。`resolveSecretRequest` 重驗完成回合、account／scope／connection／作者與成員、active profile、pending 及 lifetime，將卡片結果與新的 queued 回應一次原子保存。新回合不繼承 priority、圖片或原 chain；重複／並發提交只有一個成功。保存失敗不改記憶體狀態，也不排入回應。
+
+啟動時 pending 憑證卡片退休，queued 回應取消，不自動執行；取消／失敗回合也退休 pending 卡片。人類新訊息只退休同 account／scope 的請求，peer 訊息不會；另提供 host 明確退休 API。這不是帳號事件的 App 接線，host 仍須同步關閉 lifetime 與 submission，然後呼叫退休。
+
+`AgentSecretSubmission.recordMailboxReceipt` 只接受自身已 stored 的結果，並核對 publication ID、request、owner／account／scope／connection 後交給信箱原子保存；測試串起假 writer 到 durable receipt，確認假值不在 mailbox JSON。**Keychain 與 JSON 不是跨系統交易**：若寫入成功但信箱保存失敗，憑證可能已存，不能向使用者宣稱沒存；host 需保留 submission 的 stored receipt 重試保存，不得重新索取或覆寫值。重啟對未解決卡片採失效，不宣稱跨程序 exactly-once。
+
+8 項新測試含參數案例涵蓋保存／關閉、帳號與範圍不符、封存、重啟、保存失敗、並發、人類 move-on、重送與額度、舊資料以及值隔離。使用 testing／CustomDump 技能與隔離臨時資料，沒有真實 Keychain 或帳號存取。完整回歸記錄 `.build/validation/mailbox-secret-full-tests.log`，原生建置記錄 `.build/validation/mailbox-secret-native.log`；建置 exit 0，編譯器仍輸出既有 weak capture／Security deprecated 警告。
+
+**仍未完成實際功能入口**：App 卡片掛載、模型 schema／暫停、fresh session 採用 durable 回應、host Stop／帳號切換接線、新連線建立與遠端登入驗收還未接通。AGENT-02 維持 partial，不以保存層替代原版完整流程。
+
 ## 憑證請求第三步：遮罩卡片元件與輸入生命週期（2026-09-24）
 
 新增 `AgentSecretRequestCard`／`AgentSecretRequestCardModel`，SecureField 使用短暫 draft；提交前即清空，無效輸入、寫入失敗、取消與畫面消失均清空。模型不保存提交值或底層錯誤，reflection 隱藏 draft；失敗只呈現固定狀態。寫入失敗須重新輸入。關閉或 Task 取消後的遲到 receipt 不觸發續接 callback，成功 callback 只帶不含值的 receipt，一張卡片不重複提交。production initializer 接既有 `AgentSecretSubmission`／ChannelService／注入的 writer；host 必須在帳號、owner、Stop 等失效事件同步 invalidate，不能只依賴畫面消失。Swift String 不保證記憶體零化。

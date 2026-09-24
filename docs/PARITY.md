@@ -1,5 +1,7 @@
 # Filicon / Grok Bot 0.18 功能 parity matrix（current implementation）
 
+安全憑證信箱保存（2026-09-24）：加入不含值的卡片／回應、原子完成與新 queued 訊息、重複提交防護、重啟退休及 scoped move-on；成功 submission 可核對目的地後保存 durable receipt。尚未接 App／模型入口與 fresh session 續接，Keychain 與 JSON 也不是跨系統交易；AGENT-02 繼續 partial。詳見 [協作核對紀錄](Agent-collaboration-parity.md)。
+
 安全憑證卡片元件（2026-09-24）：新增 SecureField 與可測試輸入模型，提交即清空、失敗重輸、關閉／取消排除遲到續接，七語言明暗渲染與生命週期測試通過。尚未掛入對話或向模型公開，仍缺持久化、host 失效接線、新 turn 續接與新連線建立；不能視為完整 secret-request，AGENT-02 維持 partial。此進度取代下方歷史段落「沒有 SecureField 元件」的描述，詳見 [協作核對紀錄](Agent-collaboration-parity.md)。
 
 安全憑證提交閘門（2026-09-24）：新增不序列化輸入值、同步目的地重驗＋寫入 fence、一次提交 receipt 與 Keychain writer。測試用記憶體 writer，不碰真實 Keychain；仍缺 UI／tool／對話持久化續接與新連線建立，不能視為原版 secret-request 完成，AGENT-02 繼續 partial。詳見 [協作核對紀錄](Agent-collaboration-parity.md)。

@@ -1,5 +1,6 @@
 import Foundation
 import FiliconChannels
+import FiliconAgents
 
 /// Transient UI input, intentionally not Codable, Hashable or publicly readable.
 /// Descriptions/reflection redact it; this is not a promise of memory zeroization
@@ -81,5 +82,25 @@ public final class AgentSecretSubmission: @unchecked Sendable {
                 return receipt
             }
         }
+    }
+
+    public func recordMailboxReceipt(incomingMessageID: UUID, messenger: AgentMessenger,
+                                      responseID: UUID = UUID(), at: Date = Date(),
+                                      lifetime: AgentPublicationLifetime) async throws -> AgentMessage {
+        guard case .stored(let receipt) = state, receipt.requestID == id else {
+            throw AgentSecretSubmissionError.unavailable
+        }
+        let messages = await messenger.allMessages()
+        guard let incoming = messages.first(where: { $0.id == incomingMessageID }),
+              incoming.recipientID == destination.agentID,
+              let publication = incoming.delivery?.publications?.first(where: { $0.id == id }),
+              let card = publication.secretRequest, card.request == destination.request,
+              card.accountID == destination.accountID, card.connectionID == destination.connectionID,
+              publication.groupID == destination.conversationID else {
+            throw AgentSecretSubmissionError.unavailable
+        }
+        return try await messenger.resolveSecretRequest(replyingTo: incomingMessageID, publicationID: id,
+            provided: true, accountID: destination.accountID, originID: destination.conversationID,
+            connectionID: destination.connectionID, responseID: responseID, at: at, lifetime: lifetime)
     }
 }

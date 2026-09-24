@@ -339,6 +339,7 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
     public let images: [AttachmentMetadata]?
     /// Host-created human response provenance, never supplied by SendToAgent.
     public internal(set) var questionResponse: MailboxQuestionResponse?
+    public internal(set) var secretResponse: MailboxSecretResponse?
 
     public init(id: UUID = UUID(), senderID: UUID, recipientID: UUID, text: String,
                 priority: AgentMessagePriority = .normal, createdAt: Date = Date(), deliveredAt: Date? = nil,
@@ -396,6 +397,7 @@ public struct RoomMessage: Identifiable, Codable, Hashable, Sendable {
     public var memberOutcome: RoomMemberOutcome?
     public var images: [AttachmentMetadata]?
     public var question: GroupQuestion?
+    public internal(set) var secretRequest: MailboxSecretRequest?
     public var questionReplyTo: UUID?
     public var replyToMessageID: UUID?
     /// Host-assigned, group-local address. Never recomputed from a bounded prompt.
@@ -407,7 +409,7 @@ public struct RoomMessage: Identifiable, Codable, Hashable, Sendable {
         self.images = images.isEmpty ? nil : images
     }
 
-    private enum CodingKeys: String, CodingKey { case id, groupID, senderID, text, createdAt, toolActivities, memberOutcome, images, question, questionReplyTo, replyToMessageID, shortAddress }
+    private enum CodingKeys: String, CodingKey { case id, groupID, senderID, text, createdAt, toolActivities, memberOutcome, images, question, secretRequest, questionReplyTo, replyToMessageID, shortAddress }
     public init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         id = try values.decode(UUID.self, forKey: .id)
@@ -419,6 +421,7 @@ public struct RoomMessage: Identifiable, Codable, Hashable, Sendable {
         memberOutcome = try values.decodeIfPresent(RoomMemberOutcome.self, forKey: .memberOutcome)
         images = try values.decodeIfPresent([AttachmentMetadata].self, forKey: .images)
         question = try values.decodeIfPresent(GroupQuestion.self, forKey: .question)
+        secretRequest = try values.decodeIfPresent(MailboxSecretRequest.self, forKey: .secretRequest)
         questionReplyTo = try values.decodeIfPresent(UUID.self, forKey: .questionReplyTo)
         replyToMessageID = try values.decodeIfPresent(UUID.self, forKey: .replyToMessageID)
         shortAddress = try values.decodeIfPresent(String.self, forKey: .shortAddress)
