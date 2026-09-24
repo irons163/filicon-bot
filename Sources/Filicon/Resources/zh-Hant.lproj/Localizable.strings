@@ -1679,3 +1679,4 @@
 "Could not store the credential. Enter it again to retry." = "無法儲存憑證，請重新輸入後再試。";
 "This credential request is no longer available." = "此憑證請求已失效。";
 "Save credential" = "儲存憑證";
+"Credential stored, but the conversation receipt could not be saved. Retry without entering the credential again." = "憑證已儲存，但無法保存對話回條。請重試，不必再次輸入憑證。";

@@ -264,6 +264,14 @@ final class AppModel: ObservableObject {
     private let agentMessenger: AgentMessenger?
     private let agentConversations: AgentConversationStore?
     private var agentMessagingSessions: [UUID: AgentMessagingSession] = [:]
+    @Published private(set) var mailboxSecretCards: [UUID: AgentSecretRequestCardModel] = [:]
+    private struct MailboxSecretContext {
+        let incomingID: UUID
+        let submission: AgentSecretSubmission
+        let generation: UInt64
+    }
+    private var mailboxSecretContexts: [UUID: MailboxSecretContext] = [:]
+    var secretCredentialWriter: AgentSecretSubmission.Writer?
     private var delegatedGroupOrigins: [UUID: UUID] = [:]
     private var delegatedGroupPosts: [UUID: AgentGroupDispatch] = [:]
     @Published private(set) var runningAgentMessageScopes: Set<UUID> = []
@@ -2413,6 +2421,10 @@ final class AppModel: ObservableObject {
 
     func archiveAgent(id: UUID) async {
         guard let agentService else { return }
+        for (key, context) in mailboxSecretContexts where context.submission.destination.agentID == id
+            || agentMessages.first(where: { $0.id == context.incomingID })?.senderID == id {
+            invalidateMailboxSecret(key)
+        }
         for session in routineEditSessions.values.filter({ $0.automation.agentID == id }) {
             endAutomationEdit(session)
         }
@@ -2501,6 +2513,7 @@ final class AppModel: ObservableObject {
             // Reserve before enqueue's first suspension. One conversation owns
             // its context and approval cards until its entire reply chain ends.
             runningAgentMessageScopes.insert(scopeID)
+            invalidateMailboxSecrets(scopeID: scopeID)
             agentMessagingSessions[scopeID] = session
             workspaceFolders.beginTurn(conversationID: scopeID)
             do {
@@ -2522,6 +2535,101 @@ final class AppModel: ObservableObject {
             errorMessage = l10n("Message not sent: \(error.localizedDescription)")
             await reloadAgentMessages()
             return false
+        }
+    }
+
+    private func invalidateMailboxSecret(_ id: UUID) {
+        mailboxSecretContexts[id]?.submission.close()
+        mailboxSecretCards[id]?.invalidate()
+        mailboxSecretContexts[id] = nil
+    }
+
+    private func invalidateMailboxSecrets(scopeID: UUID) {
+        for (id, context) in mailboxSecretContexts where context.submission.destination.conversationID == scopeID {
+            invalidateMailboxSecret(id)
+        }
+    }
+
+    func canUseMailboxSecret(_ incoming: AgentMessage, publication: RoomMessage) -> Bool {
+        guard let context = mailboxSecretContexts[publication.id], context.incomingID == incoming.id,
+              context.generation == autoReviewAccountGeneration, !agentMessagingAccountTransition,
+              context.submission.destination.accountID == (settings.accountScope ?? "local"),
+              incoming.delivery?.state == .completed,
+              !runningAgentMessageScopes.contains(context.submission.destination.conversationID),
+              publication.secretRequest?.isPending == true,
+              agents.contains(where: { $0.id == incoming.senderID && $0.archivedAt == nil }),
+              agents.contains(where: { $0.id == incoming.recipientID && $0.archivedAt == nil }) else { return false }
+        return true
+    }
+
+    private func publishMailboxSecret(_ request: AgentSecretRequest, incoming: AgentMessage,
+                                      lifetime: AgentPublicationLifetime, generation: UInt64) async throws -> RoomMessage {
+        guard let channelService, let agentMessenger, let scopeID = incoming.delivery?.originConversationID,
+              generation == autoReviewAccountGeneration, !agentMessagingAccountTransition else { throw CancellationError() }
+        let accountID = settings.accountScope ?? "local"
+        let destination = try AgentSecretRequestDestination.resolve(request, accountID: accountID,
+            agentID: incoming.recipientID, conversationID: scopeID, connections: await channelService.connections())
+        guard generation == autoReviewAccountGeneration, !Task.isCancelled else { throw CancellationError() }
+        let submission = AgentSecretSubmission(destination: destination)
+        let publication = try await agentMessenger.publishSecretRequest(request, replyingTo: incoming.id,
+            accountID: accountID, originID: scopeID, connectionID: destination.connectionID,
+            publicationID: submission.id, lifetime: lifetime)
+        guard generation == autoReviewAccountGeneration, !Task.isCancelled else {
+            submission.close()
+            throw CancellationError()
+        }
+        mailboxSecretContexts[submission.id] = .init(incomingID: incoming.id, submission: submission, generation: generation)
+        mailboxSecretCards[submission.id] = AgentSecretRequestCardModel(label: request.label,
+            helpText: request.description, destinationName: "\(request.connector) · \(destination.displayName)",
+            submit: { [weak self] value in
+                guard let self else { throw CancellationError() }
+                return try await self.submitMailboxSecret(submission.id, value: value)
+            }, close: { submission.close() }, didStore: { _ in },
+            complete: { [weak self] _ in
+                guard let self else { throw CancellationError() }
+                try await self.resumeMailboxSecret(submission.id, provided: true)
+            }, dismiss: { [weak self] in
+                guard let self else { throw CancellationError() }
+                try await self.resumeMailboxSecret(submission.id, provided: false)
+            })
+        return publication
+    }
+
+    private func submitMailboxSecret(_ id: UUID, value: AgentSecretValue) async throws -> AgentSecretReceipt {
+        guard let context = mailboxSecretContexts[id], let channelService,
+              let incoming = agentMessages.first(where: { $0.id == context.incomingID }),
+              let publication = incoming.delivery?.publications?.first(where: { $0.id == id }),
+              canUseMailboxSecret(incoming, publication: publication) else { throw AgentSecretSubmissionError.unavailable }
+        return try await context.submission.submit(value, accountID: settings.accountScope ?? "local",
+            agentID: incoming.recipientID, conversationID: context.submission.destination.conversationID,
+            channels: channelService, write: secretCredentialWriter ?? credentials.secretRequestWriter())
+    }
+
+    private func resumeMailboxSecret(_ id: UUID, provided: Bool) async throws {
+        guard let context = mailboxSecretContexts[id],
+              let incoming = agentMessages.first(where: { $0.id == context.incomingID }),
+              let publication = incoming.delivery?.publications?.first(where: { $0.id == id }),
+              canUseMailboxSecret(incoming, publication: publication),
+              let session = makeAgentMessagingSession(originID: context.submission.destination.conversationID,
+                supportsMailboxQuestions: true) else { throw AgentSecretSubmissionError.unavailable }
+        let scopeID = context.submission.destination.conversationID
+        runningAgentMessageScopes.insert(scopeID)
+        agentMessagingSessions[scopeID] = session
+        workspaceFolders.beginTurn(conversationID: scopeID)
+        do {
+            try await session.enqueueSecretResponse(incomingID: incoming.id, submission: context.submission, provided: provided)
+            guard context.generation == autoReviewAccountGeneration, !Task.isCancelled,
+                  runningAgentMessageScopes.contains(scopeID) else { throw CancellationError() }
+            agentMessageTasks[scopeID] = Task { [weak self] in
+                await self?.runAgentMessages(scopeID: scopeID, session: session)
+            }
+        } catch {
+            try? await session.close()
+            await cancelAgentMessageTools(scopeID: scopeID)
+            agentMessagingSessions[scopeID] = nil
+            runningAgentMessageScopes.remove(scopeID)
+            await reloadAgentMessages()
+            throw error
         }
     }
 
@@ -2600,6 +2708,7 @@ final class AppModel: ObservableObject {
     }
 
     func stopAgentMessages(scopeID: UUID) async {
+        invalidateMailboxSecrets(scopeID: scopeID)
         guard runningAgentMessageScopes.contains(scopeID) else { return }
         agentMessagingSessions[scopeID]?.revokeProfileChanges()
         agentMessageTasks[scopeID]?.cancel()
@@ -2680,6 +2789,14 @@ final class AppModel: ObservableObject {
                 guard let self else { throw CancellationError() }
                 try await self.commitAgentProjectChange(change, lifetime: lifetime, originID: originID, generation: generation)
             })
+        let secretPublisher: AgentMessagingSession.SecretPublisher?
+        if supportsMailboxQuestions, channelService != nil {
+            secretPublisher = { [weak self] request, incoming, lifetime in
+                guard let self else { throw CancellationError() }
+                return try await self.publishMailboxSecret(request, incoming: incoming,
+                    lifetime: lifetime, generation: generation)
+            }
+        } else { secretPublisher = nil }
         return AgentMessagingSession(
             originConversationID: originID, agents: agentService, messenger: agentMessenger,
             registry: registry, coordinator: coordinator, conversations: agentConversations,
@@ -2691,6 +2808,7 @@ final class AppModel: ObservableObject {
                         lifetime: lifetime, originID: originID, generation: generation)
                 }),
             supportsMailboxQuestions: supportsMailboxQuestions,
+            publishSecret: secretPublisher,
             groups: groupService,
             authorizeGroup: { [weak self] sender, audience, text, call, context in
                 guard let self else { throw CancellationError() }
@@ -3307,6 +3425,13 @@ final class AppModel: ObservableObject {
             return $0.id.uuidString < $1.id.uuidString
         }
         agentMessages = Array(stored.suffix(Self.maximumVisibleAgentMessages))
+        for (id, context) in mailboxSecretContexts {
+            let incoming = stored.first(where: { $0.id == context.incomingID })
+            let card = incoming?.delivery?.publications?.first(where: { $0.id == id })?.secretRequest
+            if card?.isPending != true || incoming?.delivery?.state == .failed || incoming?.delivery?.state == .cancelled {
+                invalidateMailboxSecret(id)
+            }
+        }
         agentMessageUnreadCounts = Dictionary(grouping: stored.lazy.filter { $0.deliveredAt == nil }, by: \.recipientID)
             .mapValues(\.count)
     }
@@ -4981,6 +5106,7 @@ final class AppModel: ObservableObject {
     func cancelAutoReviewApprovals(nextAccountID: String) async {
         // Queued peer work is scoped to the account that approved the exchange.
         agentMessagingAccountTransition = true
+        for key in Array(mailboxSecretContexts.keys) { invalidateMailboxSecret(key) }
         dismissAttachmentPreview()
         for lifetime in groupQuestionLifetimes.values { lifetime.close() }
         for session in routineEditSessions.values { session.lifetime.close() }

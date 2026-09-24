@@ -180,7 +180,8 @@ struct AgentMessagingView: View {
                             canAnswer: { model.canAnswerMailboxQuestion(message, publication: $0) },
                             onAnswer: { publication, answer in
                                 Task { await model.answerMailboxQuestion(incomingID: message.id, publicationID: publication.id, answer: answer) }
-                            })
+                            }, secretModel: { model.mailboxSecretCards[$0.id] },
+                            secretEnabled: { model.canUseMailboxSecret(message, publication: $0) })
                     } else if let response = delivery.response, !response.isEmpty, response.uppercased() != "PASS" {
                         Text((delivery.state == .cancelled && response == AgentExecutionSuperseded().localizedDescription)
                              || AgentImageError(rawValue: response) != nil
@@ -279,12 +280,25 @@ struct AgentPublishedResponses: View {
     let publications: [RoomMessage]
     var canAnswer: (RoomMessage) -> Bool = { _ in false }
     var onAnswer: (RoomMessage, AgentQuestionAnswer) -> Void = { _, _ in }
+    var secretModel: (RoomMessage) -> AgentSecretRequestCardModel? = { _ in nil }
+    var secretEnabled: (RoomMessage) -> Bool = { _ in false }
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Label(l10n("Published response"), systemImage: "bubble.left.and.text.bubble.right").font(.caption).foregroundStyle(.secondary)
             ForEach(publications) { publication in
                 VStack(alignment: .leading, spacing: 6) {
-                    if let question = publication.question {
+                    if let secret = publication.secretRequest {
+                        if let model = secretModel(publication) {
+                            AgentSecretRequestCard(model: model).disabled(!secretEnabled(publication))
+                        } else {
+                            Label(l10n("Secure credential request"), systemImage: "lock.shield")
+                            Text(secret.request.label)
+                            Text(FiliconLocalization.string(secret.state == .stored
+                                ? "Credential stored. Remote authentication has not been verified."
+                                : "This credential request is no longer available."))
+                                .font(.caption)
+                        }
+                    } else if let question = publication.question {
                         GroupQuestionCard(card: question, enabled: canAnswer(publication)) { answer in
                             onAnswer(publication, answer)
                         }

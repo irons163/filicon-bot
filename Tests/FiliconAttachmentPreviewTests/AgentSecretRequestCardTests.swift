@@ -96,6 +96,40 @@ struct AgentSecretRequestCardTests {
     }
 
     @Test(arguments: ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"])
+    func rendersReceiptRetryWithoutInput(language: String) async throws {
+        let receipt = try receipt()
+        let model = AgentSecretRequestCardModel(label: "Bot token", destinationName: "slack · Fixture",
+            submit: { _ in receipt }, close: {}, didStore: { _ in },
+            complete: { _ in throw AgentSecretSubmissionError.unavailable })
+        model.draft = "FAKE-ONLY"
+        await model.submitButtonTapped()
+        expectNoDifference(model.status, .receiptFailed)
+        expectNoDifference(model.draft, "")
+        #expect(!model.canEdit)
+        for dark in [false, true] {
+            try await withUIRenderTurn(language: language) {
+                let host = NSHostingView(rootView: AgentSecretRequestCard(model: model)
+                    .padding(16).frame(width: 380).background(FiliconTheme.canvas)
+                    .environment(\.locale, Locale(identifier: language))
+                    .environment(\.colorScheme, dark ? .dark : .light))
+                host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+                let size = host.fittingSize
+                #expect(size.height > 100 && size.height < 650)
+                host.frame = .init(origin: .zero, size: size)
+                host.layoutSubtreeIfNeeded()
+                let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                host.cacheDisplay(in: host.bounds, to: bitmap)
+                if let path = ProcessInfo.processInfo.environment["FILICON_UI_REVIEW_OUTPUT"] {
+                    let directory = URL(fileURLWithPath: path)
+                    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                    try #require(bitmap.representation(using: .png, properties: [:]))
+                        .write(to: directory.appending(path: "secret-retry-\(language)-\(dark ? "dark" : "light").png"))
+                }
+            }
+        }
+    }
+
+    @Test(arguments: ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"])
     func rendersMaskedCard(language: String) async throws {
         for dark in [false, true] {
             try await withUIRenderTurn(language: language) {

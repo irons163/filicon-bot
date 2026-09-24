@@ -1679,3 +1679,4 @@
 "Could not store the credential. Enter it again to retry." = "No se pudo guardar la credencial. Introdúcela de nuevo para reintentar.";
 "This credential request is no longer available." = "Esta solicitud de credencial ya no está disponible.";
 "Save credential" = "Guardar credencial";
+"Credential stored, but the conversation receipt could not be saved. Retry without entering the credential again." = "La credencial se ha guardado, pero no el recibo de la conversación. Reintenta sin volver a introducir la credencial.";

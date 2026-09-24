@@ -1679,3 +1679,4 @@
 "Could not store the credential. Enter it again to retry." = "Impossible d’enregistrer l’identifiant. Saisissez-le à nouveau pour réessayer.";
 "This credential request is no longer available." = "Cette demande d’identifiant n’est plus disponible.";
 "Save credential" = "Enregistrer l’identifiant";
+"Credential stored, but the conversation receipt could not be saved. Retry without entering the credential again." = "L’identifiant est enregistré, mais le reçu de conversation n’a pas pu être sauvegardé. Réessayez sans ressaisir l’identifiant.";

@@ -1,5 +1,19 @@
 # 協作能力核對紀錄（更新至 2026-09-24）
 
+## 憑證請求第五步：獨立信箱的模型／卡片／新回合接線（2026-09-24）
+
+獨立信箱的 `SendMessage` 現在可由 host 明確開啟 `type:secret-request`；一般直接聊天、群組與背景 wake 不因此自動取得這項能力。嚴格接受 type＋secret metadata，拒絕 value、text、reply_to 或額外欄位；共用兩則發布額度、重送 receipt 與停止 fence，保存後以 ToolTurnSuspension 結束回合。請求錯誤固定回應，不把底層 diagnostics 回傳模型。模型 runtime 說明目前只支援其同帳號、同 owner、唯一且 enabled 的既有 Slack／Discord bot token 連線，不能藉此建立新連線或選 Keychain key。
+
+App 在保存請求後建立短暫 submission 與卡片模型，顯示 masked input 和 host 目的地；完成原回合前不允許輸入操作。提供後經安全 writer 寫入，再保存 value-free response 並以新 session／user lane 續聊，關閉則保存 dismissed response。secretResponse 不享有 peer 自動回信豁免，不繼承舊圖片、priority、工具核准；模型只看到固定的已提供或關閉說明，不能據此宣稱遠端登入成功。
+
+卡片切離畫面清掉 draft，但保留請求，避免捲動就意外取消。Stop、新人類訊息、帳號 transition、owner／sender 封存會同步關閉 submission／清掉輸入；失效或完成的 durable card 不再提供編輯入口。提交期間仍由 submission 與 channel actor 的 fence 重驗目的地。提供後若聊天保存失敗，卡片顯示「憑證已儲存，回條未保存」及重試；重試只保存 receipt，不再次輸入或寫入憑證。未保存的 receipt 不跨重啟恢復，重啟仍保守退休未完成卡片，不能宣稱 Keychain／JSON 跨系統原子交易。
+
+新增工具 schema／額外欄位／錯誤遮蔽測試；App 假 provider＋假 writer 端到端覆蓋提供、關閉、回條保存失敗重試、帳號切換、owner／sender 封存與 Stop。假值不進模型訊息或 mailbox JSON；保存失敗重試只寫一次，權限維持不變。卡片 recovery 增加七語言明暗渲染，人工檢視繁中 light 與法文 dark，無輸入欄重現或文字截斷。SwiftUI／observable-models 技能用於卡片狀態與畫面分離；testing／CustomDump 技能用於生命周期及端到端驗證。
+
+驗證記錄：`.build/validation/secret-wiring-focused-tests.log`、`secret-wiring-full-tests.log`、`secret-wiring-native.log`，完整測試及原生建置 exit 0，package verifier／deep strict codesign 通過。仍只使用隔離 fixtures，未讀寫真實 Keychain、未連外驗證 bot 登入，也未啟動使用者 App／Xcode。
+
+**未完成的原版範圍仍保留**：群組／直接聊天 secret-request、reply_to、新連線建立、其他 connector／field、寫入後既有 listener 的重建與登入狀態回報，以及真實 Keychain／遠端登入驗收。現有 listener 可能仍持有舊認證，不能把已儲存視為已套用到連線。AGENT-02 維持 partial。此段取代下方歷史紀錄「完全沒有模型入口或續接」的描述，不代表 secret-request 全面完成。
+
 ## 憑證請求第四步：信箱保存與不含值的回條（2026-09-24）
 
 請求 metadata 移到 FiliconAgents 共用，AppServices 保留 typealias；新增嚴格 Codable 解碼，仍拒絕 value／額外欄位並只回傳固定錯誤。RoomMessage 的 optional `secretRequest` 和 AgentMessage 的 host-only `secretResponse` 保持舊資料相容。卡片只保存 label／description／connector／field、host account／member／connection ID、狀態與 response ID，沒有憑證欄位或 Keychain key。

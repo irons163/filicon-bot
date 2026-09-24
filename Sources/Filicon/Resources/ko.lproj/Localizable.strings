@@ -1679,3 +1679,4 @@
 "Could not store the credential. Enter it again to retry." = "인증 정보를 저장하지 못했습니다. 다시 입력하여 재시도하세요.";
 "This credential request is no longer available." = "이 인증 정보 요청은 더 이상 사용할 수 없습니다.";
 "Save credential" = "인증 정보 저장";
+"Credential stored, but the conversation receipt could not be saved. Retry without entering the credential again." = "인증 정보는 저장되었지만 대화 확인 기록을 저장하지 못했습니다. 인증 정보를 다시 입력하지 말고 재시도하세요.";

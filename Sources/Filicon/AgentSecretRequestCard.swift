@@ -6,7 +6,7 @@ import FiliconChannels
 @MainActor @Observable
 final class AgentSecretRequestCardModel: CustomReflectable, CustomStringConvertible {
     enum Status: Equatable {
-        case pending, submitting, stored, cancelled, invalidValue, writeFailed, unavailable
+        case pending, submitting, stored, cancelled, invalidValue, writeFailed, unavailable, receiptFailed
     }
 
     var draft = ""
@@ -17,6 +17,10 @@ final class AgentSecretRequestCardModel: CustomReflectable, CustomStringConverti
     private let submitValue: (AgentSecretValue) async throws -> AgentSecretReceipt
     private let closeSubmission: () -> Void
     private let didStore: (AgentSecretReceipt) -> Void
+    private let complete: ((AgentSecretReceipt) async throws -> Void)?
+    private let dismiss: (() async throws -> Void)?
+    private var storedReceipt: AgentSecretReceipt?
+    private var finishing = false
     private var active = true
 
     nonisolated var description: String { "<secure credential card>" }
@@ -25,13 +29,17 @@ final class AgentSecretRequestCardModel: CustomReflectable, CustomStringConverti
     init(label: String, helpText: String? = nil, destinationName: String,
          submit: @escaping (AgentSecretValue) async throws -> AgentSecretReceipt,
          close: @escaping () -> Void,
-         didStore: @escaping (AgentSecretReceipt) -> Void) {
+         didStore: @escaping (AgentSecretReceipt) -> Void,
+         complete: ((AgentSecretReceipt) async throws -> Void)? = nil,
+         dismiss: (() async throws -> Void)? = nil) {
         self.label = label
         self.helpText = helpText
         self.destinationName = destinationName
         submitValue = submit
         closeSubmission = close
         self.didStore = didStore
+        self.complete = complete
+        self.dismiss = dismiss
     }
 
     convenience init(submission: AgentSecretSubmission, channels: ChannelService,
@@ -70,11 +78,8 @@ final class AgentSecretRequestCardModel: CustomReflectable, CustomStringConverti
                 invalidate()
                 return
             }
-            active = false
-            draft = ""
-            status = .stored
-            closeSubmission()
-            didStore(receipt)
+            storedReceipt = receipt
+            await retryButtonTapped()
         } catch {
             guard active else { return }
             draft = ""
@@ -90,11 +95,40 @@ final class AgentSecretRequestCardModel: CustomReflectable, CustomStringConverti
         }
     }
 
+    func retryButtonTapped() async {
+        guard active, !finishing, let receipt = storedReceipt else { return }
+        finishing = true
+        defer { finishing = false }
+        status = .submitting
+        do {
+            try await complete?(receipt)
+            guard active, !Task.isCancelled else { invalidate(); return }
+            active = false
+            draft = ""
+            status = .stored
+            closeSubmission()
+            didStore(receipt)
+        } catch {
+            guard active else { return }
+            if error is CancellationError { invalidate() }
+            else { status = .receiptFailed }
+        }
+    }
+
+    func dismissButtonTapped() async {
+        guard storedReceipt == nil else { invalidate(); return }
+        invalidate()
+        do { try await dismiss?() }
+        catch { status = .unavailable }
+    }
+
+    func clearDraft() { draft = "" }
+
     func invalidate() {
         draft = ""
         guard active else { return }
         active = false
-        status = .cancelled
+        status = storedReceipt == nil ? .cancelled : .stored
         closeSubmission()
     }
 }
@@ -126,7 +160,7 @@ struct AgentSecretRequestCard: View {
                 Text(FiliconLocalization.string(message)).font(.caption)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            if model.canEdit || model.status == .submitting {
+            if model.canEdit || model.status == .submitting || model.status == .receiptFailed {
                 ViewThatFits(in: .horizontal) {
                     HStack { actions }
                     VStack(alignment: .leading) { actions }
@@ -136,7 +170,7 @@ struct AgentSecretRequestCard: View {
         .padding(14).frame(maxWidth: .infinity, alignment: .leading)
         .foregroundStyle(FiliconTheme.textPrimary)
         .background(FiliconTheme.incomingBubble, in: RoundedRectangle(cornerRadius: 16))
-        .onDisappear { model.invalidate() }
+        .onDisappear { model.clearDraft() }
     }
 
     private var statusMessage: String? {
@@ -148,16 +182,22 @@ struct AgentSecretRequestCard: View {
         case .invalidValue: "Enter a nonempty credential without line breaks."
         case .writeFailed: "Could not store the credential. Enter it again to retry."
         case .unavailable: "This credential request is no longer available."
+        case .receiptFailed: "Credential stored, but the conversation receipt could not be saved. Retry without entering the credential again."
         }
     }
 
     @ViewBuilder private var actions: some View {
-        Button(l10n("Save credential")) {
-            Task { await model.submitButtonTapped() }
+        if model.status == .receiptFailed {
+            Button(l10n("Retry")) { Task { await model.retryButtonTapped() } }
+                .buttonStyle(.borderedProminent)
+        } else {
+            Button(l10n("Save credential")) {
+                Task { await model.submitButtonTapped() }
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(!model.canEdit || model.draft.isEmpty)
         }
-        .buttonStyle(.borderedProminent)
-        .disabled(!model.canEdit || model.draft.isEmpty)
-        Button(l10n("Dismiss")) { model.invalidate() }
+        Button(l10n("Dismiss")) { Task { await model.dismissButtonTapped() } }
             .buttonStyle(.bordered)
     }
 }
