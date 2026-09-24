@@ -33,6 +33,31 @@ struct ChannelLifecycleTests {
         }
     }
     private let date = Date(timeIntervalSince1970: 1_000)
+    @Test func legacyRemoteAccountIsNotLocalAuthorizationIdentity() throws {
+        let original = ChannelConnection(connectorID: "slack", displayName: "Legacy",
+            secretReference: "keychain://channels/legacy", accountID: "REMOTE_TEAM")
+        let data = try JSONEncoder().encode(original)
+        let legacy = try JSONDecoder().decode(ChannelConnection.self, from: data)
+        expectNoDifference(legacy.accountID, "REMOTE_TEAM")
+        expectNoDifference(legacy.ownerAccountID, nil)
+        expectNoDifference(legacy.authorizationAccountID, "local")
+        var scoped = legacy
+        scoped.ownerAccountID = "filicon-account"
+        let restored = try JSONDecoder().decode(ChannelConnection.self, from: JSONEncoder().encode(scoped))
+        expectNoDifference(restored, scoped)
+    }
+
+    @Test func remoteProfileRefreshPreservesLocalOwner() async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        var connection = f.first
+        connection.ownerAccountID = "filicon-account"
+        try await f.service.saveConnection(connection)
+        await f.service.register(LifecycleConnector())
+        _ = try await f.service.refreshProfile(connectionID: connection.id)
+        let refreshed = try #require(await f.service.connections().first { $0.id == connection.id })
+        expectNoDifference(refreshed.accountID, "remote-workspace")
+        expectNoDifference(refreshed.authorizationAccountID, "filicon-account")
+    }
     @Test(arguments: ["authenticated", "disabled", "other-account", "other-owner", "failure"])
     func ownCredentialStatusIsReadOnlyAndScoped(mode: String) async throws {
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
@@ -40,7 +65,8 @@ struct ChannelLifecycleTests {
         var connection = ChannelConnection(id: f.first.id, connectorID: "slack", displayName: "First",
             secretReference: f.first.secretReference, agentID: owner)
         connection.enabled = mode != "disabled"
-        connection.accountID = mode == "other-account" ? "other" : "local"
+        connection.accountID = "remote-workspace"
+        connection.ownerAccountID = mode == "other-account" ? "other" : "local"
         try await f.service.saveConnection(connection)
         await f.service.register(LifecycleConnector(descriptor: .init(id: "slack", displayName: "Slack"), failProfile: mode == "failure"))
         let before = await Snapshot(f.service)

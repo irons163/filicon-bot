@@ -111,7 +111,7 @@ public actor ChannelService {
     public func verifyOwnCredential(agentID: UUID, accountID: String, platform: String) async throws -> String {
         guard ["slack", "discord"].contains(platform) else { return "unsupported" }
         let matches = state.connections.filter {
-            $0.agentID == agentID && ($0.accountID ?? "local") == accountID && $0.connectorID == platform
+            $0.agentID == agentID && $0.authorizationAccountID == accountID && $0.connectorID == platform
         }
         guard matches.count == 1, let connection = matches.first else {
             return matches.isEmpty ? "not_configured" : "ambiguous"
@@ -125,12 +125,12 @@ public actor ChannelService {
         catch { verified = false }
         try Task.checkCancellation()
         let currentMatches = state.connections.filter {
-            $0.agentID == agentID && ($0.accountID ?? "local") == accountID && $0.connectorID == platform
+            $0.agentID == agentID && $0.authorizationAccountID == accountID && $0.connectorID == platform
         }
         guard connectionRevisions[connection.id] == revision,
               currentMatches.count == 1, currentMatches.contains(where: {
                   $0.id == connection.id && $0.enabled && $0.agentID == agentID
-                      && ($0.accountID ?? "local") == accountID && $0.secretReference == connection.secretReference
+                      && $0.authorizationAccountID == accountID && $0.secretReference == connection.secretReference
               }) else {
             return "stale"
         }

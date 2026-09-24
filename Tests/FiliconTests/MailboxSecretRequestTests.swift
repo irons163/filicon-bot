@@ -195,7 +195,7 @@ struct MailboxSecretRequestTests {
         let channels = try ChannelService(storeURL: f.root.appending(path: "channels.json"))
         let connection = ChannelConnection(id: connectionID, connectorID: "slack", displayName: "Fixture",
             secretReference: "keychain://channels/\(connectionID)", agentID: f.incoming.recipientID,
-            authKind: .botToken, accountID: "A")
+            authKind: .botToken, accountID: "remote", ownerAccountID: "A")
         try await channels.saveConnection(connection)
         let destination = try AgentSecretRequestDestination.resolve(request(), accountID: "A",
             agentID: f.incoming.recipientID, conversationID: scope, connections: [connection])

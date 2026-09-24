@@ -15,7 +15,7 @@ struct AgentSecretRequestTests {
     private func connection() -> ChannelConnection {
         .init(id: connectionID, connectorID: "slack", displayName: "Design workspace",
             secretReference: "keychain://channels/\(connectionID.uuidString)", agentID: agent,
-            authKind: .botToken, accountID: "account-A")
+            authKind: .botToken, accountID: "remote-workspace", ownerAccountID: "account-A")
     }
 
     @Test func canonicalMetadataContainsNoCredentialOrDestination() throws {
@@ -30,6 +30,23 @@ struct AgentSecretRequestTests {
         expectNoDifference(try JSONDecoder().decode([String: String].self, from: encoded),
             ["label": "Slack bot token", "description": "Help\nwith setup", "connector": "slack", "field": "token"])
         expectNoDifference(try AgentSecretRequest.parse(encoded), request)
+    }
+
+    @Test func legacyOwnershipNeverComesFromRemoteAccountID() throws {
+        let request = try AgentSecretRequest.parse(requestData)
+        var legacy = connection()
+        legacy.ownerAccountID = nil
+        let target = try AgentSecretRequestDestination.resolve(request, accountID: "local", agentID: agent,
+            conversationID: scope, connections: [legacy])
+        expectNoDifference(target.accountID, "local")
+        #expect(throws: AgentSecretRequestError.unavailable) {
+            try AgentSecretRequestDestination.resolve(request, accountID: "remote-workspace", agentID: agent,
+                conversationID: scope, connections: [legacy])
+        }
+        legacy.ownerAccountID = "account-A"
+        #expect(throws: AgentSecretRequestError.stale) {
+            try target.validate(accountID: "local", agentID: agent, conversationID: scope, connections: [legacy])
+        }
     }
 
     @Test func referenceDisplayBoundsAreAppliedWithoutSplittingCharacters() throws {

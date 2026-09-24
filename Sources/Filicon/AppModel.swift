@@ -3897,6 +3897,7 @@ final class AppModel: ObservableObject {
 
     func createChannelConnection(connectorID: String, displayName: String, channelIDs: String, token: String, agentID: UUID?) async {
         guard let channelService else { errorMessage = l10n("Channel storage is unavailable."); return }
+        let ownerAccountID = settings.accountScope ?? "local"
         let token = token.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !token.isEmpty else { errorMessage = l10n("Enter the bot token."); return }
         let id = UUID()
@@ -3910,7 +3911,7 @@ final class AppModel: ObservableObject {
                 accountLabel: channelIDs,
                 secretReference: reference,
                 agentID: agentID,
-                authKind: .botToken
+                authKind: .botToken, ownerAccountID: ownerAccountID
             )
             _ = try await channelService.saveConnection(connection)
             _ = try? await channelService.refreshProfile(connectionID: id)
@@ -3924,6 +3925,7 @@ final class AppModel: ObservableObject {
 
     func connectChannelOAuth(connectorID: String, clientID: String, displayName: String, channelIDs: String, agentID: UUID?) async {
         guard !channelOAuthInProgress, let channelService else { return }
+        let ownerAccountID = settings.accountScope ?? "local"
         let cleanClientID = clientID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanClientID.isEmpty else { errorMessage = l10n("Enter the OAuth client ID."); return }
         channelOAuthInProgress = true
@@ -3958,7 +3960,7 @@ final class AppModel: ObservableObject {
                 let connection = ChannelConnection(
                     id: id, connectorID: connectorID, displayName: displayName,
                     accountLabel: channelIDs, secretReference: reference,
-                    agentID: agentID, authKind: .oauth
+                    agentID: agentID, authKind: .oauth, ownerAccountID: ownerAccountID
                 )
                 _ = try await channelService.saveConnection(connection)
                 _ = try await channelService.refreshProfile(connectionID: id)

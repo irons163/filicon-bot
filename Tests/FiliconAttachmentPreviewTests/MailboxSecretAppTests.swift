@@ -65,7 +65,7 @@ struct MailboxSecretAppTests {
         let channels = try ChannelService(storeURL: root.appending(path: "channels.json"))
         let connectionID = UUID(uuidString: "00000000-0000-0000-0000-000000000004")!
         try await channels.saveConnection(.init(id: connectionID, connectorID: "slack", displayName: "Fixture",
-            secretReference: "keychain://channels/\(connectionID)", agentID: owner.id, authKind: .botToken, accountID: "local"))
+            secretReference: "keychain://channels/\(connectionID)", agentID: owner.id, authKind: .botToken, accountID: "remote", ownerAccountID: "local"))
         let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
         #expect(await model.updateAgent(sender))
         let probe = SecretAppProbe()

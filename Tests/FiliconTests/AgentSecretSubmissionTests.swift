@@ -46,7 +46,7 @@ struct AgentSecretSubmissionTests {
         let root = FileManager.default.temporaryDirectory.appending(path: "secret-submission-\(UUID())")
         let channels = try ChannelService(storeURL: root.appending(path: "channels.json"))
         let connection = ChannelConnection(id: connectionID, connectorID: "slack", displayName: "Fixture",
-            secretReference: "keychain://channels/\(connectionID)", agentID: owner, authKind: .botToken, accountID: "A")
+            secretReference: "keychain://channels/\(connectionID)", agentID: owner, authKind: .botToken, accountID: "remote", ownerAccountID: "A")
         try await channels.saveConnection(connection)
         let request = try AgentSecretRequest.parse(Data(#"{"label":"Bot token","connector":"slack","field":"token"}"#.utf8))
         let destination = try AgentSecretRequestDestination.resolve(request, accountID: "A", agentID: owner,

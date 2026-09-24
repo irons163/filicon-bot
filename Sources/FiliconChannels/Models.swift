@@ -24,7 +24,11 @@ public struct ChannelConnection: Identifiable, Codable, Hashable, Sendable {
     public var lastActivityAt: Date?
     public var agentID: UUID?
     public var authKind: ChannelAuthKind?
+    /// Remote connector identity (for example a Slack workspace), not a Filicon account.
     public var accountID: String?
+    /// Host ownership for scoped credential operations. Legacy records remain local.
+    public var ownerAccountID: String?
+    public var authorizationAccountID: String { ownerAccountID ?? "local" }
     public var profile: ChannelProfile?
 
     public init(
@@ -32,7 +36,7 @@ public struct ChannelConnection: Identifiable, Codable, Hashable, Sendable {
         accountLabel: String = "", secretReference: String,
         enabled: Bool = true, cursor: String? = nil, lastActivityAt: Date? = nil,
         agentID: UUID? = nil, authKind: ChannelAuthKind? = nil,
-        accountID: String? = nil, profile: ChannelProfile? = nil
+        accountID: String? = nil, profile: ChannelProfile? = nil, ownerAccountID: String? = nil
     ) {
         self.id = id
         self.connectorID = connectorID
@@ -45,6 +49,7 @@ public struct ChannelConnection: Identifiable, Codable, Hashable, Sendable {
         self.agentID = agentID
         self.authKind = authKind
         self.accountID = accountID
+        self.ownerAccountID = ownerAccountID
         self.profile = profile
     }
 }

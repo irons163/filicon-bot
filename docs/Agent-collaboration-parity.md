@@ -1,5 +1,13 @@
 # 協作能力核對紀錄（更新至 2026-09-24）
 
+## 遠端帳號與 Filicon 帳號分離（2026-09-24）
+
+端到端檢查發現既有 `ChannelConnection.accountID` 由 refreshProfile 寫入遠端 workspace／user ID；先前 secure request／GetChannelStatus 將它當 Filicon account scope 比對會錯誤拒絕已登入的連線。新增 optional `ownerAccountID`，新 token／OAuth 連線記錄建立開始時的 Filicon account；遠端 profile 刷新仍只更新 accountID。憑證目的地及狀態查詢改比對 authorizationAccountID，缺少 owner 的舊資料只歸 local，不根據遠端 ID 推測帳號歸屬。沒有搬移或改寫使用者真實資料。
+
+隔離 fixtures 明確包含不同 remote／local ID，新增 Codable 舊資料相容及 profile 刷新不改 owner 測試。此修正限於憑證／狀態的身份邊界，不能據此宣稱整個 channel subsystem 已做完整多帳號隔離；既有全域 channel UI／收送與帳號轉移策略仍需核對。完整回歸仍待解鎖，AGENT-02 維持 partial。
+
+驗證：`channel-owner-final-focused.log` exit 0、`channel-owner-native.log` exit 0，封裝／deep strict codesign 通過。較廣的 `channel-owner-focused.log` 僅 onlyWriterSeesValueAndRetriesCannotOverwriteIt 在重讀 channels.json 時因 IOConsoleLocked=Yes 遇 EPERM，未降低保護或跳過後聲稱完整通過。
+
 ## 提交後驗證認證（2026-09-24）
 
 最終針對性測試 `channel-status-focused.log`、原生建置 `channel-status-native.log` 均 exit 0，封裝與 deep strict codesign 通過；完整回歸仍待解鎖。

@@ -34,7 +34,7 @@ public struct AgentSecretRequestDestination: Sendable, Equatable {
         guard !accountID.isEmpty else { throw AgentSecretRequestError.unavailable }
         let candidates = connections.filter {
             $0.connectorID == request.connector && $0.agentID == agentID
-                && ($0.accountID ?? "local") == accountID
+                && $0.authorizationAccountID == accountID
         }
         guard candidates.count <= 1 else { throw AgentSecretRequestError.ambiguous }
         guard let connection = candidates.first, connection.enabled,
