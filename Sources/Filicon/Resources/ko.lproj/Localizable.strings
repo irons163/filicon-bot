@@ -1670,3 +1670,12 @@
 "Memory suggestions changed or are no longer available. Refresh and try again." = "기억 제안이 변경되었거나 더 이상 사용할 수 없습니다. 새로고침 후 다시 시도하세요.";
 "The memory suggestion response was invalid. No facts were saved." = "기억 제안 응답이 올바르지 않습니다. 저장된 사실이 없습니다.";
 "Full Screen" = "전체 화면";
+"Secure credential request" = "안전한 인증 정보 요청";
+"Stored securely on this Mac, not sent to the conversation. This does not verify the connection or approve other tools." = "이 Mac에 안전하게 저장되며 대화에는 전송되지 않습니다. 연결을 확인하거나 다른 도구를 승인하지 않습니다.";
+"Credential" = "인증 정보";
+"Saving credential securely…" = "인증 정보를 안전하게 저장하는 중…";
+"Credential stored. Remote authentication has not been verified." = "인증 정보가 저장되었습니다. 원격 인증은 확인되지 않았습니다.";
+"Enter a nonempty credential without line breaks." = "비어 있지 않고 줄바꿈이 없는 인증 정보를 입력하세요.";
+"Could not store the credential. Enter it again to retry." = "인증 정보를 저장하지 못했습니다. 다시 입력하여 재시도하세요.";
+"This credential request is no longer available." = "이 인증 정보 요청은 더 이상 사용할 수 없습니다.";
+"Save credential" = "인증 정보 저장";

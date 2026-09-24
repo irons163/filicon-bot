@@ -48,6 +48,7 @@
 		62B05CEDA9607DBE033DFA54B3CC68DF /* PackagedLocalToolTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF3AA57701581BCACC3D15D6F697C30F /* PackagedLocalToolTests.swift */; };
 		62DEE7DE6E922D23C16D95FB14D37DB1 /* ChannelOAuthLoopbackServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91B04FA5B58C4CCFF48694E5AF3160D8 /* ChannelOAuthLoopbackServer.swift */; };
 		632D0D2B919BAC3935C1A4373375E833 /* GroupConversationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 695DCA7F61DDF09EDA7BA4A580B9F0A9 /* GroupConversationView.swift */; };
+		AB918D8934B74895AB8934AA /* AgentSecretRequestCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB918D8934B74895AB8934BB /* AgentSecretRequestCard.swift */; };
 		670AA26F1F0484AE7FA0EF087D6CCD29 /* FiliconDomain in Frameworks */ = {isa = PBXBuildFile; productRef = BA083183DC0CA7E78721987453659AF5 /* FiliconDomain */; };
 		6E22DBCADE1A8F3C99EB9594EC3F043A /* FiliconLocalToolService.xpc in Embed XPC Services */ = {isa = PBXBuildFile; fileRef = 052C4C896FED416ABDF0BEA4265EA2C1 /* FiliconLocalToolService.xpc */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		75872259925775BB8E9ACB5696E613AF /* AboutView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C14D5C49ECDF1A2977D16C7B0349788D /* AboutView.swift */; };
@@ -186,6 +187,7 @@
 		623AFFE542F2BD818EFACA38B93EAE27 /* Filicon.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Filicon.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		66E93089FFA2C2444A311ABB7959AE9F /* FiliconLocalization.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = FiliconLocalization.swift; sourceTree = "<group>"; };
 		695DCA7F61DDF09EDA7BA4A580B9F0A9 /* GroupConversationView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GroupConversationView.swift; sourceTree = "<group>"; };
+		AB918D8934B74895AB8934BB /* AgentSecretRequestCard.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AgentSecretRequestCard.swift; sourceTree = "<group>"; };
 		698BBB0AB729092EE1387866EE549EEF /* FiliconUpdateHelper */ = {isa = PBXFileReference; includeInIndex = 0; path = FiliconUpdateHelper; sourceTree = BUILT_PRODUCTS_DIR; };
 		702B57D5CFE70912360DC0456FC8D54C /* WorkflowWorkspaceView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WorkflowWorkspaceView.swift; sourceTree = "<group>"; };
 		74A56746EAC47F9503B1A3944671B5C1 /* Package.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Package.swift; sourceTree = "<group>"; };
@@ -414,6 +416,7 @@
 				47D191729BD917C88A29FBAF11099791 /* FiliconWorkspaceShell.swift */,
 				3A772BE5EE2CDB23F8C599DF6E0E829F /* GroupComposerEditor.swift */,
 				695DCA7F61DDF09EDA7BA4A580B9F0A9 /* GroupConversationView.swift */,
+				AB918D8934B74895AB8934BB /* AgentSecretRequestCard.swift */,
 				EF0EF19B276E7F41097A21F2E1CB2654 /* GroupMentionCompletion.swift */,
 				4BB2B87725181EE2F76AE24D230C8FB8 /* InAppNotificationView.swift */,
 				E5AF319E0CDBC55D72FCF51314D8ADEA /* MCPAccountsView.swift */,
@@ -712,6 +715,7 @@
 				50DC94B791C338E835D257340EF940B1 /* FiliconWorkspaceShell.swift in Sources */,
 				5FDB82040A9A44EFD11434E0030A4115 /* GroupComposerEditor.swift in Sources */,
 				632D0D2B919BAC3935C1A4373375E833 /* GroupConversationView.swift in Sources */,
+				AB918D8934B74895AB8934AA /* AgentSecretRequestCard.swift in Sources */,
 				A9D36E91E22DF603B328CF01A07336B0 /* GroupMentionCompletion.swift in Sources */,
 				E816387014CEE2802B74A477AF8A2E23 /* InAppNotificationView.swift in Sources */,
 				409826D9E79E58E18703E53275D5C0AD /* MCPAccountsView.swift in Sources */,

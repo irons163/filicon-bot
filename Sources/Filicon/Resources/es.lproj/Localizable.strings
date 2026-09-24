@@ -1670,3 +1670,12 @@
 "Memory suggestions changed or are no longer available. Refresh and try again." = "Las sugerencias de memoria han cambiado o ya no están disponibles. Actualiza e inténtalo de nuevo.";
 "The memory suggestion response was invalid. No facts were saved." = "La respuesta de sugerencias de memoria no era válida. No se guardó ningún dato.";
 "Full Screen" = "Pantalla completa";
+"Secure credential request" = "Solicitud segura de credencial";
+"Stored securely on this Mac, not sent to the conversation. This does not verify the connection or approve other tools." = "Se guarda de forma segura en este Mac, sin enviarse a la conversación. Esto no verifica la conexión ni autoriza otras herramientas.";
+"Credential" = "Credencial";
+"Saving credential securely…" = "Guardando la credencial de forma segura…";
+"Credential stored. Remote authentication has not been verified." = "Credencial guardada. No se ha verificado la autenticación remota.";
+"Enter a nonempty credential without line breaks." = "Introduce una credencial no vacía y sin saltos de línea.";
+"Could not store the credential. Enter it again to retry." = "No se pudo guardar la credencial. Introdúcela de nuevo para reintentar.";
+"This credential request is no longer available." = "Esta solicitud de credencial ya no está disponible.";
+"Save credential" = "Guardar credencial";

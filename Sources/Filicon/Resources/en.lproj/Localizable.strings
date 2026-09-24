@@ -1670,3 +1670,12 @@
 "Memory suggestions changed or are no longer available. Refresh and try again." = "Memory suggestions changed or are no longer available. Refresh and try again.";
 "The memory suggestion response was invalid. No facts were saved." = "The memory suggestion response was invalid. No facts were saved.";
 "Full Screen" = "Full Screen";
+"Secure credential request" = "Secure credential request";
+"Stored securely on this Mac, not sent to the conversation. This does not verify the connection or approve other tools." = "Stored securely on this Mac, not sent to the conversation. This does not verify the connection or approve other tools.";
+"Credential" = "Credential";
+"Saving credential securely…" = "Saving credential securely…";
+"Credential stored. Remote authentication has not been verified." = "Credential stored. Remote authentication has not been verified.";
+"Enter a nonempty credential without line breaks." = "Enter a nonempty credential without line breaks.";
+"Could not store the credential. Enter it again to retry." = "Could not store the credential. Enter it again to retry.";
+"This credential request is no longer available." = "This credential request is no longer available.";
+"Save credential" = "Save credential";

@@ -1670,3 +1670,12 @@
 "Memory suggestions changed or are no longer available. Refresh and try again." = "記憶建議已變更或無法使用。請重新整理後再試。";
 "The memory suggestion response was invalid. No facts were saved." = "記憶建議的回應格式無效，未儲存任何事實。";
 "Full Screen" = "全螢幕";
+"Secure credential request" = "安全憑證請求";
+"Stored securely on this Mac, not sent to the conversation. This does not verify the connection or approve other tools." = "安全儲存在這台 Mac，不會傳入對話。這不代表連線驗證成功，也不會核准其他工具。";
+"Credential" = "憑證";
+"Saving credential securely…" = "正在安全儲存憑證⋯";
+"Credential stored. Remote authentication has not been verified." = "憑證已儲存，尚未驗證遠端登入。";
+"Enter a nonempty credential without line breaks." = "請輸入非空白且不含換行的憑證。";
+"Could not store the credential. Enter it again to retry." = "無法儲存憑證，請重新輸入後再試。";
+"This credential request is no longer available." = "此憑證請求已失效。";
+"Save credential" = "儲存憑證";

@@ -1,5 +1,13 @@
 # 協作能力核對紀錄（更新至 2026-09-24）
 
+## 憑證請求第三步：遮罩卡片元件與輸入生命週期（2026-09-24）
+
+新增 `AgentSecretRequestCard`／`AgentSecretRequestCardModel`，SecureField 使用短暫 draft；提交前即清空，無效輸入、寫入失敗、取消與畫面消失均清空。模型不保存提交值或底層錯誤，reflection 隱藏 draft；失敗只呈現固定狀態。寫入失敗須重新輸入。關閉或 Task 取消後的遲到 receipt 不觸發續接 callback，成功 callback 只帶不含值的 receipt，一張卡片不重複提交。production initializer 接既有 `AgentSecretSubmission`／ChannelService／注入的 writer；host 必須在帳號、owner、Stop 等失效事件同步 invalidate，不能只依賴畫面消失。Swift String 不保證記憶體零化。
+
+卡片顯示請求 label／description 與 host 固定的 connector／連線名稱，明示本機儲存不代表遠端認證成功或其他工具核准。新增九個七語言字串；隔離的 NSHostingView 渲染涵蓋七語言明暗模式，人工檢視繁中 light、法文 dark 的遮罩與窄版換行。SwiftUI／observable-models 技能用於狀態與畫面分離；測試技能用於失敗重試、輸入清除、遲到完成及取消的回歸。
+
+**這仍是未掛入實際對話的 UI 元件，不是可用的 secret-request 入口。** 模型 schema、對話持久化、host 生命週期接線、保存後新 turn 續接與新連線建立尚未完成，AGENT-02 維持 partial。UI 測試只用假憑證與假寫入 closure；未執行真實 Keychain 寫入、遠端登入、live 模型或啟動使用者 App。完整回歸記錄 `.build/validation/secret-card-full-tests.log`；原生建置記錄 `.build/validation/secret-card-native.log`，package verifier 與 deep strict codesign 通過。
+
 ## 憑證請求第二步：值隔離與同步提交閘門（2026-09-24）
 
 新增 `AgentSecretValue` 作為短暫輸入：不提供 Codable／Hashable 或公開讀取值，description、debugDescription 與 reflection 隱藏內容；空白、控制字元與超過 16 KiB 的輸入拒絕。不宣稱 Swift String 記憶體零化，未來 UI 仍須在完成、取消及帳號切換時清空欄位。
