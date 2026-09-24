@@ -3,12 +3,54 @@ import AppKit
 import CustomDump
 import Darwin
 import Foundation
+import PDFKit
 import Testing
 import FiliconDomain
 @testable import Filicon
 
 @Suite("Native attachment viewers")
 struct AttachmentViewerTests {
+    @Test @MainActor func pdfPreviewAndSearchUseVerifiedSnapshotAfterReplacement() throws {
+        let sandbox = FileManager.default.temporaryDirectory.appending(path: "pdf-snapshot-\(UUID())", directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: sandbox) }
+        try FileManager.default.createDirectory(at: sandbox, withIntermediateDirectories: true)
+        func pdf(_ text: String) -> Data {
+            let view = NSTextView(frame: NSRect(x: 0, y: 0, width: 300, height: 120))
+            view.string = text
+            return view.dataWithPDF(inside: view.bounds)
+        }
+        let bytes = pdf("approved snapshot"), replacement = pdf("replacement only")
+        let path = sandbox.appending(path: "review.pdf")
+        try bytes.write(to: path)
+        let metadata = AttachmentMetadata(id: SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined(),
+            filename: "review.pdf", mimeType: "application/pdf", byteCount: Int64(bytes.count), kind: .document,
+            createdAt: Date(timeIntervalSince1970: 1))
+        let file = AttachmentPreviewFile(filename: metadata.filename, fileURL: path, metadata: metadata)
+        let verified = try AttachmentFileIntegrity().verifiedData(for: file)
+        try replacement.write(to: path, options: .atomic)
+        #expect(throws: AttachmentFileIntegrityError.changed) { try AttachmentFileIntegrity().verifiedData(for: file) }
+        let preview = AttachmentPDFView(file: file, verifiedData: verified)
+        let document = try #require(preview.document)
+        #expect(document.documentURL == nil)
+        expectNoDifference(document.pageCount, 1)
+        #expect(document.string?.contains("approved snapshot") == true)
+        try FileManager.default.removeItem(at: path)
+        let native = PDFView(), coordinator = PDFNativeView.Coordinator()
+        coordinator.update(native, document: document, searchQuery: "approved")
+        #expect(native.document === document)
+        expectNoDifference(native.highlightedSelections?.count, 1)
+        let other = try #require(PDFDocument(data: replacement))
+        coordinator.update(native, document: other, searchQuery: "approved")
+        #expect(native.document === other)
+        expectNoDifference(native.highlightedSelections?.count, 0)
+        coordinator.update(native, document: document, searchQuery: "approved")
+        expectNoDifference(native.highlightedSelections?.count, 1)
+        coordinator.update(native, document: document, searchQuery: "")
+        expectNoDifference(native.highlightedSelections?.count, 0)
+        #expect(AttachmentPDFView(file: file, verifiedData: nil).document == nil)
+        #expect(AttachmentPDFView(file: file, verifiedData: Data("invalid".utf8)).document == nil)
+    }
+
     @Test @MainActor func mainImageDecodesVerifiedSnapshotAfterPathReplacement() throws {
         let sandbox = FileManager.default.temporaryDirectory.appending(path: "image-snapshot-\(UUID())", directoryHint: .isDirectory)
         defer { try? FileManager.default.removeItem(at: sandbox) }

@@ -149,11 +149,11 @@ struct AttachmentMediaViewerSheet: View {
     }
 
     @ViewBuilder private func viewer(for file: AttachmentPreviewFile) -> some View {
-        AttachmentIntegrityGate(file: file) { verifiedImageData in
+        AttachmentIntegrityGate(file: file) { verifiedData in
             switch AttachmentViewerKind.classify(filename: file.filename, mimeType: file.metadata?.mimeType) {
-            case .image: AttachmentImageView(verifiedData: verifiedImageData)
+            case .image: AttachmentImageView(verifiedData: verifiedData)
             case .audiovisual: AttachmentAVPlayerView(fileURL: file.fileURL)
-            case .pdf: AttachmentPDFView(file: file)
+            case .pdf: AttachmentPDFView(file: file, verifiedData: verifiedData)
             case .spreadsheet: AttachmentSpreadsheetView(file: file)
             case .quickLook: AttachmentQuickLookView(fileURL: file.fileURL)
             }
@@ -211,21 +211,21 @@ struct AttachmentMediaViewerSheet: View {
 /// No native parser or Quick Look generator receives a materialized CAS file
 /// until its digest and byte count have been checked again. This closes the
 /// gap between the store check in `AppModel` and opening the preview sheet.
-/// Image decoding consumes the verified snapshot, never a second path read.
+/// Image and PDF decoding consume the verified snapshot, never a second path read.
 /// Other native parsers still use their URL APIs after the initial check.
 private struct AttachmentIntegrityGate<Content: View>: View {
     @Environment(\.locale) private var uiLocale
     let file: AttachmentPreviewFile
     @ViewBuilder let content: (Data?) -> Content
     @State private var isVerified = false
-    @State private var verifiedImageData: Data?
+    @State private var verifiedData: Data?
     @State private var error: String?
 
     var body: some View {
         let _ = uiLocale.identifier
         Group {
             if isVerified {
-                content(verifiedImageData)
+                content(verifiedData)
             } else if let error {
                 ContentUnavailableView(
                     l10n("Attachment unavailable"),
@@ -241,7 +241,7 @@ private struct AttachmentIntegrityGate<Content: View>: View {
 
     private func verifyAttachment() async {
         isVerified = false
-        verifiedImageData = nil
+        verifiedData = nil
         error = nil
         do {
             let previewFile = file
@@ -249,8 +249,9 @@ private struct AttachmentIntegrityGate<Content: View>: View {
                 try AttachmentFileIntegrity().verifiedData(for: previewFile)
             }.value
             guard !Task.isCancelled else { return }
-            if AttachmentViewerKind.classify(filename: file.filename, mimeType: file.metadata?.mimeType) == .image {
-                verifiedImageData = data
+            let kind = AttachmentViewerKind.classify(filename: file.filename, mimeType: file.metadata?.mimeType)
+            if kind == .image || kind == .pdf {
+                verifiedData = data
             }
             isVerified = true
         } catch {
@@ -426,14 +427,20 @@ private struct AttachmentAVPlayerView: View {
     }
 }
 
-private struct AttachmentPDFView: View {
+struct AttachmentPDFView: View {
     @Environment(\.locale) private var uiLocale
     let file: AttachmentPreviewFile
+    let document: PDFDocument?
     @State private var searchQuery = ""
     @State private var showsText = false
     @State private var documentText = ""
     @State private var pageCount = 0
     @State private var error: String?
+
+    init(file: AttachmentPreviewFile, verifiedData: Data?) {
+        self.file = file
+        document = verifiedData.flatMap { PDFDocument(data: $0) }
+    }
 
     var body: some View {
         let _ = uiLocale.identifier
@@ -452,14 +459,14 @@ private struct AttachmentPDFView: View {
             } else if showsText {
                 ScrollView { Text(documentText).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading).padding() }
             } else {
-                PDFNativeView(fileURL: file.fileURL, searchQuery: searchQuery)
+                PDFNativeView(document: document, searchQuery: searchQuery)
             }
         }
         .task(id: file.id) { loadDocumentMetadata() }
     }
 
     private func loadDocumentMetadata() {
-        guard let document = PDFDocument(url: file.fileURL) else { error = "The PDF document is malformed."; return }
+        guard let document else { error = "The PDF document is malformed."; return }
         pageCount = document.pageCount
         var parts: [String] = []
         var characters = 0
@@ -489,8 +496,8 @@ private struct AttachmentPDFView: View {
     }
 }
 
-private struct PDFNativeView: NSViewRepresentable {
-    let fileURL: URL
+struct PDFNativeView: NSViewRepresentable {
+    let document: PDFDocument?
     let searchQuery: String
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -500,22 +507,29 @@ private struct PDFNativeView: NSViewRepresentable {
         view.autoScales = true
         view.displayMode = .singlePageContinuous
         view.displaysPageBreaks = true
-        view.document = PDFDocument(url: fileURL)
+        view.document = document
         return view
     }
 
     func updateNSView(_ view: PDFView, context: Context) {
-        if view.document?.documentURL != fileURL { view.document = PDFDocument(url: fileURL) }
-        guard context.coordinator.lastQuery != searchQuery else { return }
-        context.coordinator.lastQuery = searchQuery
-        let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { view.highlightedSelections = []; return }
-        let selections = view.document?.findString(query, withOptions: .caseInsensitive) ?? []
-        view.highlightedSelections = Array(selections.prefix(1_000))
-        if let first = selections.first { view.go(to: first) }
+        context.coordinator.update(view, document: document, searchQuery: searchQuery)
     }
 
-    final class Coordinator { var lastQuery = "" }
+    @MainActor final class Coordinator {
+        private var lastQuery = ""
+
+        func update(_ view: PDFView, document: PDFDocument?, searchQuery: String) {
+            let changedDocument = view.document !== document
+            if changedDocument { view.document = document }
+            guard changedDocument || lastQuery != searchQuery else { return }
+            lastQuery = searchQuery
+            let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !query.isEmpty else { view.highlightedSelections = []; return }
+            let selections = document?.findString(query, withOptions: .caseInsensitive) ?? []
+            view.highlightedSelections = Array(selections.prefix(1_000))
+            if let first = selections.first { view.go(to: first) }
+        }
+    }
 }
 
 private struct AttachmentSpreadsheetView: View {

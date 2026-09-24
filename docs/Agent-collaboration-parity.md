@@ -1,5 +1,13 @@
 # 協作能力核對紀錄（更新至 2026-09-24）
 
+## 本輪修正：PDF 共用已驗證文件快照（2026-09-24）
+
+PDF 原先在 gate 驗證後於 metadata loader 與 native view 各自 `PDFDocument(url:)` 重讀。本批使用 gate 已驗證 Data 初始化單一文件供預覽、頁數、文字擷取與搜尋使用；圖片快照防護保留，影音與其他格式不額外保留 Data。搜尋 coordinator 同時比較文件 identity 與字詞，換文件時即使查詢相同也更新高亮。匯出文字仍重驗預覽檔完整性，不因持有快照就放寬匯出政策。
+
+新增實際 PDF fixture 測試：驗證後 atomic 替換路徑會被再次驗證拒絕，原快照的頁數／文字不變且無 documentURL；刪除路徑後仍可在快照搜尋。換文件、返回原文件、清空查詢及 nil／損壞資料也有覆蓋。22 項附件聚焦測試、原生 Debug build、deep strict codesign 及 package verifier 通過。使用 SwiftUI／測試技能保持 view 與搜尋行為分離、以具體狀態差異斷言。沒有重啟使用者 App／Xcode、push 或碰真實資料。影音／Quick Look 路徑式載入未在這批修正，整體 parity 計數不變。
+
+PDF 本批完整非並行 `swift test` 亦 exit 0；live 模型 opt-in 測試仍跳過，沒有真實 App 點擊驗收。
+
 ## 本輪修正：主圖解碼使用已驗證快照（2026-09-24）
 
 延續先前縮圖的完整性防護，主圖先前仍在 gate 驗證後使用 `NSImage(contentsOf:)` 重新讀路徑。本批讓 gate 將已驗證的圖片 Data 傳入 `AttachmentImageView`，由資料初始化 NSImage，縮放重繪不重新讀檔。只有圖片保留這份快照，其他媒體在檢查後不額外留存整份資料；取消的驗證不發佈結果，切換圖片沿用 preview identity 重建。按 SwiftUI 技能將驗證 task 行為移出 view action closure。
