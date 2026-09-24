@@ -3225,7 +3225,8 @@ final class AppModel: ObservableObject {
 
     private func authorizeAgentChannelDisconnection(sender: AgentProfile, change: ChannelDisconnection,
                                                     call: NormalizedToolCall, context: ToolContext) async throws {
-        guard isAgentMessagingScopeActive(context.conversationID) else { throw CancellationError() }
+        guard isAgentMessagingScopeActive(context.conversationID),
+              change.ownerAccountID == (settings.accountScope ?? "local") else { throw CancellationError() }
         let generation = autoReviewAccountGeneration
         let fence = ApprovalFence(accountID: settings.accountScope ?? "local", agentID: context.conversationID.uuidString.lowercased(),
                                   runID: context.runID, generation: generation)
@@ -3249,6 +3250,7 @@ final class AppModel: ObservableObject {
     private func commitAgentChannelDisconnection(_ change: ChannelDisconnection, lifetime: ChannelDisconnectionLifetime,
                                                   originID: UUID, generation: UInt64) async throws {
         guard let channelService, let agentService, generation == autoReviewAccountGeneration,
+              change.ownerAccountID == (settings.accountScope ?? "local"),
               isAgentMessagingScopeActive(originID),
               let owner = await agentService.profile(id: change.agentID), owner.archivedAt == nil else { throw CancellationError() }
         try lifetime.check()

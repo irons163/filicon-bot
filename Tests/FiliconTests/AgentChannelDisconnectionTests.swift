@@ -129,6 +129,33 @@ struct AgentChannelDisconnectionTests {
         }
     }
 
+    @Test(arguments: [false, true])
+    func disconnectionDoesNotSelectAnotherAccountsConnection(onlyForeign: Bool) async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        var foreign = f.other
+        foreign.agentID = f.owner.id
+        foreign.ownerAccountID = "other-account"
+        try await f.channels.saveConnection(foreign)
+        if onlyForeign { try await f.channels.removeConnection(id: f.own.id) }
+        let session = f.session(authorize: { _, change, _, _ in
+            #expect(!onlyForeign)
+            expectNoDifference(change.ownerAccountID, "local")
+            expectNoDifference(change.connectionID, f.own.id)
+        })
+        let tool = session.tools(for: f.owner.id)[2]
+        if onlyForeign {
+            await #expect(throws: ChannelDisconnectionError.unavailable) {
+                _ = try await tool.execute(call(), context: f.context)
+            }
+        } else {
+            _ = try await tool.execute(call(), context: f.context)
+        }
+        let remaining = await f.channels.connections()
+        #expect(remaining.contains(foreign))
+        let foreignProposal = try await f.channels.proposeDisconnection(agentID: f.owner.id, platform: "slack", accountID: "other-account")
+        expectNoDifference(foreignProposal.connectionID, foreign.id)
+    }
+
     @Test func approvalIsIndependentAndFieldsCannotChoosePeersOrCredentials() async throws {
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
         let before = await Snapshot(f.channels)

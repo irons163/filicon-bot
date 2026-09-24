@@ -164,9 +164,11 @@ public actor ChannelService {
         return outcome.result
     }
 
-    public func proposeDisconnection(agentID: UUID, platform: String) throws -> ChannelDisconnection {
+    public func proposeDisconnection(agentID: UUID, platform: String, accountID: String = "local") throws -> ChannelDisconnection {
         guard ["slack", "discord"].contains(platform) else { throw ChannelDisconnectionError.invalid }
-        let matches = state.connections.filter { $0.agentID == agentID && $0.connectorID == platform }
+        let matches = state.connections.filter {
+            $0.agentID == agentID && $0.connectorID == platform && $0.authorizationAccountID == accountID
+        }
         guard let connection = matches.first else { throw ChannelDisconnectionError.unavailable }
         guard matches.count == 1 else { throw ChannelDisconnectionError.ambiguous }
         let deliveries = state.deliveries.filter { $0.connectionID == connection.id }

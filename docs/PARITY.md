@@ -1,5 +1,9 @@
 # Filicon / Grok Bot 0.18 功能 parity matrix（current implementation）
 
+模型斷線帳號隔離（2026-09-25）：own-channel disconnect 以 host 帳號＋agent 篩選，另一帳號不列入候選、不刪除；App 核准及提交重驗 owner。全域 channel UI／收送策略仍未宣稱全面隔離，complete 計數不變。
+
+完整驗收補跑（2026-09-25）：`channel-account-full-recheck.log` 完整非並行測試 exit 0，原生建置、封裝及 deep strict codesign 通過；下方 channel status／owner identity 的待解鎖補驗已完成。前一次 EPERM 保留紀錄，原因未完全確認，未降低檔案保護。
+
 連線身份修正（2026-09-24）：遠端 accountID 與 Filicon ownerAccountID 分離，避免遠端登入後安全憑證卡片／GetChannelStatus 找不到自己的連線。舊資料僅回退 local，新建立連線明確記錄 host owner。channel 全域 UI／收送的完整多帳號策略仍待核對，完整回歸待解鎖；不改 complete 計數。
 
 憑證驗證查詢（2026-09-24）：新增 host-scoped GetChannelStatus，以唯讀 profile 查詢回報自己的既有 Slack／Discord 認證，不揭露 secret／identity／diagnostics，不以登入成功代表送達或 listener 健康。新增隔離測試通過；廣泛回歸受鎖定檔案保護影響待補驗。不是原版 MCP 狀態功能的全面替代，AGENT-02 維持 partial。

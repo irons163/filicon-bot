@@ -554,7 +554,7 @@ public actor AgentManagementSession {
         guard let channels, let sender = await agents.profile(id: senderID), sender.archivedAt == nil else {
             throw ChannelDisconnectionError.unavailable
         }
-        let change = try await channels.proposeDisconnection(agentID: senderID, platform: platform)
+        let change = try await channels.proposeDisconnection(agentID: senderID, platform: platform, accountID: accountID)
         try channelLifetime.check()
         try await authorizeChannel(sender, change, call, context)
         try channelLifetime.check()

@@ -1,4 +1,12 @@
-# 協作能力核對紀錄（更新至 2026-09-24）
+# 協作能力核對紀錄（更新至 2026-09-25）
+
+## 模型斷線操作的帳號隔離（2026-09-25）
+
+`update_state(target:channel,action:disconnect)` 現在以 management session 的 host account 篩選 ownerAccountID，同 agent 在其他帳號下的連線不進候選，也不造成 ambiguous。舊無 owner 的連線只屬 local。提案保留 owner，App 在核准及提交時核對目前帳號；既有 lifetime／revision／完整 connection snapshot 仍拒絕等待期間的變更。測試覆蓋同 agent 跨帳號兩條連線只刪自己，以及只剩另一個帳號時不提出核准、不刪除；帳號由 host 提供，模型不能指定。
+
+此修正延續原版自己的 channel disconnect，不增加自動斷線、憑證刪除或遠端 OAuth 撤銷。全域 channel UI／收送帳號策略仍是另列缺口。
+
+驗證：首輪 `channel-account-full-tests.log` 在 IOConsoleLocked=No 前後檢查下仍有 protected-file EPERM 及衍生斷言，不能只以畫面鎖定解釋。未改保護設定；獨立暫存 plain／protected 讀寫均成功，`channel-account-focused-recheck.log` 17 tests／2 suites 通過，再執行完整 `channel-account-full-recheck.log` exit 0，先前失敗的 updater、credential、agents、channels、MCP 與 UI 回歸均恢復。`channel-account-native.log` 原生建置 exit 0，package verifier／deep strict codesign 通過。下方前幾輪「待解鎖完整回歸」現已補驗；暫時 EPERM 的底層原因未完全證實，不聲稱修改程式已修復 OS 保護問題。測試使用 testing／CustomDump 技能，未操作真實帳號或重啟使用者 App。
 
 ## 遠端帳號與 Filicon 帳號分離（2026-09-24）
 

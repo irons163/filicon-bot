@@ -4,6 +4,7 @@ import Foundation
 /// Public fields are safe approval metadata; credentials and message bodies stay private.
 public struct ChannelDisconnection: Sendable, Equatable {
     public let agentID: UUID
+    public var ownerAccountID: String { connection.authorizationAccountID }
     public let connectionID: UUID
     public let platform: String
     public let displayName: String
