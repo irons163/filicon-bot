@@ -1,5 +1,15 @@
 # 協作能力核對紀錄（更新至 2026-09-24）
 
+## 範圍校正：generic 不是已證實的原版模型排程路由（2026-09-24）
+
+重新核對本機 reconstructed `source/host/runner/tools/sand-state-tool.ts:121` 的 `triggerMemberSchema`，只列 cron、Slack、GitHub、Microsoft Teams、Linear、Sentry、PagerDuty；接下來的 trigger schema 允許單條、group 或 array，沒有 generic／event／connector 類型。`frontend/src/recovered/features/automations/routines/trigger-schema.ts` 的 `RoutineListener` 亦只有這七類。因此，先前把「generic 模型 create/update 未支援」混列為原版缺口並不精確：它是 Filicon-native 功能邊界，不是目前來源證據支持的 parity 待辦。此次不新增模型 generic 權限入口，也不改手動 connector 編輯／比對功能。
+
+新增 `nativeConnectorConditionsAreNotModelRoutineRoutes` 回歸測試，覆蓋 create/update × single/array/group，以及 generic/event/connector 三種假路由；含合法 Slack 分支的混合 OR 仍整筆拒絕，不靜默捨棄條件。核准 callback 不應被呼叫，所有代理人的排程及持久化 bytes 必須不變。既有 schema 測試同時固定七種 model member 類型。
+
+此校正不提高完成數，仍為 43 complete／4 partial／1 NA。真正已確認的剩餘差異包括 GitHub settled checks（現為單一 workflow）、Slack 名稱／自身身分解析、Teams 可信使用者身分、mailbox／單獨聊天引用與提問、任意附件與安全憑證請求、原版記憶與跨程序協作生命週期。這些不能因測試通過或把 native 限制移出 parity 待辦就視為完成；外部平台需要的帳號與服務驗收仍另列。
+
+驗證：`swift test --filter 'AgentRoutineChangeTests/' --no-parallel` exit 0，62 tests／1 suite（參數案例另含其內），紀錄 `.build/validation/routine-reference-boundary-tests.log`。本批只改測試與文件，不改產品程式；未重跑全套、原生封裝或 live 驗收，不沿用上一批結果宣稱本批全驗證。使用 Swift testing／CustomDump 技能比較完整 state 與持久化 bytes；未 push、重啟 App／Xcode 或操作真實資料。
+
 ## 本輪修正：表格解析使用已驗證資料（2026-09-24）
 
 CSV／TSV 和 XLSX 預覽原先在 gate 後重新從原 URL 解析。本批 gate 保留表格快照，`AttachmentSpreadsheetSnapshotParser` 依檔名格式 dispatch，CSV／TSV 直接使用 Data parser；XLSX 先驗證 50 MB 上限，再於 mkdtemp 私有目錄建立 0600 archive 副本，交既有 ZIP preflight／展開／XML 安全解析流程，成功或失敗均 defer 清理快照。這避免原預覽路徑被替換影響資料來源，但不聲稱能隔離相同 UID 惡意程序，也沒有替換 XLSX 的系統工具實作。既有展開量、entry、路徑、列欄與文字限制保留，不執行公式、宏、外部連結。

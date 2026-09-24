@@ -1471,6 +1471,36 @@ struct AgentRoutineChangeTests {
         session.close()
     }
 
+    @Test(arguments: ["create", "update"], ["single", "array", "group"])
+    func nativeConnectorConditionsAreNotModelRoutineRoutes(action: String, shape: String) async throws {
+        // Reference sand-state-tool.ts triggerMemberSchema has seven explicit
+        // types, not Filicon's native connector JSON filter representation.
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let session = f.session(authorize: { _, _, _, _ in Issue.record("Native connector proposal reached approval") })
+        defer { session.close() }
+        let before = await f.automations.list()
+        let bytes = try Data(contentsOf: f.file)
+        for kind in ["generic", "event", "connector"] {
+            let unsupported: [String: Any] = ["type": kind,
+                "connectorID": "00000000-0000-0000-0000-000000000099", "kind": "deploy", "filtersJSON": "{}"]
+            let trigger: Any
+            switch shape {
+            case "array": trigger = [slackFields, unsupported]
+            case "group": trigger = ["type": "group", "listeners": [slackFields, unsupported]]
+            default: trigger = unsupported
+            }
+            var fields: [String: Any] = ["target": "routine", "action": action, "trigger": trigger]
+            if action == "create" { fields["name"] = "Connector"; fields["prompt"] = "Fixture only" }
+            else { fields["id"] = f.routine.id.uuidString }
+            await #expect(throws: (any Error).self) {
+                _ = try await session.tools(for: f.owner.id)[2].execute(writeCall(fields), context: f.context)
+            }
+        }
+        let after = await f.automations.list()
+        expectNoDifference(after, before)
+        expectNoDifference(try Data(contentsOf: f.file), bytes)
+    }
+
     @Test func unsafeTeamsModelProposalsNeverReachApproval() async throws {
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
         let session = f.session(authorize: { _, _, _, _ in Issue.record("Unsafe Teams model writes must not reach approval") })
