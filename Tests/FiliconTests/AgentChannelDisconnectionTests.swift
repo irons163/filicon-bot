@@ -21,6 +21,20 @@ private actor ChannelApprovalGate {
 
 @Suite("Approved own-channel disconnection", .timeLimit(.minutes(1)))
 struct AgentChannelDisconnectionTests {
+    @Test func statusToolIsScopedAndRejectsOwnerOverrides() async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let session = f.session()
+        let tool = try #require(session.tools(for: f.owner.id).first { $0.descriptor.name == "GetChannelStatus" })
+        let call = try NormalizedToolCall(id: "status", name: "GetChannelStatus", argumentsJSON: Data(#"{"platform":"slack"}"#.utf8))
+        let result = try await tool.execute(call, context: f.context)
+        let encoded = String(decoding: try JSONEncoder().encode(result), as: UTF8.self)
+        #expect(encoded.contains("disabled"))
+        #expect(!encoded.contains("PRIVATE"))
+        let invalid = try NormalizedToolCall(id: "invalid", name: "GetChannelStatus", argumentsJSON: Data(#"{"platform":"slack","agent_id":"other"}"#.utf8))
+        await #expect(throws: (any Error).self) { _ = try await tool.execute(invalid, context: f.context) }
+        session.close()
+        await #expect(throws: (any Error).self) { _ = try await tool.execute(call, context: f.context) }
+    }
     private struct Snapshot: Equatable {
         var connections: [ChannelConnection]
         var inbound: [ChannelEnvelope]

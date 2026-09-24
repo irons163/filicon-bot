@@ -149,6 +149,32 @@ public actor AgentManagementSession {
          AgentProfileTool(session: self, senderID: senderID, operation: .update),
          AgentProfileTool(session: self, senderID: senderID, operation: .setOwnProfile, memoryQuery: AgentMemoryQuery(memoryQuery)),
          AgentMemorySearchTool(session: self, senderID: senderID)]
+        + (channels == nil ? [] : [AgentChannelStatusTool(session: self, senderID: senderID)])
+    }
+
+    private var channelStatusChecks = 0
+    fileprivate func checkChannelStatus(_ call: NormalizedToolCall, context: ToolContext, senderID: UUID) async throws -> NormalizedToolResult {
+        try lifetime.check()
+        guard context.conversationID == originID, call.name == "GetChannelStatus",
+              call.argumentsJSON.count <= 1_024,
+              let fields = try JSONSerialization.jsonObject(with: call.argumentsJSON) as? [String: String],
+              Set(fields.keys) == ["platform"], let platform = fields["platform"],
+              ["slack", "discord"].contains(platform) else { throw ChannelDisconnectionError.invalid }
+        guard channelStatusChecks < 8, let channels else {
+            throw ChannelDisconnectionError.unavailable
+        }
+        channelStatusChecks += 1
+        guard let owner = await agents.profile(id: senderID), owner.archivedAt == nil else {
+            throw ChannelDisconnectionError.unavailable
+        }
+        try lifetime.check()
+        let status = try await channels.verifyOwnCredential(agentID: senderID, accountID: accountID, platform: platform)
+        try lifetime.check()
+        guard let current = await agents.profile(id: senderID), current.archivedAt == nil else {
+            throw ChannelDisconnectionError.unavailable
+        }
+        try lifetime.check()
+        return .init(callID: call.id, content: [.text("\(platform): \(status). Authentication is a point-in-time profile check, not proof of message delivery, listener health, or additional permissions. No configuration was changed. Unverified does not distinguish invalid credentials from network/service failure.")])
     }
 
     fileprivate func searchMemory(_ call: NormalizedToolCall, context: ToolContext, senderID: UUID) async throws -> NormalizedToolResult {
@@ -1275,6 +1301,17 @@ private extension JSONEncoder {
         let encoder = JSONEncoder()
         encoder.outputFormatting = .sortedKeys
         return encoder
+    }
+}
+
+private struct AgentChannelStatusTool: ToolExecutor {
+    let session: AgentManagementSession
+    let senderID: UUID
+    let descriptor = ToolDescriptor(name: "GetChannelStatus",
+        description: "Verify your own existing Slack or Discord credential with a read-only remote profile request. Use after a secure credential submission. No credential, remote identity or diagnostic details are returned. Status: authenticated, unverified, stale, disabled, unavailable, ambiguous, or not_configured. Authentication alone does not prove listener health or delivery. Does not install, enable, connect or change permissions. At most eight checks per request. No agent or account selector is accepted.",
+        inputSchema: Data(#"{"type":"object","properties":{"platform":{"type":"string","enum":["slack","discord"]}},"required":["platform"],"additionalProperties":false}"#.utf8), parallelSafe: false)
+    func execute(_ call: NormalizedToolCall, context: ToolContext) async throws -> NormalizedToolResult {
+        try await session.checkChannelStatus(call, context: context, senderID: senderID)
     }
 }
 

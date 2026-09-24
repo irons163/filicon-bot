@@ -33,6 +33,40 @@ struct ChannelLifecycleTests {
         }
     }
     private let date = Date(timeIntervalSince1970: 1_000)
+    @Test(arguments: ["authenticated", "disabled", "other-account", "other-owner", "failure"])
+    func ownCredentialStatusIsReadOnlyAndScoped(mode: String) async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let owner = UUID(uuidString: "00000000-0000-0000-0000-000000000003")!
+        var connection = ChannelConnection(id: f.first.id, connectorID: "slack", displayName: "First",
+            secretReference: f.first.secretReference, agentID: owner)
+        connection.enabled = mode != "disabled"
+        connection.accountID = mode == "other-account" ? "other" : "local"
+        try await f.service.saveConnection(connection)
+        await f.service.register(LifecycleConnector(descriptor: .init(id: "slack", displayName: "Slack"), failProfile: mode == "failure"))
+        let before = await Snapshot(f.service)
+        let status = try await f.service.verifyOwnCredential(agentID: mode == "other-owner" ? f.second.id : owner,
+            accountID: "local", platform: "slack")
+        let expected = mode == "other-account" || mode == "other-owner" ? "not_configured" : mode == "failure" ? "unverified" : mode
+        expectNoDifference(status, expected)
+        let after = await Snapshot(f.service)
+        expectNoDifference(after, before)
+    }
+    @Test func credentialStatusRejectsAReplacedCredential() async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let owner = f.second.id
+        let connection = ChannelConnection(id: f.first.id, connectorID: "slack", displayName: "First",
+            secretReference: f.first.secretReference, agentID: owner)
+        try await f.service.saveConnection(connection)
+        let gate = ChannelLifecycleGate()
+        await f.service.register(LifecycleConnector(descriptor: .init(id: "slack", displayName: "Slack"), profileGate: gate))
+        let check = Task { try await f.service.verifyOwnCredential(agentID: owner, accountID: "local", platform: "slack") }
+        await gate.waitForEntry()
+        _ = await f.service.commitCredential(connectionID: connection.id) { _ in (true, true) }
+        await gate.release()
+        let status = try await check.value
+        expectNoDifference(status, "stale")
+    }
+
     private func fixture() async throws -> Fixture {
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-channel-lifecycle-\(UUID())")
         let service = try ChannelService(storeURL: root.appending(path: "channels.json"))
@@ -447,13 +481,14 @@ private actor ChannelLifecycleGate {
 }
 
 private struct LifecycleConnector: ChannelConnector {
-    let descriptor = ChannelConnectorDescriptor(id: "probe", displayName: "Probe")
+    var descriptor = ChannelConnectorDescriptor(id: "probe", displayName: "Probe")
     var profileGate: ChannelLifecycleGate?
     var profileValue = ChannelProfile(id: "remote-first", displayName: "First remote profile", workspaceID: "remote-workspace")
     var stream: LifecycleStream?
     var sendGate: ChannelLifecycleGate?
     var sendProbe: LifecycleSendProbe?
     var failSend = false
+    var failProfile = false
     func inbound(connection: ChannelConnection) -> AsyncThrowingStream<ChannelEnvelope, Error> {
         if let stream { return stream.stream }
         return AsyncThrowingStream { $0.finish() }
@@ -465,6 +500,7 @@ private struct LifecycleConnector: ChannelConnector {
     }
     func profile(connection: ChannelConnection) async throws -> ChannelProfile? {
         await profileGate?.hold()
+        if failProfile { throw NSError(domain: "FAKE_SECRET", code: 1) }
         return profileValue
     }
 }

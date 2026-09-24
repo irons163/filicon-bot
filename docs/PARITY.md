@@ -1,5 +1,7 @@
 # Filicon / Grok Bot 0.18 功能 parity matrix（current implementation）
 
+憑證驗證查詢（2026-09-24）：新增 host-scoped GetChannelStatus，以唯讀 profile 查詢回報自己的既有 Slack／Discord 認證，不揭露 secret／identity／diagnostics，不以登入成功代表送達或 listener 健康。新增隔離測試通過；廣泛回歸受鎖定檔案保護影響待補驗。不是原版 MCP 狀態功能的全面替代，AGENT-02 維持 partial。
+
 憑證更新連線（2026-09-24）：成功安全寫入後會重建原本運行中的 listener 並排除舊 profile 結果；失敗／重送不重建，停止的連線不自動啟用。遠端登入狀態、新連線與其他 secret-request 入口仍未完成，AGENT-02 維持 partial。
 
 獨立信箱憑證流程（2026-09-24）：已接上模型 secret-request、遮罩卡片、既有 Slack／Discord token 目的地、安全提交、durable 回條與新 session 續聊。保存回條失敗可不重寫憑證地重試；account／Stop／封存及工具邊界有隔離測試。群組／直接聊天、reply_to、新連線／其他 connector 及真實 Keychain／遠端登入驗收仍未完成，AGENT-02 維持 partial；詳見 [協作核對紀錄](Agent-collaboration-parity.md)。

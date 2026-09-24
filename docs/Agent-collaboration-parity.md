@@ -1,5 +1,13 @@
 # 協作能力核對紀錄（更新至 2026-09-24）
 
+## 提交後驗證認證（2026-09-24）
+
+最終針對性測試 `channel-status-focused.log`、原生建置 `channel-status-native.log` 均 exit 0，封裝與 deep strict codesign 通過；完整回歸仍待解鎖。
+
+原版 `sand-secret-request.ts` 的回條要求後續查核 connector 狀態。Filicon 增加原生 `GetChannelStatus(platform:slack|discord)`，在有 ChannelService 的管理 session 提供；不是原版 MCP server 狀態工具的別名。host 固定 account／agent／origin，只查自己的唯一既有連線，最多八次。實際 profile 查詢只回 authenticated／unverified 等固定狀態，不回傳 identity、憑證或底層錯誤，不保存 profile、不啟用或重建連線。unverified 不區分網路故障或無效認證；authenticated 只代表當次 profile 驗證，不代表 listener 健康、訊息送達或新權限。查詢期間更新憑證／連線後的舊結果回 stale，session 關閉或代理人封存不回報成功。
+
+使用 testing／CustomDump 技能與假 connector 驗證帳號／owner 隔離、disabled、認證成功、錯誤遮蔽、拒絕模型指定 owner、關閉及憑證換代。新增測試通過；較廣回歸記錄 `channel-status-tests.log` 遇到鎖定畫面時受保護 fixture 讀取 EPERM（已確認 IOConsoleLocked=Yes），尚不能宣稱完整回歸通過。仍需解鎖後補驗；真實遠端登入、新連線建立、其他入口與 MCP 狀態仍保留原範圍，AGENT-02 partial。
+
 ## 憑證更新後的監聽連線（2026-09-24）
 
 確認 Slack 輪詢在開始時解析 token 並持有至結束。安全提交現在透過 ChannelService 的同步 commit 操作，在成功寫入後使舊 profile 查詢失效，取消舊 listener，使用原 inbound callback 和最新 cursor 重建原本正在執行的 listener。寫入失敗或已提交 receipt 重送不重建；已停止的連線不會被自動啟用。此處只代表重新載入認證，不宣稱遠端登入成功；已開始的外部請求不能撤回。

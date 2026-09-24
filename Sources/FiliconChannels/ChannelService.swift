@@ -108,6 +108,35 @@ public actor ChannelService {
         state.connections.sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
     }
 
+    public func verifyOwnCredential(agentID: UUID, accountID: String, platform: String) async throws -> String {
+        guard ["slack", "discord"].contains(platform) else { return "unsupported" }
+        let matches = state.connections.filter {
+            $0.agentID == agentID && ($0.accountID ?? "local") == accountID && $0.connectorID == platform
+        }
+        guard matches.count == 1, let connection = matches.first else {
+            return matches.isEmpty ? "not_configured" : "ambiguous"
+        }
+        guard connection.enabled else { return "disabled" }
+        guard let connector = connectors[platform] else { return "unavailable" }
+        let revision = connectionRevisions[connection.id]
+        let verified: Bool
+        do { verified = try await connector.profile(connection: connection) != nil }
+        catch is CancellationError { throw CancellationError() }
+        catch { verified = false }
+        try Task.checkCancellation()
+        let currentMatches = state.connections.filter {
+            $0.agentID == agentID && ($0.accountID ?? "local") == accountID && $0.connectorID == platform
+        }
+        guard connectionRevisions[connection.id] == revision,
+              currentMatches.count == 1, currentMatches.contains(where: {
+                  $0.id == connection.id && $0.enabled && $0.agentID == agentID
+                      && ($0.accountID ?? "local") == accountID && $0.secretReference == connection.secretReference
+              }) else {
+            return "stale"
+        }
+        return verified ? "authenticated" : "unverified"
+    }
+
     /// Host credential commits must revalidate and perform their synchronous
     /// write without an actor hop between them. Never run network work here.
     public func withCredentialSnapshot<Result: Sendable>(
