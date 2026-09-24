@@ -1,5 +1,11 @@
 # 協作能力核對紀錄（更新至 2026-09-25）
 
+## 信箱引用摘要畫面（2026-09-25）
+
+已保存的信箱 publication 現在顯示引用作者與最多 240 字摘要，可展開原文與圖片；不存在或重複 ID 顯示既有的「原訊息無法使用」。原訊息解析限制同 sender／recipient／origin、截至引用 publication 之前，不使用模型的 40 則目錄上限，避免較舊的合法引用失去顯示。未加入跨信箱跳轉或猜測來源。
+
+SwiftUI 技能用於 disclosure 摘要，testing／CustomDump 用於同範圍、重複、未來、跨 scope／sender 查找測試及七語言畫面渲染。修正既有畫面測試只設 environment locale、未設 App TaskLocal 語系的問題；人工檢視繁中與修正後法文圖，文字可見且未截斷。`mailbox-quote-ui-tests.log`、`mailbox-quote-ui-native.log` 通過，package／deep strict codesign 通過。未啟動使用者 App。暗色、展開互動及圖片引用仍需進一步 UI 驗收；短地址與 sand-msg 導航仍未完成，完整回歸仍待補驗，AGENT-02 partial。
+
 ## 信箱問題引用接線（2026-09-25）
 
 publishQuestion 可保存 replyToMessageID，沿用同參與者／origin 引用目錄及共用保存驗證；獨立信箱 SendMessage 的 widget reply_to 接入此路徑。提問後仍暫停原回合，回答或關閉後才以新的人類回合續聊，不繼承工具權限。不存在、自我、跨範圍引用不會保存或造成暫停；保存成功後不得繼續發布。

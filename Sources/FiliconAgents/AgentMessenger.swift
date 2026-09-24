@@ -229,6 +229,32 @@ public actor AgentMessenger {
         }
     }
 
+    /// Resolves a saved quote without the model directory's 40-message limit.
+    /// Never resolves a future publication, another mailbox, or an ambiguous ID.
+    public nonisolated static func replySource(for publication: RoomMessage, replyingTo id: UUID,
+                                              messages: [AgentMessage]) -> RoomMessage? {
+        guard let target = publication.replyToMessageID, target != publication.id,
+              messages.filter({ $0.id == id }).count == 1,
+              let index = messages.firstIndex(where: { $0.id == id }),
+              let scope = messages[index].delivery?.originConversationID,
+              publication.groupID == scope, publication.senderID == messages[index].recipientID,
+              let publications = messages[index].delivery?.publications,
+              publications.filter({ $0.id == publication.id }).count == 1,
+              let position = publications.firstIndex(of: publication) else { return nil }
+        let inbound = messages[index]
+        let candidates = messages[...index].filter {
+            $0.senderID == inbound.senderID && $0.recipientID == inbound.recipientID
+                && $0.delivery?.originConversationID == scope
+        }.flatMap { item -> [RoomMessage] in
+            let input = RoomMessage(id: item.id, groupID: scope, senderID: item.senderID,
+                text: item.text, createdAt: item.createdAt, images: item.images ?? [])
+            let saved = item.id == id ? Array(publications.prefix(position)) : item.delivery?.publications ?? []
+            return [input] + saved.filter { $0.groupID == scope && $0.senderID == inbound.recipientID && $0.memberOutcome == nil }
+        }.filter { $0.id == target }
+        guard candidates.count == 1 else { return nil }
+        return candidates.first
+    }
+
     public func replyDirectory(replyingTo id: UUID) throws -> [RoomMessage] {
         guard state.messages.filter({ $0.id == id }).count == 1,
               let index = state.messages.firstIndex(where: { $0.id == id }),

@@ -87,10 +87,15 @@ private struct AppQuestionProvider: InteractiveToolProvider {
 
     @Test(arguments: ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"])
     func mailboxPublicationRendersQuestionInsteadOfDuplicatePrompt(language: String) throws {
+        try FiliconLocalization.$languageOverride.withValue(language) {
         let question = try AgentQuestion.parse(Data(#"{"prompt":"Which layout?","options":[{"label":"Compact"},{"label":"Spacious"}],"allowCustom":true}"#.utf8))
         var publication = RoomMessage(groupID: UUID(), senderID: UUID(), text: question.prompt)
         publication.question = GroupQuestion(question: question, accountID: "local", memberIDs: [])
-        let host = NSHostingView(rootView: AgentPublishedResponses(publications: [publication], canAnswer: { _ in true })
+        let original = RoomMessage(groupID: publication.groupID, senderID: publication.senderID,
+            text: "Please review the layout. 請檢查版面配置。")
+        publication.replyToMessageID = original.id
+        let host = NSHostingView(rootView: AgentPublishedResponses(publications: [publication],
+            replySource: { _ in original }, replyAuthor: { _ in "Designer / 設計師" }, canAnswer: { _ in true })
             .padding(16).frame(width: 420).background(FiliconTheme.canvas)
             .environment(\.locale, Locale(identifier: language)).environment(\.colorScheme, .light))
         host.appearance = NSAppearance(named: .aqua)
@@ -105,6 +110,7 @@ private struct AppQuestionProvider: InteractiveToolProvider {
             let output = URL(fileURLWithPath: path)
             try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
             try #require(bitmap.representation(using: .png, properties: [:])).write(to: output.appending(path: "mailbox-question-\(language).png"))
+        }
         }
     }
 

@@ -177,6 +177,8 @@ struct AgentMessagingView: View {
                     Text(deliveryTitle(delivery.state)).font(.caption).foregroundStyle(.secondary)
                     if let publications = delivery.publications, !publications.isEmpty {
                         AgentPublishedResponses(publications: publications,
+                            replySource: { AgentMessenger.replySource(for: $0, replyingTo: message.id, messages: model.agentMessages) },
+                            replyAuthor: { $0.senderID.map(agentName) ?? "" },
                             canAnswer: { model.canAnswerMailboxQuestion(message, publication: $0) },
                             onAnswer: { publication, answer in
                                 Task { await model.answerMailboxQuestion(incomingID: message.id, publicationID: publication.id, answer: answer) }
@@ -278,6 +280,8 @@ struct AgentMessagingView: View {
 
 struct AgentPublishedResponses: View {
     let publications: [RoomMessage]
+    var replySource: (RoomMessage) -> RoomMessage? = { _ in nil }
+    var replyAuthor: (RoomMessage) -> String = { _ in "" }
     var canAnswer: (RoomMessage) -> Bool = { _ in false }
     var onAnswer: (RoomMessage, AgentQuestionAnswer) -> Void = { _, _ in }
     var secretModel: (RoomMessage) -> AgentSecretRequestCardModel? = { _ in nil }
@@ -287,6 +291,9 @@ struct AgentPublishedResponses: View {
             Label(l10n("Published response"), systemImage: "bubble.left.and.text.bubble.right").font(.caption).foregroundStyle(.secondary)
             ForEach(publications) { publication in
                 VStack(alignment: .leading, spacing: 6) {
+                    if publication.replyToMessageID != nil {
+                        MailboxReplyPreview(original: replySource(publication), author: replySource(publication).map(replyAuthor) ?? "")
+                    }
                     if let secret = publication.secretRequest {
                         if let model = secretModel(publication) {
                             AgentSecretRequestCard(model: model).disabled(!secretEnabled(publication))
@@ -309,6 +316,35 @@ struct AgentPublishedResponses: View {
                 }
             }
         }
+    }
+}
+
+struct MailboxReplyPreview: View {
+    let original: RoomMessage?
+    let author: String
+    var body: some View {
+        Group {
+            if let original {
+                DisclosureGroup {
+                    Text(verbatim: original.text).font(.callout).textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let images = original.images, !images.isEmpty { AgentMessageImagePreviews(images: images) }
+                } label: {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Label(l10n("Replying to"), systemImage: "arrowshape.turn.up.left").font(.caption2)
+                        Text(verbatim: author).font(.caption.weight(.semibold)).lineLimit(1)
+                        Text(verbatim: original.text.isEmpty && !(original.images ?? []).isEmpty
+                            ? l10n("Image") : String(original.text.prefix(240)))
+                            .font(.caption).lineLimit(3)
+                    }
+                }
+            } else {
+                Label(l10n("Original message unavailable"), systemImage: "arrowshape.turn.up.left").font(.caption)
+            }
+        }
+        .padding(10).frame(maxWidth: .infinity, alignment: .leading)
+        .background(FiliconTheme.input, in: RoundedRectangle(cornerRadius: 10))
+        .accessibilityIdentifier("mailbox-reply-preview")
     }
 }
 

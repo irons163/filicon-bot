@@ -8,6 +8,22 @@ struct MailboxReplyTests {
     private let scope = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
     private let date = Date(timeIntervalSince1970: 1_000)
 
+    @Test(arguments: ["valid", "duplicate", "future", "foreignScope", "foreignSender"])
+    func displayResolutionUsesOnlyEarlierUnambiguousMailboxMessages(mode: String) {
+        let sender = UUID(), owner = UUID(), foreign = UUID()
+        let target = AgentMessage(senderID: mode == "foreignSender" ? foreign : sender,
+            recipientID: owner, text: "Original", createdAt: date,
+            delivery: .init(chainID: scope, originConversationID: mode == "foreignScope" ? foreign : scope))
+        var input = AgentMessage(senderID: sender, recipientID: owner, text: "Now", createdAt: date,
+            delivery: .init(chainID: scope, originConversationID: scope))
+        var publication = RoomMessage(groupID: scope, senderID: owner, text: "Answer", createdAt: date)
+        publication.replyToMessageID = target.id
+        input.delivery?.publications = [publication]
+        let messages = mode == "future" ? [input, target] : mode == "duplicate" ? [target, target, input] : [target, input]
+        let original = AgentMessenger.replySource(for: publication, replyingTo: input.id, messages: messages)
+        expectNoDifference(original?.text, mode == "valid" ? "Original" : nil)
+    }
+
     @Test(arguments: ["valid", "foreignScope", "foreignSender", "future", "self", "missing"])
     func validatesReferencesBeforeSaving(mode: String) async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "mailbox-reply-\(UUID())")
