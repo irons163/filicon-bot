@@ -337,6 +337,8 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
     public var delivery: AgentMessageDelivery?
     /// Optional for backward compatibility with text-only persisted mailboxes.
     public let images: [AttachmentMetadata]?
+    /// Host-created human response provenance, never supplied by SendToAgent.
+    public internal(set) var questionResponse: MailboxQuestionResponse?
 
     public init(id: UUID = UUID(), senderID: UUID, recipientID: UUID, text: String,
                 priority: AgentMessagePriority = .normal, createdAt: Date = Date(), deliveredAt: Date? = nil,
@@ -346,6 +348,14 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
         self.delivery = delivery
         self.images = images.isEmpty ? nil : images
     }
+}
+
+public struct MailboxQuestionResponse: Codable, Hashable, Sendable {
+    public let incomingMessageID: UUID
+    public let publicationID: UUID
+    public let question: AgentQuestion
+    public let answer: AgentQuestionAnswer
+    public let accountID: String
 }
 
 public struct AgentGroup: Identifiable, Codable, Hashable, Sendable {

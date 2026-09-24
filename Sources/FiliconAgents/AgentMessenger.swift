@@ -23,6 +23,7 @@ public actor AgentMessenger {
     }
 
     public func send(_ message: AgentMessage) async throws {
+        guard message.questionResponse == nil else { throw AgentQuestionError.unavailable }
         guard message.senderID != message.recipientID else { throw AgentServiceError.selfMessage }
         guard message.text.count <= 8_000 else { throw AgentServiceError.messageTooLong }
         guard !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw AgentServiceError.invalidName }
@@ -53,6 +54,69 @@ public actor AgentMessenger {
     /// The mailbox is the canonical publication receipt. Its identity, author,
     /// image capability and atomic persistence are checked in the same actor turn.
     public func publish(_ publication: RoomMessage, replyingTo id: UUID, lifetime: AgentPublicationLifetime) throws {
+        guard publication.question == nil else { throw AgentPublicationError.invalid }
+        try publishValidated(publication, replyingTo: id, lifetime: lifetime)
+    }
+
+    /// The host supplies account/scope; the model supplies only question content.
+    /// A saved question ends publication for this delivery. It is not permission
+    /// to execute another turn or grant any tool access.
+    public func publishQuestion(_ question: AgentQuestion, replyingTo id: UUID, accountID: String,
+                                originID: UUID, publicationID: UUID = UUID(), at: Date = Date(),
+                                lifetime: AgentPublicationLifetime) throws -> RoomMessage {
+        try question.validate()
+        guard !accountID.isEmpty, accountID.utf8.count <= 256,
+              let incoming = state.messages.first(where: { $0.id == id }),
+              incoming.delivery?.originConversationID == originID else { throw AgentQuestionError.unavailable }
+        var publication = RoomMessage(id: publicationID, groupID: originID, senderID: incoming.recipientID,
+                                      text: question.prompt, createdAt: at)
+        publication.question = GroupQuestion(question: question, accountID: accountID,
+                                            memberIDs: [incoming.senderID, incoming.recipientID])
+        try publishValidated(publication, replyingTo: id, lifetime: lifetime)
+        return publication
+    }
+
+    /// Resolving a question and queuing its response are one durable write.
+    /// Caller must drain the returned message explicitly in a fresh user turn;
+    /// restarting never automatically executes this queued response.
+    public func answerQuestion(replyingTo id: UUID, publicationID: UUID, answer: AgentQuestionAnswer,
+                               accountID: String, originID: UUID, responseID: UUID = UUID(),
+                               at: Date = Date(), lifetime: AgentPublicationLifetime) async throws -> AgentMessage {
+        guard let before = state.messages.first(where: { $0.id == id }) else { throw AgentQuestionError.unavailable }
+        let active = await service.list()
+        guard active.contains(where: { $0.id == before.senderID }),
+              active.contains(where: { $0.id == before.recipientID }) else {
+            throw AgentQuestionError.unavailable
+        }
+        var result: AgentMessage?
+        try lifetime.commit {
+            guard let index = state.messages.firstIndex(where: { $0.id == id }), state.messages[index] == before,
+                  let delivery = before.delivery, delivery.state == .completed, delivery.originConversationID == originID,
+                  let questionIndex = delivery.publications?.firstIndex(where: { $0.id == publicationID }),
+                  let publication = delivery.publications?[questionIndex],
+                  publication.groupID == originID, publication.senderID == before.recipientID,
+                  var pending = publication.question, pending.isPending, pending.accountID == accountID,
+                  pending.memberIDs == [before.senderID, before.recipientID],
+                  !state.messages.contains(where: { $0.id == responseID }) else { throw AgentQuestionError.unavailable }
+            let text = try pending.question.reply(for: answer)
+            var response = AgentMessage(id: responseID, senderID: before.senderID, recipientID: before.recipientID,
+                text: text, createdAt: at, delivery: .init(chainID: responseID, originConversationID: originID))
+            response.questionResponse = .init(incomingMessageID: id, publicationID: publicationID,
+                question: pending.question, answer: answer, accountID: accountID)
+            pending.answer = answer
+            pending.responseMessageID = responseID
+            var next = state
+            next.messages[index].delivery?.publications?[questionIndex].question = pending
+            next.messages.append(response)
+            try Self.save(next, to: storeURL)
+            state = next
+            result = response
+        }
+        guard let result else { throw AgentQuestionError.unavailable }
+        return result
+    }
+
+    private func publishValidated(_ publication: RoomMessage, replyingTo id: UUID, lifetime: AgentPublicationLifetime) throws {
         try lifetime.commit {
             guard let index = state.messages.firstIndex(where: { $0.id == id }),
                   let delivery = state.messages[index].delivery,
@@ -61,7 +125,8 @@ public actor AgentMessenger {
                   publication.senderID == state.messages[index].recipientID,
                   (!publication.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !(publication.images ?? []).isEmpty),
                   publication.text.count <= 8_000, publication.toolActivities.isEmpty,
-                  publication.memberOutcome == nil else { throw AgentPublicationError.invalid }
+                  publication.memberOutcome == nil, publication.replyToMessageID == nil,
+                  publication.shortAddress == nil else { throw AgentPublicationError.invalid }
             let images = publication.images ?? []
             guard images.count <= 4, Set(images.map(\.id)).count == images.count,
                   images.allSatisfy({ image in state.messages[index].images?.contains(where: { image.isAnnotation(of: $0) }) == true }) else {
@@ -72,6 +137,7 @@ public actor AgentMessenger {
                 guard existing == publication else { throw AgentPublicationError.invalid }
                 return
             }
+            guard !prior.contains(where: { $0.question != nil }) else { throw AgentQuestionError.unavailable }
             guard prior.count < 2 else { throw AgentPublicationError.limit }
             var next = state
             next.messages[index].delivery?.publications = prior + [publication]

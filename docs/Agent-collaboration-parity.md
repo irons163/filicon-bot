@@ -1,5 +1,17 @@
 # 協作能力核對紀錄（更新至 2026-09-24）
 
+## 信箱提問接線第一步：原子保存與回答續接契約（2026-09-24）
+
+`AgentMessenger` 新增 host 專用 `publishQuestion`／`answerQuestion`，沿用 `AgentQuestion` 的有界選項、自訂回答與略過語意。問題保存進既有 delivery publications，與文字共用兩則上限，保存問題後不再接受後續發文。帳號、原對話、提問代理人與兩位參與者由 host 固定；一般 `publish` 不能夾帶 question／群組引用 metadata，普通 `send` 也不能注入 human-answer provenance。
+
+回答要求原 delivery 已完成、問題未回答／退休、同帳號／scope、參與者仍 active。跨 actor 取得名單後重驗整筆 mailbox snapshot，並在同一 publication lifetime 內把選擇與唯一 responseMessageID、host `MailboxQuestionResponse` provenance、全新 queued 回合一次落盤。重複／並發回答不能新增第二筆，失敗不留下半個回答。續接保留原寄件者、只送原提問者，不攜帶舊圖片、工具權限或 priority；重啟會沿用既有 queued→cancelled 回復，不自行執行答案。舊訊息省略新 optional provenance 仍可解碼。
+
+**這批尚未開放產品功能**：模型 publisher、暫停結果處理、App 回答／續接、move-on retirement 與 UI 都還沒接上。這是完整信箱 widget 的底層第一步，不是原版提問功能已完成，也不新增 complete 列。下一步須接上 host 人類回答入口、作用域／帳號切換與新回合工具核准，才可向模型公開 widget；不能只把保存的 pending question 畫成可點卡片。
+
+使用 Swift testing／CustomDump 技能，7 項測試（另含參數案例）覆蓋選項／自訂／略過、持久化重開、同時回答、scope／帳號／封存／取消／非完成回合、共享發布額度、偽造 metadata、舊資料及保存失敗回滾，exit 0。原生 Debug build、deep strict codesign、package verifier 通過。首輪與圖片一起跑遇到 81 issues，輸出顯示受保護圖片讀取拒絕，同時 `IOConsoleLocked=Yes`；新信箱 suite 本身通過。稍後系統已解鎖，已重新啟動完整回歸，最終結果另記。沒有降低檔案保護、重啟 App／Xcode、push 或操作真實信箱。
+
+解鎖後完整非並行回歸 exit 0（`.build/validation/mailbox-question-full-tests.log`），包含先前失敗的圖片案例；先前鎖定失敗保留於 `.build/validation/mailbox-question-store-tests.log`。live 模型 opt-in 仍未啟用。下一批不能把這次底層通過當成尚未接線的信箱 widget 已驗收。
+
 ## 本輪增量：SendMessage 原版文字格式（2026-09-24）
 
 本機 reconstructed `source/host/runner/tools/send-message-tool.ts` 使用 `{type:"text",content:"..."}`，Filicon 先前只接受 `{text:"..."}`。此次在共用 `AgentUserMessageTool` 接上原版文字格式，schema 與描述明示新舊兩種格式，不能混合。文字正規化、8,000 字上限、兩次發布預算、call receipt／內容去重、scope／Stop、reply_to 解析和當前圖片核准都共用既有流程；同 call ID 從原版格式換成等效 shorthand 回傳相同 receipt，不重複發布。未知 type、缺 content、同時 text/content、外部 channel／收件者、不可用圖片／引用與非文字 content 都拒絕。

@@ -1,5 +1,7 @@
 # Filicon / Grok Bot 0.18 功能 parity matrix（current implementation）
 
+信箱提問底層（2026-09-24）：新增 host 問題保存與回答／queued 續接的原子契約，保留帳號／scope／提問者、一次回答、兩則發布上限與失敗回滾。模型入口、UI、move-on 與 App 續接尚未接線，**mailbox widget 仍未完成**，不改 complete 數。7 項底層測試與解鎖後完整非並行回歸、原生建置／嚴格簽章／封裝通過；首輪鎖定時圖片讀取拒絕另保留紀錄。詳見 [協作核對紀錄](Agent-collaboration-parity.md)。
+
 文字工具格式對齊（2026-09-24）：共用 `SendMessage` 接受原版 `{type:"text",content:"..."}`，保留舊 `{text:"..."}`，混用拒絕；兩者共用發布額度、receipt／內容去重、引用及當前圖片核准。群組／mailbox 雙格式回歸、完整非並行測試、原生建置／簽章／封裝通過。任意 URL／路徑附件、mailbox 引用／提問與其他既有差異仍未完成，計數不變。詳見 [協作核對紀錄](Agent-collaboration-parity.md)。
 
 範圍校正（2026-09-24）：原版 `sand-state-tool.ts:121` 的模型排程 member schema 只有 cron／Slack／GitHub／Teams／Linear／Sentry／PagerDuty。generic connector 是 Filicon-native 能力；其模型寫入限制不是已確認的原版缺失，不因此擴充模型權限。新增 create/update 與混合 OR 的拒絕／不落盤回歸測試。歷史段落提及 generic 限制時應依此解讀；完成數不變，真正的 settled checks、Slack 身分、Teams 驗證與其他 partial 項目仍未完成。詳見 [協作核對紀錄](Agent-collaboration-parity.md)。
