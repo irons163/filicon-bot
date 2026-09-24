@@ -1,5 +1,11 @@
 # 協作能力核對紀錄（更新至 2026-09-25）
 
+## 信箱問題引用接線（2026-09-25）
+
+publishQuestion 可保存 replyToMessageID，沿用同參與者／origin 引用目錄及共用保存驗證；獨立信箱 SendMessage 的 widget reply_to 接入此路徑。提問後仍暫停原回合，回答或關閉後才以新的人類回合續聊，不繼承工具權限。不存在、自我、跨範圍引用不會保存或造成暫停；保存成功後不得繼續發布。
+
+使用 testing／CustomDump 技能補保存與假 provider 整合驗證。`mailbox-question-reply-tests.log` 兩項測試共七案例通過，`mailbox-question-reply-native.log` 原生建置與封裝／deep strict codesign 通過。系統仍鎖定，前輪廣泛回歸的 protected-file EPERM 待解鎖補驗，不能用本次定向通過代替完整回歸。引用的畫面卡片與短地址仍待補齊，未宣稱全面 parity；未啟動 App 或修改真實資料。
+
 ## 信箱同回合發布回條（2026-09-25）
 
 獨立信箱使用 host 提供的 receiptSenderID／publishReceipt，只有正式保存後才回傳 RoomMessage。共用工具重驗 sender、scope、內容、圖片及 reply target，將新 UUID 加入本回合目錄；模型可先發布進度，再以 UUID 引用該訊息。鏡像顯示失敗仍不要求重發已保存訊息。非獨立信箱入口保留原 transport，不自動增加能力；secret／question 暫停流程不變。

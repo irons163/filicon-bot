@@ -36,6 +36,36 @@ struct MailboxQuestionTests {
             originID: scope, publicationID: publicationID, at: date, lifetime: .init())
     }
 
+    @Test(arguments: ["input", "missing", "self", "foreignScope"])
+    func questionReplyValidatesTargetBeforeSuspending(mode: String) async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let foreign = AgentMessage(id: responseID, senderID: f.incoming.senderID,
+            recipientID: f.incoming.recipientID, text: "Other scope", createdAt: date,
+            delivery: .init(chainID: responseID, originConversationID: responseID))
+        if mode == "foreignScope" { try await f.messenger.send(foreign) }
+        let target = mode == "input" ? f.incoming.id : mode == "self" ? publicationID : responseID
+        let before = await f.messenger.allMessages()
+        if mode == "input" {
+            let saved = try await f.messenger.publishQuestion(question(), replyingTo: f.incoming.id,
+                accountID: "account-A", originID: scope, publicationID: publicationID, at: date,
+                replyToMessageID: target, lifetime: .init())
+            expectNoDifference(saved.replyToMessageID, target)
+            expectNoDifference(saved.question?.isPending, true)
+            await #expect(throws: AgentQuestionError.unavailable) {
+                try await f.messenger.publish(RoomMessage(groupID: scope, senderID: f.incoming.recipientID,
+                    text: "Must wait", createdAt: date), replyingTo: f.incoming.id, lifetime: .init())
+            }
+        } else {
+            await #expect(throws: AgentPublicationError.invalid) {
+                _ = try await f.messenger.publishQuestion(question(), replyingTo: f.incoming.id,
+                    accountID: "account-A", originID: scope, publicationID: publicationID, at: date,
+                    replyToMessageID: target, lifetime: .init())
+            }
+            let after = await f.messenger.allMessages()
+            expectNoDifference(after, before)
+        }
+    }
+
     @Test(arguments: [AgentQuestionAnswer.option(0), .custom("  More contrast  "), .dismissed])
     func answerPersistsExactlyOnceAndRestartNeverRunsIt(answer: AgentQuestionAnswer) async throws {
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }

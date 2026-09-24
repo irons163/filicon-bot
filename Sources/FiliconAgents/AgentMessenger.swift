@@ -106,6 +106,7 @@ public actor AgentMessenger {
     /// to execute another turn or grant any tool access.
     public func publishQuestion(_ question: AgentQuestion, replyingTo id: UUID, accountID: String,
                                 originID: UUID, publicationID: UUID = UUID(), at: Date = Date(),
+                                replyToMessageID: UUID? = nil,
                                 lifetime: AgentPublicationLifetime) throws -> RoomMessage {
         try question.validate()
         guard !accountID.isEmpty, accountID.utf8.count <= 256,
@@ -115,6 +116,7 @@ public actor AgentMessenger {
                                       text: question.prompt, createdAt: at)
         publication.question = GroupQuestion(question: question, accountID: accountID,
                                             memberIDs: [incoming.senderID, incoming.recipientID])
+        publication.replyToMessageID = replyToMessageID
         try publishValidated(publication, replyingTo: id, lifetime: lifetime)
         return publication
     }

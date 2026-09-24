@@ -552,6 +552,16 @@ public actor AgentMessagingSession {
                     await onChange()
                 }
             } else { questionPublisher = nil }
+            let questionReplyPublisher: AgentUserMessageTool.QuestionReplyPublisher?
+            if supportsMailboxQuestions {
+                questionReplyPublisher = { [messenger, accountID, originConversationID, publicationLifetime, onChange] question, target in
+                    let publication = try await messenger.publishQuestion(question, replyingTo: inbound.id,
+                        accountID: accountID, originID: originConversationID, replyToMessageID: target,
+                        lifetime: publicationLifetime)
+                    await output.recordQuestion(publication)
+                    await onChange()
+                }
+            } else { questionReplyPublisher = nil }
             let secretPublisher: AgentUserMessageTool.SecretPublisher?
             if let publishSecret {
                 secretPublisher = { [publicationLifetime, onChange] request in
@@ -579,6 +589,7 @@ public actor AgentMessagingSession {
                     try await authorizePublication(agent, text, images, call, context)
                     try await checkOpen()
                 }, publishQuestion: questionPublisher, publishSecret: secretPublisher,
+                publishQuestionReply: questionReplyPublisher,
                 replyHistory: replyHistory, receiptSenderID: supportsMailboxQuestions ? agent.id : nil,
                 publishReceipt: receiptPublisher) { [messenger, onChange, publicationLifetime] text, images in
                 try await output.publish(text, images: images) { publication in

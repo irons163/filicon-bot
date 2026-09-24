@@ -133,8 +133,12 @@ struct AgentMessagingSessionTests {
         await f.registry.register(MessagingProvider { request, execute in
             let count = await f.probe.request(request)
             if count == 1 {
+                let inbound = try #require(await f.messenger.allMessages().first)
+                let fields: [String: Any] = ["type": "widget", "reply_to": inbound.id.uuidString,
+                    "widget": ["prompt": "Which layout?", "options": [["label": "Compact"], ["label": "Spacious"]],
+                               "allowCustom": true, "dismissOnMoveOn": true]]
                 _ = try await execute(.init(id: "question", name: "SendMessage", argumentsJSON:
-                    Data(#"{"type":"widget","widget":{"prompt":"Which layout?","options":[{"label":"Compact"},{"label":"Spacious"}],"allowCustom":true,"dismissOnMoveOn":true}}"#.utf8)))
+                    JSONSerialization.data(withJSONObject: fields)))
                 Issue.record("A question must suspend the model turn")
             } else {
                 let incoming = try #require(request.messages.last)
@@ -156,6 +160,7 @@ struct AgentMessagingSessionTests {
         let publication = try #require(incoming.delivery?.publications?.first)
         expectNoDifference(incoming.delivery?.state, .completed)
         expectNoDifference(publication.question?.isPending, true)
+        expectNoDifference(publication.replyToMessageID, incoming.id)
         let initialRequestCount = await f.probe.requests.count
         expectNoDifference(initialRequestCount, 1)
         let stopped = f.session(questions: true)

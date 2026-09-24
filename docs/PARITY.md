@@ -1,5 +1,7 @@
 # Filicon / Grok Bot 0.18 功能 parity matrix（current implementation）
 
+信箱問題引用（2026-09-25）：widget reply_to 已接模型至保存層，沿用範圍驗證及提問暫停／新回合回答。七個定向案例、原生建置、封裝通過；完整回歸仍待補驗。引用卡片與短地址仍未完成，AGENT-02 partial。
+
 信箱同回合回條（2026-09-25）：正式保存的 text／image publication UUID 可供同回合後續 reply_to 使用，共用 sender／scope／內容驗證。工具層與單獨 session 測試、原生建置及封裝通過；廣泛回歸遇 protected-file EPERM，完整補驗待解鎖。引用 UI、短地址、question 引用仍未完成，AGENT-02 partial。
 
 信箱引用增量（2026-09-25）：獨立信箱 SendMessage 接入同參與者／origin 的 reply_to UUID 目錄及保存時重驗；跨範圍、未來、自我及未知引用拒絕。完整回歸、原生建置、封裝及 deep strict codesign 通過。引用卡片、短地址、同回合新增 receipt 及 question 引用仍待接線，AGENT-02 partial、complete 計數不變。
