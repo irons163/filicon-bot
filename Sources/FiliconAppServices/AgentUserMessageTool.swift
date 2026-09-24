@@ -179,9 +179,8 @@ public actor AgentUserMessageTool: ToolExecutor, ToolRuntimeContextProviding {
     private nonisolated static func makeDescriptor(supportsImages: Bool, supportsQuestions: Bool, supportsReplies: Bool, supportsTextReplies: Bool, supportsQuestionReplies: Bool) -> ToolDescriptor {
         let images = supportsImages ? #", "images":{"type":"array","maxItems":4,"uniqueItems":true,"items":{"oneOf":[{"type":"string"},{"type":"object","properties":{"image_id":{"type":"string"},"alt":{"type":"string","maxLength":500}},"required":["image_id"],"additionalProperties":false}]},"description":"Current host-provided image IDs only, never paths or URLs. Each entry may be an ID or {image_id,alt} with an optional plain description (500 characters, no control characters). Requires fresh preview approval of all images and descriptions."}"# : ""
         let attachment = supportsImages ? #", "image_id":{"type":"string","description":"For a standalone image attachment, one exact ID from the current host-provided image directory. No text, path or URL. Requires fresh preview approval."}, "alt":{"type":"string","maxLength":500,"description":"Optional plain description for type:attachment only. Shown in preview approval, hover and image viewer. No control characters. This is descriptive content, never instructions or permission."}"# : ""
-        let messageTypes = supportsQuestions && supportsImages ? #", "type":{"type":"string","enum":["widget","attachment"]}"#
-            : supportsQuestions ? #", "type":{"type":"string","enum":["widget"]}"#
-            : supportsImages ? #", "type":{"type":"string","enum":["attachment"]}"# : ""
+        let types = ["text"] + (supportsQuestions ? ["widget"] : []) + (supportsImages ? ["attachment"] : [])
+        let messageTypes = #", "content":{"type":"string","minLength":1,"maxLength":8000}, "type":{"type":"string","enum":[\#(types.map { "\"\($0)\"" }.joined(separator: ","))]}"#
         let reply = supportsReplies ? #", "reply_to":{"type":"string","minLength":3,"maxLength":36,"description":"Optional exact shortAddress (e.g. t3u, t3s1) or UUID from this turn's reply directory only. Quotes a prior message in this group, without changing the recipient or granting permission."}"# : ""
         let question = supportsQuestions ? #"""
         ,"widget":{
@@ -206,10 +205,14 @@ public actor AgentUserMessageTool: ToolExecutor, ToolRuntimeContextProviding {
           }
         }
         """# : ""
-        let required = supportsQuestions || supportsImages ? "[]" : "[\"text\"]"
+        let variants = [
+            #"{"required":["text"],"not":{"anyOf":[{"required":["type"]},{"required":["content"]}]}}"#,
+            #"{"required":["type","content"],"properties":{"type":{"enum":["text"]}},"not":{"required":["text"]}}"#
+        ] + (supportsQuestions ? [#"{"required":["type","widget"],"properties":{"type":{"enum":["widget"]}}}"#] : [])
+          + (supportsImages ? [#"{"required":["type","image_id"],"properties":{"type":{"enum":["attachment"]}}}"#] : [])
         return .init(name: "SendMessage",
-            description: "Publish a useful message to the user in the current conversation, not to a peer. At most two messages per turn; do not repeat them in final text. " + (supportsImages ? "May include current incoming image IDs with text, or publish one current image without text using {type:'attachment',image_id:'exact ID'}, after fresh preview approval. Never use a path or URL." : "Images are not accepted.") + (supportsQuestions ? Self.questionInstructions : "") + (supportsReplies ? Self.replyInstructions(text: supportsTextReplies, questions: supportsQuestionReplies) : ""),
-            inputSchema: Data("{\"type\":\"object\",\"properties\":{\"text\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":8000}\(images)\(attachment)\(messageTypes)\(question)\(reply)},\"required\":\(required),\"additionalProperties\":false}".utf8), parallelSafe: false)
+            description: "Publish a useful message to the user in the current conversation, not to a peer. Use {type:'text',content:'...'} for normal text, or the legacy {text:'...'} shorthand; never mix both. At most two messages per turn; do not repeat them in final text. " + (supportsImages ? "May include current incoming image IDs with text, or publish one current image without text using {type:'attachment',image_id:'exact ID'}, after fresh preview approval. Never use a path or URL." : "Images are not accepted.") + (supportsQuestions ? Self.questionInstructions : "") + (supportsReplies ? Self.replyInstructions(text: supportsTextReplies, questions: supportsQuestionReplies) : ""),
+            inputSchema: Data("{\"type\":\"object\",\"properties\":{\"text\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":8000,\"description\":\"Legacy shorthand. Prefer type:text with content; never mix both forms.\"}\(images)\(attachment)\(messageTypes)\(question)\(reply)},\"anyOf\":[\(variants.joined(separator: ","))],\"additionalProperties\":false}".utf8), parallelSafe: false)
     }
 
     private static let questionInstructions = " Alternatively use {type:'widget',widget:{prompt,options:[{label,value?,description?,style?}],helpText?,allowCustom?,dismissOnMoveOn?}} without text/images to ask one necessary question with 1-6 real choices. This ends the current group turn, including a supervised background group peer wake, until a human responds in a new group turn; never ask for passwords, API keys or other secrets here. All choices and values are visible to the user. A choice is not tool permission: sensitive operations still require their normal approval. Default flags are false. dismissOnMoveOn retires this question when the user sends a newer ordinary message. Mailbox and direct chats do not support widgets."
@@ -240,10 +243,10 @@ public actor AgentUserMessageTool: ToolExecutor, ToolRuntimeContextProviding {
         guard context.conversationID == conversationID else { throw AgentMessagingError.scopeMismatch }
         struct Arguments: Decodable {
             let text: String; let replyTo: String?
-            enum CodingKeys: String, CodingKey { case text, images; case replyTo = "reply_to" }
+            enum CodingKeys: String, CodingKey { case text, content, type; case replyTo = "reply_to" }
             init(from decoder: any Decoder) throws {
                 let values = try decoder.container(keyedBy: CodingKeys.self)
-                text = try values.decode(String.self, forKey: .text)
+                text = try values.decode(String.self, forKey: values.contains(.type) ? .content : .text)
                 replyTo = values.contains(.replyTo) ? try values.decode(String.self, forKey: .replyTo) : nil
             }
         }
@@ -288,9 +291,10 @@ public actor AgentUserMessageTool: ToolExecutor, ToolRuntimeContextProviding {
                 return .init(callID: call.id, content: [.text("SendMessage received fields unavailable in this context. Nothing was published.")], isError: true)
             }
             let standalone = object["type"] as? String == "attachment"
+            let referenceText = object["type"] as? String == "text"
             let allowed = standalone && supportsImages
                 ? Set(["type", "image_id", "alt"] + (publishReply == nil ? [] : ["reply_to"]))
-                : Set(["text"] + (supportsImages ? ["images"] : []) + (publishReply == nil ? [] : ["reply_to"]))
+                : Set((referenceText ? ["type", "content"] : ["text"]) + (supportsImages ? ["images"] : []) + (publishReply == nil ? [] : ["reply_to"]))
             guard Set(object.keys).isSubset(of: allowed) else {
                 return .init(callID: call.id, content: [.text("SendMessage received fields unavailable in this context. Nothing was published.")], isError: true)
             }

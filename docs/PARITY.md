@@ -1,5 +1,7 @@
 # Filicon / Grok Bot 0.18 功能 parity matrix（current implementation）
 
+文字工具格式對齊（2026-09-24）：共用 `SendMessage` 接受原版 `{type:"text",content:"..."}`，保留舊 `{text:"..."}`，混用拒絕；兩者共用發布額度、receipt／內容去重、引用及當前圖片核准。群組／mailbox 雙格式回歸、完整非並行測試、原生建置／簽章／封裝通過。任意 URL／路徑附件、mailbox 引用／提問與其他既有差異仍未完成，計數不變。詳見 [協作核對紀錄](Agent-collaboration-parity.md)。
+
 範圍校正（2026-09-24）：原版 `sand-state-tool.ts:121` 的模型排程 member schema 只有 cron／Slack／GitHub／Teams／Linear／Sentry／PagerDuty。generic connector 是 Filicon-native 能力；其模型寫入限制不是已確認的原版缺失，不因此擴充模型權限。新增 create/update 與混合 OR 的拒絕／不落盤回歸測試。歷史段落提及 generic 限制時應依此解讀；完成數不變，真正的 settled checks、Slack 身分、Teams 驗證與其他 partial 項目仍未完成。詳見 [協作核對紀錄](Agent-collaboration-parity.md)。
 
 本矩陣保留固定的 48 個 parity ID，對照目前 macOS Swift 實作。`complete` 表示該列所述能力有歷史實作證據，不代表原版所有細項均已重新核驗；`partial` 表示仍有功能、接線或驗證缺口；`NA` 表示該列是來源 runtime 的實作細節，不是 macOS 產品行為。這不是「原版功能全部都有」的保證。

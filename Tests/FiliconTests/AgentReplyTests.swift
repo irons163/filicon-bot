@@ -69,7 +69,9 @@ struct AgentReplyTests {
             await probe.append(message)
         }) { _ in Issue.record("Must not publish through the unthreaded callback") }
         let context = ToolContext(conversationID: groupID)
-        let result = try await tool.execute(call(target: first.id), context: context)
+        let reference = try NormalizedToolCall(id: "reply", name: "SendMessage", argumentsJSON: JSONEncoder().encode([
+            "type": "text", "content": "Here is the review", "reply_to": first.id.uuidString]))
+        let result = try await tool.execute(reference, context: context)
         #expect(!result.isError)
         let replay = try await tool.execute(call(target: first.id), context: context)
         expectNoDifference(replay, result)

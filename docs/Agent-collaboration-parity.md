@@ -1,5 +1,15 @@
 # 協作能力核對紀錄（更新至 2026-09-24）
 
+## 本輪增量：SendMessage 原版文字格式（2026-09-24）
+
+本機 reconstructed `source/host/runner/tools/send-message-tool.ts` 使用 `{type:"text",content:"..."}`，Filicon 先前只接受 `{text:"..."}`。此次在共用 `AgentUserMessageTool` 接上原版文字格式，schema 與描述明示新舊兩種格式，不能混合。文字正規化、8,000 字上限、兩次發布預算、call receipt／內容去重、scope／Stop、reply_to 解析和當前圖片核准都共用既有流程；同 call ID 從原版格式換成等效 shorthand 回傳相同 receipt，不重複發布。未知 type、缺 content、同時 text/content、外部 channel／收件者、不可用圖片／引用與非文字 content 都拒絕。
+
+圖片仍只能使用本輪 host 圖片 ID；這不是原版任意 URL／路徑附件的完成，也沒有新增 mailbox／單獨聊天引用或提問。新增文字格式邊界測試，擴充群組引用的跨格式 replay，以及圖片批准／拒絕與 mailbox 保存重開的雙格式測試。43 項／4 suites 聚焦測試通過；本批不新增 UI／翻譯字串，整體 parity 計數不變。
+
+GitHub CI 的來源規格仍要求 branch 上 settled checks，而本機現有入口只有 workflow_run 分類。webhook HMAC 密鑰不是 GitHub API 讀取憑證，不能藉此假造整批檢查完成或挪用其他 App 登入；已向使用者詢問新增獨立 token 設定或保留此外部缺口的選擇。此次未改 GitHub CI 行為或任何真實連線。
+
+本批完整非並行 `swift test` exit 0（`.build/validation/sendmessage-reference-full-tests.log`），原生 Debug build、deep strict codesign 與 package verifier 通過；live opt-in 模型測試未啟用。使用 Swift testing／CustomDump 技能檢查 receipt、輸出與持久化結果。沒有 push、啟動／重啟使用者 App 或 Xcode、修改真實帳號／群組資料；不是外部服務驗收。
+
 ## 範圍校正：generic 不是已證實的原版模型排程路由（2026-09-24）
 
 重新核對本機 reconstructed `source/host/runner/tools/sand-state-tool.ts:121` 的 `triggerMemberSchema`，只列 cron、Slack、GitHub、Microsoft Teams、Linear、Sentry、PagerDuty；接下來的 trigger schema 允許單條、group 或 array，沒有 generic／event／connector 類型。`frontend/src/recovered/features/automations/routines/trigger-schema.ts` 的 `RoutineListener` 亦只有這七類。因此，先前把「generic 模型 create/update 未支援」混列為原版缺口並不精確：它是 Filicon-native 功能邊界，不是目前來源證據支持的 parity 待辦。此次不新增模型 generic 權限入口，也不改手動 connector 編輯／比對功能。
