@@ -2,6 +2,8 @@
 
 本矩陣保留固定的 48 個 parity ID，對照目前 macOS Swift 實作。`complete` 表示該列所述能力有歷史實作證據，不代表原版所有細項均已重新核驗；`partial` 表示仍有功能、接線或驗證缺口；`NA` 表示該列是來源 runtime 的實作細節，不是 macOS 產品行為。這不是「原版功能全部都有」的保證。
 
+解鎖後驗證（2026-09-24）：確認 macOS `IOConsoleLocked = No` 後，對 `fcc8354` 重跑完整非並行 `swift test`，exit 0。先前圖片、工作流程 EPERM 與共享聊天室 malformedState 未再出現，圖片描述增量的最終回歸阻礙已解除；下方失敗紀錄保留為前次鎖定時的結果。沒有降低檔案保護、重啟使用者 App／Xcode、push 或真實帳號操作。測試通過不代表其餘 parity 缺口完成，矩陣仍 43 complete／4 partial／1 NA。
+
 圖片描述增量（2026-09-24）：目前單張 `SendMessage(type:attachment)` 接受可選 `alt`，最多 500 字／2,000 UTF-8 bytes，拒絕控制字元。描述顯示在核准預覽、懸停、圖片檢視與輔助閱讀，隨群組／信箱保存；圖片本體與來源 metadata 仍須完全相符，只有描述可變更，重送亦驗證描述。21 項 storage/delivery 與 19 項 App 測試曾分別通過；七語言渲染、原生 Debug 建置及 deep strict 封裝檢查通過。完整回歸未通過：工作流程暫存檔 EPERM、共享聊天室 malformedState 等失敗仍需追查；最後重跑圖片聚焦套件亦出現圖片暫存檔 EPERM 和連帶斷言失敗，尚無最後一次全綠結果。多張圖片逐張描述與其他附件類型尚未補齊，整體計數不變。
 
 附件視窗增量（2026-09-23）：將附屬 sheet 換成可調整大小的獨立原生視窗，接上 macOS 全螢幕按鈕／Control–Command–F；七語言新增 Full Screen 字串。視窗關閉帶 preview ID，避免遲到回呼誤關新預覽；主視窗關閉與帳號撤銷會關閉附件並沿用暫存清理。21 項聚焦測試通過，包含隱藏 NSWindow 的全螢幕設定、同一預覽更新、替換、主視窗關閉及帳號清理；七語言各 1,661 keys、零缺漏。沒有啟動使用者 App，實際 macOS 全螢幕動畫未驗收；原版 lightbox 外觀與 alt caption 仍非完成，整體計數不變。

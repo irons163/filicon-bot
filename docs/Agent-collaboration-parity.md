@@ -1,5 +1,9 @@
 # 協作能力核對紀錄（更新至 2026-09-24）
 
+## 解鎖後完整回歸（2026-09-24）
+
+使用者解鎖後確認 `IOConsoleLocked = No`，在 `fcc8354` 重跑完整非並行 `swift test --scratch-path .build/validation/markdown-prose.SDrQnO/spm --no-parallel`，exit 0。圖片 storage/delivery、App 圖片、WorkflowService／AgentWorkflow 與 SharedRoom 均通過；前次 EPERM／malformedState 未重現。工作流程與共享聊天室落盤使用 `.completeFileProtectionUnlessOpen`，前次失敗期間系統確實鎖定；此次沒有修改或降低檔案保護。前次失敗保留於下文作為驗證歷程，不再是目前圖片描述功能的未通過狀態。沒有啟動／重啟使用者 App、Xcode、真實模型或帳號，也沒有 push。原版逐張 inline image alt、其他附件種類及既有 partial 項目仍待完成，不能把回歸全綠當成功能全對等。
+
 ## 本輪增量：經核准的單張圖片描述（2026-09-24）
 
 對照 reconstructed 附件的 `alt`，單張無文字圖片發布可附上 500 字／2,000 UTF-8 bytes 以內的純文字描述，控制字元拒絕、空白正規化。描述在核准卡完整呈現，並提供懸停提示、圖片檢視說明與 accessibility label；不將描述解讀為 Markdown、工具指令或授權。群組與信箱只允許替目前 incoming 圖片加描述，ID、檔名、MIME、長度、種類與建立時間仍須符合來源；不放寬路徑、URL、歷史圖片或收件者。重新使用 call ID 但修改描述會拒絕，同圖片另換 call ID 亦不重複發布。舊資料缺少 `altText` 仍可解碼。
