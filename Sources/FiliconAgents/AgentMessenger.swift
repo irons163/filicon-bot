@@ -163,7 +163,8 @@ public actor AgentMessenger {
 
     public func publishSecretRequest(_ request: AgentSecretRequest, replyingTo id: UUID, accountID: String,
                                      originID: UUID, connectionID: UUID, publicationID: UUID = UUID(),
-                                     at: Date = Date(), lifetime: AgentPublicationLifetime) throws -> RoomMessage {
+                                     at: Date = Date(), replyToMessageID: UUID? = nil,
+                                     lifetime: AgentPublicationLifetime) throws -> RoomMessage {
         guard !accountID.isEmpty, accountID.utf8.count <= 256,
               let incoming = state.messages.first(where: { $0.id == id }),
               incoming.delivery?.originConversationID == originID else { throw AgentSecretRequestError.unavailable }
@@ -171,6 +172,7 @@ public actor AgentMessenger {
             text: "Requested a credential securely: \(request.label)", createdAt: at)
         publication.secretRequest = .init(request: request, accountID: accountID,
             memberIDs: [incoming.senderID, incoming.recipientID], connectionID: connectionID)
+        publication.replyToMessageID = replyToMessageID
         try publishValidated(publication, replyingTo: id, lifetime: lifetime)
         return publication
     }

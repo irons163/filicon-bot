@@ -17,10 +17,31 @@ struct SecretRequestToolTests {
     private let runID = UUID(uuidString: "00000000-0000-0000-0000-000000000002")!
     private let payload = #"{"type":"secret-request","secret":{"label":"Token","connector":"slack","field":"token"}}"#
 
+    @Test func quotedSecretRequestPreservesTargetAndReplayIdentity() async throws {
+        let probe = SecretToolProbe()
+        let target = RoomMessage(id: runID, groupID: scope, senderID: nil, text: "Connect Slack")
+        let tool = AgentUserMessageTool(conversationID: scope, availableImages: [], imageStore: nil,
+            publishSecret: { request, reply in
+                expectNoDifference(reply, target.id)
+                await probe.append(request)
+            }, replyHistory: [target], publishReply: { _, _, _ in }, publish: { _, _ in })
+        var fields = try #require(try JSONSerialization.jsonObject(with: Data(payload.utf8)) as? [String: Any])
+        fields["reply_to"] = target.id.uuidString
+        let call = try NormalizedToolCall(id: "secret", name: "SendMessage", argumentsJSON: JSONSerialization.data(withJSONObject: fields))
+        let context = ToolContext(conversationID: scope, runID: runID)
+        for _ in 0..<2 {
+            await #expect(throws: ToolTurnSuspension.self) { _ = try await tool.execute(call, context: context) }
+        }
+        let changed = try await tool.execute(.init(id: "secret", name: "SendMessage", argumentsJSON: Data(payload.utf8)), context: context)
+        #expect(changed.isError)
+        let requests = await probe.requests
+        expectNoDifference(requests.count, 1)
+    }
+
     @Test func requestSuspendsAndRetriesDoNotRepublish() async throws {
         let probe = SecretToolProbe()
         let tool = AgentUserMessageTool(conversationID: scope, availableImages: [], imageStore: nil,
-            publishSecret: { await probe.append($0) }, publish: { _, _ in Issue.record("Unexpected text") })
+            publishSecret: { request, _ in await probe.append(request) }, publish: { _, _ in Issue.record("Unexpected text") })
         let context = ToolContext(conversationID: scope, runID: runID)
         let call = try NormalizedToolCall(id: "secret", name: "SendMessage", argumentsJSON: Data(payload.utf8))
         for _ in 0..<2 {
@@ -45,7 +66,7 @@ struct SecretRequestToolTests {
     ])
     func rejectsExtraFields(payload: String) async throws {
         let tool = AgentUserMessageTool(conversationID: scope, availableImages: [], imageStore: nil,
-            publishSecret: { _ in Issue.record("Invalid request reached host") }, publish: { _, _ in })
+            publishSecret: { _, _ in Issue.record("Invalid request reached host") }, publish: { _, _ in })
         let result = try await tool.execute(.init(id: "bad", name: "SendMessage", argumentsJSON: Data(payload.utf8)),
             context: .init(conversationID: scope, runID: runID))
         #expect(result.isError)
@@ -54,7 +75,7 @@ struct SecretRequestToolTests {
 
     @Test func hostErrorsAreSanitized() async throws {
         let tool = AgentUserMessageTool(conversationID: scope, availableImages: [], imageStore: nil,
-            publishSecret: { _ in throw NSError(domain: "FAKE-SECRET", code: 1,
+            publishSecret: { _, _ in throw NSError(domain: "FAKE-SECRET", code: 1,
                 userInfo: [NSLocalizedDescriptionKey: "FAKE-SECRET"]) }, publish: { _, _ in })
         let result = try await tool.execute(.init(id: "bad", name: "SendMessage", argumentsJSON: Data(payload.utf8)),
             context: .init(conversationID: scope, runID: runID))

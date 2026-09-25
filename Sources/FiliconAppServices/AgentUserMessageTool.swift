@@ -21,9 +21,9 @@ public actor AgentUserMessageTool: ToolExecutor, ToolRuntimeContextProviding {
     private let imageStore: AgentImageStore?
     private let authorizeImages: ImageAuthorizer
     private let supportsImages: Bool
-    public typealias SecretPublisher = @Sendable (AgentSecretRequest) async throws -> Void
+    public typealias SecretPublisher = @Sendable (AgentSecretRequest, UUID?) async throws -> Void
     private let publishSecret: SecretPublisher?
-    private var secretReceipt: (Key, AgentSecretRequest, NormalizedToolResult)?
+    private var secretReceipt: (Key, AgentSecretRequest, UUID?, NormalizedToolResult)?
     public typealias QuestionPublisher = @Sendable (AgentQuestion) async throws -> Void
     private let publishQuestion: (@Sendable (AgentQuestion) async throws -> RoomMessage?)?
     public typealias QuestionReplyPublisher = @Sendable (AgentQuestion, UUID) async throws -> Void
@@ -273,20 +273,25 @@ public actor AgentUserMessageTool: ToolExecutor, ToolRuntimeContextProviding {
                let object = try JSONSerialization.jsonObject(with: call.argumentsJSON) as? [String: Any],
                object["type"] as? String == "secret-request" {
                 handlingSecretRequest = true
-                guard let publishSecret, Set(object.keys) == ["type", "secret"],
+                guard let publishSecret, Set(object.keys).isSubset(of: ["type", "secret", "reply_to"]),
                       let raw = object["secret"] as? [String: Any] else { throw AgentSecretRequestError.invalid }
                 let request = try AgentSecretRequest.parse(JSONSerialization.data(withJSONObject: raw))
+                let reply: UUID?
+                if let address = object["reply_to"] {
+                    guard let address = address as? String else { throw AgentSecretRequestError.invalid }
+                    reply = try resolveReply(address)
+                } else { reply = nil }
                 let key = Key(runID: context.runID, callID: call.id)
                 if let receipt = secretReceipt {
-                    guard receipt.0 == key, receipt.1 == request else { throw AgentMessagingError.duplicateMessage }
-                    throw ToolTurnSuspension(result: receipt.2)
+                    guard receipt.0 == key, receipt.1 == request, receipt.2 == reply else { throw AgentMessagingError.duplicateMessage }
+                    throw ToolTurnSuspension(result: receipt.3)
                 }
                 guard questionReceipt == nil, !reserved, texts.count < 2, calls[key] == nil else { throw AgentSecretRequestError.unavailable }
                 reserved = true
                 defer { reserved = false }
-                try await publishSecret(request)
+                try await publishSecret(request, reply)
                 let result = NormalizedToolResult(callID: call.id, content: [.text("Secure credential request saved. The turn is paused. No credential has been provided yet.")])
-                secretReceipt = (key, request, result)
+                secretReceipt = (key, request, reply, result)
                 texts.append("Requested a credential securely: \(request.label)")
                 try Task.checkCancellation()
                 guard !closed else { throw AgentMessagingError.closed }

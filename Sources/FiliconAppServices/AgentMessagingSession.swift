@@ -61,7 +61,7 @@ public actor AgentMessagingSession {
     private var activeGroupID: UUID?
     private let accountID: String
     private let supportsMailboxQuestions: Bool
-    public typealias SecretPublisher = @Sendable (AgentSecretRequest, AgentMessage, AgentPublicationLifetime) async throws -> RoomMessage
+    public typealias SecretPublisher = @Sendable (AgentSecretRequest, AgentMessage, UUID?, AgentPublicationLifetime) async throws -> RoomMessage
     private let publishSecret: SecretPublisher?
     private let authorize: Authorizer
     private let authorizeImages: ImageAuthorizer
@@ -564,8 +564,8 @@ public actor AgentMessagingSession {
             } else { questionReplyPublisher = nil }
             let secretPublisher: AgentUserMessageTool.SecretPublisher?
             if let publishSecret {
-                secretPublisher = { [publicationLifetime, onChange] request in
-                    let publication = try await publishSecret(request, inbound, publicationLifetime)
+                secretPublisher = { [publicationLifetime, onChange] request, target in
+                    let publication = try await publishSecret(request, inbound, target, publicationLifetime)
                     await output.recordQuestion(publication)
                     await onChange()
                 }

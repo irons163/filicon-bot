@@ -25,6 +25,7 @@ private final class SecretAppWriter: @unchecked Sendable {
 private struct SecretAppProvider: InteractiveToolProvider {
     let descriptor = ProviderDescriptor(id: "secret-fixture", displayName: "Secret fixture", requiresAPIKey: false)
     let probe: SecretAppProbe
+    let replyTarget: @Sendable () async -> UUID?
     func models() async throws -> [AIModel] { [.init(id: "test")] }
     func stream(_ request: InferenceRequest) -> AsyncThrowingStream<InferenceEvent, Error> {
         AsyncThrowingStream { $0.finish(throwing: ProviderError.invalidResponse) }
@@ -40,8 +41,11 @@ private struct SecretAppProvider: InteractiveToolProvider {
                         continuation.finish()
                         return
                     }
+                    let target = try #require(await replyTarget())
+                    let fields: [String: Any] = ["type": "secret-request", "reply_to": target.uuidString,
+                        "secret": ["label": "Bot token", "connector": "slack", "field": "token"]]
                     let call = try NormalizedToolCall(id: "secret", name: "SendMessage", argumentsJSON:
-                        Data(#"{"type":"secret-request","secret":{"label":"Bot token","connector":"slack","field":"token"}}"#.utf8))
+                        JSONSerialization.data(withJSONObject: fields))
                     let result = try await executeTool(call)
                     Issue.record("Expected suspension, got \(result.isError)")
                     continuation.finish()
@@ -71,11 +75,14 @@ struct MailboxSecretAppTests {
         let probe = SecretAppProbe()
         let writer = SecretAppWriter()
         model.secretCredentialWriter = writer.write
-        await model.registry.register(SecretAppProvider(probe: probe))
+        await model.registry.register(SecretAppProvider(probe: probe, replyTarget: {
+            await MainActor.run { model.agentMessages.first?.id }
+        }))
         #expect(await model.sendAgentMessage(senderID: sender.id, recipientID: owner.id, text: "Connect my configured bot"))
         try await waitForMailbox(model)
         let incoming = try #require(model.agentMessages.first)
         let publication = try #require(incoming.delivery?.publications?.first)
+        expectNoDifference(publication.replyToMessageID, incoming.id)
         let card = try #require(model.mailboxSecretCards[publication.id])
         #expect(model.canUseMailboxSecret(incoming, publication: publication))
         let beforePermissions = await model.localToolPermissionPolicy.effectivePermission(for: .writeFile)

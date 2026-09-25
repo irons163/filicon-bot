@@ -2563,6 +2563,7 @@ final class AppModel: ObservableObject {
     }
 
     private func publishMailboxSecret(_ request: AgentSecretRequest, incoming: AgentMessage,
+                                      replyToMessageID: UUID?,
                                       lifetime: AgentPublicationLifetime, generation: UInt64) async throws -> RoomMessage {
         guard let channelService, let agentMessenger, let scopeID = incoming.delivery?.originConversationID,
               generation == autoReviewAccountGeneration, !agentMessagingAccountTransition else { throw CancellationError() }
@@ -2573,7 +2574,7 @@ final class AppModel: ObservableObject {
         let submission = AgentSecretSubmission(destination: destination)
         let publication = try await agentMessenger.publishSecretRequest(request, replyingTo: incoming.id,
             accountID: accountID, originID: scopeID, connectionID: destination.connectionID,
-            publicationID: submission.id, lifetime: lifetime)
+            publicationID: submission.id, replyToMessageID: replyToMessageID, lifetime: lifetime)
         guard generation == autoReviewAccountGeneration, !Task.isCancelled else {
             submission.close()
             throw CancellationError()
@@ -2791,9 +2792,10 @@ final class AppModel: ObservableObject {
             })
         let secretPublisher: AgentMessagingSession.SecretPublisher?
         if supportsMailboxQuestions, channelService != nil {
-            secretPublisher = { [weak self] request, incoming, lifetime in
+            secretPublisher = { [weak self] request, incoming, target, lifetime in
                 guard let self else { throw CancellationError() }
                 return try await self.publishMailboxSecret(request, incoming: incoming,
+                    replyToMessageID: target,
                     lifetime: lifetime, generation: generation)
             }
         } else { secretPublisher = nil }

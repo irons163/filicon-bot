@@ -1,5 +1,11 @@
 # 協作能力核對紀錄（更新至 2026-09-25）
 
+## 安全憑證請求引用（2026-09-25）
+
+獨立信箱 secret-request 現在接受 optional reply_to，透過既有目錄解析為 UUID，App 傳至 publishSecretRequest 並在保存時重驗參與者／origin／目標。回條重送比較內容與引用 UUID，改變引用不會重建請求。只增加訊息關聯，不改變目的地、帳號、credential writer、暫停、新回合或授權流程；value／text／path 等額外輸入仍拒絕。
+
+使用 testing／CustomDump 技能驗證有引用的重送與拒絕變更；App 假 provider／writer 的提供、關閉、回條失敗重試、帳號切換、雙方封存及 Stop 七種情境全部改用引用請求並通過。模型層保持原有安全狀態管理，不把憑證交給畫面引用。`secret-reply-final-tests.log`、`secret-reply-full-tests.log` 完整回歸與 `secret-reply-native.log` 均 exit 0，封裝／deep strict codesign 通過。未操作真實憑證或重啟 App。此項取代上方舊的 secret-request reply_to 缺口；短地址與 sand-msg 導航等其餘差異仍保留，AGENT-02 partial。
+
 ## 引用完整回歸與明暗驗收（2026-09-25）
 
 確認 IOConsoleLocked=No 後補跑 `mailbox-reply-complete-recheck.log`，完整非並行 swift test exit 0；前幾輪 mailbox receipt／question／quote UI 的待解鎖驗證已補齊，並非跳過失敗案例。未降低檔案保護。新增七語言明暗雙模式渲染，`mailbox-quote-dark-tests.log` 14 案例通過；人工檢視繁中、法文 dark 引用及問題卡片，未見裁切。測試使用 SwiftUI／testing 技能，沒有啟動使用者 App 或修改真實資料。
