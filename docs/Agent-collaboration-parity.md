@@ -1,5 +1,11 @@
 # 協作能力核對紀錄（更新至 2026-09-25）
 
+## 直接聊天引用安全索引（2026-09-25）
+
+新增 DirectMessageReferenceDirectory，重用群組 canonical sand-msg 解析與先後順序規則，輸入明確標示是否為完整對話歷史；分頁／部分歷史一律不解析，避免漏掉未載入的重複地址。解析要求同一對話、唯一訊息身份、公開且有文字的目標，以及地址與角色相符；地址保留紀錄若指向其他／已刪除身份也拒絕，不讓舊連結被新訊息接管。無 URL 開啟、檔案讀取或工具授權副作用。
+
+依 Swift testing 技能驗證完整／部分歷史、跨對話、刪除、重複身份、保留地址衝突、角色、空白、未來／自身及 URL 變形。direct-reference-index-final.log 共 10 項／3 suites 通過；完整非並行回歸 direct-reference-index-full.log exit 0。此批是純索引基礎：尚未接上直接聊天 Markdown 與分頁跳轉，supportsReferenceNavigation 仍為 false，不宣稱使用者已可點擊；下一步接 UI 與歷史載入生命週期。
+
 ## 工具事件保存與執行順序（2026-09-25）
 
 最終驗證：完整非並行回歸 tool-event-order-full.log exit 0，先前群組順序失敗通過；加強「事件確實抵達且只呼叫一次」斷言後，tool-event-order-final-focused.log 共 20 項／3 suites（含六組順序案例）通過。封裝與 deep strict 簽章 tool-event-order-package.log 通過，關閉上一輪直接地址接線的完整回歸待補驗。

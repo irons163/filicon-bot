@@ -1,5 +1,7 @@
 # Filicon / Grok Bot 0.18 功能 parity matrix（current implementation）
 
+直接聊天引用索引（2026-09-25）：新增完整歷史限定、對話隔離、重複／已刪除地址保留檢查的 sand-msg 索引，聚焦 10 項測試通過。尚未接 UI 與分頁跳轉，工具仍不宣告支援 inline navigation；AGENT-02 保持 partial。
+
 工具事件順序補驗（2026-09-25）：修正工具執行可能超前主程式 pending 狀態保存的競態；正式工具迴圈現在等待事件處理成功後再繼續。完整回歸 tool-event-order-full.log exit 0，新增六組慢速／失敗保存案例通過；關閉上一輪群組事件順序失敗，未改剩餘功能 partial 狀態。
 
 直接聊天短地址接線（2026-09-25）：完整歷史保存時配置 tNu／tNsM（啟動前發布為 tbsM），schema 11 保存已用地址保留紀錄，刪除訊息不重用地址。SendMessage 目錄與成功保存回條帶入短地址，reply_to 可引用本對話目錄或同回合回條；只發布工具的空白佔位／私人推理不分配公開地址。此項取代下方「配置／工具目錄與回條未接線」的缺口；sand-msg 正文點擊跳轉尚未接上，其他 secret-request／外部服務等仍 partial。
