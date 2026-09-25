@@ -846,10 +846,11 @@ private struct FiliconChatHeader: View {
     }
 }
 
-private struct ChatConfigurationPopover: View {
+struct ChatConfigurationPopover: View {
     @Environment(\.locale) private var uiLocale
     @EnvironmentObject private var model: AppModel
     let conversation: Conversation
+    @State private var recoveredConversationID: UUID?
 
     var body: some View {
         let _ = uiLocale.identifier
@@ -896,6 +897,17 @@ private struct ChatConfigurationPopover: View {
                 }
                 .disabled(model.isConversationWorking(conversation.id)
                     || model.synchronizingAgentConversations.contains(conversation.id))
+                Button(l10n("Recover agent messages")) {
+                    Task { await recoverButtonTapped() }
+                }
+                .help(l10n("Restore saved peer messages without running agents. Deleted chats stay deleted."))
+                .disabled(model.isConversationWorking(conversation.id)
+                    || model.synchronizingAgentConversations.contains(conversation.id))
+                if recoveredConversationID == conversation.id {
+                    Text(l10n("Saved peer messages restored."))
+                        .font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             Picker(l10n("Reasoning"), selection: Binding(
                 get: { conversation.reasoningEffort },
@@ -933,6 +945,12 @@ private struct ChatConfigurationPopover: View {
         .padding(16)
         .frame(width: 310)
         .background(FiliconTheme.surface)
+    }
+
+    private func recoverButtonTapped() async {
+        let id = conversation.id
+        recoveredConversationID = nil
+        if await model.recoverDirectPeerMessages(conversationID: id) { recoveredConversationID = id }
     }
 }
 

@@ -1684,3 +1684,6 @@
 "Open on cursor.com. Remote status has not been verified." = "在 cursor.com 打开。尚未验证远端状态。";
 "Sync agent model" = "同步代理人模型";
 "Request dismissed. The dismissal receipt could not be saved. Retry to continue the conversation." = "已取消请求。无法保存取消回执，请重试以继续对话。";
+"Recover agent messages" = "恢复代理人消息";
+"Restore saved peer messages without running agents. Deleted chats stay deleted." = "补回已保存的同伴消息，不运行代理人。已删除的聊天不会恢复。";
+"Saved peer messages restored." = "已补回保存的同伴消息。";

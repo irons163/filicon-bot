@@ -9,6 +9,36 @@ import FiliconDomain
 @Suite("Conversation design", .serialized)
 @MainActor
 struct ConversationDesignTests {
+    @Test func peerRecoverySettingsRenderInEveryLanguage() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "peer-recovery-render-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+        let agent = AgentProfile(name: "Designer", avatar: .pet(.dewey))
+        model.agents = [agent]
+        var conversation = Conversation()
+        conversation.agentBinding = .init(accountID: "local", agentID: agent.id)
+        let output = ProcessInfo.processInfo.environment["FILICON_UI_REVIEW_OUTPUT"].map { URL(fileURLWithPath: $0, isDirectory: true) }
+        if let output { try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true) }
+        for language in ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"] {
+            try await withUIRenderTurn(language: language) {
+                for dark in [false, true] {
+                    let view = ChatConfigurationPopover(conversation: conversation)
+                        .environmentObject(model).environment(\.locale, Locale(identifier: language))
+                        .environment(\.colorScheme, dark ? .dark : .light)
+                    let host = NSHostingView(rootView: view)
+                    host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+                    host.frame = NSRect(x: 0, y: 0, width: 310, height: 620)
+                    host.layoutSubtreeIfNeeded()
+                    let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                    host.cacheDisplay(in: host.bounds, to: bitmap)
+                    let png = try #require(bitmap.representation(using: .png, properties: [:]))
+                    #expect(!png.isEmpty)
+                    if let output { try png.write(to: output.appending(path: "peer-recovery-\(language)-\(dark ? "dark" : "light").png")) }
+                }
+            }
+        }
+    }
+
     @Test func peerTranscriptShowsActualAuthor() async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "peer-author-render-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }

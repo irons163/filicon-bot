@@ -1684,3 +1684,6 @@
 "Open on cursor.com. Remote status has not been verified." = "cursor.com에서 엽니다. 원격 상태는 확인되지 않았습니다.";
 "Sync agent model" = "에이전트 모델 동기화";
 "Request dismissed. The dismissal receipt could not be saved. Retry to continue the conversation." = "요청이 취소되었습니다. 취소 확인을 저장하지 못했습니다. 대화를 계속하려면 다시 시도하세요.";
+"Recover agent messages" = "에이전트 메시지 복구";
+"Restore saved peer messages without running agents. Deleted chats stay deleted." = "에이전트를 실행하지 않고 저장된 메시지를 복구합니다. 삭제된 채팅은 복구하지 않습니다.";
+"Saved peer messages restored." = "저장된 에이전트 메시지를 복구했습니다.";

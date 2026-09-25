@@ -1684,3 +1684,6 @@
 "Open on cursor.com. Remote status has not been verified." = "cursor.com で開きます。リモートの状態は未確認です。";
 "Sync agent model" = "エージェントのモデルを同期";
 "Request dismissed. The dismissal receipt could not be saved. Retry to continue the conversation." = "リクエストはキャンセルされました。キャンセルの確認を保存できませんでした。会話を続けるには再試行してください。";
+"Recover agent messages" = "エージェントのメッセージを復元";
+"Restore saved peer messages without running agents. Deleted chats stay deleted." = "エージェントを実行せずに保存済みメッセージを復元します。削除したチャットは復元しません。";
+"Saved peer messages restored." = "保存済みのエージェントメッセージを復元しました。";

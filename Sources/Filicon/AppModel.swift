@@ -273,9 +273,12 @@ final class AppModel: ObservableObject {
         let sessionID: UUID
     }
     @Published private var directPeerExecutions: [UUID: DirectPeerExecution] = [:]
+    @Published private(set) var recoveringPeerConversations: Set<UUID> = []
+    private var peerRecoveryOrigins: [UUID: UUID] = [:]
+    private var cancelledPeerRecoveries: Set<UUID> = []
 
     func isConversationWorking(_ id: UUID) -> Bool {
-        running.contains(id) || directPeerExecutions[id] != nil
+        running.contains(id) || directPeerExecutions[id] != nil || recoveringPeerConversations.contains(id)
     }
 
     private func clearDirectPeerExecutions(originID: UUID, sessionID: UUID) {
@@ -2166,6 +2169,10 @@ final class AppModel: ObservableObject {
 
     func cancel() {
         guard isBootstrapped, let selection else { return }
+        if let origin = peerRecoveryOrigins[selection] {
+            cancelledPeerRecoveries.insert(origin)
+            return
+        }
         cancelConversationWork(directPeerExecutions[selection]?.originID ?? selection)
     }
 
@@ -4222,7 +4229,7 @@ final class AppModel: ObservableObject {
                   agentMessagingSessions[origin]?.id == sessionID else { throw CancellationError() }
         }
         try checkScope()
-        guard let messenger = agentMessenger, let contexts = agentConversations, let service = agentService,
+        guard let messenger = agentMessenger,
               let owner = directMessagingBindings[origin],
               let canonical = await messenger.allMessages().first(where: { $0.id == source.deliveryID }),
               let delivery = canonical.delivery,
@@ -4246,6 +4253,62 @@ final class AppModel: ObservableObject {
                       delivery.finalPublication == message else { throw AgentMessagingError.scopeMismatch }
             }
         }
+        try await saveDirectPeerMessage(source, message: message, owner: owner,
+            sessionID: sessionID, checkScope: checkScope)
+    }
+
+    @discardableResult
+    func recoverDirectPeerMessages(conversationID origin: UUID) async -> Bool {
+        guard isBootstrapped, !isConversationWorking(origin), !agentMessagingAccountTransition,
+              !synchronizingAgentConversations.contains(origin),
+              let owner = conversations.first(where: { $0.id == origin })?.agentBinding,
+              owner.accountID == (settings.accountScope ?? "local"),
+              let messenger = agentMessenger, let contexts = agentConversations, let service = agentService else {
+            errorMessage = l10n("The selected agent is unavailable.")
+            return false
+        }
+        let generation = autoReviewAccountGeneration
+        recoveringPeerConversations.insert(origin)
+        peerRecoveryOrigins[origin] = origin
+        cancelledPeerRecoveries.remove(origin)
+        defer {
+            recoveringPeerConversations.remove(origin)
+            peerRecoveryOrigins[origin] = nil
+            cancelledPeerRecoveries.remove(origin)
+        }
+        func checkScope() throws {
+            try Task.checkCancellation()
+            guard generation == autoReviewAccountGeneration, !agentMessagingAccountTransition,
+                  owner.accountID == (settings.accountScope ?? "local"), !deletedConversationIDs.contains(origin),
+                  conversations.first(where: { $0.id == origin })?.agentBinding == owner,
+                  agents.contains(where: { $0.id == owner.agentID && $0.archivedAt == nil }),
+                  !cancelledPeerRecoveries.contains(origin),
+                  !running.contains(origin), directPeerExecutions[origin] == nil else { throw CancellationError() }
+        }
+        do {
+            try checkScope()
+            guard let profile = await service.profile(id: owner.agentID), profile.archivedAt == nil,
+                  await !contexts.isProjectionRetired(conversationID: origin) else { throw AgentMessagingError.invalidRecipient }
+            let entries = try await messenger.directPeerTranscript(originID: origin, binding: owner)
+            try checkScope()
+            for entry in entries {
+                try await saveDirectPeerMessage(entry.source, message: entry.message, owner: owner,
+                    sessionID: nil, checkScope: checkScope)
+            }
+            try checkScope()
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    private func saveDirectPeerMessage(_ source: AgentMessageSource, message: RoomMessage,
+                                      owner: DirectConversationAgentBinding, sessionID: UUID?,
+                                      checkScope: () throws -> Void) async throws {
+        try checkScope()
+        let origin = source.originConversationID
+        guard let contexts = agentConversations, let service = agentService else { throw AgentMessagingError.scopeMismatch }
         guard let profile = await service.profile(id: source.recipientAgentID), profile.archivedAt == nil else {
             throw AgentMessagingError.invalidRecipient
         }
@@ -4256,20 +4319,46 @@ final class AppModel: ObservableObject {
                 agentID: source.recipientAgentID).conversationID
         }
         try checkScope()
-        guard await !contexts.isProjectionRetired(conversationID: origin),
-              await !contexts.isProjectionRetired(conversationID: destination) else { throw CancellationError() }
+        guard await !contexts.isProjectionRetired(conversationID: origin) else { throw CancellationError() }
+        if await contexts.isProjectionRetired(conversationID: destination) {
+            if sessionID == nil { return } // A user deletion is not a missing projection.
+            throw CancellationError()
+        }
         try checkScope()
+        let recoveringDestination = sessionID == nil && destination != origin
+        if recoveringDestination {
+            guard !isConversationWorking(destination) else { throw AgentMessagingError.scopeMismatch }
+            recoveringPeerConversations.insert(destination)
+            peerRecoveryOrigins[destination] = origin
+        } else if sessionID != nil, recoveringPeerConversations.contains(destination) {
+            throw AgentMessagingError.scopeMismatch
+        }
+        defer {
+            if recoveringDestination {
+                recoveringPeerConversations.remove(destination)
+                peerRecoveryOrigins[destination] = nil
+            }
+        }
         guard !deletedConversationIDs.contains(destination), destination == origin || !running.contains(destination) else {
             throw CancellationError()
         }
         let binding = DirectConversationAgentBinding(accountID: source.accountID, agentID: source.recipientAgentID)
         let stored = try await store.conversation(id: destination)
         try checkScope()
-        guard !deletedConversationIDs.contains(destination), stored == nil || stored?.agentBinding == binding else {
+        guard !deletedConversationIDs.contains(destination), stored == nil || stored?.agentBinding == binding,
+              agents.contains(where: { $0.id == source.recipientAgentID && $0.archivedAt == nil }),
+              conversations.first(where: { $0.id == destination }).map({ $0.agentBinding == binding }) ?? true else {
             throw CancellationError()
         }
         if let saved = stored?.messages.first(where: { $0.id == message.id }) {
             guard saved.agentMessageSource == source, saved.text == message.text else { throw AgentMessagingError.scopeMismatch }
+            if completeMessageHistories.contains(destination),
+               let index = conversations.firstIndex(where: { $0.id == destination }),
+               !conversations[index].messages.contains(where: { $0.id == saved.id }) {
+                let position = conversations[index].messages.firstIndex { $0.createdAt > saved.createdAt }
+                    ?? conversations[index].messages.endIndex
+                conversations[index].messages.insert(saved, at: position)
+            }
             return
         }
         var insertedConversation = false
@@ -4286,12 +4375,14 @@ final class AppModel: ObservableObject {
               conversations[index].agentBinding == binding else { throw CancellationError() }
         let projected = ChatMessage(id: message.id, role: .assistant, text: message.text,
             createdAt: message.createdAt, agentMessageSource: source)
-        conversations[index].messages.append(projected)
+        let position = conversations[index].messages.firstIndex { $0.createdAt > projected.createdAt }
+            ?? conversations[index].messages.endIndex
+        conversations[index].messages.insert(projected, at: position)
         conversations[index].updatedAt = max(conversations[index].updatedAt, message.createdAt)
         do {
             try await persistOrThrow(conversationID: destination)
             try checkScope()
-            if source.kind == .incoming && destination != origin {
+            if let sessionID, source.kind == .incoming && destination != origin {
                 directPeerExecutions[destination] = .init(originID: origin, sessionID: sessionID)
             }
         } catch {

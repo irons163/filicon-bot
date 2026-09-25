@@ -1684,3 +1684,6 @@
 "Open on cursor.com. Remote status has not been verified." = "Ouvrir sur cursor.com. L’état distant n’a pas été vérifié.";
 "Sync agent model" = "Synchroniser le modèle de l’agent";
 "Request dismissed. The dismissal receipt could not be saved. Retry to continue the conversation." = "Demande annulée. Impossible d’enregistrer la confirmation d’annulation. Réessayez pour poursuivre la conversation.";
+"Recover agent messages" = "Récupérer les messages des agents";
+"Restore saved peer messages without running agents. Deleted chats stay deleted." = "Restaure les messages enregistrés sans exécuter les agents. Les discussions supprimées restent supprimées.";
+"Saved peer messages restored." = "Les messages enregistrés des agents ont été restaurés.";

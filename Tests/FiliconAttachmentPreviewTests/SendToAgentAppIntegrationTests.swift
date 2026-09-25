@@ -1,4 +1,5 @@
 import Foundation
+import CSQLite
 import Testing
 import CustomDump
 @testable import Filicon
@@ -75,6 +76,80 @@ private struct DelegatingGroupProvider: InteractiveToolProvider {
 
 @Suite("SendToAgent app integration", .timeLimit(.minutes(1)))
 @MainActor struct SendToAgentAppIntegrationTests {
+    @Test(arguments: ["missing-chat", "missing-message", "deleted", "foreign", "write-failure", "conflict"])
+    func recoversCanonicalTextWithoutRerunningAgents(mode: String) async throws {
+        let (root, model, _, sender, recipient, probe) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        await model.bootstrap()
+        let origin = try #require(await model.addConversation(agentID: sender))
+        model.draft = "Ask the designer for a contrast review"
+        model.send()
+        let approval = try await pending(model)
+        model.handleTranscriptCardIntent(.approveReview(reviewID: approval.id))
+        let deadline = ContinuousClock.now + .seconds(10)
+        while model.running.contains(origin), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(!model.running.contains(origin))
+        let peer = try #require(model.conversations.first { $0.agentBinding?.agentID == recipient })
+        let canonical = model.agentMessages
+        let wakes = await probe.wakes
+        let store = ConversationStore(fileURL: root.appending(path: "conversations.json"))
+        for id in [origin, peer.id] {
+            let index = try #require(model.conversations.firstIndex { $0.id == id })
+            model.conversations[index].messages.removeAll { $0.agentMessageSource != nil }
+            try await store.upsert(model.conversations[index], replacingLoadedMessageIDs: [], historyComplete: true)
+        }
+        if mode == "missing-chat" {
+            // Remove only the canonical row to simulate missing projection data.
+            // User deletion also removes the transcript journal and is a separate case.
+            var fixtureDB: OpaquePointer?
+            #expect(sqlite3_open(root.appending(path: "conversations.sqlite3").path, &fixtureDB) == SQLITE_OK)
+            defer { if let fixtureDB { sqlite3_close(fixtureDB) } }
+            #expect(sqlite3_exec(fixtureDB, "DELETE FROM conversations WHERE id = '\(peer.id.uuidString)'", nil, nil, nil) == SQLITE_OK)
+            model.conversations.removeAll { $0.id == peer.id }
+        }
+        if mode == "deleted" {
+            model.deleteConversation(id: peer.id)
+            while try await store.conversation(id: peer.id) != nil, ContinuousClock.now < deadline {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+        }
+        if mode == "foreign", let index = model.conversations.firstIndex(where: { $0.id == origin }) {
+            model.conversations[index].agentBinding = .init(accountID: "other", agentID: sender)
+        }
+        if mode == "conflict", let index = model.conversations.firstIndex(where: { $0.id == peer.id }) {
+            var conflicting = try #require(peer.messages.first)
+            conflicting.text = "Keep this conflicting record"
+            model.conversations[index].messages = [conflicting]
+            try await store.upsert(model.conversations[index], replacingLoadedMessageIDs: [], historyComplete: true)
+        }
+        var database: OpaquePointer?
+        defer { if let database { sqlite3_close(database) } }
+        if mode == "write-failure" {
+            #expect(sqlite3_open(root.appending(path: "conversations.sqlite3").path, &database) == SQLITE_OK)
+            #expect(sqlite3_exec(database, "CREATE TRIGGER reject_recovery BEFORE INSERT ON messages BEGIN SELECT RAISE(ABORT, 'fixture recovery failure'); END", nil, nil, nil) == SQLITE_OK)
+        }
+        let success = await model.recoverDirectPeerMessages(conversationID: origin)
+        if mode == "missing-chat" { #expect(success, Comment(rawValue: model.errorMessage ?? "Recovery failed")) }
+        expectNoDifference(success, !["foreign", "write-failure", "conflict"].contains(mode))
+        #expect(model.recoveringPeerConversations.isEmpty)
+        let afterWakes = await probe.wakes
+        expectNoDifference(afterWakes, wakes)
+        expectNoDifference(model.agentMessages, canonical)
+        if success {
+            let count = model.conversations.flatMap(\.messages).filter { $0.agentMessageSource != nil }.count
+            expectNoDifference(count, mode == "deleted" ? 2 : 4)
+            let snapshot = model.conversations
+            #expect(await model.recoverDirectPeerMessages(conversationID: origin))
+            expectNoDifference(model.conversations, snapshot)
+            if mode == "deleted" { #expect(!model.conversations.contains { $0.id == peer.id }) }
+            else {
+                let restored = try #require(try await store.conversation(id: peer.id))
+                expectNoDifference(restored.messages.map(\.text), peer.messages.map(\.text))
+                expectNoDifference(restored.messages.map(\.agentMessageSource), peer.messages.map(\.agentMessageSource))
+            }
+        }
+    }
+
     private func fixture() async throws -> (URL, AppModel, UUID, UUID, UUID, AgentWakeProbe) {
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-delegating-app-\(UUID())")
         let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
