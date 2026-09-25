@@ -287,7 +287,7 @@ enum ConversationRecovery {
         var values: [UUID: SalvageConversation] = [:]
         var completed = true
         do {
-            let rows = try database.prepare("SELECT id,title,provider_id,model_id,updated_at,hidden_at,reasoning_effort FROM conversations ORDER BY rowid", operation: "scan conversations for recovery")
+            let rows = try database.prepare("SELECT id,title,provider_id,model_id,updated_at,hidden_at,reasoning_effort,message_addresses_json FROM conversations ORDER BY rowid", operation: "scan conversations for recovery")
             while true {
                 let code: Int32
                 do { code = try rows.step() } catch { rejected.append(.init(table: "conversations", rowIdentifier: "scan", reason: bounded(error.localizedDescription))); completed = false; break }
@@ -337,13 +337,13 @@ enum ConversationRecovery {
         try database.configure()
         try ConversationRepository.migrate(database)
         try database.transaction("write recovered conversations") {
-            let conversation = try database.prepare("INSERT INTO conversations(id,title,provider_id,model_id,updated_at,hidden_at,next_message_ordinal,reasoning_effort) VALUES(?,?,?,?,?,?,?,?)", operation: "recover conversation")
+            let conversation = try database.prepare("INSERT INTO conversations(id,title,provider_id,model_id,updated_at,hidden_at,next_message_ordinal,reasoning_effort,message_addresses_json) VALUES(?,?,?,?,?,?,?,?,?)", operation: "recover conversation")
             let message = try database.prepare("INSERT INTO messages(id,conversation_id,ordinal,role,text,created_at,attachments_json,delivery_status,delivery_error,reasoning_text,tool_activities_json,reply_to_message_id,reactions_json,transcript_cards_json,short_address) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", operation: "recover message")
             let search = try database.prepare("INSERT INTO conversation_search(conversation_id,content) VALUES(?,?)", operation: "recover search")
             for item in values {
                 let value = item.value
                 let nextOrdinal = (item.messages.map(\.ordinal).max() ?? -1) + 1
-                try conversation.bind(value.id.uuidString, at: 1); try conversation.bind(value.title, at: 2); try conversation.bind(value.providerID.rawValue, at: 3); try conversation.bind(value.modelID.rawValue, at: 4); try conversation.bind(value.updatedAt.timeIntervalSince1970, at: 5); try conversation.bind(value.hiddenAt?.timeIntervalSince1970 ?? 0, at: 6); try conversation.bind(nextOrdinal, at: 7); try conversation.bind(value.reasoningEffort.rawValue, at: 8); _ = try conversation.step(); conversation.reset()
+                try conversation.bind(value.id.uuidString, at: 1); try conversation.bind(value.title, at: 2); try conversation.bind(value.providerID.rawValue, at: 3); try conversation.bind(value.modelID.rawValue, at: 4); try conversation.bind(value.updatedAt.timeIntervalSince1970, at: 5); try conversation.bind(value.hiddenAt?.timeIntervalSince1970 ?? 0, at: 6); try conversation.bind(nextOrdinal, at: 7); try conversation.bind(value.reasoningEffort.rawValue, at: 8); try conversation.bind(String(decoding: JSONEncoder().encode(value.messageAddressReservations), as: UTF8.self), at: 9); _ = try conversation.step(); conversation.reset()
                 for row in item.messages {
                     let value = row.value
                     let attachments = try JSONEncoder().encode(value.attachments), activities = try JSONEncoder().encode(value.toolActivities), reactions = try JSONEncoder().encode(value.reactions), cards = try JSONEncoder().encode(value.transcriptCards)
@@ -358,7 +358,7 @@ enum ConversationRecovery {
 
     private static func validateCurrentSchema(_ database: SQLiteDatabase) throws {
         let expected: [String: [String]] = [
-            "conversations": ["id", "title", "provider_id", "model_id", "updated_at", "hidden_at", "next_message_ordinal", "reasoning_effort"],
+            "conversations": ["id", "title", "provider_id", "model_id", "updated_at", "hidden_at", "next_message_ordinal", "reasoning_effort", "message_addresses_json"],
             "messages": ["id", "conversation_id", "ordinal", "role", "text", "created_at", "attachments_json", "delivery_status", "delivery_error", "reasoning_text", "tool_activities_json", "reply_to_message_id", "reactions_json", "transcript_cards_json", "short_address"],
         ]
         for (table, columns) in expected {

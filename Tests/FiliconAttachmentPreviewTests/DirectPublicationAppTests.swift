@@ -37,14 +37,16 @@ private struct DirectPublicationProvider: AIProvider {
                     }
                     if replyMode == "current" {
                         arguments["reply_to"] = request.messages.last(where: { $0.role == .user })?.id.uuidString
+                    } else if replyMode == "current-short" {
+                        arguments["reply_to"] = try #require(request.messages.last(where: { $0.role == .user })?.shortAddress)
                     } else if replyMode == "foreign" {
                         arguments["reply_to"] = "00000000-0000-0000-0000-000000000123"
-                    } else if replyMode == "receipt", index == 1 {
+                    } else if (replyMode == "receipt" || replyMode == "receipt-short"), index == 1 {
                         let result = try #require(request.toolExchanges.first?.results.first?.wireText)
                         let start = try #require(result.range(of: "Saved message receipt: ")?.upperBound)
                         let end = try #require(result[start...].firstIndex(of: "}"))
                         let json = try #require(JSONSerialization.jsonObject(with: Data(result[start...end].utf8)) as? [String: String])
-                        arguments["reply_to"] = try #require(json["messageID"])
+                        arguments["reply_to"] = try #require(json[replyMode == "receipt-short" ? "shortAddress" : "messageID"])
                     }
                     let call = try NormalizedToolCall(id: .init(rawValue: "publish-\(index)"), name: "SendMessage",
                         argumentsJSON: JSONEncoder().encode(arguments))
@@ -122,7 +124,7 @@ struct DirectPublicationAppTests {
         expectNoDifference(card.externalCursorReference?.url.host, "cursor.com")
     }
 
-    @Test(arguments: ["current", "receipt", "foreign"]) @MainActor
+    @Test(arguments: ["current", "receipt", "foreign", "current-short", "receipt-short"]) @MainActor
     func directRepliesUseOnlySavedSameConversationTargets(mode: String) async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-direct-reply-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
@@ -155,8 +157,10 @@ struct DirectPublicationAppTests {
             let first = try #require(messages.first)
             let last = try #require(messages.last)
             let user = try #require(saved.messages.first(where: { $0.role == .user }))
-            expectNoDifference(first.replyToMessageID, mode == "current" ? user.id : nil)
-            expectNoDifference(last.replyToMessageID, mode == "current" ? user.id : first.id)
+            expectNoDifference(first.replyToMessageID, mode.hasPrefix("current") ? user.id : nil)
+            expectNoDifference(last.replyToMessageID, mode.hasPrefix("current") ? user.id : first.id)
+            expectNoDifference(user.shortAddress, "t0u")
+            expectNoDifference(messages.map(\.shortAddress), ["t0s0", "t0s1"])
         }
     }
 

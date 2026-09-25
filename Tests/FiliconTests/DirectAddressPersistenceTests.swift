@@ -52,15 +52,46 @@ struct DirectAddressPersistenceTests {
         let opened = sqlite3_open(url.path, &database)
         defer { sqlite3_close_v2(database) }
         try #require(opened == SQLITE_OK)
-        let changed = sqlite3_exec(database, "ALTER TABLE messages DROP COLUMN short_address; UPDATE schema_version SET version=9", nil, nil, nil)
+        let changed = sqlite3_exec(database, "ALTER TABLE messages DROP COLUMN short_address; ALTER TABLE conversations DROP COLUMN message_addresses_json; UPDATE schema_version SET version=9", nil, nil, nil)
         try #require(changed == SQLITE_OK)
         let migrated = try ConversationRepository(databaseURL: url)
         let version = try await migrated.schemaVersion()
         let migratedValues = try await migrated.load()
-        expectNoDifference(version, 10)
+        expectNoDifference(version, ConversationRepository.currentSchemaVersion)
         expectNoDifference(migratedValues.first?.messages, original.messages)
         let again = try ConversationRepository(databaseURL: url)
         let reopenedValues = try await again.load()
         expectNoDifference(reopenedValues.first?.messages, original.messages)
+    }
+
+    @Test func allocationRetainsDeletedIdentitiesAcrossReopen() async throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: "direct-address-book-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appending(path: "chat.sqlite3")
+        var conversation = Conversation(messages: [
+            .init(role: .assistant, text: "Boot"),
+            .init(role: .user, text: "Question"),
+            .init(role: .assistant, text: "First"),
+            .init(role: .assistant, text: "", reasoningText: "private"),
+            .init(role: .tool, text: "tool output")
+        ])
+        DirectMessageAddressing.assignMissing(in: &conversation)
+        expectNoDifference(conversation.messages.map(\.shortAddress), ["tbs0", "t0u", "t0s0", nil, nil])
+        let removed = conversation.messages.remove(at: 2)
+        let repository = try ConversationRepository(databaseURL: url)
+        try await repository.save([conversation])
+        let reopened = try ConversationRepository(databaseURL: url)
+        conversation = try #require(try await reopened.load().first)
+        expectNoDifference(conversation.messageAddressReservations[removed.id.uuidString], "t0s0")
+        conversation.messages.append(.init(role: .assistant, text: "Replacement"))
+        DirectMessageAddressing.assignMissing(in: &conversation)
+        expectNoDifference(conversation.messages.last?.shortAddress, "t0s1")
+        conversation.messages.removeAll()
+        conversation.messages.append(.init(role: .user, text: "New question"))
+        DirectMessageAddressing.assignMissing(in: &conversation)
+        expectNoDifference(conversation.messages.last?.shortAddress, "t1u")
+        let snapshot = conversation
+        DirectMessageAddressing.assignMissing(in: &conversation)
+        expectNoDifference(conversation, snapshot)
     }
 }

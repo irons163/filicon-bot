@@ -1741,7 +1741,17 @@ final class AppModel: ObservableObject {
             var publisher: AgentUserMessageTool?
             defer { directPublicationIDs.removeValue(forKey: assistantID) }
             do {
-                await persist(conversationID: id)
+                try await persistOrThrow(conversationID: id)
+                try Task.checkCancellation()
+                guard publicationGeneration == autoReviewAccountGeneration,
+                      !agentMessagingAccountTransition, running.contains(id),
+                      let current = conversations.first(where: { $0.id == id }) else { throw CancellationError() }
+                let addresses = Dictionary(current.messages.map { ($0.id, $0.shortAddress) }, uniquingKeysWith: { _, _ in nil })
+                let requestMessages = requestMessages.map { message in
+                    var value = message
+                    value.shortAddress = addresses[message.id] ?? nil
+                    return value
+                }
                 var attachmentsByMessageID: [UUID: [InferenceAttachment]] = [:]
                 for message in requestMessages where !message.attachments.isEmpty {
                     var values: [InferenceAttachment] = []
@@ -1777,6 +1787,7 @@ final class AppModel: ObservableObject {
                         var message = RoomMessage(id: $0.id, groupID: id, senderID: $0.role == .user ? nil : id,
                             text: $0.text, createdAt: $0.createdAt)
                         message.images = $0.attachments.filter { $0.kind == .image }
+                        message.shortAddress = $0.shortAddress
                         return message
                     }
                     publisher = AgentUserMessageTool(conversationID: id, availableImages: images, imageStore: nil,
@@ -2035,6 +2046,7 @@ final class AppModel: ObservableObject {
         receipt.cursorAgent = cursorAgent
         receipt.question = savedQuestion
         receipt.images = images.isEmpty ? nil : images
+        receipt.shortAddress = conversations.first(where: { $0.id == conversationID })?.messages.first(where: { $0.id == messageID })?.shortAddress
         return receipt
     }
 
@@ -2075,7 +2087,11 @@ final class AppModel: ObservableObject {
     private func persistOrThrow(conversationID: UUID?) async throws {
         guard let conversationID,
               !deletedConversationIDs.contains(conversationID),
-              let conversation = conversations.first(where: { $0.id == conversationID }) else { return }
+              let ci = conversations.firstIndex(where: { $0.id == conversationID }) else { return }
+        if completeMessageHistories.contains(conversationID) {
+            DirectMessageAddressing.assignMissing(in: &conversations[ci])
+        }
+        let conversation = conversations[ci]
         let loadedIDs = loadedMessageIDs[conversation.id] ?? []
         let historyComplete = completeMessageHistories.contains(conversation.id)
         let operation: @Sendable () async throws -> Void = { [store, conversation, loadedIDs, historyComplete] in

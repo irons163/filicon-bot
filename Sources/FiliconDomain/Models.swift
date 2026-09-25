@@ -142,6 +142,75 @@ public struct ChatMessage: Identifiable, Codable, Hashable, Sendable {
     }
 }
 
+/// Call only with the complete, canonical message history, never a page.
+public enum DirectMessageAddressing {
+    private static let limit = 1_000_000_000
+    private static func number(_ value: Substring) -> Int? {
+        guard !value.isEmpty, value.allSatisfy({ $0.isASCII && $0.isNumber }),
+              value.count == 1 || value.first != "0", let n = Int(value), n < limit else { return nil }
+        return n
+    }
+    private static func parse(_ address: String) -> (turn: Int?, response: Int?)? {
+        guard address.first == "t", address.utf8.count <= 22 else { return nil }
+        let body = address.dropFirst()
+        if body.last == "u", let turn = number(body.dropLast()) { return (turn, nil) }
+        let parts = body.split(separator: "s", omittingEmptySubsequences: false)
+        guard parts.count == 2, let response = number(parts[1]) else { return nil }
+        if parts[0] == "b" { return (nil, response) }
+        guard let turn = number(parts[0]) else { return nil }
+        return (turn, response)
+    }
+    public static func assignMissing(in conversation: inout Conversation) {
+        // Reserve imports first, even when invalid or ambiguous. Resolution
+        // rejects ambiguity; allocation must not silently repair identity.
+        for message in conversation.messages {
+            if let address = message.shortAddress,
+               conversation.messageAddressReservations[message.id.uuidString] == nil {
+                conversation.messageAddressReservations[message.id.uuidString] = address
+            }
+        }
+        var reserved = Set(conversation.messageAddressReservations.values)
+        var nextTurn = 0
+        var nextResponse: [String: Int] = [:]
+        for address in reserved {
+            guard let parsed = parse(address) else { continue }
+            if let turn = parsed.turn { nextTurn = max(nextTurn, turn + 1) }
+            if let response = parsed.response {
+                let prefix = "t\(parsed.turn.map(String.init) ?? "b")"
+                nextResponse[prefix] = max(nextResponse[prefix, default: 0], response + 1)
+            }
+        }
+        var turn: Int?
+        var turnKnown = true
+        for index in conversation.messages.indices {
+            let message = conversation.messages[index]
+            guard message.role == .user || message.role == .assistant else { continue }
+            let key = message.id.uuidString
+            var address = conversation.messageAddressReservations[key] ?? message.shortAddress
+            if address == nil, message.role == .user || !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !message.attachments.isEmpty {
+                if message.role == .user, nextTurn < limit {
+                    address = "t\(nextTurn)u"
+                    nextTurn += 1
+                } else if message.role == .assistant, turnKnown {
+                    let prefix = "t\(turn.map(String.init) ?? "b")"
+                    let next = nextResponse[prefix, default: 0]
+                    if next < limit { address = "\(prefix)s\(next)"; nextResponse[prefix] = next + 1 }
+                }
+            }
+            if let address {
+                conversation.messageAddressReservations[key] = address
+                conversation.messages[index].shortAddress = address
+                reserved.insert(address)
+            }
+            if message.role == .user {
+                if let address, let parsed = parse(address), parsed.response == nil {
+                    turn = parsed.turn; turnKnown = true
+                } else { turnKnown = false }
+            }
+        }
+    }
+}
+
 public struct Conversation: Identifiable, Codable, Hashable, Sendable {
     public let id: UUID
     public var title: String
@@ -151,12 +220,14 @@ public struct Conversation: Identifiable, Codable, Hashable, Sendable {
     public var messages: [ChatMessage]
     public var updatedAt: Date
     public var hiddenAt: Date?
+    /// Includes deleted messages so old references can never name new content.
+    public var messageAddressReservations: [String: String] = [:]
     public init(id: UUID = UUID(), title: String = "New conversation", providerID: ProviderID = "fake", modelID: ModelID = "fake-stream", reasoningEffort: ReasoningEffort = .disabled, messages: [ChatMessage] = [], updatedAt: Date = Date(), hiddenAt: Date? = nil) {
         self.id = id; self.title = title; self.providerID = providerID; self.modelID = modelID; self.reasoningEffort = reasoningEffort; self.messages = messages; self.updatedAt = updatedAt; self.hiddenAt = hiddenAt
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, title, providerID, modelID, reasoningEffort, messages, updatedAt, hiddenAt
+        case id, title, providerID, modelID, reasoningEffort, messages, updatedAt, hiddenAt, messageAddressReservations
     }
 
     public init(from decoder: Decoder) throws {
@@ -169,6 +240,7 @@ public struct Conversation: Identifiable, Codable, Hashable, Sendable {
         messages = try values.decodeIfPresent([ChatMessage].self, forKey: .messages) ?? []
         updatedAt = try values.decode(Date.self, forKey: .updatedAt)
         hiddenAt = try values.decodeIfPresent(Date.self, forKey: .hiddenAt)
+        messageAddressReservations = try values.decodeIfPresent([String: String].self, forKey: .messageAddressReservations) ?? [:]
     }
 
     @discardableResult

@@ -1,5 +1,17 @@
 # 協作能力核對紀錄（更新至 2026-09-25）
 
+## 直接聊天短地址配置與回條（2026-09-25）
+
+最終驗證：完整回歸 direct-address-allocation-full.log 中本批地址、直接發布與復原案例通過，但既有 realExecutionUsesGroupScopeAndPersistsHostStatus 出現 pending／工具狀態與正式發布順序失敗；獨立重跑 direct-address-group-recheck.log exit 0。不能把這輪記為全綠。初查 TurnCoordinator 透過非同步 ToolLoop events 消費狀態，工具 publisher 可先執行保存，事件消費未必先抵達；須另做可控排程重現及修正，不能只移除順序斷言。下方完整回歸待補記由此結果取代。
+
+在上一批保存欄位上接入主程式完整歷史保存路徑。沿用原版公開 tNu／tNsM 與 boot tbsM 形狀，不給私人 reasoning、工具輸出或空白 assistant 佔位地址。配置器保留已有身份，不從目錄最近 40 則重新編號；人類訊息開新回合，多次正式發布使用同回合遞增 s 編號。
+
+Conversation 保存 UUID→已用地址保留紀錄，schema 11 同步 SQLite、metadata 分頁、JSON 舊格式與損壞資料復原。刪除訊息保留地址，重啟後新訊息不會接管舊地址；部分載入保存合併 canonical 保留紀錄。舊非法／重複地址不擅自重編，工具現有身份與歧義檢查負責拒絕不可解析目標。地址保留只是身份，不給予工具權限。
+
+直接回合以成功保存後的地址快照建立模型目錄；保存錯誤停止回合，不再忽略初次保存錯誤。SendMessage 正式保存後的回條包含 shortAddress，同回合下一次發布即可引用。UUID 路徑仍相容，正文 sand-msg 導航保持關閉並在工具提示明說，尚未宣稱 UI 點擊可用。
+
+Swift testing／CustomDump 測試覆盖 boot、人類回合、空佔位排除、刪除後遞增、重啟後保留及冪等配置；實際 AppModel 測試增加使用者短地址與同回合短回條引用，原保存故障測試保持通過。損壞復原測試亦核對已刪訊息的保留紀錄不丟失。聚焦 direct-address-allocation-focused.log、原生建置 direct-address-allocation-native.log、封裝與 deep strict 簽章 direct-address-allocation-package.log 通過；完整回歸待補記。未啟動使用者 App 或操作真實帳號資料。
+
 ## 直接聊天短地址的保存基礎（2026-09-25）
 
 最終補驗：direct-address-storage-full-final.log 完整非並行回歸 exit 0；新增三項保存測試與既有損壞復原測試通過。下方完整回歸待補記已關閉，短地址配置／工具／UI 接線仍未完成。

@@ -125,6 +125,9 @@ public actor ConversationStore {
             return
         }
         var merged = conversation
+        // A paged view must not discard reservations belonging to unseen or
+        // deleted messages; canonical identity wins over stale metadata.
+        merged.messageAddressReservations.merge(canonical.messageAddressReservations) { _, saved in saved }
         let unseen = canonical.messages.filter { !replacingLoadedMessageIDs.contains($0.id) }
         merged.messages = Self.mergeChronologically(older: unseen, newer: conversation.messages)
         try await repository.upsert(merged)
