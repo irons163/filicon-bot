@@ -1,4 +1,10 @@
-# 協作能力核對紀錄（更新至 2026-09-25）
+# 協作能力核對紀錄（更新至 2026-09-26）
+
+## 單獨聊天代理人執行驗證（2026-09-26）
+
+持久 binding 接入直接聊天 startTurn：查詢 AgentService 的存活 profile，確認 accountID、agentID、對話 binding、provider/model 與帳號 generation，帶入該代理人的名稱／職務／說明／指令，並使用共用 agent execution lane。取得 lane 後、呼叫 provider 前再次查詢；排隊期間封存、解除／改動綁定或變更執行指令均拒絕舊請求，不退回無綁定聊天。presence、unreadCount 等非執行欄位變化不使快照失效。舊無綁定對話不猜測代理人。
+
+新增純身份解析案例與 App 實際發送／封存／排隊再驗證測試；聚焦 direct-agent-runtime.log exit 0（10 項測試，含參數化案例）。完整非並行 direct-agent-runtime-full.log、原生 direct-agent-runtime-native.log、封裝／deep strict 簽章 direct-agent-runtime-package.log 均 exit 0。此為執行接線，不是工具權限授予，亦未新增 UI 綁定入口、direct secret-request 或既有群組／對話資料更動；這些缺口仍保留。
 
 ## 單獨聊天代理人關聯儲存（2026-09-25）
 

@@ -12,6 +12,7 @@ private struct DirectPublicationProvider: AIProvider {
     let toolSupport: Bool
     var replyMode: String? = nil
     var cloudID: String? = nil
+    var expectedAgentInstructions: String? = nil
     var descriptor: ProviderDescriptor {
         .init(id: "direct-publication-test", displayName: "Direct publication test",
               requiresAPIKey: false, supportsToolCalling: toolSupport)
@@ -21,6 +22,9 @@ private struct DirectPublicationProvider: AIProvider {
         AsyncThrowingStream { continuation in
             do {
                 let tools = request.tools.map(\.name)
+                if let expectedAgentInstructions {
+                    #expect(request.messages.contains { $0.role == .system && $0.text.contains(expectedAgentInstructions) })
+                }
                 if toolSupport { #expect(tools.contains("SendMessage")) }
                 else { #expect(!tools.contains("SendMessage")) }
                 if replyMode != nil {
@@ -92,6 +96,85 @@ private struct DelayedDirectPublicationProvider: AIProvider {
 
 @Suite("Direct conversation publications")
 struct DirectPublicationAppTests {
+    @Test(arguments: ["instructions", "archive", "unbind"])
+    @MainActor func queuedBoundTurnRevalidatesBeforeProviderStarts(change: String) async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "filicon-bound-queue-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+        await model.bootstrap()
+        await model.registry.register(DirectPublicationProvider(publishes: false, toolSupport: false))
+        var agent = try #require(await model.createAgent(name: "Designer", summary: "", instructions: "Original",
+            providerID: "direct-publication-test", modelID: "test"))
+        let agentID = agent.id
+        let id = try #require(model.selection)
+        let ci = try #require(model.conversations.firstIndex(where: { $0.id == id }))
+        model.conversations[ci].providerID = agent.providerID
+        model.conversations[ci].modelID = agent.modelID
+        model.conversations[ci].agentBinding = .init(accountID: "local", agentID: agentID)
+        await model.refreshModels()
+        let entered = AsyncStream<Void>.makeStream()
+        let release = AsyncStream<Void>.makeStream()
+        let blocker = Task {
+            try await model.agentExecutionScheduler.withExclusiveAccess(agentID: agentID) {
+                entered.continuation.yield(())
+                for await _ in release.stream { break }
+            }
+        }
+        defer { release.continuation.finish(); blocker.cancel() }
+        for await _ in entered.stream { break }
+        model.draft = "Review"
+        model.send()
+        for _ in 0..<600 {
+            if await model.agentExecutionScheduler.snapshot(agentID: agentID).queuedCount == 1 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let queued = await model.agentExecutionScheduler.snapshot(agentID: agentID)
+        expectNoDifference(queued.queuedCount, 1)
+        if change == "instructions" {
+            agent.instructions = "Changed after enqueue"
+            #expect(await model.updateAgent(agent))
+        } else if change == "archive" { await model.archiveAgent(id: agentID) }
+        else { model.conversations[ci].agentBinding = nil }
+        release.continuation.finish()
+        try await blocker.value
+        for _ in 0..<600 {
+            if !model.running.contains(id) { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(!model.running.contains(id))
+        #expect(!model.conversations[ci].messages.contains { $0.text == "Plain answer" })
+    }
+
+    @Test(arguments: [false, true]) @MainActor
+    func boundAgentUsesLiveIdentityOrRejectsArchivedAgent(archived: Bool) async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "filicon-bound-direct-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+        await model.bootstrap()
+        await model.registry.register(DirectPublicationProvider(publishes: false, toolSupport: false,
+            expectedAgentInstructions: "Use the designer's accessibility checklist."))
+        let agent = try #require(await model.createAgent(name: "Designer", summary: "Design review",
+            instructions: "Use the designer's accessibility checklist.",
+            providerID: "direct-publication-test", modelID: "test"))
+        let id = try #require(model.selection)
+        let ci = try #require(model.conversations.firstIndex(where: { $0.id == id }))
+        model.conversations[ci].providerID = agent.providerID
+        model.conversations[ci].modelID = agent.modelID
+        model.conversations[ci].agentBinding = .init(accountID: "local", agentID: agent.id)
+        if archived { await model.archiveAgent(id: agent.id) }
+        await model.refreshModels()
+        model.draft = "Review the design"
+        model.send()
+        for _ in 0..<600 {
+            if !model.running.contains(id) { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(!model.running.contains(id))
+        let answers = model.conversations[ci].messages.filter { $0.role == .assistant && !$0.text.isEmpty }
+        expectNoDifference(answers.map(\.text), archived ? [] : ["Plain answer"])
+        if archived { #expect(model.errorMessage != nil) }
+    }
+
     @Test @MainActor func cloudReferenceIsSavedAndCanBeRepliedTo() async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-direct-cloud-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }

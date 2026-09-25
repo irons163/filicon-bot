@@ -1750,6 +1750,30 @@ final class AppModel: ObservableObject {
     }
     func cancelReply() { replyingToMessageID = nil }
 
+    /// Revalidated after every asynchronous profile lookup and again when the
+    /// coordinator acquires the agent lane. A binding is not an authority grant.
+    private func directTurnAgentIdentity(
+        conversationID: UUID, binding: DirectConversationAgentBinding?, accountScope: String,
+        generation: UInt64, providerID: ProviderID, modelID: ModelID
+    ) async throws -> DirectAgentExecutionIdentity? {
+        let profile: AgentProfile?
+        if let binding { profile = await agentService?.profile(id: binding.agentID) }
+        else { profile = nil }
+        guard generation == autoReviewAccountGeneration, !agentMessagingAccountTransition,
+              (settings.accountScope ?? "local") == accountScope,
+              let conversation = conversations.first(where: { $0.id == conversationID }),
+              conversation.agentBinding == binding,
+              conversation.providerID == providerID, conversation.modelID == modelID else {
+            throw CancellationError()
+        }
+        do {
+            return try DirectAgentExecutionIdentity.resolve(binding: binding, accountID: accountScope,
+                profile: profile, providerID: providerID, modelID: modelID)
+        } catch {
+            throw ProviderError.transport(l10n("The selected agent is unavailable."))
+        }
+    }
+
     private func startTurn(
         conversationID id: UUID,
         assistantID: UUID,
@@ -1762,6 +1786,7 @@ final class AppModel: ObservableObject {
         workspaceFolders.beginTurn(conversationID: id)
         let accountScope = settings.accountScope ?? "local"
         let publicationGeneration = autoReviewAccountGeneration
+        let agentBinding = conversations.first(where: { $0.id == id })?.agentBinding
         let turnTask = Task { [self] in
             var succeeded = false
             var publisher: AgentUserMessageTool?
@@ -1772,6 +1797,9 @@ final class AppModel: ObservableObject {
                 guard publicationGeneration == autoReviewAccountGeneration,
                       !agentMessagingAccountTransition, running.contains(id),
                       let current = conversations.first(where: { $0.id == id }) else { throw CancellationError() }
+                let agentIdentity = try await directTurnAgentIdentity(conversationID: id,
+                    binding: agentBinding, accountScope: accountScope, generation: publicationGeneration,
+                    providerID: providerID, modelID: requestModelID)
                 let addresses = Dictionary(current.messages.map { ($0.id, $0.shortAddress) }, uniquingKeysWith: { _, _ in nil })
                 let requestMessages = requestMessages.map { message in
                     var value = message
@@ -1796,7 +1824,7 @@ final class AppModel: ObservableObject {
                     conversationID: id,
                     modelID: requestModelID,
                     messages: WorkflowComposerReferences.injectingReferencedWorkflows(
-                        into: requestMessages,
+                        into: (agentIdentity.map { [$0.systemMessage] } ?? []) + requestMessages,
                         workflows: workflows
                     ),
                     attachmentsByMessageID: attachmentsByMessageID,
@@ -1848,7 +1876,14 @@ final class AppModel: ObservableObject {
                         }, publish: { _, _ in throw CancellationError() })
                 }
                 let tools: [any ToolExecutor] = publisher.map { [$0] } ?? []
-                try await coordinator.send(request: request, providerID: providerID, additionalTools: tools) { [weak self] event in
+                try await coordinator.send(request: request, providerID: providerID, additionalTools: tools,
+                    agentID: agentIdentity?.agentID, onStart: { [weak self] in
+                        guard let self else { throw CancellationError() }
+                        let liveIdentity = try await self.directTurnAgentIdentity(conversationID: id,
+                            binding: agentBinding, accountScope: accountScope, generation: publicationGeneration,
+                            providerID: providerID, modelID: requestModelID)
+                        guard liveIdentity == agentIdentity else { throw CancellationError() }
+                    }) { [weak self] event in
                     await self?.consume(event, conversationID: id, assistantID: assistantID)
                 }
                 succeeded = true
