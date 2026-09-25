@@ -1680,3 +1680,5 @@
 "This credential request is no longer available." = "This credential request is no longer available.";
 "Save credential" = "Save credential";
 "Credential stored, but the conversation receipt could not be saved. Retry without entering the credential again." = "Credential stored, but the conversation receipt could not be saved. Retry without entering the credential again.";
+"Cursor cloud agent" = "Cursor cloud agent";
+"Open on cursor.com. Remote status has not been verified." = "Open on cursor.com. Remote status has not been verified.";

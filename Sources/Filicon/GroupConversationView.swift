@@ -588,7 +588,10 @@ struct GroupMessageBubble: View {
                     GroupQuestionCard(card: question, enabled: questionEnabled, onAnswer: onQuestionAnswer ?? { _ in })
                         .accessibilityIdentifier("group-question-\(message.id)")
                 }
-                if !message.text.isEmpty && message.question == nil {
+                if let reference = message.cursorAgent {
+                    CursorAgentReferenceCard(reference: reference)
+                }
+                if !message.text.isEmpty && message.question == nil && message.cursorAgent == nil {
                     Group {
                         if isUser {
                             Text(message.questionReplyTo != nil && message.text == "Question dismissed without an answer."
@@ -628,7 +631,7 @@ struct GroupMessageBubble: View {
                     )
                     .font(.caption).foregroundStyle(FiliconTheme.textSecondary)
                     .accessibilityIdentifier("group-member-outcome-\(outcome.rawValue)")
-                } else if !isUser && message.toolActivities.isEmpty && message.question == nil
+                } else if !isUser && message.toolActivities.isEmpty && message.question == nil && message.cursorAgent == nil
                             && message.images?.isEmpty != false && !message.text.isEmpty {
                     Text(l10n("Text reply · no tools used"))
                         .font(.system(size: 10)).foregroundStyle(FiliconTheme.textTertiary)

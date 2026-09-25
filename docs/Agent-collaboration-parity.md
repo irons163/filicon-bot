@@ -1,5 +1,17 @@
 # 協作能力核對紀錄（更新至 2026-09-25）
 
+## Cursor 雲端代理人引用卡片（2026-09-25）
+
+核對 reconstructed `send-message-schema.ts`、`send-message-tool.ts` 與 `electron-main/main-edge.ts`：`type:cursor-agent` 保存 bcId，可選擇解析遠端名稱；點擊使用 `/agents/<bcId>` 網頁，而不是由這張卡片啟動雲端工作。Filicon 現已接入有保存回條的一般群組、背景群組及獨立信箱 `SendMessage`，接受 `type:cursor-agent`、`bcId` 及可選的 `reply_to`。使用既有前文／同回合回條目錄、兩則共用發布額度、固定作者／目的地／lifetime、重送及保存失敗語意；不暫停回合、不修改外部 channel。
+
+新增可驗證 Codable 的引用型別；本機接受 4–200 ASCII 字元的 `bc-` ID，後綴僅英數、底線及連字號。拒絕 path、URL、percent encoding、控制字元、content／images／channel／title 等混用欄位。網址由 host 固定為 `https://cursor.com/agents/<bcId>`，不讀 Cursor 私人資料、不採用模型或環境提供的 host。訊息保留 canonical summary 與引用 metadata，保存層拒絕混入其他卡片／圖片／偽造文字。舊 RoomMessage 缺少欄位仍可解碼。
+
+群組與信箱以相同的七語言 SwiftUI 卡片呈現，顯示 ID 及「遠端狀態未驗證」，只在使用者點擊時交給系統網址開啟器；發布及渲染不發出網路請求。沒有實作 Cursor 身分驗證、遠端名稱／狀態查詢、啟動或操控代理人，不能把引用回條當遠端代理人存在的證據。原版可自訂網站 base／寬鬆 ID 與遠端 title resolver 不在這批支援範圍；直接聊天與 legacy 無回條 transport 不新增此模型能力。
+
+依 Swift testing／CustomDump／SwiftUI 技能補輸入／解碼拒絕、同 ID 重送、跨型別重送、共用額度、失敗重試、保存重開、同回合短地址引用、群組 lifetime 關閉及前景／背景／信箱 host 接線測試。七語言明暗 14 個 340 點寬離線渲染，人工檢视繁中深色及法文淺色；長 ID 限三行，說明可換行。不是實際使用者視窗點擊或 Cursor 帳號驗收。原生建置首輪抓到新增 view 未列 target，已補入 Xcode 專案；不以 SPM 編譯取代原生建置。AGENT-02 仍 partial，其餘附件／secret-request 入口與 runtime 差異未消失。
+
+驗證：`cloud-reference-full.log` 首輪完整非並行回歸 exit 0；補充前景／背景 adapter fixtures 後，`cloud-reference-adapters-verified.log` 35 項核心／session／保存測試及 14 個 UI 語言明暗案例通過。`cloud-reference-native-final.log` 原生建置、`cloud-reference-package.log` 封裝及 deep strict codesign exit 0；七語言各 1,673 keys、零缺漏。最後 `cloud-reference-full-final.log` 完整重跑 exit 1，AttachmentPreview／Agents fixtures 出現 protected-file EPERM，當時 `IOConsoleLocked=Yes`；不宣稱該次重跑通過，也不降低檔案保護，解鎖後需補跑。沒有啟動或重啟 App／Xcode、push 或修改真實帳號／群組。
+
 ## 信箱引用索引（2026-09-25）
 
 上一批 `c78721d` 已提交，接續將每次引用查找時的全歷史掃描，改為快照建立時一次按 origin／sender／recipient 建立不可變索引。正文、UUID 引用與點擊重驗共用位置及地址索引；不再於每個連結查找時重新分組整份歷史。沒有改動持久化格式、模型的 40 則目錄或 UI 的 500 則收件上限，亦未宣稱已測量實際視窗的效能提升。

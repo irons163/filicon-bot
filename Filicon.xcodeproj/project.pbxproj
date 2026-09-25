@@ -65,6 +65,7 @@
 		A022A8B7A8ED5AE25E873C536B7E25D7 /* AutomationIngressSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7FA7FDF3401B58D25E2C646F2B11425C /* AutomationIngressSettingsView.swift */; };
 		A0891392482881B9074F9CF38479A7E0 /* FiliconChannels in Frameworks */ = {isa = PBXBuildFile; productRef = 69980B04CBF49B352E549D70605A97B6 /* FiliconChannels */; };
 		A49FDCD7C01D3EC81BF5DE73BCE8CF77 /* AgentMessagingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25695B7A8D6D11E1121CFBB8C4CFF231 /* AgentMessagingView.swift */; };
+		CB61AA302509250001000002 /* CursorAgentReferenceCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB61AA302509250001000001 /* CursorAgentReferenceCard.swift */; };
 		A9D36E91E22DF603B328CF01A07336B0 /* GroupMentionCompletion.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF0EF19B276E7F41097A21F2E1CB2654 /* GroupMentionCompletion.swift */; };
 		AA142DE86F094060D797144C9F7A3168 /* AutoReviewSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 331FDCB37193F98FD5E5B5215983B6B8 /* AutoReviewSettingsView.swift */; };
 		AD9177D98F23825971571F8C591688EF /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = 4CF1F3B95E79C27C59B6BCA074C02C38 /* Localizable.strings */; };
@@ -168,6 +169,7 @@
 		1F67E2E65410CDAF6351FF2AD850C273 /* WorkspaceFolderAccess.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WorkspaceFolderAccess.swift; sourceTree = "<group>"; };
 		2150DB0C63484B26CC187F7F4D33F281 /* VNCWebView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = VNCWebView.swift; sourceTree = "<group>"; };
 		25695B7A8D6D11E1121CFBB8C4CFF231 /* AgentMessagingView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AgentMessagingView.swift; sourceTree = "<group>"; };
+		CB61AA302509250001000001 /* CursorAgentReferenceCard.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CursorAgentReferenceCard.swift; sourceTree = "<group>"; };
 		2F67E8851A5AF9A9FD17836172EF8645 /* TranscriptPresentationState.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TranscriptPresentationState.swift; sourceTree = "<group>"; };
 		32132013CCE3FC4709E5A13761CDEB17 /* ko */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.strings; name = ko; path = ko.lproj/Localizable.strings; sourceTree = "<group>"; };
 		331FDCB37193F98FD5E5B5215983B6B8 /* AutoReviewSettingsView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AutoReviewSettingsView.swift; sourceTree = "<group>"; };
@@ -397,6 +399,7 @@
 				C14D5C49ECDF1A2977D16C7B0349788D /* AboutView.swift */,
 				08E5FA7292533DB8264CC6AEBE3CC9BB /* AccountExperienceView.swift */,
 				25695B7A8D6D11E1121CFBB8C4CFF231 /* AgentMessagingView.swift */,
+				CB61AA302509250001000001 /* CursorAgentReferenceCard.swift */,
 				8DAD592594C2A916EB769203BA06C074 /* AgentNotificationProjection.swift */,
 				AB9020100011000022000033 /* AgentWorkflowApprovalDetails.swift */,
 				AFC4B544D33DEA599FF5653B8E2F2AFE /* AgentsWorkspaceScreen.swift */,
@@ -696,6 +699,7 @@
 				75872259925775BB8E9ACB5696E613AF /* AboutView.swift in Sources */,
 				3C40F2744C2EFB2A28C36EABDB2689FA /* AccountExperienceView.swift in Sources */,
 				A49FDCD7C01D3EC81BF5DE73BCE8CF77 /* AgentMessagingView.swift in Sources */,
+				CB61AA302509250001000002 /* CursorAgentReferenceCard.swift in Sources */,
 				E78F64D096C0C305E790863A7F517F44 /* AgentNotificationProjection.swift in Sources */,
 				AB9020100011000022000044 /* AgentWorkflowApprovalDetails.swift in Sources */,
 				4C7B212585BCFC13897A73AFD3B79A6C /* AgentsWorkspaceScreen.swift in Sources */,

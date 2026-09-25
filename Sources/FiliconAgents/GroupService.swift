@@ -35,13 +35,16 @@ public struct GroupAgentPublication: Sendable {
     public let sourceUserMessageID: UUID?
     public let lifetime: AgentPublicationLifetime?
     public let question: GroupQuestion?
+    public let cursorAgent: CursorAgentReference?
     public let replyToMessageID: UUID?
 
     public init(text: String, images: [AttachmentMetadata] = [], sourceUserMessageID: UUID? = nil,
-                lifetime: AgentPublicationLifetime? = nil, question: GroupQuestion? = nil, replyToMessageID: UUID? = nil) {
+                lifetime: AgentPublicationLifetime? = nil, question: GroupQuestion? = nil, replyToMessageID: UUID? = nil,
+                cursorAgent: CursorAgentReference? = nil) {
         self.text = text; self.images = images
         self.sourceUserMessageID = sourceUserMessageID; self.lifetime = lifetime
         self.question = question
+        self.cursorAgent = cursorAgent
         self.replyToMessageID = replyToMessageID
     }
 }
@@ -489,6 +492,10 @@ public actor GroupService {
         try Task.checkCancellation()
         guard epochs[activity.groupID] == epoch else { throw CancellationError() }
         let text = publication.text, images = publication.images
+        if let reference = publication.cursorAgent {
+            guard text == reference.summary, images.isEmpty, publication.question == nil,
+                  publication.lifetime != nil else { throw AgentPublicationError.invalid }
+        }
         if let replyID = publication.replyToMessageID {
             guard publication.lifetime != nil, replyID != activity.id,
                   GroupThreadProjection(history: state.roomMessages, groupID: activity.groupID).canReply(to: replyID) else {
@@ -522,6 +529,7 @@ public actor GroupService {
         }
         var draft = RoomMessage(groupID: activity.groupID, senderID: activity.senderID, text: text, images: images)
         draft.question = publication.question
+        draft.cursorAgent = publication.cursorAgent
         draft.replyToMessageID = publication.replyToMessageID ?? activity.replyToMessageID
         let message = draft
         let commit = {

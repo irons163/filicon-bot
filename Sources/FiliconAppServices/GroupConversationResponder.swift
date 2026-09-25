@@ -183,7 +183,11 @@ public struct GroupConversationResponder: GroupAgentResponder {
             } else {
                 publisher = AgentUserMessageTool(conversationID: toolScopeID, senderID: agent.id,
                     replyHistory: replyHistory, supportsQuestions: questionAccountID != nil,
-                    defaultReplyToMessageID: threadProjection.defaultReplyTargetID) { text, images, replyID, question in
+                    defaultReplyToMessageID: threadProjection.defaultReplyTargetID,
+                    publishCursorAgent: { reference, replyID in
+                        try await onSavedPublication(.init(text: reference.summary, lifetime: questionLifetime,
+                            replyToMessageID: replyID, cursorAgent: reference))
+                    }) { text, images, replyID, question in
                     guard images.isEmpty else { throw AgentImageError.unavailable }
                     let card = question.flatMap { question in questionAccountID.map {
                         GroupQuestion(question: question, accountID: $0, memberIDs: roomContext.group.memberIDs)

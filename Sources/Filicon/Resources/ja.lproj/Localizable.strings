@@ -1680,3 +1680,5 @@
 "This credential request is no longer available." = "この認証情報のリクエストは利用できなくなりました。";
 "Save credential" = "認証情報を保存";
 "Credential stored, but the conversation receipt could not be saved. Retry without entering the credential again." = "認証情報は保存されましたが、会話への記録に失敗しました。認証情報を再入力せずに再試行してください。";
+"Cursor cloud agent" = "Cursor クラウドエージェント";
+"Open on cursor.com. Remote status has not been verified." = "cursor.com で開きます。リモートの状態は未確認です。";

@@ -57,6 +57,56 @@ private func prioritySendCall(_ target: UUID, _ text: String, id: ToolCallID = "
 
 @Suite("SendToAgent messaging session", .timeLimit(.minutes(1)))
 struct AgentMessagingSessionTests {
+    @Test(arguments: [false, true]) func groupCloudReferenceAdaptersPreserveScope(background: Bool) async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let groups = try GroupService(agents: f.agents, storeURL: f.root.appending(path: "groups.json"))
+        let group = try await groups.create(name: "Fixture", memberIDs: [f.sender.id])
+        let input = try await groups.postUserMessage("Existing reference", groupID: group.id)
+        let destination = group.id, origin = background ? f.origin : group.id
+        let session = AgentMessagingSession(originConversationID: origin, agents: f.agents, messenger: f.messenger,
+            registry: f.registry, coordinator: f.coordinator, groups: groups)
+        let publish: @Sendable (GroupAgentPublication) async throws -> RoomMessage? = { value in
+            expectNoDifference(value.cursorAgent?.bcID, "bc-fixture")
+            expectNoDifference(value.replyToMessageID, input.id)
+            #expect(value.lifetime != nil)
+            var saved = RoomMessage(groupID: destination, senderID: f.sender.id, text: value.text)
+            saved.cursorAgent = value.cursorAgent; saved.replyToMessageID = value.replyToMessageID
+            await f.probe.update(saved)
+            return saved
+        }
+        let tool: AgentUserMessageTool
+        if background {
+            tool = try await session.savedBackgroundGroupPublisher(for: f.sender.id, groupID: destination,
+                memberIDs: [f.sender.id], replyHistory: [input], publish: publish)
+        } else {
+            tool = try await session.savedGroupPublisher(for: f.sender.id, userMessageID: input.id,
+                replyHistory: [input], questionAccountID: nil, memberIDs: [f.sender.id], publish: publish)
+        }
+        let request = try NormalizedToolCall(id: "cloud", name: "SendMessage", argumentsJSON:
+            JSONEncoder().encode(["type": "cursor-agent", "bcId": "bc-fixture", "reply_to": input.id.uuidString]))
+        #expect(try await !tool.execute(request, context: .init(conversationID: origin)).isError)
+        let saved = await f.probe.messages
+        expectNoDifference(saved.count, 1)
+        expectNoDifference(saved.first?.groupID, destination)
+        try await session.close()
+    }
+    @Test(arguments: [true, false]) func cloudReferenceEntryIsHostGatedAndPersists(enabled: Bool) async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        await f.registry.register(MessagingProvider { _, execute in
+            let result = try await execute(.init(id: "cloud", name: "SendMessage",
+                argumentsJSON: Data(#"{"type":"cursor-agent","bcId":"bc-fixture"}"#.utf8)))
+            expectNoDifference(result.isError, !enabled)
+            return "Done"
+        })
+        let session = f.session(questions: enabled)
+        try await session.enqueueUserMessage(senderID: f.sender.id, recipientID: f.recipient.id, text: "Reference existing cloud agent")
+        try await session.drain(onUpdate: { await f.probe.update($0) })
+        try await session.close()
+        let history = await f.messenger.allMessages()
+        expectNoDifference(history.first?.delivery?.publications?.first?.cursorAgent?.bcID, enabled ? "bc-fixture" : nil)
+        let projected = await f.probe.messages
+        expectNoDifference(projected.contains { $0.cursorAgent?.bcID == "bc-fixture" }, enabled)
+    }
     private struct Fixture {
         let root: URL
         let agents: AgentService

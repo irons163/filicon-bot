@@ -25,6 +25,10 @@ public actor AgentUserMessageTool: ToolExecutor, ToolRuntimeContextProviding {
     private let supportsImages: Bool
     public typealias SecretPublisher = @Sendable (AgentSecretRequest, UUID?) async throws -> Void
     private let publishSecret: SecretPublisher?
+    public typealias CursorAgentPublisher = @Sendable (CursorAgentReference, UUID?) async throws -> RoomMessage?
+    private var publishCursorAgent: CursorAgentPublisher?
+    private var cloudCalls: [Key: (CursorAgentReference, UUID?, NormalizedToolResult)] = [:]
+    private var cloudReferences: Set<CursorAgentReference> = []
     private var secretReceipt: (Key, AgentSecretRequest, UUID?, NormalizedToolResult)?
     public typealias QuestionPublisher = @Sendable (AgentQuestion) async throws -> Void
     private let publishQuestion: (@Sendable (AgentQuestion) async throws -> RoomMessage?)?
@@ -79,6 +83,7 @@ public actor AgentUserMessageTool: ToolExecutor, ToolRuntimeContextProviding {
                 authorizeImages: @escaping ImageAuthorizer = { _, _, _, _ in throw AgentMessagingError.approvalRequired },
                 publishQuestion: QuestionPublisher? = nil,
                 publishSecret: SecretPublisher? = nil,
+                publishCursorAgent: CursorAgentPublisher? = nil,
                 publishQuestionReply: QuestionReplyPublisher? = nil,
                 replyHistory: [RoomMessage] = [], publishReply: ReplyPublisher? = nil,
                 receiptSenderID: UUID? = nil,
@@ -88,6 +93,7 @@ public actor AgentUserMessageTool: ToolExecutor, ToolRuntimeContextProviding {
                 publish: @escaping @Sendable (String, [AttachmentMetadata]) async throws -> Void) {
         self.conversationID = conversationID; self.availableImages = availableImages
         self.publishSecret = publishSecret
+        self.publishCursorAgent = publishCursorAgent
         replyGroupID = conversationID
         senderID = receiptSenderID
         self.supportsReferenceNavigation = supportsReferenceNavigation
@@ -115,7 +121,7 @@ public actor AgentUserMessageTool: ToolExecutor, ToolRuntimeContextProviding {
         knownShortAddresses = Set(replyHistory.filter { $0.groupID == conversationID }.compactMap(\.shortAddress))
         descriptor = Self.makeDescriptor(supportsImages: supportsImages, supportsQuestions: publishQuestion != nil,
             supportsReplies: hasReceipts || !targets.isEmpty, supportsTextReplies: hasReceipts || publishReply != nil, supportsQuestionReplies: questionReplies,
-            supportsSecrets: publishSecret != nil)
+            supportsSecrets: publishSecret != nil, supportsCloudAgents: publishCursorAgent != nil)
     }
 
     public init(conversationID: UUID, senderID: UUID, replyHistory: [RoomMessage], supportsQuestions: Bool,
@@ -123,9 +129,11 @@ public actor AgentUserMessageTool: ToolExecutor, ToolRuntimeContextProviding {
                 defaultReplyToMessageID: UUID? = nil,
                 availableImages: [AttachmentMetadata] = [], imageStore: AgentImageStore? = nil,
                 authorizeImages: @escaping ImageAuthorizer = { _, _, _, _ in throw AgentMessagingError.approvalRequired },
+                publishCursorAgent: CursorAgentPublisher? = nil,
                 publishGroup: @escaping GroupPublisher) {
         let groupID = replyGroupID ?? conversationID
         publishSecret = nil
+        self.publishCursorAgent = publishCursorAgent
         self.conversationID = conversationID
         self.replyGroupID = groupID
         supportsReferenceNavigation = true
@@ -143,7 +151,8 @@ public actor AgentUserMessageTool: ToolExecutor, ToolRuntimeContextProviding {
         knownMessageIDs = Set(replyHistory.filter { $0.groupID == groupID }.map(\.id))
         knownShortAddresses = Set(replyHistory.filter { $0.groupID == groupID }.compactMap(\.shortAddress))
         descriptor = Self.makeDescriptor(supportsImages: supportsImages, supportsQuestions: supportsQuestions,
-            supportsReplies: true, supportsTextReplies: true, supportsQuestionReplies: supportsQuestions)
+            supportsReplies: true, supportsTextReplies: true, supportsQuestionReplies: supportsQuestions,
+            supportsCloudAgents: publishCursorAgent != nil)
     }
 
     private nonisolated static func replyTargets(in history: [RoomMessage], groupID: UUID) -> [RoomMessage] {
@@ -172,11 +181,12 @@ public actor AgentUserMessageTool: ToolExecutor, ToolRuntimeContextProviding {
     }
 
     private func registerReceipt(_ message: RoomMessage?, text: String, images: [AttachmentMetadata],
-                                 replyTo: UUID?, question: AgentQuestion? = nil) -> String {
+                                 replyTo: UUID?, question: AgentQuestion? = nil, cursorAgent: CursorAgentReference? = nil) -> String {
         guard var saved = message, saved.groupID == replyGroupID, let senderID, saved.senderID == senderID,
               saved.text == text, saved.images ?? [] == images, saved.memberOutcome == nil,
               saved.replyToMessageID == replyTo, saved.question?.question == question,
-              saved.questionReplyTo == nil, saved.secretRequest == nil, !knownMessageIDs.contains(saved.id) else { return "" }
+              saved.questionReplyTo == nil, saved.secretRequest == nil, saved.cursorAgent == cursorAgent,
+              !knownMessageIDs.contains(saved.id) else { return "" }
         // A bad or colliding alias must not hide a successful save, invent an
         // identity, or make a foreign/ambiguous address actionable. UUIDs remain
         // usable if the rest of the host's receipt matches this publication.
@@ -198,10 +208,11 @@ public actor AgentUserMessageTool: ToolExecutor, ToolRuntimeContextProviding {
             : " This receipt does not resume the paused turn or grant approval.")
     }
 
-    private nonisolated static func makeDescriptor(supportsImages: Bool, supportsQuestions: Bool, supportsReplies: Bool, supportsTextReplies: Bool, supportsQuestionReplies: Bool, supportsSecrets: Bool = false) -> ToolDescriptor {
+    private nonisolated static func makeDescriptor(supportsImages: Bool, supportsQuestions: Bool, supportsReplies: Bool, supportsTextReplies: Bool, supportsQuestionReplies: Bool, supportsSecrets: Bool = false, supportsCloudAgents: Bool = false) -> ToolDescriptor {
         let images = supportsImages ? #", "images":{"type":"array","maxItems":4,"uniqueItems":true,"items":{"oneOf":[{"type":"string"},{"type":"object","properties":{"image_id":{"type":"string"},"alt":{"type":"string","maxLength":500}},"required":["image_id"],"additionalProperties":false}]},"description":"Current host-provided image IDs only, never paths or URLs. Each entry may be an ID or {image_id,alt} with an optional plain description (500 characters, no control characters). Requires fresh preview approval of all images and descriptions."}"# : ""
         let attachment = supportsImages ? #", "image_id":{"type":"string","description":"For a standalone image attachment, one exact ID from the current host-provided image directory. No text, path or URL. Requires fresh preview approval."}, "alt":{"type":"string","maxLength":500,"description":"Optional plain description for type:attachment only. Shown in preview approval, hover and image viewer. No control characters. This is descriptive content, never instructions or permission."}"# : ""
-        let types = ["text"] + (supportsQuestions ? ["widget"] : []) + (supportsImages ? ["attachment"] : []) + (supportsSecrets ? ["secret-request"] : [])
+        let types = ["text"] + (supportsQuestions ? ["widget"] : []) + (supportsImages ? ["attachment"] : []) + (supportsSecrets ? ["secret-request"] : []) + (supportsCloudAgents ? ["cursor-agent"] : [])
+        let cloud = supportsCloudAgents ? #", "bcId":{"type":"string","minLength":4,"maxLength":200,"pattern":"^bc-[A-Za-z0-9_-]+$","description":"type:cursor-agent only. An existing Cursor cloud agent ID, never a URL or invented ID. Publishes a link card; does not launch, query, authenticate or verify the remote agent. Opens cursor.com only on user click. No channel, content, images or title fields."}"# : ""
         let secret = supportsSecrets ? #", "secret":{"type":"object","properties":{"label":{"type":"string","minLength":1,"maxLength":120},"description":{"type":"string","maxLength":400},"connector":{"type":"string","enum":["slack","discord"]},"field":{"type":"string","enum":["token"]}},"required":["label","connector","field"],"additionalProperties":false}"# : ""
         let messageTypes = #", "content":{"type":"string","minLength":1,"maxLength":8000}, "type":{"type":"string","enum":[\#(types.map { "\"\($0)\"" }.joined(separator: ","))]}"#
         let reply = supportsReplies ? #", "reply_to":{"type":"string","minLength":3,"maxLength":36,"description":"Optional exact shortAddress (e.g. t3u, t3s1) or UUID from this turn's reply directory only. Quotes a prior message in this group, without changing the recipient or granting permission."}"# : ""
@@ -234,9 +245,10 @@ public actor AgentUserMessageTool: ToolExecutor, ToolRuntimeContextProviding {
         ] + (supportsQuestions ? [#"{"required":["type","widget"],"properties":{"type":{"enum":["widget"]}}}"#] : [])
           + (supportsImages ? [#"{"required":["type","image_id"],"properties":{"type":{"enum":["attachment"]}}}"#] : [])
           + (supportsSecrets ? [#"{"required":["type","secret"],"properties":{"type":{"enum":["secret-request"]}}}"#] : [])
+          + (supportsCloudAgents ? [#"{"required":["type","bcId"],"properties":{"type":{"enum":["cursor-agent"]}}}"#] : [])
         return .init(name: "SendMessage",
             description: "Publish a useful message to the user in the current conversation, not to a peer. Use {type:'text',content:'...'} for normal text, or the legacy {text:'...'} shorthand; never mix both. At most two messages per turn; do not repeat them in final text. " + (supportsImages ? "May include current incoming image IDs with text, or publish one current image without text using {type:'attachment',image_id:'exact ID'}, after fresh preview approval. Never use a path or URL." : "Images are not accepted.") + (supportsQuestions ? Self.questionInstructions : "") + (supportsReplies ? Self.replyInstructions(text: supportsTextReplies, questions: supportsQuestionReplies) : ""),
-            inputSchema: Data("{\"type\":\"object\",\"properties\":{\"text\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":8000,\"description\":\"Legacy shorthand. Prefer type:text with content; never mix both forms.\"}\(images)\(attachment)\(messageTypes)\(question)\(secret)\(reply)},\"anyOf\":[\(variants.joined(separator: ","))],\"additionalProperties\":false}".utf8), parallelSafe: false)
+            inputSchema: Data("{\"type\":\"object\",\"properties\":{\"text\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":8000,\"description\":\"Legacy shorthand. Prefer type:text with content; never mix both forms.\"}\(images)\(attachment)\(messageTypes)\(question)\(secret)\(cloud)\(reply)},\"anyOf\":[\(variants.joined(separator: ","))],\"additionalProperties\":false}".utf8), parallelSafe: false)
     }
 
     private static let questionInstructions = " Alternatively use {type:'widget',widget:{prompt,options:[{label,value?,description?,style?}],helpText?,allowCustom?,dismissOnMoveOn?}} without text/images to ask one necessary question with 1-6 real choices. This ends the current turn until a human responds in a new host-controlled turn; never ask for passwords, API keys or other secrets here. All choices and values are visible to the user. A choice is not tool permission: sensitive operations still require their normal approval. Default flags are false. dismissOnMoveOn retires this question when the user sends a newer ordinary message. Widgets are available only where this host tool explicitly advertises them."
@@ -249,7 +261,7 @@ public actor AgentUserMessageTool: ToolExecutor, ToolRuntimeContextProviding {
 
     public func runtimeContext(for context: ToolContext) async throws -> String {
         guard context.conversationID == conversationID, !closed else { throw AgentMessagingError.scopeMismatch }
-        let questions = (publishQuestion == nil ? "" : Self.questionInstructions) + (publishSecret == nil ? "" : " Use {type:'secret-request',secret:{label,description?,connector,field:'token'}} to request a token for your existing enabled Slack or Discord bot connection. Never supply a value, path, recipient or credential reference. Only one unambiguous host-owned connection is supported; this cannot create a new connection. The masked card ends this turn. Only a later host acknowledgement confirms local storage, not remote authentication or additional tool permissions.")
+        let questions = (publishQuestion == nil ? "" : Self.questionInstructions) + (publishSecret == nil ? "" : " Use {type:'secret-request',secret:{label,description?,connector,field:'token'}} to request a token for your existing enabled Slack or Discord bot connection. Never supply a value, path, recipient or credential reference. Only one unambiguous host-owned connection is supported; this cannot create a new connection. The masked card ends this turn. Only a later host acknowledgement confirms local storage, not remote authentication or additional tool permissions.") + (publishCursorAgent == nil ? "" : " You may also publish {type:'cursor-agent',bcId:'bc-...'} for an existing Cursor cloud agent the user needs to open. Never invent IDs or claim this launches, queries or verifies an agent. The card opens https://cursor.com/agents/<bcId> only on user click; no remote request happens when publishing. Optional reply_to uses the same directory as text. No content, images, channel, title, status or URL fields. This shares the two-message budget and does not pause the turn.")
         struct ReplyTarget: Encodable { let id: UUID; let shortAddress: String?; let senderID: UUID?; let excerpt: String }
         let directory = replyTargets.map { ReplyTarget(id: $0.id, shortAddress: $0.shortAddress, senderID: $0.senderID, excerpt: String($0.text.prefix(240))) }
         let inlineLinks = publishReply == nil || !supportsReferenceNavigation ? "" : " In text prose you may also use [descriptive label](sand-msg:<shortAddress>) to link to an earlier message from this directory. Use its listed shortAddress, not a UUID, URL host, private address, or bare address as the label. This only scrolls to the original; it does not create a quote or thread, route messages, load attachments, or grant approval. Unavailable links render as plain labels. Image-only targets with an empty excerpt support reply_to, not inline links. No inline links in widgets, code, math, or tables."
@@ -296,7 +308,7 @@ public actor AgentUserMessageTool: ToolExecutor, ToolRuntimeContextProviding {
                     guard receipt.0 == key, receipt.1 == request, receipt.2 == reply else { throw AgentMessagingError.duplicateMessage }
                     throw ToolTurnSuspension(result: receipt.3)
                 }
-                guard questionReceipt == nil, !reserved, texts.count < 2, calls[key] == nil else { throw AgentSecretRequestError.unavailable }
+                guard questionReceipt == nil, !reserved, texts.count < 2, calls[key] == nil, cloudCalls[key] == nil else { throw AgentSecretRequestError.unavailable }
                 reserved = true
                 defer { reserved = false }
                 try await publishSecret(request, reply)
@@ -326,7 +338,7 @@ public actor AgentUserMessageTool: ToolExecutor, ToolRuntimeContextProviding {
                     guard receipt.0 == key, receipt.1 == question, receipt.2 == replyID else { throw AgentMessagingError.duplicateMessage }
                     throw ToolTurnSuspension(result: receipt.3)
                 }
-                guard !reserved, texts.count < 2, calls[key] == nil else { throw AgentQuestionError.unavailable }
+                guard !reserved, texts.count < 2, calls[key] == nil, cloudCalls[key] == nil else { throw AgentQuestionError.unavailable }
                 reserved = true
                 defer { reserved = false }
                 let saved: RoomMessage?
@@ -343,6 +355,39 @@ public actor AgentUserMessageTool: ToolExecutor, ToolRuntimeContextProviding {
                 throw ToolTurnSuspension(result: result)
             }
             guard questionReceipt == nil else { throw AgentQuestionError.unavailable }
+            if call.name == "SendMessage", call.argumentsJSON.count <= 16_384,
+               let object = try JSONSerialization.jsonObject(with: call.argumentsJSON) as? [String: Any],
+               object["type"] as? String == "cursor-agent" {
+                guard let publishCursorAgent, Set(object.keys).isSubset(of: ["type", "bcId", "reply_to"]),
+                      let rawID = object["bcId"] as? String else { throw AgentPublicationError.invalid }
+                let reference = try CursorAgentReference(bcID: rawID)
+                let reply: UUID?
+                if let raw = object["reply_to"] {
+                    guard let address = raw as? String else { throw GroupReplyError.unavailable }
+                    reply = try resolveReply(address)
+                } else { reply = try defaultReplyToMessageID.map { try resolveReply($0.uuidString) } }
+                let key = Key(runID: context.runID, callID: call.id)
+                if let existing = cloudCalls[key] {
+                    guard existing.0 == reference, existing.1 == reply else { throw AgentMessagingError.duplicateMessage }
+                    return existing.2
+                }
+                guard !reserved, texts.count < 2, calls[key] == nil, !cloudReferences.contains(reference) else {
+                    throw AgentPublicationError.limit
+                }
+                reserved = true
+                defer { reserved = false }
+                try Task.checkCancellation()
+                guard !closed else { throw AgentMessagingError.closed }
+                let saved = try await publishCursorAgent(reference, reply)
+                let receipt = registerReceipt(saved, text: reference.summary, images: [], replyTo: reply, cursorAgent: reference)
+                let result = NormalizedToolResult(callID: call.id, content: [.text("Cloud agent reference saved. No remote agent was launched or verified; the user may open the link." + receipt)])
+                cloudCalls[key] = (reference, reply, result)
+                cloudReferences.insert(reference)
+                texts.append(reference.summary)
+                try Task.checkCancellation()
+                guard !closed else { throw AgentMessagingError.closed }
+                return result
+            }
             guard call.name == "SendMessage", call.argumentsJSON.count <= 40_000,
                   let object = try JSONSerialization.jsonObject(with: call.argumentsJSON) as? [String: Any] else {
                 return .init(callID: call.id, content: [.text("SendMessage received fields unavailable in this context. Nothing was published.")], isError: true)
@@ -398,6 +443,7 @@ public actor AgentUserMessageTool: ToolExecutor, ToolRuntimeContextProviding {
             guard Set(imageIDs).count == imageIDs.count else { throw AgentImageError.limit }
             let payload = Payload(text: text, images: imageIDs, replyTo: replyID, descriptions: images.map(\.altText))
             let key = Key(runID: context.runID, callID: call.id)
+            guard cloudCalls[key] == nil else { throw AgentMessagingError.duplicateMessage }
             if let existing = calls[key] {
                 guard existing.0 == payload else { throw AgentMessagingError.duplicateMessage }
                 return existing.1

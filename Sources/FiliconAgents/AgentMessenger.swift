@@ -319,6 +319,11 @@ public actor AgentMessenger {
                   publication.memberOutcome == nil,
                   publication.shortAddress == nil else { throw AgentPublicationError.invalid }
             let prior = delivery.publications ?? []
+            if let reference = publication.cursorAgent {
+                guard publication.text == reference.summary, (publication.images ?? []).isEmpty,
+                      publication.question == nil, publication.secretRequest == nil,
+                      publication.questionReplyTo == nil else { throw AgentPublicationError.invalid }
+            }
             // A saved receipt remains replayable after its target leaves the bounded directory.
             if let existing = prior.first(where: { $0.id == publication.id }) {
                 guard existing == publication else { throw AgentPublicationError.invalid }

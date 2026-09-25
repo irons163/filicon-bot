@@ -1,5 +1,7 @@
 # Filicon / Grok Bot 0.18 功能 parity matrix（current implementation）
 
+雲端引用卡片（2026-09-25）：有保存回條的一般／背景群組及独立信箱已接入 `SendMessage type:cursor-agent` 與 `bcId`／reply_to，沿用發布額度、身份、保存和引用限制。七語言卡片點擊開啟固定 cursor.com 網址，不在發布時查詢或啟動遠端工作。只接受有界 bc- ID，不支援自訂網站 base、遠端 title resolver 或直接聊天入口；不是雲端帳號完整驗收。此項取代「完全缺少供應商 cloud-agent 卡」的歷史描述，其餘 AGENT-02 差異仍 partial，詳見協作核對紀錄。
+
 信箱引用導航（2026-09-25）：已接上 sand-msg 正文連結與引用卡片的原訊息定位，使用完整且分方向／origin 的主程式快照；超過目前 500 則的目標可載入並維持列表上限。非法／跨範圍／未來／模糊引用不啟用，導航不改檔案、未讀或執行狀態。完整測試、七語言明暗渲染、原生建置與封裝通過；實際使用者視窗點擊尚未進行，未重啟 App。本項取代下方「信箱 sand-msg UI 跳轉仍待完成」的實作缺口，其餘 AGENT-02 差異仍 partial。
 
 信箱短地址（2026-09-25）：已按 directed mailbox 持久保存 tNu／tNsM 地址，工具目錄與正式回條可用於 reply_to；人類來源由 host 記錄、舊記錄不猜測來源、重啟及超過 40 則不重新編號。群組同步不帶入信箱地址。完整回歸、最後 82 項信箱／群組整合測試、原生建置與封裝通過。信箱 sand-msg UI 跳轉仍待完成，AGENT-02 partial；詳見協作核對紀錄。

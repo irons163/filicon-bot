@@ -36,6 +36,48 @@ struct AgentPublicationReceiptTests {
     private let secondID = UUID(uuidString: "44444444-4444-4444-8444-444444444444")!
     private let date = Date(timeIntervalSince1970: 1_000)
 
+    @Test(arguments: [false, true]) func cloudReferenceGroupRoundTripHonorsLifetime(closed: Bool) async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "group-cloud-reference-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let agents = try AgentService(storeURL: root.appending(path: "agents.json"))
+        let member = try await agents.create(name: "Engineer", providerID: "fixture", modelID: "test")
+        let file = root.appending(path: "groups.json")
+        let groups = try GroupService(agents: agents, storeURL: file)
+        let group = try await groups.create(name: "Team", memberIDs: [member.id])
+        let user = try await groups.postUserMessage("Reference existing cloud work", groupID: group.id)
+        let lifetime = AgentPublicationLifetime()
+        let reference = try CursorAgentReference(bcID: "bc-existing")
+        let responder = ReceiptResponder { publish in
+            if closed { lifetime.close() }
+            let tool = AgentUserMessageTool(conversationID: group.id, senderID: member.id,
+                replyHistory: [user], supportsQuestions: false, defaultReplyToMessageID: user.id,
+                publishCursorAgent: { reference, reply in
+                    try await publish(.init(text: reference.summary, lifetime: lifetime,
+                        replyToMessageID: reply, cursorAgent: reference))
+                }) { _, _, _, _ in Issue.record("Only cloud publication expected"); return nil }
+            let request = try NormalizedToolCall(id: "cloud", name: "SendMessage",
+                argumentsJSON: Data(#"{"type":"cursor-agent","bcId":"bc-existing"}"#.utf8))
+            if closed {
+                await #expect(throws: CancellationError.self) {
+                    try await tool.execute(request, context: .init(conversationID: group.id))
+                }
+            } else {
+                let result = try await tool.execute(request, context: .init(conversationID: group.id))
+                #expect(!result.isError)
+            }
+            await tool.close()
+        }
+        _ = try await groups.run(groupID: group.id, responder: responder)
+        let reopened = try GroupService(agents: agents, storeURL: file)
+        let saved = await reopened.messages(groupID: group.id).filter { $0.cursorAgent != nil }
+        expectNoDifference(saved.count, closed ? 0 : 1)
+        if !closed {
+            expectNoDifference(saved.first?.cursorAgent, reference)
+            expectNoDifference(saved.first?.replyToMessageID, user.id)
+            expectNoDifference(saved.first?.shortAddress, "t0s0")
+        }
+    }
+
     @Test func mailboxReceiptAdapterSupportsSameTurnReferences() async throws {
         let probe = ReceiptProbe()
         let tool = AgentUserMessageTool(conversationID: groupID, availableImages: [], imageStore: nil,

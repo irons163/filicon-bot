@@ -398,6 +398,7 @@ public struct RoomMessage: Identifiable, Codable, Hashable, Sendable {
     public var images: [AttachmentMetadata]?
     public var question: GroupQuestion?
     public internal(set) var secretRequest: MailboxSecretRequest?
+    public var cursorAgent: CursorAgentReference?
     public var questionReplyTo: UUID?
     public var replyToMessageID: UUID?
     /// Host-assigned, group-local address. Never recomputed from a bounded prompt.
@@ -409,7 +410,7 @@ public struct RoomMessage: Identifiable, Codable, Hashable, Sendable {
         self.images = images.isEmpty ? nil : images
     }
 
-    private enum CodingKeys: String, CodingKey { case id, groupID, senderID, text, createdAt, toolActivities, memberOutcome, images, question, secretRequest, questionReplyTo, replyToMessageID, shortAddress }
+    private enum CodingKeys: String, CodingKey { case id, groupID, senderID, text, createdAt, toolActivities, memberOutcome, images, question, secretRequest, cursorAgent, questionReplyTo, replyToMessageID, shortAddress }
     public init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         id = try values.decode(UUID.self, forKey: .id)
@@ -422,6 +423,7 @@ public struct RoomMessage: Identifiable, Codable, Hashable, Sendable {
         images = try values.decodeIfPresent([AttachmentMetadata].self, forKey: .images)
         question = try values.decodeIfPresent(GroupQuestion.self, forKey: .question)
         secretRequest = try values.decodeIfPresent(MailboxSecretRequest.self, forKey: .secretRequest)
+        cursorAgent = try values.decodeIfPresent(CursorAgentReference.self, forKey: .cursorAgent)
         questionReplyTo = try values.decodeIfPresent(UUID.self, forKey: .questionReplyTo)
         replyToMessageID = try values.decodeIfPresent(UUID.self, forKey: .replyToMessageID)
         shortAddress = try values.decodeIfPresent(String.self, forKey: .shortAddress)

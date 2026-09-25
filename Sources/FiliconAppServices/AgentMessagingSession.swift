@@ -169,6 +169,10 @@ public actor AgentMessagingSession {
                 try await checkOpen()
                 try await authorizePublication(sender, text, images, call, context)
                 try await checkOpen()
+            }, publishCursorAgent: { [self] reference, replyID in
+                try await validateGroupPublication(images: [], senderID: senderID, userMessageID: userMessageID)
+                return try await publish(.init(text: reference.summary, sourceUserMessageID: userMessageID,
+                    lifetime: publicationLifetime, replyToMessageID: replyID, cursorAgent: reference))
             }) { [self] text, images, replyID, question in
                 try await validateGroupPublication(images: images, senderID: senderID, userMessageID: userMessageID)
                 let card = question.flatMap { question in questionAccountID.map {
@@ -190,7 +194,12 @@ public actor AgentMessagingSession {
         }
         try checkOpen()
         return AgentUserMessageTool(conversationID: originConversationID, senderID: senderID,
-            replyHistory: replyHistory, supportsQuestions: true, replyGroupID: groupID) { [self] text, images, replyID, question in
+            replyHistory: replyHistory, supportsQuestions: true, replyGroupID: groupID,
+            publishCursorAgent: { [self] reference, replyID in
+                try await checkOpen()
+                return try await publish(.init(text: reference.summary, lifetime: publicationLifetime,
+                    replyToMessageID: replyID, cursorAgent: reference))
+            }) { [self] text, images, replyID, question in
             guard images.isEmpty else { throw AgentImageError.unavailable }
             try await checkOpen()
             let card = question.map { GroupQuestion(question: $0, accountID: accountID, memberIDs: memberIDs) }
@@ -582,13 +591,23 @@ public actor AgentMessagingSession {
                     return saved
                 }
             } else { receiptPublisher = nil }
+            let cloudPublisher: AgentUserMessageTool.CursorAgentPublisher?
+            if supportsMailboxQuestions {
+                cloudPublisher = { [messenger, onChange, publicationLifetime] reference, target in
+                    let saved = try await output.publish(reference.summary, images: [], replyTo: target, cursorAgent: reference) { publication in
+                        try await messenger.publish(publication, replyingTo: inbound.id, lifetime: publicationLifetime)
+                    }
+                    await onChange()
+                    return saved
+                }
+            } else { cloudPublisher = nil }
             let publisher = AgentUserMessageTool(conversationID: originConversationID,
                 availableImages: inbound.images ?? [], imageStore: imageStore,
                 authorizeImages: { [self] text, images, call, context in
                     try await checkOpen()
                     try await authorizePublication(agent, text, images, call, context)
                     try await checkOpen()
-                }, publishQuestion: questionPublisher, publishSecret: secretPublisher,
+                }, publishQuestion: questionPublisher, publishSecret: secretPublisher, publishCursorAgent: cloudPublisher,
                 publishQuestionReply: questionReplyPublisher,
                 replyHistory: replyHistory, receiptSenderID: supportsMailboxQuestions ? agent.id : nil,
                 supportsReferenceNavigation: true, mailboxPresentation: true,
@@ -776,11 +795,12 @@ private actor AgentInboundOutput {
         self.onUpdate = onUpdate
     }
     @discardableResult
-    func publish(_ text: String, images: [AttachmentMetadata], replyTo: UUID? = nil,
+    func publish(_ text: String, images: [AttachmentMetadata], replyTo: UUID? = nil, cursorAgent: CursorAgentReference? = nil,
                  persist: @Sendable (RoomMessage) async throws -> RoomMessage) async throws -> RoomMessage {
         try Task.checkCancellation()
         var publication = RoomMessage(groupID: message.groupID, senderID: message.senderID, text: text, images: images)
         publication.replyToMessageID = replyTo
+        publication.cursorAgent = cursorAgent
         let saved = try await persist(publication)
         publishedTexts.append(text)
         // Once the canonical mailbox commits, the tool must not invite a retry

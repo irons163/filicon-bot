@@ -377,6 +377,8 @@ struct AgentPublishedResponses: View {
                         GroupQuestionCard(card: question, enabled: canAnswer(publication)) { answer in
                             onAnswer(publication, answer)
                         }
+                    } else if let reference = publication.cursorAgent {
+                        CursorAgentReferenceCard(reference: reference)
                     } else if !publication.text.isEmpty {
                         RichMarkdownView(source: publication.text, messageReferences: references(publication))
                     }
