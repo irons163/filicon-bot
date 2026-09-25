@@ -943,6 +943,7 @@ struct ChatDetailView: View {
     var body: some View {
         let _ = uiLocale.identifier
         let references = model.directMessageReferences(for: conversation.id)
+        let referenceGeneration = model.directReferenceGeneration
         VStack(spacing: 0) {
             FiliconChatHeader(
                 title: conversation.title == "New conversation" ? l10n("New Conversation") : conversation.title,
@@ -998,10 +999,11 @@ struct ChatDetailView: View {
                                 message: message,
                                 conversation: conversation,
                                 inlineReferences: references,
+                                referenceGeneration: referenceGeneration,
                                 isFindMatch: transcript.isMatch(message.id),
                                 isActiveFindMatch: transcript.activeMatchID == message.id,
                                 isReplyJumpTarget: replyJumpTargetID == message.id,
-                                onJumpToMessage: { referenceTapped($0, proxy: proxy) }
+                                onJumpToMessage: { referenceTapped($0, generation: referenceGeneration, proxy: proxy) }
                             )
                             .id(message.id)
                         }
@@ -1254,17 +1256,19 @@ struct ChatDetailView: View {
         }
     }
 
-    private func referenceTapped(_ id: UUID, proxy: ScrollViewProxy) {
-        guard model.selection == conversation.id, let current = model.selectedConversation,
+    private func referenceTapped(_ id: UUID, generation: UInt64, proxy: ScrollViewProxy) {
+        guard generation == model.directReferenceGeneration,
+              model.selection == conversation.id, let current = model.selectedConversation,
               transcript.exposeMessage(id: id, in: current.messages) else { return }
         replyJumpTargetID = id
         DispatchQueue.main.async {
-            guard model.selection == conversation.id,
+            guard generation == model.directReferenceGeneration, model.selection == conversation.id,
                   model.selectedConversation?.messages.contains(where: { $0.id == id }) == true else { return }
             withAnimation { proxy.scrollTo(id, anchor: .center) }
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) {
-            guard model.selection == conversation.id, replyJumpTargetID == id else { return }
+            guard generation == model.directReferenceGeneration,
+                  model.selection == conversation.id, replyJumpTargetID == id else { return }
             withAnimation { replyJumpTargetID = nil }
         }
     }
@@ -1360,6 +1364,7 @@ private struct TranscriptMessageView: View {
     let message: ChatMessage
     let conversation: Conversation
     var inlineReferences: DirectMessageReferenceDirectory? = nil
+    var referenceGeneration: UInt64 = 0
     var isFindMatch = false
     var isActiveFindMatch = false
     var isReplyJumpTarget = false
@@ -1523,12 +1528,12 @@ private struct TranscriptMessageView: View {
         guard message.role == .assistant, let inlineReferences else { return nil }
         return .init(target: { url in
             guard let target = inlineReferences.target(for: url, from: message.id, in: conversation.id),
-                  model.directMessageReferences(for: conversation.id)?.target(
+                  model.directMessageReferences(for: conversation.id, generation: referenceGeneration)?.target(
                     for: url, from: message.id, in: conversation.id) == target else { return nil }
             return target
         }, show: { id in
             // Recheck against current host state: a rendered link may outlive its target.
-            guard model.selection == conversation.id,
+            guard referenceGeneration == model.directReferenceGeneration, model.selection == conversation.id,
                   let current = model.conversations.first(where: { $0.id == conversation.id }),
                   current.messages.contains(where: { $0.id == id }) else { return }
             onJumpToMessage(id)

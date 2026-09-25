@@ -1003,8 +1003,11 @@ final class AppModel: ObservableObject {
         completeMessageHistories.insert(conversationID)
     }
 
-    func directMessageReferences(for conversationID: UUID) -> DirectMessageReferenceDirectory? {
-        guard !agentMessagingAccountTransition, selection == conversationID,
+    var directReferenceGeneration: UInt64 { autoReviewAccountGeneration }
+
+    func directMessageReferences(for conversationID: UUID, generation: UInt64? = nil) -> DirectMessageReferenceDirectory? {
+        guard generation == nil || generation == autoReviewAccountGeneration,
+              !agentMessagingAccountTransition, selection == conversationID,
               let conversation = conversations.first(where: { $0.id == conversationID }) else { return nil }
         return DirectMessageReferenceDirectory(conversation: conversation,
             historyComplete: completeMessageHistories.contains(conversationID))

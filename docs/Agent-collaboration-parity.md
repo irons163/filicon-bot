@@ -1,5 +1,13 @@
 # 協作能力核對紀錄（更新至 2026-09-25）
 
+## 直接引用帳號世代隔離與憑證流程核對（2026-09-25）
+
+最終驗證：direct-reference-scope-full.log 完整非並行回歸、direct-reference-scope-native.log 原生建置及 direct-reference-scope-package.log 封裝／deep strict 簽章皆 exit 0。
+
+補上直接引用畫面快照的帳號 generation：解析、show callback、下一次 main queue 捲動與高亮清除都要求原世代仍有效。僅比較選取對話／訊息 UUID 不足，因帳號切換後可能仍有同樣 UUID；舊不可變索引本身也不會自動失效。新增保留相同 UUID、呼叫正式帳號取消流程的回歸測試，確認舊 generation 被拒絕。聚焦 direct-reference-scope.log 7 項／2 suites 通過；完整／原生驗證另補記。未重啟 App 或變更真實帳號。
+
+同輪重新核對原版 source/host/runner/tools/send-message-tool.ts、sand-secret-request.ts 與 frontend 的 secret-request-actions.ts：secret-request 的目的地是 channel-credential（platform、field），遮罩輸入只傳 submitSecret(entryId,value,agentId)，提交後以不含值的 acknowledgement 恢復對話。Filicon 現有 AgentSecretRequestDestination 依 accountID＋agentID 尋找既有連接器，群組／mailbox 已接；直接 Conversation 只有 provider/model 配置，未保存 agent profile 關聯。不能拿任意連接器或把 conversation UUID 假裝成既有 agent 來宣稱 direct secret-request 完成。後續需建立明確 host-owned 直接聊天／代理人關聯及相應遷移／選擇流程，再接安全輸入、保存回條與恢復；現有 secret-request partial 不變。
+
 ## 直接引用完整回歸補驗與保護檔案診斷（2026-09-25）
 
 未修改產品碼或檔案保護選項，先以 ioreg 唯讀確認 IOConsoleLocked = No，再重跑先前失敗的 MCP configurationStoreUpsertRenameAndRemoveAreAtomic 與 updater backendRequirementRaisesScopedGatePersistsAndImmediatelyChecks：protected-storage-recheck.log exit 0，兩項均通過。接著完整非並行回歸 direct-reference-ui-full-unlocked.log exit 0；直接引用分頁測試、MCP、updater 均通過，無失敗測試。關閉上一批完整回歸待補驗，不改其他功能 partial 與真實 UI／外部服務驗收狀態。

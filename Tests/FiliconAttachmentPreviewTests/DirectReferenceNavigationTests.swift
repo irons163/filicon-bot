@@ -7,6 +7,28 @@ import FiliconAppServices
 
 @Suite("Direct reference navigation")
 struct DirectReferenceNavigationTests {
+    @Test @MainActor func accountTransitionRevokesOldSnapshotEvenWhenConversationIDsRemain() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "direct-reference-scope-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+        await model.bootstrap()
+        let id = try #require(model.selection)
+        let ci = try #require(model.conversations.firstIndex(where: { $0.id == id }))
+        let original = ChatMessage(role: .user, text: "Original", shortAddress: "t0u")
+        let response = ChatMessage(role: .assistant, text: "Response", shortAddress: "t0s0")
+        model.conversations[ci].messages = [original, response]
+        let generation = model.directReferenceGeneration
+        let url = try #require(URL(string: "sand-msg:t0u"))
+        let snapshot = try #require(model.directMessageReferences(for: id, generation: generation))
+        expectNoDifference(snapshot.target(for: url, from: response.id, in: id), original.id)
+        await model.cancelAutoReviewApprovals(nextAccountID: "other-test-account")
+        expectNoDifference(model.selection, id)
+        #expect(model.directReferenceGeneration != generation)
+        #expect(model.directMessageReferences(for: id, generation: generation) == nil)
+        // UUIDs and the old immutable index still match: generation is the revocation boundary.
+        expectNoDifference(snapshot.target(for: url, from: response.id, in: id), original.id)
+    }
+
     @Test @MainActor func oldReferenceLoadsFullHistoryAndOpensOnlyInItsConversation() async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "direct-reference-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
