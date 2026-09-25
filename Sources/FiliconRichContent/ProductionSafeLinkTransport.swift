@@ -132,6 +132,10 @@ public struct FoundationSafeLinkProcessRunner: SafeLinkProcessRunning, Sendable 
     public init() {}
 
     public func run(_ invocation: SafeLinkProcessInvocation) async throws -> SafeLinkProcessResult {
+        guard !Task.isCancelled else { throw SafeLinkError.cancelled }
+        guard invocation.maximumStandardOutputBytes >= 0,
+              invocation.maximumStandardErrorBytes >= 0,
+              invocation.timeout > .zero else { throw SafeLinkError.transportFailure }
         let process = Process()
         let stdout = Pipe(), stderr = Pipe()
         process.executableURL = invocation.executableURL
@@ -139,18 +143,27 @@ public struct FoundationSafeLinkProcessRunner: SafeLinkProcessRunning, Sendable 
         process.environment = invocation.environment
         process.standardOutput = stdout
         process.standardError = stderr
+        // Register before launch: a short-lived process may exit before any task starts
+        // awaiting its status. AsyncStream buffers that exit without blocking a Swift
+        // cooperative worker in Foundation's waitUntilExit run loop.
+        let (exits, exitContinuation) = AsyncStream<Int32>.makeStream()
+        process.terminationHandler = { terminated in
+            exitContinuation.yield(terminated.terminationStatus)
+            exitContinuation.finish()
+        }
         let state = ProcessState(process)
+        defer { exitContinuation.finish() }
         do { try process.run() } catch { throw SafeLinkError.transportFailure }
 
         return try await withTaskCancellationHandler {
             do {
                 return try await withThrowingTaskGroup(of: ProcessPart.self) { group in
                     group.addTask {
-                        do { return .stdout(try Self.read(stdout.fileHandleForReading, limit: invocation.maximumStandardOutputBytes)) }
+                        do { return .stdout(try await Self.readPipe(stdout.fileHandleForReading, limit: invocation.maximumStandardOutputBytes)) }
                         catch { state.terminate(); throw error }
                     }
                     group.addTask {
-                        do { return .stderr(try Self.read(stderr.fileHandleForReading, limit: invocation.maximumStandardErrorBytes)) }
+                        do { return .stderr(try await Self.readPipe(stderr.fileHandleForReading, limit: invocation.maximumStandardErrorBytes)) }
                         catch { state.terminate(); throw error }
                     }
                     group.addTask {
@@ -159,8 +172,8 @@ public struct FoundationSafeLinkProcessRunner: SafeLinkProcessRunning, Sendable 
                         throw SafeLinkError.timeout
                     }
                     group.addTask {
-                        process.waitUntilExit()
-                        return .status(process.terminationStatus)
+                        for await status in exits { return .status(status) }
+                        throw CancellationError()
                     }
                     var output: Data?, errorOutput: Data?, status: Int32?
                     while let part = try await group.next() {
@@ -184,10 +197,22 @@ public struct FoundationSafeLinkProcessRunner: SafeLinkProcessRunning, Sendable 
         } onCancel: { state.terminate() }
     }
 
+    private static func readPipe(_ handle: FileHandle, limit: Int) async throws -> Data {
+        // Pipe reads are blocking syscalls, not asynchronous Swift work. Keep both
+        // drains off the cooperative executor so exit and timeout tasks can run.
+        try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .utility).async {
+                do { continuation.resume(returning: try read(handle, limit: limit)) }
+                catch { continuation.resume(throwing: error) }
+            }
+        }
+    }
+
     private static func read(_ handle: FileHandle, limit: Int) throws -> Data {
+        defer { try? handle.close() }
         var data = Data()
         while true {
-            let chunk = try handle.read(upToCount: min(16_384, limit - data.count + 1)) ?? Data()
+            let chunk = try handle.read(upToCount: min(16_383, limit - data.count) + 1) ?? Data()
             if chunk.isEmpty { return data }
             data.append(chunk)
             if data.count > limit { throw SafeLinkError.responseTooLarge }

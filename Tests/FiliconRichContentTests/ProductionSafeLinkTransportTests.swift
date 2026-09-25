@@ -1,5 +1,6 @@
 #if os(macOS)
 import Foundation
+import CustomDump
 import Testing
 @testable import FiliconRichContent
 
@@ -156,7 +157,41 @@ struct ProductionSafeLinkTransportTests {
         }
     }
 
-    @Test func foundationRunnerEnforcesPipeLimitDeadlineAndCancellation() async {
+    @Test(.timeLimit(.minutes(1))) func foundationRunnerCollectsConcurrentImmediateExits() async throws {
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for index in 0..<40 {
+                group.addTask {
+                    let result = try await FoundationSafeLinkProcessRunner().run(.init(
+                        executableURL: URL(fileURLWithPath: "/usr/bin/printf"),
+                        arguments: ["output-\(index)"], environment: ["LC_ALL": "C"],
+                        maximumStandardOutputBytes: Int.max, maximumStandardErrorBytes: 0,
+                        timeout: .seconds(5)
+                    ))
+                    expectNoDifference(result.standardOutput, Data("output-\(index)".utf8))
+                    expectNoDifference(result.standardError, Data())
+                    expectNoDifference(result.terminationStatus, 0)
+                }
+            }
+            try await group.waitForAll()
+        }
+    }
+
+    @Test func foundationRunnerRejectsPrecancelledInvocationBeforeLaunch() async {
+        // An invalid executable distinguishes cancellation-before-launch from a
+        // transport failure, without timing assumptions or filesystem side effects.
+        let task = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try await FoundationSafeLinkProcessRunner().run(.init(
+                executableURL: URL(fileURLWithPath: "/nonexistent/filicon-test-executable"),
+                arguments: [], environment: [:], maximumStandardOutputBytes: 0,
+                maximumStandardErrorBytes: 0, timeout: .seconds(1)
+            ))
+        }
+        do { _ = try await task.value; Issue.record("expected cancellation") }
+        catch { expectNoDifference(error as? SafeLinkError, .cancelled) }
+    }
+
+    @Test(.timeLimit(.minutes(1))) func foundationRunnerEnforcesPipeLimitDeadlineAndCancellation() async {
         let processRunner = FoundationSafeLinkProcessRunner()
         let outputInvocation = SafeLinkProcessInvocation(
             executableURL: URL(fileURLWithPath: "/usr/bin/printf"), arguments: ["12345"], environment: ["LC_ALL": "C"],

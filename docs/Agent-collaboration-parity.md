@@ -1,5 +1,11 @@
 # 協作能力核對紀錄（更新至 2026-09-25）
 
+## 連結預覽程序等待修正（2026-09-25）
+
+追查上一批完整回歸的程序取樣，確認停留在 FoundationSafeLinkProcessRunner 的 `waitUntilExit()`；當時未觀察到仍存活的子程序。這是已觀察到的等待位置，不足以斷言 Foundation 內部競態的唯一成因。本批移除該同步等待，以啟動前註冊的 terminationHandler 加 AsyncStream 緩存退出碼，避免短命程序先退出而呼叫端尚未開始等候。stdout／stderr 的阻塞讀取改由 Dispatch 工作佇列執行，不占 Swift cooperative executor，且讀完關閉 handle。補上啟動前取消檢查、無效上限／期限拒絕，以及 Int.max 上限計算的溢位防護；不改 curl 網路權限、DNS pinning 或 SSRF 政策。
+
+依 Swift testing／CustomDump／SPM 技能新增 40 個並行快速退出程序與預先取消測試，沿用輸出超限、逾時及執行中取消測試。聚焦 11 項 exit 0（`link-process-exit-focused.log`），完整非並行回歸 exit 0（`link-process-exit-full.log`），原生建置、封裝與 deep strict 簽章通過（`link-process-exit-native.log`、`link-process-exit-package.log`），日誌位於 `.build/validation/`。首次測試建置曾缺少 CustomDump 連結，已補 test-target 依賴後完成上述驗證。本批針對系統 curl 的既有執行路徑；未驗證任意忽略 SIGTERM 或把 pipe 傳給後代的程序，也未宣稱所有程序生命週期情境均已解決。未啟動／重啟使用者 App，整體功能 parity 仍 partial。
+
 ## 正式發布與私有草稿界線（2026-09-25）
 
 核對 reconstructed `send-message-tool.ts` 的「only voice」契約後，移除有 SendMessage 的群組（含背景）／獨立信箱之 final-text 相容回退。成功的 SendMessage 才進入可見文字及回覆摘要；沒呼叫、工具拒絕或只有其他工具活動都不把最後草稿冒充已發布答案。信箱 tool-start 狀態投影固定清空文字，避免中途草稿先洩漏到群組投影。群組記憶整理與信箱持久上下文也只採用正式發布內容。未發布草稿不是錯誤訊息，安靜結束仍可表示沒有要送給使用者的消息；不合成模型結果。
