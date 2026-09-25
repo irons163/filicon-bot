@@ -53,9 +53,7 @@ public actor AgentMessenger {
         guard let sender = await service.profile(id: message.senderID), sender.archivedAt == nil else { throw AgentServiceError.unknownAgent(message.senderID) }
         guard let recipient = await service.profile(id: message.recipientID), recipient.archivedAt == nil else { throw AgentServiceError.unknownAgent(message.recipientID) }
         try Task.checkCancellation()
-        guard !state.messages.contains(where: {
-            $0.id == message.id || ($0.delivery?.publications ?? []).contains(where: { $0.id == message.id })
-        }) else { throw AgentServiceError.duplicateMessage(message.id) }
+        guard !containsMessageID(message.id) else { throw AgentServiceError.duplicateMessage(message.id) }
         try lifetime.commit {
             var next = state
             if let movingOnAccount {
@@ -144,7 +142,7 @@ public actor AgentMessenger {
                   publication.groupID == originID, publication.senderID == before.recipientID,
                   var pending = publication.question, pending.isPending, pending.accountID == accountID,
                   pending.memberIDs == [before.senderID, before.recipientID],
-                  !state.messages.contains(where: { $0.id == responseID }) else { throw AgentQuestionError.unavailable }
+                  !containsMessageID(responseID) else { throw AgentQuestionError.unavailable }
             let text = try pending.question.reply(for: answer)
             var response = AgentMessage(id: responseID, senderID: before.senderID, recipientID: before.recipientID,
                 text: text, createdAt: at, delivery: .init(chainID: responseID, originConversationID: originID))
@@ -196,7 +194,7 @@ public actor AgentMessenger {
                   publication.groupID == originID, publication.senderID == before.recipientID,
                   var pending = publication.secretRequest, pending.isPending, pending.accountID == accountID,
                   pending.connectionID == connectionID, pending.memberIDs == [before.senderID, before.recipientID],
-                  !state.messages.contains(where: { $0.id == responseID }) else { throw AgentSecretRequestError.unavailable }
+                  !containsMessageID(responseID) else { throw AgentSecretRequestError.unavailable }
             let provenance = MailboxSecretResponse(incomingMessageID: id, publicationID: publicationID,
                 accountID: accountID, provided: provided)
             var response = AgentMessage(id: responseID, senderID: before.senderID, recipientID: before.recipientID,
@@ -300,9 +298,7 @@ public actor AgentMessenger {
                 guard existing == publication else { throw AgentPublicationError.invalid }
                 return
             }
-            guard !state.messages.contains(where: {
-                $0.id == publication.id || ($0.delivery?.publications ?? []).contains(where: { $0.id == publication.id })
-            }) else { throw AgentPublicationError.invalid }
+            guard !containsMessageID(publication.id) else { throw AgentPublicationError.invalid }
             if let target = publication.replyToMessageID {
                 guard target != publication.id,
                       try replyDirectory(replyingTo: id).contains(where: { $0.id == target }) else {
@@ -344,6 +340,14 @@ public actor AgentMessenger {
             state.messages[index].delivery?.response = String(publications.map(\.text).joined(separator: "\n\n").prefix(8_000))
         } else if let response { state.messages[index].delivery?.response = String(response.prefix(8_000)) }
         do { try persist() } catch { state.messages[index] = previous; throw error }
+    }
+
+    /// Inbound messages and visible publications share the same identity space.
+    /// All fresh insertion paths must reject a collision in either collection.
+    private func containsMessageID(_ id: UUID) -> Bool {
+        state.messages.contains {
+            $0.id == id || ($0.delivery?.publications ?? []).contains { $0.id == id }
+        }
     }
 
     private func persist() throws {

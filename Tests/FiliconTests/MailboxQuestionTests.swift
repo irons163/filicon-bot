@@ -99,7 +99,7 @@ struct MailboxQuestionTests {
         expectNoDifference(restored.last?.questionResponse, response.questionResponse)
     }
 
-    @Test(arguments: ["account", "scope", "publication", "running", "cancelled", "failed", "closed", "invalid-answer", "archived"])
+    @Test(arguments: ["account", "scope", "publication", "running", "cancelled", "failed", "closed", "invalid-answer", "archived", "response-input", "response-publication"])
     func unavailableAnswerNeverChangesMailbox(mode: String) async throws {
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
         _ = try await publish(f)
@@ -116,7 +116,9 @@ struct MailboxQuestionTests {
                 publicationID: mode == "publication" ? responseID : publicationID,
                 answer: mode == "invalid-answer" ? .option(9) : .option(0),
                 accountID: mode == "account" ? "account-B" : "account-A",
-                originID: mode == "scope" ? responseID : scope, lifetime: lifetime)
+                originID: mode == "scope" ? responseID : scope,
+                responseID: mode == "response-input" ? f.incoming.id : mode == "response-publication" ? publicationID : responseID,
+                lifetime: lifetime)
         }
         let after = await f.messenger.allMessages()
         expectNoDifference(after, before)

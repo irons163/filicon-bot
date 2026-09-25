@@ -1,5 +1,13 @@
 # 協作能力核對紀錄（更新至 2026-09-25）
 
+## 人工回應的訊息身分一致性（2026-09-25）
+
+延伸前一批 ID 邊界檢查至 answerQuestion／resolveSecretRequest：它們產生的新收件也必須避開全部既有收件與發布 ID，與普通 send／publish 共用 containsMessageID。問題答案及安全輸入回條不再能與原卡片共用 ID；拒絕時不更新卡片、不排入新工作、不寫入磁碟。
+
+先以 `mailbox-response-collision-before.log` 重現兩個 response-publication 案例未拋錯且更動記憶體／檔案，再修正共用檢查。回歸沿用 pfw-testing／CustomDump，比對完整狀態與磁碟內容。此為短地址接線前的身分一致性修補，不宣稱信箱短地址／sand-msg 導航完成。
+
+驗證：`mailbox-response-collision-full.log` 完整非並行測試、`mailbox-response-collision-native.log` 原生建置、`mailbox-response-collision-package.log` 封裝與 deep strict codesign 全部 exit 0。沒有重啟使用者 App／Xcode或更改真實資料。
+
 ## 引用重送與訊息 ID 邊界（2026-09-25）
 
 已保存的信箱發布先核對完整回條再查新引用目錄，因此原目標被最近 40 則目錄排除後，完全相同的重送仍成功且不重寫資料。變更引用的重送仍拒絕；新發布不能使用任何既有收件／發布 ID，新收件也不能撞到發布 ID。保留 running、lifetime、scope、作者、內容及新發布的圖片驗證與兩則上限。

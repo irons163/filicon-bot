@@ -71,7 +71,7 @@ struct MailboxSecretRequestTests {
         expectNoDifference(restored[0].delivery?.publications?[0].secretRequest?.state, provided ? .stored : .dismissed)
     }
 
-    @Test(arguments: ["account", "scope", "connection", "publication", "running", "cancelled", "failed", "closed", "archived", "retired", "restart"])
+    @Test(arguments: ["account", "scope", "connection", "publication", "running", "cancelled", "failed", "closed", "archived", "retired", "restart", "response-input", "response-publication"])
     func staleResponsesNeverQueueWork(mode: String) async throws {
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
         _ = try await publish(f)
@@ -91,7 +91,9 @@ struct MailboxSecretRequestTests {
             _ = try await messenger.resolveSecretRequest(replyingTo: f.incoming.id,
                 publicationID: mode == "publication" ? responseID : publicationID, provided: true,
                 accountID: mode == "account" ? "B" : "A", originID: mode == "scope" ? responseID : scope,
-                connectionID: mode == "connection" ? responseID : connectionID, lifetime: lifetime)
+                connectionID: mode == "connection" ? responseID : connectionID,
+                responseID: mode == "response-input" ? f.incoming.id : mode == "response-publication" ? publicationID : responseID,
+                lifetime: lifetime)
         }
         let after = await messenger.allMessages()
         expectNoDifference(after, before)
