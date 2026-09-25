@@ -131,12 +131,16 @@ public struct ListenerTranscriptCard: Codable, Hashable, Sendable {
 /// Intentionally has no secret/value field. A credential is supplied to a
 /// Keychain-backed service after the typed intent is handled, never to chat.
 public struct SecretRequestTranscriptCard: Codable, Hashable, Sendable {
+    /// Presence routes through the agent-bound secure submission flow only.
+    /// It must never fall back to the legacy generic credential action.
+    public var directRequest: DirectSecretRequest?
     public var requestID: String
     public var service: String
     public var account: String?
     public var scope: String?
     public var prompt: String
-    public init(requestID: String, service: String, account: String? = nil, scope: String? = nil, prompt: String = "Credential required") {
+    public init(requestID: String, service: String, account: String? = nil, scope: String? = nil, prompt: String = "Credential required", directRequest: DirectSecretRequest? = nil) {
+        self.directRequest = directRequest
         self.requestID = requestID; self.service = service; self.account = account; self.scope = scope; self.prompt = prompt
     }
 }

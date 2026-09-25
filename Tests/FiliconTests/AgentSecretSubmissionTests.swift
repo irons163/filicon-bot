@@ -2,6 +2,7 @@ import CustomDump
 import Foundation
 import Testing
 import FiliconChannels
+import FiliconDomain
 @testable import FiliconAppServices
 
 private final class SecretWriteProbe: @unchecked Sendable {
@@ -68,6 +69,16 @@ struct AgentSecretSubmissionTests {
         #expect(probe.matches(sentinel, reference: .init(providerID: .init(rawValue: "channel.\(connectionID)"))))
         expectNoDifference(f.submission.state, .stored(receipt))
         expectNoDifference(receipt.requestID, requestID)
+        let direct = DirectSecretRequest(requestID: requestID, request: f.submission.destination.request,
+            binding: .init(accountID: "A", agentID: owner), conversationID: scope, connectionID: connectionID)
+        let resolved = try f.submission.resolvingDirectRequest(direct, responseID: scope)
+        expectNoDifference(resolved.state, .stored)
+        expectNoDifference(resolved.acknowledgement, receipt.acknowledgement)
+        expectNoDifference(try f.submission.resolvingDirectRequest(resolved, responseID: scope), resolved)
+        #expect(throws: (any Error).self) {
+            try f.submission.resolvingDirectRequest(resolved, responseID: owner)
+        }
+        #expect(!String(decoding: try JSONEncoder().encode(resolved), as: UTF8.self).contains(sentinel))
         #expect(receipt.acknowledgement.contains("does not confirm remote authentication"))
         let publicOutputs = [String(describing: value), String(reflecting: value), String(customDumping: value),
             String(describing: f.submission.state), receipt.acknowledgement,
@@ -76,6 +87,39 @@ struct AgentSecretSubmissionTests {
         #expect(publicOutputs.allSatisfy { !$0.contains(sentinel) })
         f.submission.close()
         expectNoDifference(f.submission.state, .stored(receipt))
+    }
+
+    @Test func directReceiptRequiresRealOutcomeAndExactDestination() async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let direct = DirectSecretRequest(requestID: requestID, request: f.submission.destination.request,
+            binding: .init(accountID: "A", agentID: owner), conversationID: scope, connectionID: connectionID)
+        #expect(throws: AgentSecretSubmissionError.unavailable) {
+            try f.submission.resolvingDirectRequest(direct, responseID: owner)
+        }
+        try f.submission.dismiss()
+        let dismissed = try f.submission.resolvingDirectRequest(direct, responseID: owner)
+        expectNoDifference(dismissed.state, .dismissed)
+        #expect(dismissed.acknowledgement?.contains("without providing") == true)
+        let foreign = DirectSecretRequest(requestID: requestID, request: f.submission.destination.request,
+            binding: .init(accountID: "B", agentID: owner), conversationID: scope, connectionID: connectionID)
+        #expect(throws: AgentSecretSubmissionError.unavailable) {
+            try f.submission.resolvingDirectRequest(foreign, responseID: owner)
+        }
+    }
+
+    @Test(arguments: ["request", "account", "agent", "conversation", "connection", "metadata"])
+    func directReceiptRejectsSubstitutedIdentity(field: String) async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        try f.submission.dismiss()
+        let otherRequest = try AgentSecretRequest.parse(Data(#"{"label":"Different request","connector":"slack","field":"token"}"#.utf8))
+        let direct = DirectSecretRequest(requestID: field == "request" ? owner : requestID,
+            request: field == "metadata" ? otherRequest : f.submission.destination.request,
+            binding: .init(accountID: field == "account" ? "B" : "A", agentID: field == "agent" ? scope : owner),
+            conversationID: field == "conversation" ? owner : scope,
+            connectionID: field == "connection" ? owner : connectionID)
+        #expect(throws: AgentSecretSubmissionError.unavailable) {
+            try f.submission.resolvingDirectRequest(direct, responseID: owner)
+        }
     }
 
     @Test(arguments: ["closed", "dismissed", "account", "owner", "scope", "changed"])

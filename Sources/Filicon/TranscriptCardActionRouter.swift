@@ -77,7 +77,7 @@ actor TranscriptCardActionRouter {
             return lhs == rhs.reviewID
         case (.sendDraft(let lhs), .draft(let rhs)): return lhs == rhs.draftID
         case (.connectListener(let lhs), .listener(let rhs)): return lhs == rhs.listenerID
-        case (.provideSecret(let lhs), .secretRequest(let rhs)): return lhs == rhs.requestID
+        case (.provideSecret(let lhs), .secretRequest(let rhs)): return rhs.directRequest == nil && lhs == rhs.requestID
         case (.connectorAction(let connector, let action), .connector(let rhs)):
             return connector == rhs.connectorID && rhs.allowedActionIDs.contains(action)
         case (.decideLocalToolPermission(let lhs, _), .localToolPermission(let rhs)):

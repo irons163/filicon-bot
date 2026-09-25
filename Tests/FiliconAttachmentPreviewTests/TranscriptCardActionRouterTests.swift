@@ -5,6 +5,19 @@ import FiliconDomain
 
 @Suite("Transcript card action authority")
 struct TranscriptCardActionRouterTests {
+    @Test func boundSecretCannotUseLegacyCredentialAction() async throws {
+        let request = try AgentSecretRequest.parse(Data(#"{"label":"Token","connector":"slack","field":"token"}"#.utf8))
+        let id = UUID(uuidString: "40000000-0000-0000-0000-000000000001")!
+        let direct = DirectSecretRequest(requestID: id, request: request,
+            binding: .init(accountID: "local", agentID: id), conversationID: id, connectionID: id)
+        let intent = TranscriptCardActionIntent.provideSecret(requestID: id.uuidString)
+        let card = makeCard(payload: .secretRequest(.init(requestID: id.uuidString,
+            service: "slack", directRequest: direct)), intents: [intent])
+        await expectRoutingError(.mismatchedTarget) {
+            try await TranscriptCardActionRouter().begin(card: card, intent: intent)
+        }
+    }
+
     @Test func externalReferenceCannotNavigateToLocalAgent() async throws {
         let intent = TranscriptCardActionIntent.openCloudAgent(agentID: "same-id", threadID: nil)
         let card = makeCard(payload: .cloudAgent(.init(agentID: "same-id", title: "Cloud",

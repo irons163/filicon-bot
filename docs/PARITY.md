@@ -1,5 +1,7 @@
 # Filicon / Grok Bot 0.18 功能 parity matrix（current implementation）
 
+直接憑證請求契約（2026-09-26）：新增不含值的持久 request/binding/destination/state/responseID、以實際 submission 結果產生回條，以及禁止退回舊通用憑證路由。29 項聚焦測試、完整非並行回歸、原生建置及封裝／簽章驗證通過。直接聊天的 publishSecret、輸入 UI 與恢復回合仍未啟用；不能將資料契約視為完整 secret-request 功能。
+
 既有代理人聊天模型同步（2026-09-26）：新增七語系「同步代理人模型」，查詢活躍 profile 並保存 provider/model／重設 reasoning，拒絕跨帳號、封存、執行中與重複同步。失敗只還原模型欄位；保留聊天身份與訊息。關閉下方 profile 模型修改後缺少同步流程的缺口，direct secret-request 與整體 partial 狀態不變。
 
 代理人聊天入口（2026-09-26）：代理人列表已可建立持久綁定的新單獨聊天；保存成功才導覽，封存／缺失／寫入失敗不新增畫面，一般模型控制不可覆寫綁定設定。聚焦 10 項測試通過。profile 模型修改後的同步、direct secret-request 及真實 UI 驗收仍待完成，不上調整體 partial。

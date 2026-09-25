@@ -103,4 +103,28 @@ public final class AgentSecretSubmission: @unchecked Sendable {
             provided: true, accountID: destination.accountID, originID: destination.conversationID,
             connectionID: destination.connectionID, responseID: responseID, at: at, lifetime: lifetime)
     }
+
+    /// Produces value-free direct-chat metadata only from this submission's
+    /// actual outcome. Persisting the returned card/acknowledgement and checking
+    /// the current account/lifetime remain the host's responsibility.
+    public func resolvingDirectRequest(_ request: DirectSecretRequest, responseID: UUID) throws -> DirectSecretRequest {
+        guard request.requestID == id, request.request == destination.request,
+              request.binding.accountID == destination.accountID,
+              request.binding.agentID == destination.agentID,
+              request.conversationID == destination.conversationID,
+              request.connectionID == destination.connectionID else {
+            throw AgentSecretSubmissionError.unavailable
+        }
+        let provided: Bool
+        switch state {
+        case .stored(let receipt) where receipt.requestID == id: provided = true
+        case .dismissed: provided = false
+        default: throw AgentSecretSubmissionError.unavailable
+        }
+        let expectedState: DirectSecretRequest.State = provided ? .stored : .dismissed
+        if request.state == expectedState, request.responseMessageID == responseID { return request }
+        var resolved = request
+        try resolved.resolve(provided: provided, responseMessageID: responseID)
+        return resolved
+    }
 }

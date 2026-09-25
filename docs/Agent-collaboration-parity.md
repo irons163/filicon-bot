@@ -1,5 +1,13 @@
 # 協作能力核對紀錄（更新至 2026-09-26）
 
+## 直接憑證請求的持久契約與回條證據（2026-09-26）
+
+重新核對 reconstructed 的 sand-secret-request.ts 與 secret-request-actions.ts：submitSecret(entryId,value,agentId) 帶帳號／代理人作用域，提交後只以不含值的 acknowledgement 恢復。Filicon 將既有嚴格 AgentSecretRequest 元資料移至 Domain（Agents 保留 re-export），SecretRequestTranscriptCard 加入可選 DirectSecretRequest，記錄 requestID、account/agent binding、conversationID、connectionID、pending/stored/dismissed/retired 與 responseMessageID，不新增憑證值欄位。舊卡片缺欄位仍可讀；矛盾的完成狀態／response ID 被拒絕。
+
+AgentSecretSubmission.resolvingDirectRequest 只接受該 submission 的實際 stored receipt 或 dismissed 狀態，並核對每個目的地欄位；相同回條可重試，不可替換 response ID 或移到另一帳號／代理人／對話／連接器。這是元資料投影，不取代 host 當前 lifetime 檢查或原子保存。新增 direct metadata 的卡片禁止走舊通用 provideSecret 路由，避免繞過 destination 驗證。
+
+聚焦 direct-secret-contract.log 共 29 項測試通過，含 JSON/SQLite 相容、無憑證輸出、terminal transition、目的地替換與舊路由拒絕。完整非並行回歸 direct-secret-contract-full.log 與原生建置 direct-secret-contract-native.log 均 exit 0；verify-package 的封裝、entitlements 與 deep strict 簽章驗證通過。這批尚未在直接聊天啟用 publishSecret、安全輸入 UI 或恢復回合；只能算必要的持久化／安全契約完成，不宣稱 direct secret-request 已可使用，亦未寫入真實 Keychain。
+
 ## 既有代理人聊天同步模型（2026-09-26）
 
 模型設定增加「同步代理人模型」（七語系）：明確從 AgentService 取回綁定代理人的當前 provider/model，將 reasoning 重設 disabled，保存後刷新 catalog。只操作同帳號、存活代理人且未執行的綁定對話；同步期間阻止再次同步、送出訊息、回答直接問題與調整 reasoning。失敗還原此次擁有的模型欄位，不以舊完整快照覆寫訊息或其他編輯。帳號 generation／綁定失效時不繼續套用。
