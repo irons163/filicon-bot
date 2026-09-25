@@ -1769,11 +1769,26 @@ final class AppModel: ObservableObject {
                 let provider = await registry.provider(id: providerID)
                 if provider?.descriptor.supportsToolCalling == true {
                     directPublicationIDs[assistantID] = []
+                    let imageSource = requestMessages.last(where: { $0.role == .user })
+                    let images = imageSource?.attachments.filter {
+                        $0.kind == .image && ["image/png", "image/jpeg"].contains($0.mimeType)
+                    } ?? []
                     let replyHistory = requestMessages.filter { $0.role == .user || $0.role == .assistant }.map {
-                        RoomMessage(id: $0.id, groupID: id, senderID: $0.role == .user ? nil : id,
+                        var message = RoomMessage(id: $0.id, groupID: id, senderID: $0.role == .user ? nil : id,
                             text: $0.text, createdAt: $0.createdAt)
+                        message.images = $0.attachments.filter { $0.kind == .image }
+                        return message
                     }
-                    publisher = AgentUserMessageTool(conversationID: id, availableImages: [], imageStore: nil,
+                    publisher = AgentUserMessageTool(conversationID: id, availableImages: images, imageStore: nil,
+                        hostImageValidator: { [weak self] images in
+                            guard let self, let imageSource else { throw AgentImageError.unavailable }
+                            try await self.validateDirectPublicationImages(images, source: imageSource,
+                                conversationID: id, account: accountScope, generation: publicationGeneration)
+                        },
+                        authorizeImages: { [weak self] text, images, call, context in
+                            guard let self else { throw CancellationError() }
+                            try await self.authorizeDirectImagePublication(text: text, images: images, call: call, context: context)
+                        },
                         publishCursorAgent: { [weak self] reference, replyTo in
                             guard let self else { throw CancellationError() }
                             return try await self.publishDirectText(reference.summary, conversationID: id,
@@ -1788,11 +1803,11 @@ final class AppModel: ObservableObject {
                                 assistantID: assistantID, accountScope: accountScope,
                                 generation: publicationGeneration, replyTo: replyTo, question: question)
                         },
-                        publishReceipt: { [weak self] text, _, replyTo in
+                        publishReceipt: { [weak self] text, images, replyTo in
                             guard let self else { throw CancellationError() }
                             return try await self.publishDirectText(text, conversationID: id,
                                 assistantID: assistantID, accountScope: accountScope,
-                                generation: publicationGeneration, replyTo: replyTo)
+                                generation: publicationGeneration, replyTo: replyTo, images: images)
                         }, publish: { _, _ in throw CancellationError() })
                 }
                 let tools: [any ToolExecutor] = publisher.map { [$0] } ?? []
@@ -1887,12 +1902,59 @@ final class AppModel: ObservableObject {
         conversations[ci].messages[mi].consume(event)
     }
 
+    private func validateDirectPublicationImages(_ images: [AttachmentMetadata], source: ChatMessage,
+                                                 conversationID: UUID, account: String, generation: UInt64) async throws {
+        func checkScope() throws {
+            guard generation == autoReviewAccountGeneration, account == (settings.accountScope ?? "local"),
+                  !agentMessagingAccountTransition, running.contains(conversationID),
+                  !deletedConversationIDs.contains(conversationID),
+                  let current = conversations.first(where: { $0.id == conversationID })?.messages.first(where: { $0.id == source.id }),
+                  current.role == .user, current.attachments == source.attachments else { throw CancellationError() }
+        }
+        try checkScope()
+        guard images.count <= 4, Set(images.map(\.id)).count == images.count,
+              images.allSatisfy({ $0.byteCount > 0 && $0.byteCount <= AgentImageStore.maximumBytes }),
+              images.reduce(Int64(0), { $0 + $1.byteCount }) <= 12 * 1_024 * 1_024 else { throw AgentImageError.limit }
+        let owner = AttachmentReferenceOwner(conversationID: conversationID, messageID: source.id)
+        for image in images {
+            guard let original = source.attachments.first(where: { $0.id == image.id }), original.kind == .image,
+                  image.isAnnotation(of: original) else { throw AgentImageError.unavailable }
+            let data: Data
+            if let attachmentLifecycle {
+                do { data = try await attachmentLifecycle.data(for: image, owner: owner) }
+                catch AttachmentStoreError.missing { data = try await attachmentStore.data(for: image) }
+            } else { data = try await attachmentStore.data(for: image) }
+            guard try AgentImageStore.validate(data) == image.mimeType else { throw AgentImageError.invalid }
+            try Task.checkCancellation()
+            try checkScope()
+        }
+    }
+
+    private func authorizeDirectImagePublication(text: String, images: [AttachmentMetadata],
+                                                call: NormalizedToolCall, context: ToolContext) async throws {
+        guard running.contains(context.conversationID), !agentMessagingAccountTransition else { throw CancellationError() }
+        let generation = autoReviewAccountGeneration
+        let fence = ApprovalFence(accountID: settings.accountScope ?? "local", agentID: context.conversationID.uuidString.lowercased(),
+            runID: context.runID, generation: generation)
+        await autoReviewBroker.activate(fence)
+        let action = AutoReviewAction(summary: l10n("Publish these images in this conversation?"),
+            target: .resource(kind: "conversation", identifier: context.conversationID.uuidString), risks: [.sensitive],
+            context: .init(fence: fence, conversationID: context.conversationID, toolCallID: call.id.rawValue,
+                metadata: ["tool": "SendMessage", "agentMessage": text, "agentImagePublication": "true",
+                    "agentImages": String(decoding: try JSONEncoder().encode(images), as: UTF8.self)]))
+        let pending = PendingApproval(action: action, reason: "Approval required", expiresAt: Date().addingTimeInterval(300))
+        try await autoReviewBroker.waitForApprovalToExecute(pending) { [weak self] in await self?.registerAutoReviewApproval($0) }
+        try Task.checkCancellation()
+        guard generation == autoReviewAccountGeneration, running.contains(context.conversationID),
+              !agentMessagingAccountTransition, !deletedConversationIDs.contains(context.conversationID) else { throw CancellationError() }
+    }
+
     /// Bind publications to the active turn, never the currently selected chat.
     /// A failed save must not be acknowledged as a delivered message.
     private func publishDirectText(_ text: String, conversationID: UUID,
                                    assistantID: UUID, accountScope: String, generation: UInt64,
                                    replyTo: UUID?, cursorAgent: CursorAgentReference? = nil,
-                                   question: AgentQuestion? = nil) async throws -> RoomMessage {
+                                   question: AgentQuestion? = nil, images: [AttachmentMetadata] = []) async throws -> RoomMessage {
         try Task.checkCancellation()
         guard !agentMessagingAccountTransition, generation == autoReviewAccountGeneration,
               accountScope == (settings.accountScope ?? "local"),
@@ -1906,13 +1968,14 @@ final class AppModel: ObservableObject {
             let targets = conversations[ci].messages.filter { $0.id == replyTo }
             guard targets.count == 1, let target = targets.first,
                   target.role == .user || target.role == .assistant,
-                  !target.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  !target.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !target.attachments.isEmpty,
                   replyTo != assistantID || published.contains(assistantID) else {
                 throw GroupReplyError.unavailable
             }
         }
         let previousReply = conversations[ci].messages[mi].replyToMessageID
         let previousCards = conversations[ci].messages[mi].transcriptCards
+        let previousAttachments = conversations[ci].messages[mi].attachments
         var cards: [TranscriptCard] = cursorAgent.map { reference in
             [TranscriptCard(lifecycle: .succeeded, payload: .cloudAgent(.init(
                 agentID: "", title: "Cursor cloud agent", externalReferenceID: reference.bcID)))]
@@ -1929,14 +1992,24 @@ final class AppModel: ObservableObject {
             conversations[ci].messages[mi].text = text
             conversations[ci].messages[mi].replyToMessageID = replyTo
             conversations[ci].messages[mi].transcriptCards.append(contentsOf: cards)
+            conversations[ci].messages[mi].attachments = images
         } else {
             var message = ChatMessage(role: .assistant, text: text,
                 replyToMessageID: replyTo)
             message.transcriptCards = cards
+            message.attachments = images
             messageID = message.id
             conversations[ci].messages.append(message)
         }
-        do { try await persistOrThrow(conversationID: conversationID) }
+        let owner = AttachmentReferenceOwner(conversationID: conversationID, messageID: messageID)
+        do {
+            try await persistOrThrow(conversationID: conversationID)
+            if !images.isEmpty {
+                guard let attachmentLifecycle else { throw AgentImageError.unavailable }
+                for image in images { try await attachmentLifecycle.addReference(image, owner: owner) }
+                guard generation == autoReviewAccountGeneration, !deletedConversationIDs.contains(conversationID) else { throw CancellationError() }
+            }
+        }
         catch {
             if let ci = conversations.firstIndex(where: { $0.id == conversationID }) {
                 if messageID == assistantID,
@@ -1944,7 +2017,15 @@ final class AppModel: ObservableObject {
                     conversations[ci].messages[mi].text = ""
                     conversations[ci].messages[mi].replyToMessageID = previousReply
                     conversations[ci].messages[mi].transcriptCards = previousCards
+                    conversations[ci].messages[mi].attachments = previousAttachments
                 } else { conversations[ci].messages.removeAll { $0.id == messageID } }
+            }
+            if !images.isEmpty {
+                // Keep reachability until the rolled-back transcript is durable.
+                do {
+                    try await persistOrThrow(conversationID: conversationID)
+                    for image in images { try await attachmentLifecycle?.removeReference(blobID: image.id, owner: owner) }
+                } catch { /* Retain references for startup reconciliation. */ }
             }
             throw error
         }
@@ -1953,6 +2034,7 @@ final class AppModel: ObservableObject {
         receipt.replyToMessageID = replyTo
         receipt.cursorAgent = cursorAgent
         receipt.question = savedQuestion
+        receipt.images = images.isEmpty ? nil : images
         return receipt
     }
 
@@ -5303,13 +5385,22 @@ final class AppModel: ObservableObject {
         }
         pendingAutoReviewByID[pending.id] = pending
         pendingAutoReviewApprovals = pendingAutoReviewByID.values.sorted { $0.createdAt < $1.createdAt }
+        var publicationDetails: [String] = []
+        if pending.action.context.metadata["agentImagePublication"] == "true",
+           let raw = pending.action.context.metadata["agentImages"],
+           let images = try? JSONDecoder().decode([AttachmentMetadata].self, from: Data(raw.utf8)) {
+            publicationDetails = images.map { image in
+                [image.filename, image.altText].compactMap { $0 }.joined(separator: " — ")
+            }
+            if let text = pending.action.context.metadata["agentMessage"], !text.isEmpty { publicationDetails.append(text) }
+        }
         let card = TranscriptCard(
             lifecycle: .waiting,
             payload: .autoReview(.init(
                 reviewID: pending.id,
                 title: "Approval required",
                 summary: pending.action.summary,
-                findings: [pending.reason, "Target: \(pending.action.target.searchableText)"]
+                findings: [pending.reason, "Target: \(pending.action.target.searchableText)"] + publicationDetails
             )),
             actions: [
                 .init(id: "approve", label: "Approve", intent: .approveReview(reviewID: pending.id)),

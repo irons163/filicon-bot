@@ -22,6 +22,7 @@ public actor AgentUserMessageTool: ToolExecutor, ToolRuntimeContextProviding {
     private let publish: @Sendable (String, [AttachmentMetadata]) async throws -> RoomMessage?
     private let availableImages: [AttachmentMetadata]
     private let imageStore: AgentImageStore?
+    private var hostImageValidator: (@Sendable ([AttachmentMetadata]) async throws -> Void)? = nil
     private let authorizeImages: ImageAuthorizer
     private let supportsImages: Bool
     public typealias SecretPublisher = @Sendable (AgentSecretRequest, UUID?) async throws -> Void
@@ -81,6 +82,7 @@ public actor AgentUserMessageTool: ToolExecutor, ToolRuntimeContextProviding {
     }
 
     public init(conversationID: UUID, availableImages: [AttachmentMetadata], imageStore: AgentImageStore?,
+                hostImageValidator: (@Sendable ([AttachmentMetadata]) async throws -> Void)? = nil,
                 authorizeImages: @escaping ImageAuthorizer = { _, _, _, _ in throw AgentMessagingError.approvalRequired },
                 publishQuestion: QuestionPublisher? = nil,
                 publishSecret: SecretPublisher? = nil,
@@ -104,10 +106,11 @@ public actor AgentUserMessageTool: ToolExecutor, ToolRuntimeContextProviding {
         self.directConversationPresentation = directConversationPresentation
         defaultReplyToMessageID = nil
         self.imageStore = imageStore; self.authorizeImages = authorizeImages
+        self.hostImageValidator = hostImageValidator
         if let publishReceipt, receiptSenderID != nil {
             self.publish = { try await publishReceipt($0, $1, nil) }
         } else { self.publish = { try await publish($0, $1); return nil } }
-        supportsImages = imageStore != nil && !availableImages.isEmpty
+        supportsImages = (imageStore != nil || hostImageValidator != nil) && !availableImages.isEmpty
         let hasReceipts = publishReceipt != nil && receiptSenderID != nil
         if let publishReceipt, hasReceipts {
             self.publishReply = { try await publishReceipt($0, $1, $2) }
@@ -467,14 +470,13 @@ public actor AgentUserMessageTool: ToolExecutor, ToolRuntimeContextProviding {
             reserved = true
             defer { reserved = false }
             if !images.isEmpty {
-                guard let imageStore else { throw AgentImageError.unavailable }
-                _ = try await imageStore.load(images)
+                try await validatePublicationImages(images)
                 try Task.checkCancellation()
                 guard !closed else { throw AgentMessagingError.closed }
                 try await authorizeImages(text, images, call, context)
                 try Task.checkCancellation()
                 guard !closed else { throw AgentMessagingError.closed }
-                _ = try await imageStore.load(images)
+                try await validatePublicationImages(images)
             }
             try Task.checkCancellation()
             guard !closed else { throw AgentMessagingError.closed }
@@ -500,5 +502,11 @@ public actor AgentUserMessageTool: ToolExecutor, ToolRuntimeContextProviding {
             }
             return .init(callID: call.id, content: [.text(error.localizedDescription)], isError: true)
         }
+    }
+
+    private func validatePublicationImages(_ images: [AttachmentMetadata]) async throws {
+        if let hostImageValidator { try await hostImageValidator(images) }
+        else if let imageStore { _ = try await imageStore.load(images) }
+        else { throw AgentImageError.unavailable }
     }
 }

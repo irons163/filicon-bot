@@ -1,5 +1,13 @@
 # 協作能力核對紀錄（更新至 2026-09-25）
 
+## 直接聊天圖片發布（2026-09-25）
+
+直接 SendMessage 接上主程式提供的本回合最後一則使用者圖片目錄，不接受模型自行指定路徑或網址。重用單幀 PNG／JPEG 解碼、每張 5 MB／總計 12 MB／最多四張限制；核准前後重新核對附件身份、來源訊息、帳號世代、取消狀態與內容。核准卡列出檔名、alt 及完整附文，沿用現有七語言核准文案。支援附文或獨立 attachment，以及圖片訊息的 UUID 引用；正式保存與獨立附件引用成功後才給回條。
+
+Swift testing 隔離測試以九種情境 × 兩種發布型別共 18 案例覆蓋核准、拒絕、未知 ID、核准後損壞、停止、帳號切換及三種保存故障。重新開啟儲存層確認資料，移除原使用者附件引用後，發布訊息仍可讀取同一圖片。失敗不給成功回條、不留下已發布附件；不宣稱持續磁碟故障或所有並行情境皆驗收。
+
+圖片案例全部通過；最終完整回歸 direct-images-full-final.log 中既有安全金鑰心跳測試在固定 1,000 次 Task.yield 等待內未達條件，其餘通過。安全金鑰獨立重跑 direct-images-security-recheck.log exit 0；因此不將完整回歸記為全綠。原生建置 direct-images-native-final.log、封裝驗證及 deep strict 簽章通過。未啟動 App、未改真實資料；任意外部圖片／影片／文件、secret-request、短地址等仍待完成。
+
 ## 直接問題的歷史失效判定（2026-09-25）
 
 續查原版 `source/host/extensions/transcript/widget-responses.ts` 的 `hasLaterUserMoment`：dismissOnMoveOn 問題在回答時，也會檢查後續人類訊息或已回答／取消的 widget，不能只依當初保存的 pending 旗標。補測先重現未退休的歷史問題仍能回答（`direct-widget-history-red.log`，10 個案例中 6 個斷言失敗）。

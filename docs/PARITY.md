@@ -1,5 +1,7 @@
 # Filicon / Grok Bot 0.18 功能 parity matrix（current implementation）
 
+直接聊天圖片發布（2026-09-25）：SendMessage 現可發布本回合最後一則使用者訊息所附的 PNG／JPEG，支援附文字或獨立 attachment、UUID reply_to／保存回條。發布前顯示檔名、替代文字與說明供核准，核准前後重新驗證來源及內容；保存後建立獨立附件引用。此項取代直接聊天圖片完全未接線的描述，但任意路徑／HTTPS／生成檔案、影片及一般文件發布仍未完成，secret-request／短地址等缺口不變，AGENT-02 仍 partial。驗證與完整回歸中的既有安全金鑰測試偶發失敗詳見協作紀錄。
+
 直接聊天選項問答（2026-09-25）：SendMessage `type:widget` 已接入正式保存、UUID 引用／回條、暫停回合，以及人類選項／自訂文字／取消後的續聊。沿用群組問答介面；`dismissOnMoveOn` 只在明確設為 true 時隨新訊息失效，回答不改工具權限。此項取代下方直接聊天 widget 尚未接線的描述。圖片、secret-request、短地址／sand-msg 和外部服務驗收等仍有缺口，AGENT-02 仍 partial。
 
 直接聊天雲端引用（2026-09-25）：SendMessage `type:cursor-agent`／`bcId` 已接入正式保存、UUID 回條與 reply_to，可由同回合下一則文字引用。外部卡片沿用七語言 Cursor 引用介面，只在使用者點擊時開啟固定 cursor.com；與既有本機代理導航分離。此項取代下方直接聊天 cloud-agent 入口尚未接線的記錄。圖片／widget／secret-request、短地址／sand-msg，以及遠端 title／status／帳號驗收仍未完成，AGENT-02 維持 partial。

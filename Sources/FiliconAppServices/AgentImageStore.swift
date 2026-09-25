@@ -57,7 +57,7 @@ public actor AgentImageStore {
         return result
     }
 
-    private static func validate(_ data: Data) throws -> String {
+    public static func validate(_ data: Data) throws -> String {
         guard !data.isEmpty, data.count <= maximumBytes else { throw AgentImageError.limit }
         guard let source = CGImageSourceCreateWithData(data as CFData, nil),
               CGImageSourceGetCount(source) == 1,
