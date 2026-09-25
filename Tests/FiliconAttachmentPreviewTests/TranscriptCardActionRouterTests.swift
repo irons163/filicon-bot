@@ -5,6 +5,18 @@ import FiliconDomain
 
 @Suite("Transcript card action authority")
 struct TranscriptCardActionRouterTests {
+    @Test func externalReferenceCannotNavigateToLocalAgent() async throws {
+        let intent = TranscriptCardActionIntent.openCloudAgent(agentID: "same-id", threadID: nil)
+        let card = makeCard(payload: .cloudAgent(.init(agentID: "same-id", title: "Cloud",
+            externalReferenceID: "same-id")), intents: [intent])
+        await expectRoutingError(.mismatchedTarget) {
+            try await TranscriptCardActionRouter().begin(card: card, intent: intent)
+        }
+        let legacy = Data(#"{"agentID":"local","title":"Local","detail":""}"#.utf8)
+        let decoded = try JSONDecoder().decode(CloudAgentTranscriptCard.self, from: legacy)
+        #expect(decoded.externalReferenceID == nil)
+    }
+
     @Test func onlyAnActionDeclaredByTheExactCardMayBegin() async throws {
         let card = makeCard(
             lifecycle: .draft,

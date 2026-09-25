@@ -3,10 +3,32 @@ import SwiftUI
 import Testing
 import CustomDump
 import FiliconAgents
+import FiliconDomain
 @testable import Filicon
 
 @Suite("Cursor reference card rendering", .timeLimit(.minutes(1)))
 @MainActor struct CursorAgentReferenceCardTests {
+    @Test(arguments: ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"], [false, true])
+    func directCardRendersWithoutNavigation(language: String, dark: Bool) throws {
+        try FiliconLocalization.$languageOverride.withValue(language) {
+            let card = TranscriptCard(lifecycle: .succeeded, payload: .cloudAgent(.init(
+                agentID: "", title: "Cursor cloud agent", externalReferenceID: "remote / 設計?#")))
+            let host = NSHostingView(rootView: TranscriptCardRow(card: card) { _ in
+                Issue.record("External reference must not navigate a local agent")
+            }.padding(16).frame(width: 340)
+                .environment(\.openURL, OpenURLAction { _ in Issue.record("Rendering must not open a website"); return .handled })
+                .environment(\.locale, Locale(identifier: language)).environment(\.colorScheme, dark ? .dark : .light))
+            host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+            let size = host.fittingSize
+            expectNoDifference(size.width, 340)
+            #expect(size.height > 90 && size.height < 400)
+            host.frame = .init(origin: .zero, size: size)
+            host.layoutSubtreeIfNeeded()
+            let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+        }
+    }
+
     @Test(arguments: ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"], [false, true])
     func cardRendersWithoutNetwork(language: String, dark: Bool) throws {
         try render(language: language, dark: dark, width: 340,

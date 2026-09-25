@@ -1668,6 +1668,12 @@ final class AppModel: ObservableObject {
                             text: $0.text, createdAt: $0.createdAt)
                     }
                     publisher = AgentUserMessageTool(conversationID: id, availableImages: [], imageStore: nil,
+                        publishCursorAgent: { [weak self] reference, replyTo in
+                            guard let self else { throw CancellationError() }
+                            return try await self.publishDirectText(reference.summary, conversationID: id,
+                                assistantID: assistantID, accountScope: accountScope,
+                                generation: publicationGeneration, replyTo: replyTo, cursorAgent: reference)
+                        },
                         replyHistory: replyHistory, receiptSenderID: id, supportsReferenceNavigation: false,
                         directConversationPresentation: true,
                         publishReceipt: { [weak self] text, _, replyTo in
@@ -1771,7 +1777,7 @@ final class AppModel: ObservableObject {
     /// A failed save must not be acknowledged as a delivered message.
     private func publishDirectText(_ text: String, conversationID: UUID,
                                    assistantID: UUID, accountScope: String, generation: UInt64,
-                                   replyTo: UUID?) async throws -> RoomMessage {
+                                   replyTo: UUID?, cursorAgent: CursorAgentReference? = nil) async throws -> RoomMessage {
         try Task.checkCancellation()
         guard !agentMessagingAccountTransition, generation == autoReviewAccountGeneration,
               accountScope == (settings.accountScope ?? "local"),
@@ -1791,14 +1797,21 @@ final class AppModel: ObservableObject {
             }
         }
         let previousReply = conversations[ci].messages[mi].replyToMessageID
+        let previousCards = conversations[ci].messages[mi].transcriptCards
+        let cards: [TranscriptCard] = cursorAgent.map { reference in
+            [TranscriptCard(lifecycle: .succeeded, payload: .cloudAgent(.init(
+                agentID: "", title: "Cursor cloud agent", externalReferenceID: reference.bcID)))]
+        } ?? []
         let messageID: UUID
         if published.isEmpty {
             messageID = assistantID
             conversations[ci].messages[mi].text = text
             conversations[ci].messages[mi].replyToMessageID = replyTo
+            conversations[ci].messages[mi].transcriptCards.append(contentsOf: cards)
         } else {
-            let message = ChatMessage(role: .assistant, text: text,
+            var message = ChatMessage(role: .assistant, text: text,
                 replyToMessageID: replyTo)
+            message.transcriptCards = cards
             messageID = message.id
             conversations[ci].messages.append(message)
         }
@@ -1809,6 +1822,7 @@ final class AppModel: ObservableObject {
                    let mi = conversations[ci].messages.firstIndex(where: { $0.id == messageID }) {
                     conversations[ci].messages[mi].text = ""
                     conversations[ci].messages[mi].replyToMessageID = previousReply
+                    conversations[ci].messages[mi].transcriptCards = previousCards
                 } else { conversations[ci].messages.removeAll { $0.id == messageID } }
             }
             throw error
@@ -1816,6 +1830,7 @@ final class AppModel: ObservableObject {
         directPublicationIDs[assistantID]?.append(messageID)
         var receipt = RoomMessage(id: messageID, groupID: conversationID, senderID: conversationID, text: text)
         receipt.replyToMessageID = replyTo
+        receipt.cursorAgent = cursorAgent
         return receipt
     }
 

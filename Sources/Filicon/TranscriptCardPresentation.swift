@@ -1,6 +1,15 @@
 import Foundation
 import SwiftUI
 import FiliconDomain
+import FiliconAgents
+
+extension TranscriptCard {
+    var externalCursorReference: CursorAgentReference? {
+        guard case .cloudAgent(let value) = payload,
+              let id = value.externalReferenceID else { return nil }
+        return try? CursorAgentReference(bcID: id)
+    }
+}
 
 enum TranscriptCardPresentationKind: String, CaseIterable, Sendable {
     case widget, draft, autoReview, listener, secretRequest, connector
@@ -101,6 +110,14 @@ struct TranscriptCardRow: View {
 
     var body: some View {
         let _ = uiLocale.identifier
+        if let reference = card.externalCursorReference {
+            CursorAgentReferenceCard(reference: reference)
+        } else {
+            standardCard
+        }
+    }
+
+    private var standardCard: some View {
         VStack(alignment: .leading, spacing: 7) {
             HStack(alignment: .top, spacing: 8) {
                 Image(systemName: presentation.symbolName).frame(width: 20)

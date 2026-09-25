@@ -83,7 +83,7 @@ actor TranscriptCardActionRouter {
         case (.decideLocalToolPermission(let lhs, _), .localToolPermission(let rhs)):
             return lhs == rhs.requestID
         case (.openCloudAgent(let agent, let thread), .cloudAgent(let rhs)):
-            return agent == rhs.agentID && thread == rhs.threadID
+            return rhs.externalReferenceID == nil && agent == rhs.agentID && thread == rhs.threadID
         case (.revealFileDiff(let lhs), .fileOperation(let rhs)): return lhs == rhs.operationID
         case (.cancelShell(let lhs), .shell(let rhs)): return lhs == rhs.operationID
         case (.retry(let id), _), (.dismiss(let id), _): return id == cardID

@@ -4,6 +4,7 @@ import CustomDump
 import FiliconAppServices
 import FiliconDomain
 import FiliconProviderKit
+import FiliconAgents
 @testable import Filicon
 
 private final class PublicationSaveFault: @unchecked Sendable {
@@ -24,6 +25,7 @@ private final class PublicationSaveFault: @unchecked Sendable {
 private struct RetryingPublicationProvider: AIProvider {
     let fault: PublicationSaveFault
     let failSecond: Bool
+    var cloud = false
     let descriptor = ProviderDescriptor(id: "publication-failure", displayName: "Publication failure", requiresAPIKey: false)
     func models() async throws -> [AIModel] { [.init(id: "test")] }
     func stream(_ request: InferenceRequest) -> AsyncThrowingStream<InferenceEvent, Error> {
@@ -38,8 +40,10 @@ private struct RetryingPublicationProvider: AIProvider {
                     #expect(!result.wireText.contains("Saved message receipt:"))
                 }
                 if count < failureIndex + 2 {
+                    let isCloud = cloud && !(failSecond && count == 0)
                     let call = try NormalizedToolCall(id: .init(rawValue: "attempt-\(count)"), name: "SendMessage",
-                        argumentsJSON: JSONEncoder().encode(["text": failSecond && count == 0 ? "Progress" : "Retry-safe answer"]))
+                        argumentsJSON: JSONEncoder().encode(isCloud ? ["type": "cursor-agent", "bcId": "retry-cloud"] :
+                            ["text": failSecond && count == 0 ? "Progress" : "Retry-safe answer"]))
                     continuation.yield(.toolCallStarted(id: call.id, name: call.name))
                     continuation.yield(.toolCallCompleted(call))
                     continuation.yield(.completed(.toolUse))
@@ -59,13 +63,22 @@ private struct RetryingPublicationProvider: AIProvider {
 struct DirectPublicationFailureTests {
     @Test(arguments: [StorageQuotaFaultPoint.afterTemporaryWriteBeforeRename, .afterReservationPersist, .afterCommitPersist], [true, false])
     @MainActor func failedSaveHasNoSuccessReceiptAndCanRetry(point: StorageQuotaFaultPoint, failSecond: Bool) async throws {
+        try await checkRetry(point: point, failSecond: failSecond, cloud: false)
+    }
+
+    @Test(arguments: [StorageQuotaFaultPoint.afterTemporaryWriteBeforeRename, .afterReservationPersist, .afterCommitPersist], [true, false])
+    @MainActor func failedCloudSaveRollsBackCards(point: StorageQuotaFaultPoint, failSecond: Bool) async throws {
+        try await checkRetry(point: point, failSecond: failSecond, cloud: true)
+    }
+
+    @MainActor private func checkRetry(point: StorageQuotaFaultPoint, failSecond: Bool, cloud: Bool) async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-direct-save-failure-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
         let fault = PublicationSaveFault(point)
         let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false,
             quotaFaultInjector: { try fault.inject($0) })
         await model.bootstrap()
-        await model.registry.register(RetryingPublicationProvider(fault: fault, failSecond: failSecond))
+        await model.registry.register(RetryingPublicationProvider(fault: fault, failSecond: failSecond, cloud: cloud))
         let id = try #require(model.selection)
         let ci = try #require(model.conversations.firstIndex(where: { $0.id == id }))
         model.conversations[ci].providerID = "publication-failure"
@@ -78,11 +91,14 @@ struct DirectPublicationFailureTests {
             try await Task.sleep(for: .milliseconds(10))
         }
         #expect(!model.running.contains(id))
-        let expected = failSecond ? ["Progress", "Retry-safe answer"] : ["Retry-safe answer"]
+        let answer = cloud ? try CursorAgentReference(bcID: "retry-cloud").summary : "Retry-safe answer"
+        let expected = failSecond ? ["Progress", answer] : [answer]
         expectNoDifference(model.conversations[ci].messages.filter { $0.role == .assistant }.map(\.text), expected)
         let store = ConversationStore(fileURL: root.appending(path: "conversations.json"))
         let saved = try #require(try await store.conversation(id: id))
         expectNoDifference(saved.messages.filter { $0.role == .assistant }.map(\.text), expected)
+        let references = saved.messages.flatMap(\.transcriptCards).compactMap(\.externalCursorReference)
+        expectNoDifference(references.map(\.bcID), cloud ? ["retry-cloud"] : [])
         let memory = try await store.recentTurnMemory(conversationID: id)
         expectNoDifference(memory.count, expected.count)
         let ledger = try StorageQuotaLedger.live(dataRoot: root)

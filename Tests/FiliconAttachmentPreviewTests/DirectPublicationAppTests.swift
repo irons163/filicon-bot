@@ -4,12 +4,14 @@ import CustomDump
 import FiliconAppServices
 import FiliconDomain
 import FiliconProviderKit
+import FiliconAgents
 @testable import Filicon
 
 private struct DirectPublicationProvider: AIProvider {
     let publishes: Bool
     let toolSupport: Bool
     var replyMode: String? = nil
+    var cloudID: String? = nil
     var descriptor: ProviderDescriptor {
         .init(id: "direct-publication-test", displayName: "Direct publication test",
               requiresAPIKey: false, supportsToolCalling: toolSupport)
@@ -30,6 +32,9 @@ private struct DirectPublicationProvider: AIProvider {
                 if toolSupport && publishes && request.toolExchanges.count < 2 {
                     let index = request.toolExchanges.count
                     var arguments = ["type": "text", "content": index == 0 ? "Progress" : "Result"]
+                    if let cloudID, index == 0 {
+                        arguments = ["type": "cursor-agent", "bcId": cloudID]
+                    }
                     if replyMode == "current" {
                         arguments["reply_to"] = request.messages.last(where: { $0.role == .user })?.id.uuidString
                     } else if replyMode == "foreign" {
@@ -83,6 +88,40 @@ private struct DelayedDirectPublicationProvider: AIProvider {
 
 @Suite("Direct conversation publications")
 struct DirectPublicationAppTests {
+    @Test @MainActor func cloudReferenceIsSavedAndCanBeRepliedTo() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "filicon-direct-cloud-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+        await model.bootstrap()
+        let reference = try CursorAgentReference(bcID: "remote / 設計?#")
+        await model.registry.register(DirectPublicationProvider(publishes: true, toolSupport: true,
+            replyMode: "receipt", cloudID: reference.bcID))
+        let id = try #require(model.selection)
+        let ci = try #require(model.conversations.firstIndex(where: { $0.id == id }))
+        model.conversations[ci].providerID = "direct-publication-test"
+        model.conversations[ci].modelID = "test"
+        await model.refreshModels()
+        model.draft = "Reference the cloud task"
+        model.send()
+        for _ in 0..<600 {
+            if !model.running.contains(id) { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(!model.running.contains(id))
+        let store = ConversationStore(fileURL: root.appending(path: "conversations.json"))
+        let saved = try #require(try await store.conversation(id: id))
+        let messages = saved.messages.filter { $0.role == .assistant && !$0.text.isEmpty }
+        expectNoDifference(messages.map(\.text), [reference.summary, "Result"])
+        let first = try #require(messages.first)
+        let card = try #require(first.transcriptCards.first)
+        expectNoDifference(card.externalCursorReference, reference)
+        expectNoDifference(card.actions.count, 0)
+        expectNoDifference(messages.last?.replyToMessageID, first.id)
+        expectNoDifference(model.conversations[ci].messages.first(where: { $0.id == first.id })?.transcriptCards,
+            first.transcriptCards)
+        expectNoDifference(card.externalCursorReference?.url.host, "cursor.com")
+    }
+
     @Test(arguments: ["current", "receipt", "foreign"]) @MainActor
     func directRepliesUseOnlySavedSameConversationTargets(mode: String) async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-direct-reply-\(UUID().uuidString)")

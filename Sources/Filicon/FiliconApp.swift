@@ -1416,7 +1416,9 @@ private struct TranscriptMessageView: View {
                 }
                 .font(.callout)
             }
-            if !message.text.isEmpty {
+            if !message.text.isEmpty && !message.transcriptCards.contains(where: {
+                $0.externalCursorReference?.summary == message.text
+            }) {
                 if message.role == .user {
                     Text(message.text).textSelection(.enabled)
                         .foregroundStyle(FiliconTheme.userBubbleText)

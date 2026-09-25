@@ -190,12 +190,15 @@ public struct TimelineTranscriptCard: Codable, Hashable, Sendable {
 }
 
 public struct CloudAgentTranscriptCard: Codable, Hashable, Sendable {
+    /// An external reference, never a local agent navigation target. Nil for legacy local cards.
+    public var externalReferenceID: String?
     public var agentID: String
     public var bcID: String?
     public var threadID: String?
     public var title: String
     public var detail: String
-    public init(agentID: String, bcID: String? = nil, threadID: String? = nil, title: String, detail: String = "") {
+    public init(agentID: String, bcID: String? = nil, threadID: String? = nil, title: String, detail: String = "", externalReferenceID: String? = nil) {
+        self.externalReferenceID = externalReferenceID
         self.agentID = agentID; self.bcID = bcID; self.threadID = threadID; self.title = title; self.detail = detail
     }
 }

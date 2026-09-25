@@ -1,5 +1,15 @@
 # 協作能力核對紀錄（更新至 2026-09-25）
 
+## 直接聊天外部雲端引用（2026-09-25）
+
+接續原版 SendMessage cursor-agent 引用契約，直接聊天 publisher 現提供 CursorAgentPublisher；沿用既有 opaque ID 驗證、固定 cursor.com 安全路徑、發布額度、取消／帳號世代及同對話引用檢查。卡片與 canonical summary 同次保存，保存成功才給帶 cursorAgent 的 RoomMessage 回條；直接聊天資料仍是 ChatMessage，不新增群組。下一則發布可用回條 UUID 引用該卡片。
+
+依 SwiftUI 技能重用既有 CursorAgentReferenceCard（包括「未驗證遠端狀態」文案），不另造本機 openCloudAgent 動作；CloudAgentTranscriptCard 增加可選 externalReferenceID，舊資料缺欄位仍可解碼。渲染時重新驗證 ID，精確匹配的摘要不重複畫在卡片上，但仍保留在持久資料與記憶。路由器明確拒絕把外部引用當成本機代理导航，卡片不自動連線或取得遠端狀態。
+
+Swift testing／CustomDump 驗證實際 AppModel 的 cloud 發布、SQLite 重讀、畫面卡片一致及同回合文字引用；三種保存故障點各測第一／第二則失敗後重試，共六組，確認沒有重複卡片、錯誤成功回條或孤立 quota reservation。另有舊 JSON 相容、本機導航拒絕及七語言明暗共 14 個離屏渲染案例。未點擊使用者視窗、未啟動 App，實際外部網站／帳號驗收不在本批範圍；整體 parity 仍 partial。
+
+驗證紀錄：完整非並行回歸 `direct-cloud-full.log` exit 0；原生建置 `direct-cloud-native.log`、封裝 `direct-cloud-package.log` 及 deep strict codesign 均通過。使用隔離測試資料，未改真實帳號／群組或重啟 Xcode。
+
 ## 正式發布存檔故障與重試（2026-09-25）
 
 補驗直接聊天先前保留的存檔故障注入缺口。依 Swift testing／Dependencies／CustomDump 技能，把既有 StorageQuotaLedger fault injector 接到 AppModel 建構依賴（正式預設仍無故障），只在隔離測試的模型即將發布時啟用一次。原版 SendMessage 的「已交付」不能用未保存文字冒充；測試核對失敗工具結果沒有 saved-message receipt，以及重試後 SQLite、畫面訊息與回合記憶一致。
