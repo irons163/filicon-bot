@@ -206,12 +206,24 @@ final class FiliconSecurityKeyTests: XCTestCase {
         return nil
     }
 
-    private func waitUntil(_ predicate: @escaping @Sendable () async -> Bool) async {
-        for _ in 0..<1_000 {
+    private func waitUntil(
+        file: StaticString = #filePath, line: UInt = #line,
+        _ predicate: @escaping @Sendable () async -> Bool
+    ) async {
+        // Yield counts are not a time budget: a busy test runner can exhaust
+        // them before the proxy's child task is scheduled. The ceremony's
+        // clock remains injected; this deadline only bounds test observation.
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(5))
+        while clock.now < deadline {
             if await predicate() { return }
-            await Task.yield()
+            do { try await clock.sleep(for: .milliseconds(1)) }
+            catch {
+                XCTFail("Condition wait was cancelled", file: file, line: line)
+                return
+            }
         }
-        XCTFail("Condition did not become true")
+        XCTFail("Condition did not become true within 5 seconds", file: file, line: line)
     }
 }
 
