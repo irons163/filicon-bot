@@ -1471,7 +1471,7 @@
 "Forget shared user memory" = "忘记共享用户记忆";
 "Forget this shared fact for all agents?" = "要为所有代理忘记这个共享事实吗？";
 "Recorded by %@" = "记录者：%@";
-"Shared facts are sent to every current and future agent's configured model in this account during group and mailbox turns, including agents outside this group. Sharing does not grant tool permissions." = "共享事实会在群组聊天及消息会话中，发送给此账号内所有现有及未来代理所配置的模型，包括不在此群组的代理。共享不会授予工具权限。";
+"Shared facts are sent to every current and future agent's configured model in this account during bound direct chats, group chats and mailbox turns, including agents outside this chat. Sharing does not grant tool permissions." = "共享事实会在绑定代理的单独聊天、群组聊天及信箱回合中，发送给此账号内所有现有及未来代理所配置的模型，包括不在此聊天的代理。共享不会授予工具权限。";
 "This fact is already saved in shared user memory." = "共享用户记忆已保存这个事实。";
 "Shared user memory is limited to 48 facts, including 8 profile facts, and 12,000 characters per account across all agents." = "所有代理共享的用户记忆，每个账号最多可保存 48 个事实，其中基础事实最多 8 个，总计不得超过 12,000 字符。";
 "Use memory write/forget with one fact of at most 1,000 characters, scope agent or user, and tier profile or log. Forget requires exact recorded text, the same scope, and no tier." = "请使用 memory write／forget，单个事实最多 1,000 字符、scope 为 agent 或 user、tier 为 profile 或 log。删除须提供记录原文及相同 scope，且不得指定 tier。";
@@ -1488,7 +1488,7 @@
 "No saved facts." = "尚无已保存的事实。";
 "Forget" = "忘记";
 "Forget this fact?" = "要忘记这项事实吗？";
-"Saved facts are sent to this agent's configured model in future group and mailbox turns in this account. They are not shared with other agents or used as tool permissions." = "此账号中，这位代理之后的群组与消息任务会将已保存事实发送给其配置的模型。事实不会与其他代理共享，也不会作为工具授权。";
+"Saved facts are sent to this agent's configured model in future bound direct chats, group chats and mailbox turns in this account. They are not shared with other agents or used as tool permissions." = "此账号中，这位代理之后的绑定单独聊天、群组聊天及信箱回合会将已保存事实发送给其配置的模型。事实不会与其他代理共享，也不会作为工具授权。";
 "Forgetting stops future memory injection. Existing messages and running requests are not erased." = "忘记后不再向后续请求加载此记忆。已有消息与正在执行的请求不会被清除。";
 "Low-importance note" = "低重要性笔记";
 "Only a ranked selection is sent each turn. Low-importance notes rank below equally recent dated facts. Omitted facts remain saved until you forget them." = "每回合只会发送排序后的部分记忆。低重要性笔记的顺位低于同样近期的日期事实。未发送的事实仍会保存，直到你将其忘记。";

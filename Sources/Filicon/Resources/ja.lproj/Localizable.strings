@@ -1471,7 +1471,7 @@
 "Forget shared user memory" = "共有ユーザー記憶を削除";
 "Forget this shared fact for all agents?" = "すべてのエージェントからこの共有情報を削除しますか？";
 "Recorded by %@" = "記録者：%@";
-"Shared facts are sent to every current and future agent's configured model in this account during group and mailbox turns, including agents outside this group. Sharing does not grant tool permissions." = "共有情報は、グループとメッセージのやり取りで、このアカウントの現在および将来のすべてのエージェントに設定されたモデルへ送信されます。このグループ外のエージェントも含まれます。共有によってツール権限が付与されることはありません。";
+"Shared facts are sent to every current and future agent's configured model in this account during bound direct chats, group chats and mailbox turns, including agents outside this chat. Sharing does not grant tool permissions." = "共有情報は、エージェントに紐づく個別チャット、グループチャット、メールボックスのやり取りで、このアカウントの現在および将来のすべてのエージェントに設定されたモデルへ送信されます。このチャット外のエージェントも含まれます。共有によってツール権限が付与されることはありません。";
 "This fact is already saved in shared user memory." = "この事実は共有ユーザー記憶に保存済みです。";
 "Shared user memory is limited to 48 facts, including 8 profile facts, and 12,000 characters per account across all agents." = "共有ユーザー記憶は、アカウント内の全エージェントで基本情報8件を含む事実48件、合計12,000文字までです。";
 "Use memory write/forget with one fact of at most 1,000 characters, scope agent or user, and tier profile or log. Forget requires exact recorded text, the same scope, and no tier." = "memory write／forget には最大1,000文字の事実、scope agent または user、tier profile または log を指定してください。削除には正確な原文と同じ scope を指定し、tier は省略してください。";
@@ -1488,7 +1488,7 @@
 "No saved facts." = "保存された事実はありません。";
 "Forget" = "忘れる";
 "Forget this fact?" = "この事実を忘れますか？";
-"Saved facts are sent to this agent's configured model in future group and mailbox turns in this account. They are not shared with other agents or used as tool permissions." = "保存された事実は、このアカウントでの今後のグループ会話やメッセージ処理時に、このエージェントに設定されたモデルへ送信されます。他のエージェントとは共有されず、ツールの使用許可にもなりません。";
+"Saved facts are sent to this agent's configured model in future bound direct chats, group chats and mailbox turns in this account. They are not shared with other agents or used as tool permissions." = "保存された事実は、このアカウントでの今後の紐づけ済み個別チャット、グループチャット、メールボックスのやり取りで、このエージェントに設定されたモデルへ送信されます。他のエージェントとは共有されず、ツールの使用許可にもなりません。";
 "Forgetting stops future memory injection. Existing messages and running requests are not erased." = "忘れた記憶は今後のリクエストに含まれなくなります。既存のメッセージや実行中のリクエストは削除されません。";
 "Low-importance note" = "重要度の低いメモ";
 "Only a ranked selection is sent each turn. Low-importance notes rank below equally recent dated facts. Omitted facts remain saved until you forget them." = "各ターンでは順位に基づく一部の記憶のみを送信します。重要度の低いメモは、同じ新しさの日付付きの事実より順位が下がります。送信されない事実も、忘れる操作をするまで保存されます。";

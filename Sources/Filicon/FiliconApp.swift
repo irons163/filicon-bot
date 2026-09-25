@@ -1473,6 +1473,11 @@ private struct TranscriptMessageView: View {
                         Task { await model.directQuestionAnswered(conversationID: conversation.id, messageID: message.id, cardID: card.id, answer: answer) }
                     }
                 } else {
+                    if let approval = model.directManagementApproval(card: card, conversationID: conversation.id) {
+                        AgentManagementApprovalDetails(metadata: approval.action.context.metadata)
+                            .padding(14).frame(maxWidth: .infinity, alignment: .leading)
+                            .background(FiliconTheme.input, in: RoundedRectangle(cornerRadius: 12))
+                    }
                     TranscriptCardRow(card: card) { model.handleTranscriptCardIntent($0) }
                 }
             }

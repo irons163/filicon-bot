@@ -87,6 +87,88 @@ private actor ManagementWakeProbe {
         return try decoder.decode(Saved.self, from: Data(contentsOf: root.appending(path: "agents.json"))).projects ?? []
     }
 
+    @Test(arguments: ["approve", "deny", "stop", "account", "archive", "delete", "binding", "unbound"],
+          ["CreateAgent", "UpdateAgent", "memory", "own-and-delegate"])
+    func directManagementRequiresLiveBindingAndFullPreview(mode: String, operation: String) async throws {
+        let (root, model, _, owner, peer) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let tool = ["memory", "own-and-delegate"].contains(operation) ? "update_state" : operation
+        let detail = String(repeating: "Accessible layout. ", count: 90) + "END_OF_APPROVED_DETAIL"
+        await model.registry.register(ManagingAgentProvider { request, execute in
+            if request.messages.last?.text.hasPrefix("Incoming peer message") == true { return "PASS" }
+            expectNoDifference(request.tools.contains { $0.name == "CreateAgent" }, mode != "unbound")
+            expectNoDifference(request.tools.contains { $0.name == "UpdateAgent" }, mode != "unbound")
+            let args: [String: String]
+            switch operation {
+            case "CreateAgent": args = ["name": "Writer", "description": detail]
+            case "UpdateAgent": args = ["agent_id": peer.id.uuidString, "name": "Reviewer", "description": detail]
+            case "own-and-delegate": args = ["target": "profile", "action": "set", "name": "Lead engineer", "description": detail]
+            default: args = ["target": "memory", "action": "write", "fact": "Use accessible layouts"]
+            }
+            let result = try await execute(.init(id: "manage", name: ToolName(rawValue: tool),
+                argumentsJSON: JSONEncoder().encode(args)))
+            expectNoDifference(result.isError, mode != "approve")
+            if operation == "own-and-delegate", !result.isError {
+                let delegated = try await execute(.init(id: "delegate-after-rename", name: "SendToAgent",
+                    argumentsJSON: JSONEncoder().encode(["recipientID": peer.id.uuidString, "message": "Review contrast"])))
+                #expect(!delegated.isError)
+            }
+            return "Finished"
+        })
+        await model.bootstrap()
+        let id = try #require(await model.addConversation(agentID: owner.id))
+        if mode == "unbound", let ci = model.conversations.firstIndex(where: { $0.id == id }) {
+            model.conversations[ci].agentBinding = nil
+        }
+        model.draft = "Apply the requested change"
+        model.send()
+        if mode != "unbound" {
+            let approval = try await pending(model, tool: tool)
+            let card = try #require(model.conversations.first(where: { $0.id == id })?.messages.flatMap(\.transcriptCards)
+                .first(where: { if case .autoReview(let value) = $0.payload { return value.reviewID == approval.id }; return false }))
+            let preview = try #require(model.directManagementApproval(card: card, conversationID: id))
+            expectNoDifference(preview.action.context.metadata[operation == "memory" ? "agentMemoryFact" : "agentDescription"],
+                operation == "memory" ? "Use accessible layouts" : detail)
+            #expect(model.directManagementApproval(card: card, conversationID: UUID()) == nil)
+            expectNoDifference(model.agents.count, 2)
+            expectNoDifference(model.agents.first(where: { $0.id == peer.id })?.name, peer.name)
+            if mode == "stop" { model.cancel() }
+            if mode == "account" { await model.cancelAutoReviewApprovals(nextAccountID: "other") }
+            if mode == "archive" { await model.archiveAgent(id: owner.id) }
+            if mode == "delete" { model.deleteConversation(id: id) }
+            if mode == "binding", let ci = model.conversations.firstIndex(where: { $0.id == id }) {
+                model.conversations[ci].agentBinding = .init(accountID: "local", agentID: peer.id)
+            }
+            if !["approve", "deny"].contains(mode) {
+                #expect(model.directManagementApproval(card: card, conversationID: id) == nil)
+            }
+            model.handleTranscriptCardIntent(mode == "deny" ? .rejectReview(reviewID: approval.id) : .approveReview(reviewID: approval.id))
+            if operation == "own-and-delegate", mode == "approve" {
+                let delegation = try await pending(model, tool: "SendToAgent")
+                expectNoDifference(model.agents.first(where: { $0.id == owner.id })?.name, "Lead engineer")
+                expectNoDifference(model.agentMessages.count, 0)
+                model.handleTranscriptCardIntent(.approveReview(reviewID: delegation.id))
+            }
+        }
+        let deadline = ContinuousClock.now + .seconds(10)
+        while model.running.contains(id), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(!model.running.contains(id))
+        let saved = try AgentService(storeURL: root.appending(path: "agents.json"))
+        let profiles = await saved.list(includeArchived: true)
+        expectNoDifference(profiles.count, mode == "approve" && operation == "CreateAgent" ? 3 : 2)
+        expectNoDifference(profiles.first(where: { $0.id == peer.id })?.name,
+            mode == "approve" && operation == "UpdateAgent" ? "Reviewer" : peer.name)
+        expectNoDifference(profiles.first(where: { $0.id == peer.id })?.instructions, peer.instructions)
+        expectNoDifference(profiles.first(where: { $0.id == owner.id })?.name,
+            mode == "approve" && operation == "own-and-delegate" ? "Lead engineer" : owner.name)
+        expectNoDifference(profiles.first(where: { $0.id == owner.id })?.instructions, owner.instructions)
+        let memories = await saved.memories(accountID: "local", agentID: owner.id)
+        expectNoDifference(memories.map(\.fact), mode == "approve" && operation == "memory" ? ["Use accessible layouts"] : [])
+        #expect(model.pendingAutoReviewApprovals.isEmpty)
+        expectNoDifference(model.groups.first?.memberIDs, [owner.id])
+        expectNoDifference(model.agentMessages.count, mode == "approve" && operation == "own-and-delegate" ? 1 : 0)
+    }
+
     private func projectMemoryFixture() async throws -> (URL, AppModel, UUID, AgentProfile, AgentProfile) {
         let (root, _, group, owner, peer) = try await fixture()
         let agents = try AgentService(storeURL: root.appending(path: "agents.json"))
@@ -1065,10 +1147,10 @@ private actor ManagementWakeProbe {
             for action in ["set", "clear"] {
                 try await withUIRenderTurn(language: language) {
                     if language != "en" { #expect(FiliconLocalization.string(disclosure) != disclosure) }
-                    let metadata = ["agentName": "Designer", "agentAvatarAction": action,
+                    let metadata = ["agentStateTarget": "avatar", "agentName": "Designer", "agentAvatarAction": action,
                                     "agentAvatarPet": action == "set" ? "hoots" : "codex",
                                     "previousAgentAvatarPet": action == "set" ? "dewey" : ""]
-                    let host = NSHostingView(rootView: AgentAvatarApprovalDetails(metadata: metadata)
+                    let host = NSHostingView(rootView: AgentManagementApprovalDetails(metadata: metadata)
                         .padding(20).frame(width: 380).background(FiliconTheme.canvas)
                         .environment(\.locale, Locale(identifier: language)).environment(\.colorScheme, .light))
                     host.appearance = NSAppearance(named: .aqua)
@@ -1207,7 +1289,7 @@ private actor ManagementWakeProbe {
 
     @Test(arguments: [AgentMemory.Scope.agent, .user], [AgentMemory.Tier.profile, .note])
     func memoryApprovalDetailsRenderInSevenLanguages(scope: AgentMemory.Scope, tier: AgentMemory.Tier) async throws {
-        let metadata = ["agentMemoryAction": "forget", "agentMemoryOwner": "Designer", "agentMemoryTier": tier.rawValue, "agentMemoryScope": scope.rawValue,
+        let metadata = ["agentStateTarget": "memory", "agentMemoryAction": "forget", "agentMemoryOwner": "Designer", "agentMemoryTier": tier.rawValue, "agentMemoryScope": scope.rawValue,
                         "agentMemoryFact": "Prefer accessible layouts with keyboard navigation and clear contrast.\n優先採用支援鍵盤操作、對比清晰的版面。"]
         let output = ProcessInfo.processInfo.environment["FILICON_UI_REVIEW_OUTPUT"].map { URL(fileURLWithPath: $0, isDirectory: true) }
         for language in ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"] {
@@ -1215,7 +1297,8 @@ private actor ManagementWakeProbe {
                 let title = scope == .user ? "Forget shared user memory" : "Forget agent memory"
                 if language != "en" { #expect(FiliconLocalization.string(title) != title) }
                 if language != "en", tier == .note { #expect(l10n(tier.memoryTitleKey) != "Low-importance note") }
-                let host = NSHostingView(rootView: AgentMemoryApprovalDetails(metadata: metadata).padding(20).frame(width: 420)
+                if language != "en" { #expect(!l10n(scope.memoryDisclosureKey).contains("bound direct chats")) }
+                let host = NSHostingView(rootView: AgentManagementApprovalDetails(metadata: metadata).padding(20).frame(width: 420)
                     .background(FiliconTheme.input).environment(\.locale, Locale(identifier: language)).environment(\.colorScheme, .light))
                 host.appearance = NSAppearance(named: .aqua)
                 host.frame = NSRect(x: 0, y: 0, width: 420, height: 550)
@@ -1532,7 +1615,7 @@ private actor ManagementWakeProbe {
         if let output { try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true) }
         for language in ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"] {
             try await withUIRenderTurn(language: language) {
-                let host = NSHostingView(rootView: AgentProfileApprovalDetails(metadata: metadata)
+                let host = NSHostingView(rootView: AgentManagementApprovalDetails(metadata: metadata)
                     .padding(20).frame(width: 480, alignment: .leading)
                     .background(FiliconTheme.input)
                     .environment(\.locale, Locale(identifier: language)).environment(\.colorScheme, .light))

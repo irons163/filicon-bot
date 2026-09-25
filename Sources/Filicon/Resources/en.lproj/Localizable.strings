@@ -1471,7 +1471,7 @@
 "Forget shared user memory" = "Forget shared user memory";
 "Forget this shared fact for all agents?" = "Forget this shared fact for all agents?";
 "Recorded by %@" = "Recorded by %@";
-"Shared facts are sent to every current and future agent's configured model in this account during group and mailbox turns, including agents outside this group. Sharing does not grant tool permissions." = "Shared facts are sent to every current and future agent's configured model in this account during group and mailbox turns, including agents outside this group. Sharing does not grant tool permissions.";
+"Shared facts are sent to every current and future agent's configured model in this account during bound direct chats, group chats and mailbox turns, including agents outside this chat. Sharing does not grant tool permissions." = "Shared facts are sent to every current and future agent's configured model in this account during bound direct chats, group chats and mailbox turns, including agents outside this chat. Sharing does not grant tool permissions.";
 "This fact is already saved in shared user memory." = "This fact is already saved in shared user memory.";
 "Shared user memory is limited to 48 facts, including 8 profile facts, and 12,000 characters per account across all agents." = "Shared user memory is limited to 48 facts, including 8 profile facts, and 12,000 characters per account across all agents.";
 "Use memory write/forget with one fact of at most 1,000 characters, scope agent or user, and tier profile or log. Forget requires exact recorded text, the same scope, and no tier." = "Use memory write/forget with one fact of at most 1,000 characters, scope agent or user, and tier profile or log. Forget requires exact recorded text, the same scope, and no tier.";
@@ -1488,7 +1488,7 @@
 "No saved facts." = "No saved facts.";
 "Forget" = "Forget";
 "Forget this fact?" = "Forget this fact?";
-"Saved facts are sent to this agent's configured model in future group and mailbox turns in this account. They are not shared with other agents or used as tool permissions." = "Saved facts are sent to this agent's configured model in future group and mailbox turns in this account. They are not shared with other agents or used as tool permissions.";
+"Saved facts are sent to this agent's configured model in future bound direct chats, group chats and mailbox turns in this account. They are not shared with other agents or used as tool permissions." = "Saved facts are sent to this agent's configured model in future bound direct chats, group chats and mailbox turns in this account. They are not shared with other agents or used as tool permissions.";
 "Forgetting stops future memory injection. Existing messages and running requests are not erased." = "Forgetting stops future memory injection. Existing messages and running requests are not erased.";
 "Low-importance note" = "Low-importance note";
 "Only a ranked selection is sent each turn. Low-importance notes rank below equally recent dated facts. Omitted facts remain saved until you forget them." = "Only a ranked selection is sent each turn. Low-importance notes rank below equally recent dated facts. Omitted facts remain saved until you forget them.";

@@ -267,6 +267,7 @@ final class AppModel: ObservableObject {
     private let agentConversations: AgentConversationStore?
     private var agentMessagingSessions: [UUID: AgentMessagingSession] = [:]
     private var directMessagingScopes: Set<UUID> = []
+    private var directMessagingBindings: [UUID: DirectConversationAgentBinding] = [:]
     @Published private(set) var mailboxSecretCards: [UUID: AgentSecretRequestCardModel] = [:]
     private struct MailboxSecretContext {
         let incomingID: UUID
@@ -2012,11 +2013,11 @@ final class AppModel: ObservableObject {
                 }
                 var tools: [any ToolExecutor] = publisher.map { [$0] } ?? []
                 if publisher != nil, let agentIdentity, let agentService, let agentMessenger, let agentConversations {
-                    // Only text delegation is enabled here. Management, group
-                    // fan-out and image forwarding need their own host wiring.
+                    // Group fan-out and image forwarding need separate wiring.
                     let session = AgentMessagingSession(originConversationID: id, agents: agentService,
                         messenger: agentMessenger, registry: registry, coordinator: coordinator,
                         conversations: agentConversations, accountID: accountScope,
+                        management: makeAgentManagementSession(originID: id),
                         authorize: { [weak self] sender, recipient, text, call, context in
                             guard let self else { throw CancellationError() }
                             try await self.validateDirectDelegation(conversationID: id, binding: agentBinding,
@@ -2031,7 +2032,9 @@ final class AppModel: ObservableObject {
                     messaging = session
                     agentMessagingSessions[id] = session
                     directMessagingScopes.insert(id)
-                    tools.append(session.tool(for: agentIdentity.agentID))
+                    directMessagingBindings[id] = agentBinding
+                    tools += session.tools(for: agentIdentity.agentID,
+                        memoryQuery: requestMessages.last(where: { $0.role == .user })?.text ?? "")
                 }
                 try await coordinator.send(request: request, providerID: providerID, additionalTools: tools,
                     agentID: agentIdentity?.agentID, onStart: { [weak self] in
@@ -2069,6 +2072,7 @@ final class AppModel: ObservableObject {
                 await cancelAgentMessageTools(scopeID: id)
                 agentMessagingSessions[id] = nil
                 directMessagingScopes.remove(id)
+                directMessagingBindings[id] = nil
             }
             finishTurn(conversationID: id, assistantID: assistantID, succeeded: succeeded)
             if succeeded, directPublicationIDs[assistantID]?.isEmpty == true,
@@ -3461,10 +3465,10 @@ final class AppModel: ObservableObject {
         await invalidateMCPAuthorization(conversationID: scopeID)
     }
 
-    private func makeAgentMessagingSession(originID: UUID, supportsMailboxQuestions: Bool = false) -> AgentMessagingSession? {
-        guard let agentService, let agentMessenger, let agentConversations else { return nil }
+    private func makeAgentManagementSession(originID: UUID) -> AgentManagementSession? {
+        guard let agentService else { return nil }
         let generation = autoReviewAccountGeneration
-        let management = AgentManagementSession(originID: originID, agents: agentService,
+        return AgentManagementSession(originID: originID, agents: agentService,
             authorize: { [weak self] sender, change, call, context in
                 guard let self else { throw CancellationError() }
                 try await self.authorizeAgentProfileChange(sender: sender, change: change, call: call, context: context)
@@ -3522,6 +3526,12 @@ final class AppModel: ObservableObject {
                 guard let self else { throw CancellationError() }
                 try await self.commitAgentProjectChange(change, lifetime: lifetime, originID: originID, generation: generation)
             })
+    }
+
+    private func makeAgentMessagingSession(originID: UUID, supportsMailboxQuestions: Bool = false) -> AgentMessagingSession? {
+        guard let agentService, let agentMessenger, let agentConversations else { return nil }
+        let generation = autoReviewAccountGeneration
+        let management = makeAgentManagementSession(originID: originID)
         let secretPublisher: AgentMessagingSession.SecretPublisher?
         if supportsMailboxQuestions, channelService != nil {
             secretPublisher = { [weak self] request, incoming, target, lifetime in
@@ -4134,7 +4144,9 @@ final class AppModel: ObservableObject {
             (runningGroups.contains(scopeID) && !cancelledGroupRuns.contains(scopeID))
                 || (runningAgentMessageScopes.contains(scopeID) && agentMessageTasks[scopeID]?.isCancelled == false)
                 || (directMessagingScopes.contains(scopeID) && running.contains(scopeID)
-                    && turnTasks[scopeID]?.isCancelled == false && !deletedConversationIDs.contains(scopeID))
+                    && turnTasks[scopeID]?.isCancelled == false && !deletedConversationIDs.contains(scopeID)
+                    && directMessagingBindings[scopeID]?.accountID == (settings.accountScope ?? "local")
+                    && conversations.first(where: { $0.id == scopeID })?.agentBinding == directMessagingBindings[scopeID])
         )
     }
 
@@ -4144,7 +4156,10 @@ final class AppModel: ObservableObject {
         try Task.checkCancellation()
         let current = try await directTurnAgentIdentity(conversationID: conversationID, binding: binding,
             accountScope: account, generation: generation, providerID: providerID, modelID: modelID)
-        guard current == identity, isAgentMessagingScopeActive(conversationID) else { throw CancellationError() }
+        // Approved public-profile edits may change the system-message snapshot
+        // within this turn. Account/binding, live profile and route were checked
+        // above; a new inference still revalidates the full identity onStart.
+        guard current?.agentID == identity.agentID, isAgentMessagingScopeActive(conversationID) else { throw CancellationError() }
     }
 
     private func cancelDirectMessaging(conversationID: UUID) {
@@ -5864,6 +5879,15 @@ final class AppModel: ObservableObject {
             await autoReviewBroker.cancel(reviewID: pending.id, fence: pending.fence)
             errorMessage = error.localizedDescription
         }
+    }
+
+    func directManagementApproval(card: TranscriptCard, conversationID: UUID) -> PendingApproval? {
+        guard card.lifecycle == .waiting, case .autoReview(let value) = card.payload,
+              directMessagingScopes.contains(conversationID), isAgentMessagingScopeActive(conversationID),
+              let pending = pendingAutoReviewByID[value.reviewID],
+              pending.action.context.conversationID == conversationID,
+              ["CreateAgent", "UpdateAgent", "update_state"].contains(pending.action.context.metadata["tool"] ?? "") else { return nil }
+        return pending
     }
 
     func resolveGroupApproval(_ pending: PendingApproval, groupID: UUID, approve: Bool) async {

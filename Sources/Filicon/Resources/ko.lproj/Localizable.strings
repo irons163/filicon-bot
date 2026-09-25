@@ -1471,7 +1471,7 @@
 "Forget shared user memory" = "공유 사용자 기억 삭제";
 "Forget this shared fact for all agents?" = "모든 에이전트에서 이 공유 사실을 삭제할까요?";
 "Recorded by %@" = "기록한 에이전트: %@";
-"Shared facts are sent to every current and future agent's configured model in this account during group and mailbox turns, including agents outside this group. Sharing does not grant tool permissions." = "공유 사실은 그룹 및 메시지 대화 중 이 계정의 현재 및 향후 모든 에이전트에 설정된 모델로 전송됩니다. 이 그룹에 속하지 않은 에이전트도 포함됩니다. 공유는 도구 권한을 부여하지 않습니다.";
+"Shared facts are sent to every current and future agent's configured model in this account during bound direct chats, group chats and mailbox turns, including agents outside this chat. Sharing does not grant tool permissions." = "공유 사실은 에이전트에 연결된 개별 채팅, 그룹 채팅 및 사서함 대화에서 이 계정의 현재 및 향후 모든 에이전트에 설정된 모델로 전송됩니다. 이 채팅에 속하지 않은 에이전트도 포함됩니다. 공유는 도구 권한을 부여하지 않습니다.";
 "This fact is already saved in shared user memory." = "이 사실은 이미 공유 사용자 기억에 저장되어 있습니다.";
 "Shared user memory is limited to 48 facts, including 8 profile facts, and 12,000 characters per account across all agents." = "공유 사용자 기억은 계정 내 모든 에이전트를 합쳐 기본 사실 8개를 포함한 사실 48개, 총 12,000자로 제한됩니다.";
 "Use memory write/forget with one fact of at most 1,000 characters, scope agent or user, and tier profile or log. Forget requires exact recorded text, the same scope, and no tier." = "memory write/forget에는 최대 1,000자의 사실, scope agent 또는 user, tier profile 또는 log를 지정하세요. 삭제하려면 정확한 원문과 동일한 scope를 지정하고 tier는 생략하세요.";
@@ -1488,7 +1488,7 @@
 "No saved facts." = "저장된 사실이 없습니다.";
 "Forget" = "잊기";
 "Forget this fact?" = "이 사실을 잊을까요?";
-"Saved facts are sent to this agent's configured model in future group and mailbox turns in this account. They are not shared with other agents or used as tool permissions." = "저장된 사실은 이 계정에서 이후 그룹 대화 및 메시지 작업 시 이 에이전트에 설정된 모델로 전송됩니다. 다른 에이전트와 공유되거나 도구 권한으로 사용되지 않습니다.";
+"Saved facts are sent to this agent's configured model in future bound direct chats, group chats and mailbox turns in this account. They are not shared with other agents or used as tool permissions." = "저장된 사실은 이 계정의 향후 연결된 개별 채팅, 그룹 채팅 및 사서함 대화에서 이 에이전트에 설정된 모델로 전송됩니다. 다른 에이전트와 공유되거나 도구 권한으로 사용되지 않습니다.";
 "Forgetting stops future memory injection. Existing messages and running requests are not erased." = "잊은 기억은 이후 요청에 포함되지 않습니다. 기존 메시지와 실행 중인 요청은 지워지지 않습니다.";
 "Low-importance note" = "중요도가 낮은 메모";
 "Only a ranked selection is sent each turn. Low-importance notes rank below equally recent dated facts. Omitted facts remain saved until you forget them." = "매 차례 순위에 따른 일부 기억만 전송합니다. 중요도가 낮은 메모는 같은 시기의 날짜가 있는 사실보다 순위가 낮습니다. 제외된 사실도 잊기 전까지 저장됩니다.";

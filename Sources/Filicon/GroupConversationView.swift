@@ -827,23 +827,7 @@ struct GroupToolApprovalPanel: View {
                     // outgoing payload must be visible in full before approval.
                     Text(verbatim: text).font(.callout).textSelection(.enabled)
                 }
-                if approval.action.context.metadata["agentStateTarget"] == "memory" {
-                    AgentMemoryApprovalDetails(metadata: approval.action.context.metadata)
-                } else if approval.action.context.metadata["agentStateTarget"] == "project" {
-                    AgentProjectApprovalDetails(metadata: approval.action.context.metadata)
-                } else if approval.action.context.metadata["agentStateTarget"] == "channel" {
-                    AgentChannelDisconnectionDetails(metadata: approval.action.context.metadata)
-                } else if approval.action.context.metadata["agentStateTarget"] == "settings" {
-                    AgentSettingsApprovalDetails(metadata: approval.action.context.metadata)
-                } else if approval.action.context.metadata["agentStateTarget"] == "avatar" {
-                    AgentAvatarApprovalDetails(metadata: approval.action.context.metadata)
-                } else if approval.action.context.metadata["agentStateTarget"] == "routine" {
-                    AgentRoutineApprovalDetails(metadata: approval.action.context.metadata)
-                } else if approval.action.context.metadata["agentStateTarget"] == "workflow" {
-                    AgentWorkflowApprovalDetails(metadata: approval.action.context.metadata)
-                } else if ["CreateAgent", "UpdateAgent", "update_state"].contains(approval.action.context.metadata["tool"] ?? "") {
-                    AgentProfileApprovalDetails(metadata: approval.action.context.metadata)
-                }
+                AgentManagementApprovalDetails(metadata: approval.action.context.metadata)
                 Text(FiliconLocalization.string(approval.reason)).font(.caption).foregroundStyle(FiliconTheme.textSecondary)
                 HStack {
                     Button(l10n("Approve")) { Task { await resolve(approval, approve: true) } }
@@ -859,6 +843,25 @@ struct GroupToolApprovalPanel: View {
 
     private func resolve(_ approval: PendingApproval, approve: Bool) async {
         await model.resolveGroupApproval(approval, groupID: groupID, approve: approve)
+    }
+}
+
+struct AgentManagementApprovalDetails: View {
+    let metadata: [String: String]
+    var body: some View {
+        switch metadata["agentStateTarget"] {
+        case "memory": AgentMemoryApprovalDetails(metadata: metadata)
+        case "project": AgentProjectApprovalDetails(metadata: metadata)
+        case "channel": AgentChannelDisconnectionDetails(metadata: metadata)
+        case "settings": AgentSettingsApprovalDetails(metadata: metadata)
+        case "avatar": AgentAvatarApprovalDetails(metadata: metadata)
+        case "routine": AgentRoutineApprovalDetails(metadata: metadata)
+        case "workflow": AgentWorkflowApprovalDetails(metadata: metadata)
+        default:
+            if ["CreateAgent", "UpdateAgent", "update_state"].contains(metadata["tool"] ?? "") {
+                AgentProfileApprovalDetails(metadata: metadata)
+            }
+        }
     }
 }
 
@@ -999,8 +1002,8 @@ extension AgentMemory.Scope {
         self == .project
             ? "Project facts are shared with current and future members of that project in this account and their configured models, including members outside this chat. Leaving stops future recall, not saved facts or already-sent messages. Rejoining restores access. Private memories and tool permissions stay unchanged."
             : self == .user
-            ? "Shared facts are sent to every current and future agent's configured model in this account during group and mailbox turns, including agents outside this group. Sharing does not grant tool permissions."
-            : "Saved facts are sent to this agent's configured model in future group and mailbox turns in this account. They are not shared with other agents or used as tool permissions."
+            ? "Shared facts are sent to every current and future agent's configured model in this account during bound direct chats, group chats and mailbox turns, including agents outside this chat. Sharing does not grant tool permissions."
+            : "Saved facts are sent to this agent's configured model in future bound direct chats, group chats and mailbox turns in this account. They are not shared with other agents or used as tool permissions."
     }
 }
 

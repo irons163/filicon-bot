@@ -1,5 +1,15 @@
 # 協作能力核對紀錄（更新至 2026-09-26）
 
+## 綁定直接聊天管理工具與完整核准預覽（2026-09-26）
+
+抽出共用 makeAgentManagementSession，直接聊天的 AgentMessagingSession 使用同一組管理 authorizer／committer，提供 CreateAgent、UpdateAgent、update_state、記憶搜尋及已配置的連接器狀態工具；既有來源範圍、明確核准、quota、mutation lifetime 與帳號 generation 檢查保留。起始 binding 保存到 directMessagingBindings，核准／提交期間換成另一代理人或帳號即失效；未綁定聊天不提供這些工具。工具提示和七語系記憶分享說明同步包含綁定直接聊天，避免仍宣稱只供群組／信箱使用。
+
+GroupToolApprovalPanel 與直接聊天共用 AgentManagementApprovalDetails，依 metadata 呈現代理人前後資料、記憶事實／分享範圍、專案、連接器、設定、頭像、排程與工作流程變更。直接預覽僅取同一 live review、對話與有效 session；重開後不從歷史卡片重建授權。原核准按鈕仍經持久卡片路由與 broker 驗證。已核准的公開改名不再使同回合後續 SendToAgent 錯誤失效；帳號／binding／存活 profile／模型仍重驗，新 inference onStart 仍比較完整執行身分。
+
+新增 32 個直接整合情況：建立代理人、修改他人公開資料、保存自己記憶、改名後再委派，各驗證核准、拒絕、Stop、帳號切換、封存、刪除、替換 binding 與未綁定。確認預覽保留完整長描述、核准前未改資料、私有指令及群組成員不變、改名和委派需要各別核准。共用資料／記憶／頭像預覽七語系渲染通過；人工檢視繁中資料及更新後法文共享記憶說明，無截字。初次 fixture 描述超過既有 2,000 字上限而被拒絕，修正為有效長描述，未放寬產品限制。
+
+direct-management-full-final.log 完整非並行回歸 exit 0；direct-management-native-final.log 原生建置 exit 0；verify-package、entitlements 比對及 deep strict 簽章通過。沿用 pfw-testing 的隔離資料／差異斷言與 pfw-modern-swiftui 的共用 view，沒有操作使用者 App／Xcode、Keychain 或真實資料。此批是管理工具接線，不代表所有 update_state 路由已在直接聊天逐一完成人工驗收。自動記憶建議／原版記憶重寫、同儕訊息在直接聊天的投影、群組／圖片轉送、同儕問題／憑證卡及外部服務驗收仍未完成。
+
 ## 綁定直接聊天的文字 SendToAgent（2026-09-26）
 
 重新核對 reconstructed 的 sand-agent-management-tools.ts：SendToAgent 是傳給其他代理人的非同步訊息，回傳送達回條而不是對方答案，對方回覆可再喚醒寄件者。Filicon 的綁定直接聊天現在註冊文字 SendToAgent；未綁定聊天仍不提供。新收件人一律經直接聊天卡片核准，卡片顯示收件人、完整內容及一般／優先狀態，不因 auto-review allow 規則跳過。核准前後重新驗證原對話 binding、帳號 generation、存活 profile 與模型。
