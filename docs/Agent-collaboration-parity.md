@@ -1,5 +1,11 @@
 # 協作能力核對紀錄（更新至 2026-09-25）
 
+## 直接引用完整回歸補驗與保護檔案診斷（2026-09-25）
+
+未修改產品碼或檔案保護選項，先以 ioreg 唯讀確認 IOConsoleLocked = No，再重跑先前失敗的 MCP configurationStoreUpsertRenameAndRemoveAreAtomic 與 updater backendRequirementRaisesScopedGatePersistsAndImmediatelyChecks：protected-storage-recheck.log exit 0，兩項均通過。接著完整非並行回歸 direct-reference-ui-full-unlocked.log exit 0；直接引用分頁測試、MCP、updater 均通過，無失敗測試。關閉上一批完整回歸待補驗，不改其他功能 partial 與真實 UI／外部服務驗收狀態。
+
+失敗的 MCP、代理人與 updater 儲存均使用 completeFileProtectionUnlessOpen。前後未改碼而重驗恢復，加上先前跨模組 EPERM，支持受保護檔案當時不可用的環境判斷；先前失敗當下沒有鎖定狀態快照，故不宣稱已唯一證明是鎖屏造成。未清除任何真實檔案、未 chmod 放寬存取、未移除保護選項、未重啟 App／Xcode。若再發生，先記錄當下鎖定狀態與原始 errno，再在可存取狀態重跑同一失敗案例；不要把廣泛 EPERM 直接當作業務邏輯回歸，也不要只憑單項重跑便宣稱完整測試通過。
+
 ## 直接聊天引用畫面與歷史載入（2026-09-25）
 
 直接聊天 Markdown 接入 sand-msg 引用索引；有引用且歷史未完整時由畫面 task 載入完整歷史，再啟用可解析連結。使用既有 transcript exposeMessage／scrollTo 高亮定位，包含早於顯示視窗的訊息。不把私人 reasoning 或工具卡變成引用入口；無效引用保持純文字，不開外部 URL、不建立 thread 或授權。點擊時再次以目前對話索引驗證，跳轉排程也檢查選取對話與目標是否仍存在。loadAllMessages 補取消與帳號 generation 檢查，避免舊帳號非同步載入回寫。正式 SendMessage 開啟 supportsReferenceNavigation，移除直接聊天不支援的過期提示，仍使用原有受限公開目錄與回條。

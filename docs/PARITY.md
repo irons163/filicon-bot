@@ -1,5 +1,7 @@
 # Filicon / Grok Bot 0.18 功能 parity matrix（current implementation）
 
+直接引用完整回歸補驗（2026-09-25）：不改碼／不放寬檔案保護，確認當前系統未鎖定後，先前 MCP 與 updater 失敗案例重驗通過；完整非並行 direct-reference-ui-full-unlocked.log exit 0。關閉下方直接引用 UI 的完整回歸缺口。當時 EPERM 的唯一根因未被記錄證明；其他 parity 與真實 UI／外部驗收仍未完成。
+
 直接聊天引用 UI（2026-09-25）：已接入 Markdown、完整歷史載入、顯示視窗展開與跳轉，SendMessage 正式啟用 sand-msg 提示。本批 27 項整合測試、原生建置及封裝通過；完整回歸有多模組暫存 JSON EPERM 與 updater 保存斷言失敗，MCP 單獨重驗亦失敗，待診斷。取代下方尚未接 UI 的狀態，但不代表整體 AGENT-02 或完整驗收完成。
 
 直接聊天引用索引（2026-09-25）：新增完整歷史限定、對話隔離、重複／已刪除地址保留檢查的 sand-msg 索引，聚焦 10 項測試通過。尚未接 UI 與分頁跳轉，工具仍不宣告支援 inline navigation；AGENT-02 保持 partial。
