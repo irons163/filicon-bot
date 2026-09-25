@@ -2051,6 +2051,14 @@ final class AppModel: ObservableObject {
                         conversations: agentConversations, accountID: accountScope,
                         management: makeAgentManagementSession(originID: id),
                         directOriginBinding: agentBinding,
+                        memoryExtractor: AgentMemorySuggestionExtractor(agents: agentService, registry: registry,
+                            scheduler: agentExecutionScheduler,
+                            record: { [weak self] suggestions, settings, exchangeID, lifetime in
+                                guard let self else { throw CancellationError() }
+                                try await self.recordMemorySuggestions(suggestions, settings: settings,
+                                    exchangeID: exchangeID, lifetime: lifetime, originID: id,
+                                    generation: publicationGeneration)
+                            }),
                         authorize: { [weak self] sender, recipient, text, call, context in
                             guard let self else { throw CancellationError() }
                             try await self.validateDirectDelegation(conversationID: id, binding: agentBinding,
@@ -2066,6 +2074,14 @@ final class AppModel: ObservableObject {
                     agentMessagingSessions[id] = session
                     directMessagingScopes.insert(id)
                     directMessagingBindings[id] = agentBinding
+                    // Only an actual, unquoted human message is evidence. Question
+                    // choices and credential receipts are host-authored replies.
+                    if let human = requestMessages.last, human.role == .user,
+                       human.replyToMessageID == nil,
+                       current.messages.contains(where: { $0.id == human.id && $0.role == .user && $0.text == human.text }),
+                       let profile = await agentService.profile(id: agentIdentity.agentID) {
+                        await session.prepareMemorySuggestion(profile: profile, exchangeID: human.id, user: human.text)
+                    }
                     tools += session.tools(for: agentIdentity.agentID,
                         memoryQuery: requestMessages.last(where: { $0.role == .user })?.text ?? "")
                 }
@@ -2099,6 +2115,8 @@ final class AppModel: ObservableObject {
                         try await self.projectDirectPeerMessage(source, message: message,
                             sessionID: messaging.id, generation: publicationGeneration)
                     })
+                    try Task.checkCancellation()
+                    await messaging.suggestMemories()
                 }
                 succeeded = true
             } catch is ToolTurnSuspension {

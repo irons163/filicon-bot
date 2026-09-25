@@ -247,7 +247,7 @@ public actor AgentMessagingSession {
         management?.close(); groupLifetime.close(); publicationLifetime.close(); memorySuggestionLifetime.close()
     }
 
-    /// Only the foreground group responder supplies an actual current human
+    /// Only a foreground group or bound direct responder supplies a current human
     /// request. Peer wakes/background tasks do not invent human memory evidence.
     public func prepareMemorySuggestion(profile: AgentProfile, exchangeID: UUID, user: String) async {
         guard !closed, memoryExtractor != nil, memoryExchanges[profile.id] == nil else { return }
@@ -257,7 +257,7 @@ public actor AgentMessagingSession {
                                            user: String(user.prefix(8_000)))
     }
 
-    /// Called only after the group turn and its saved replies settled. This is
+    /// Called only after the foreground turn and its saved replies settled. This is
     /// opportunistic: errors leave the successful conversation unchanged.
     public var hasMemorySuggestionsToProcess: Bool { memoryExchanges.values.contains { !$0.response.isEmpty } }
 

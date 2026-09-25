@@ -79,6 +79,69 @@ private struct MemorySuggestionAppProvider: AIProvider {
     }
 
     @Test(arguments: [false, true])
+    func directCompletionProducesOnlyOptedInReviewCandidates(enabled: Bool) async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        await f.model.bootstrap()
+        if enabled { try await f.enable() }
+        await f.model.registry.register(MemorySuggestionAppProvider(probe: f.probe))
+        let id = try #require(await f.model.addConversation(agentID: f.owner.id))
+        f.model.draft = "I prefer accessible layouts"
+        f.model.send()
+        let deadline = ContinuousClock.now + .seconds(10)
+        while f.model.isConversationWorking(id), ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(!f.model.isConversationWorking(id))
+        #expect(f.model.errorMessage == nil)
+        let snapshot = try await f.model.memorySuggestionSnapshot(agentID: f.owner.id)
+        expectNoDifference(snapshot.suggestions.map(\.fact), enabled ? ["Prefers accessible layouts"] : [])
+        let facts = try await f.model.savedAgentMemories(agentID: f.owner.id)
+        expectNoDifference(facts, [])
+        let other = try await f.model.memorySuggestionSnapshot(agentID: f.peer.id)
+        expectNoDifference(other.suggestions, [])
+        let requests = await f.probe.requests
+        let extra = requests.filter { $0.messages.first?.text == AgentMemorySuggestionExtractor.instructions }
+        expectNoDifference(extra.count, enabled ? 1 : 0)
+        #expect(extra.allSatisfy { $0.tools.isEmpty && $0.attachmentsByMessageID.isEmpty })
+        #expect(!f.model.conversations.flatMap(\.messages).contains { $0.text.contains("suggestions") })
+    }
+
+    @Test(arguments: ["stop", "account", "delete", "disable"])
+    func directLifecycleDiscardsLateMemoryCandidates(mode: String) async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        await f.model.bootstrap()
+        try await f.enable()
+        await f.model.registry.register(MemorySuggestionAppProvider(probe: f.probe, gated: true))
+        let id = try #require(await f.model.addConversation(agentID: f.owner.id))
+        f.model.draft = "I prefer accessible layouts"
+        f.model.send()
+        await f.probe.wait()
+        #expect(f.model.conversations.first(where: { $0.id == id })?.messages.contains {
+            $0.role == .assistant && $0.text == "Understood. I will review the layout."
+        } == true)
+        switch mode {
+        case "account": await f.model.cancelAutoReviewApprovals(nextAccountID: "other")
+        case "delete": f.model.deleteConversation(id: id)
+        case "disable":
+            let snapshot = try await f.model.memorySuggestionSnapshot(agentID: f.owner.id)
+            try await f.model.setMemorySuggestionsEnabled(false, expected: snapshot.settings)
+        default: f.model.cancel()
+        }
+        await f.probe.resume()
+        let deadline = ContinuousClock.now + .seconds(10)
+        while f.model.isConversationWorking(id), ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(!f.model.isConversationWorking(id))
+        let restored = AppModel(applicationSupportRoot: f.root, bootstrapImmediately: false)
+        await restored.reloadWorkspaceData()
+        let snapshot = try await restored.memorySuggestionSnapshot(agentID: f.owner.id)
+        expectNoDifference(snapshot.suggestions, [])
+        let facts = try await restored.savedAgentMemories(agentID: f.owner.id)
+        expectNoDifference(facts, [])
+    }
+
+    @Test(arguments: [false, true])
     func groupCompletionProducesOnlyOptedInPrivateReviewCandidates(enabled: Bool) async throws {
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
         if enabled { try await f.enable() }
