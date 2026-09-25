@@ -76,9 +76,10 @@ private struct DelegatingGroupProvider: InteractiveToolProvider {
 
 @Suite("SendToAgent app integration", .timeLimit(.minutes(1)))
 @MainActor struct SendToAgentAppIntegrationTests {
-    @Test(arguments: ["missing-chat", "missing-message", "deleted", "foreign", "write-failure", "conflict"])
+    @Test(arguments: ["missing-chat", "missing-message", "deleted", "foreign", "write-failure", "conflict", "restart", "restart-deleted"])
     func recoversCanonicalTextWithoutRerunningAgents(mode: String) async throws {
-        let (root, model, _, sender, recipient, probe) = try await fixture()
+        let (root, initialModel, _, sender, recipient, probe) = try await fixture()
+        var model = initialModel
         defer { try? FileManager.default.removeItem(at: root) }
         await model.bootstrap()
         let origin = try #require(await model.addConversation(agentID: sender))
@@ -107,7 +108,8 @@ private struct DelegatingGroupProvider: InteractiveToolProvider {
             #expect(sqlite3_exec(fixtureDB, "DELETE FROM conversations WHERE id = '\(peer.id.uuidString)'", nil, nil, nil) == SQLITE_OK)
             model.conversations.removeAll { $0.id == peer.id }
         }
-        if mode == "deleted" {
+        let deleted = mode == "deleted" || mode == "restart-deleted"
+        if deleted {
             model.deleteConversation(id: peer.id)
             while try await store.conversation(id: peer.id) != nil, ContinuousClock.now < deadline {
                 try await Task.sleep(for: .milliseconds(10))
@@ -128,20 +130,38 @@ private struct DelegatingGroupProvider: InteractiveToolProvider {
             #expect(sqlite3_open(root.appending(path: "conversations.sqlite3").path, &database) == SQLITE_OK)
             #expect(sqlite3_exec(database, "CREATE TRIGGER reject_recovery BEFORE INSERT ON messages BEGIN SELECT RAISE(ABORT, 'fixture recovery failure'); END", nil, nil, nil) == SQLITE_OK)
         }
+        if mode.hasPrefix("restart") {
+            // Recreate only the isolated fixture host, never the user's running app.
+            model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+            await model.bootstrap()
+            expectNoDifference(model.agentMessages.map(\.id), canonical.map(\.id))
+        }
+        let canonicalBeforeRecovery = model.agentMessages
         let success = await model.recoverDirectPeerMessages(conversationID: origin)
         if mode == "missing-chat" { #expect(success, Comment(rawValue: model.errorMessage ?? "Recovery failed")) }
         expectNoDifference(success, !["foreign", "write-failure", "conflict"].contains(mode))
         #expect(model.recoveringPeerConversations.isEmpty)
         let afterWakes = await probe.wakes
         expectNoDifference(afterWakes, wakes)
-        expectNoDifference(model.agentMessages, canonical)
-        if success {
-            let count = model.conversations.flatMap(\.messages).filter { $0.agentMessageSource != nil }.count
-            expectNoDifference(count, mode == "deleted" ? 2 : 4)
+        expectNoDifference(model.agentMessages, canonicalBeforeRecovery)
+        if mode == "write-failure" {
+            #expect(sqlite3_exec(database, "DROP TRIGGER reject_recovery", nil, nil, nil) == SQLITE_OK)
+            #expect(await model.recoverDirectPeerMessages(conversationID: origin))
+            expectNoDifference(model.conversations.flatMap(\.messages).filter { $0.agentMessageSource != nil }.count, 4)
             let snapshot = model.conversations
             #expect(await model.recoverDirectPeerMessages(conversationID: origin))
             expectNoDifference(model.conversations, snapshot)
-            if mode == "deleted" { #expect(!model.conversations.contains { $0.id == peer.id }) }
+            expectNoDifference(model.agentMessages, canonicalBeforeRecovery)
+            let retryWakes = await probe.wakes
+            expectNoDifference(retryWakes, wakes)
+        }
+        if success {
+            let count = model.conversations.flatMap(\.messages).filter { $0.agentMessageSource != nil }.count
+            expectNoDifference(count, deleted ? 2 : 4)
+            let snapshot = model.conversations
+            #expect(await model.recoverDirectPeerMessages(conversationID: origin))
+            expectNoDifference(model.conversations, snapshot)
+            if deleted { #expect(!model.conversations.contains { $0.id == peer.id }) }
             else {
                 let restored = try #require(try await store.conversation(id: peer.id))
                 expectNoDifference(restored.messages.map(\.text), peer.messages.map(\.text))

@@ -17,6 +17,8 @@ struct ConversationDesignTests {
         model.agents = [agent]
         var conversation = Conversation()
         conversation.agentBinding = .init(accountID: "local", agentID: agent.id)
+        model.conversations = [conversation]
+        model.selection = conversation.id
         let output = ProcessInfo.processInfo.environment["FILICON_UI_REVIEW_OUTPUT"].map { URL(fileURLWithPath: $0, isDirectory: true) }
         if let output { try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true) }
         for language in ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"] {
