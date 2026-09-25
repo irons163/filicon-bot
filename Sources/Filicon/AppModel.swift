@@ -1660,12 +1660,19 @@ final class AppModel: ObservableObject {
                 let provider = await registry.provider(id: providerID)
                 if provider?.descriptor.supportsToolCalling == true {
                     directPublicationIDs[assistantID] = []
-                    publisher = AgentUserMessageTool(conversationID: id) { [weak self] text in
-                        guard let self else { throw CancellationError() }
-                        try await self.publishDirectText(text, conversationID: id,
-                            assistantID: assistantID, accountScope: accountScope,
-                            generation: publicationGeneration)
+                    let replyHistory = requestMessages.filter { $0.role == .user || $0.role == .assistant }.map {
+                        RoomMessage(id: $0.id, groupID: id, senderID: $0.role == .user ? nil : id,
+                            text: $0.text, createdAt: $0.createdAt)
                     }
+                    publisher = AgentUserMessageTool(conversationID: id, availableImages: [], imageStore: nil,
+                        replyHistory: replyHistory, receiptSenderID: id, supportsReferenceNavigation: false,
+                        directConversationPresentation: true,
+                        publishReceipt: { [weak self] text, _, replyTo in
+                            guard let self else { throw CancellationError() }
+                            return try await self.publishDirectText(text, conversationID: id,
+                                assistantID: assistantID, accountScope: accountScope,
+                                generation: publicationGeneration, replyTo: replyTo)
+                        }, publish: { _, _ in throw CancellationError() })
                 }
                 let tools: [any ToolExecutor] = publisher.map { [$0] } ?? []
                 try await coordinator.send(request: request, providerID: providerID, additionalTools: tools) { [weak self] event in
@@ -1760,7 +1767,8 @@ final class AppModel: ObservableObject {
     /// Bind publications to the active turn, never the currently selected chat.
     /// A failed save must not be acknowledged as a delivered message.
     private func publishDirectText(_ text: String, conversationID: UUID,
-                                   assistantID: UUID, accountScope: String, generation: UInt64) async throws {
+                                   assistantID: UUID, accountScope: String, generation: UInt64,
+                                   replyTo: UUID?) async throws -> RoomMessage {
         try Task.checkCancellation()
         guard !agentMessagingAccountTransition, generation == autoReviewAccountGeneration,
               accountScope == (settings.accountScope ?? "local"),
@@ -1770,13 +1778,24 @@ final class AppModel: ObservableObject {
               let mi = conversations[ci].messages.firstIndex(where: { $0.id == assistantID }) else {
             throw CancellationError()
         }
+        if let replyTo {
+            let targets = conversations[ci].messages.filter { $0.id == replyTo }
+            guard targets.count == 1, let target = targets.first,
+                  target.role == .user || target.role == .assistant,
+                  !target.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  replyTo != assistantID || published.contains(assistantID) else {
+                throw GroupReplyError.unavailable
+            }
+        }
+        let previousReply = conversations[ci].messages[mi].replyToMessageID
         let messageID: UUID
         if published.isEmpty {
             messageID = assistantID
             conversations[ci].messages[mi].text = text
+            conversations[ci].messages[mi].replyToMessageID = replyTo
         } else {
             let message = ChatMessage(role: .assistant, text: text,
-                replyToMessageID: conversations[ci].messages[mi].replyToMessageID)
+                replyToMessageID: replyTo)
             messageID = message.id
             conversations[ci].messages.append(message)
         }
@@ -1786,11 +1805,15 @@ final class AppModel: ObservableObject {
                 if messageID == assistantID,
                    let mi = conversations[ci].messages.firstIndex(where: { $0.id == messageID }) {
                     conversations[ci].messages[mi].text = ""
+                    conversations[ci].messages[mi].replyToMessageID = previousReply
                 } else { conversations[ci].messages.removeAll { $0.id == messageID } }
             }
             throw error
         }
         directPublicationIDs[assistantID]?.append(messageID)
+        var receipt = RoomMessage(id: messageID, groupID: conversationID, senderID: conversationID, text: text)
+        receipt.replyToMessageID = replyTo
+        return receipt
     }
 
     private func finishTurn(conversationID: UUID, assistantID: UUID, succeeded: Bool) {

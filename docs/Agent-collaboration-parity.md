@@ -1,5 +1,15 @@
 # 協作能力核對紀錄（更新至 2026-09-25）
 
+## 直接聊天 UUID 引用與保存回條（2026-09-25）
+
+接續原版 SendMessage 的 reply_to／保存訊息身份契約，直接聊天 text 現可引用同對話目錄內的 UUID，並在保存成功後回傳 messageID。後續同回合呼叫可引用剛發布的訊息，不需等下一次使用者輸入。只投影該次請求中可見的 user／assistant 文字至引用目錄，不帶其他對話、system 指示、附件內容或私人推理；沿用共用工具的 40 則目錄界線與重复／未知引用拒絕。內部 RoomMessage 僅用作工具回條介面，直接聊天仍以 ChatMessage 保存，不建立群組或代理人。
+
+App 保存前另核對目標仍在同一聊天且為可見文字，拒絕已刪除目標及未發布的自身 placeholder。replyToMessageID 隨文字一起保存／失敗回復，沿用既有直接聊天引用預覽與跳轉 UI；未指定引用維持主時間軸。工具指示新增 direct-conversation 呈現分支，不假稱群組摺疊討論或短地址可用。未新增圖片載入、外部連線或授權能力。
+
+依 Swift testing／CustomDump 技能擴充隔離 App 整合測試：引用當前使用者訊息、第二次發布引用第一個保存回條、跨對話 UUID 拒絕、模型等待期間目標刪除拒絕，並驗證 SQLite 重讀後的文字／replyToMessageID、外部對話不進工具目錄。沿用上一批停止／刪除聊天／帳號切換、草稿隔離、純文字模型及 Demo 測試。聚焦及最終完整非並行回歸 exit 0（`.build/validation/direct-reply-focused.log`、`direct-reply-full.log`）；原生建置、封裝及 deep strict 簽章通過（`direct-reply-native.log`、`direct-reply-package.log`）。未啟動使用者 App，因此實際使用者視窗的引用點擊未在本批驗收。
+
+UUID 回條與引用入口已接線；直接聊天持久短地址、sand-msg 正文導航、圖片／widget／secret-request／cloud-agent 等其他型別仍待補，整體 AGENT-02 partial。
+
 ## 直接聊天文字發布入口（2026-09-25）
 
 原版 `send-message-tool.ts` 將 SendMessage 定義為使用者可見的唯一 voice，包含一般聊天與簡短社交回答；本機原先只在群組／信箱提供該工具。本批將有工具能力的直接聊天接入每回合的 AgentUserMessageTool。進度與結果最多兩則，分別保存為 assistant 訊息，成功保存才回覆工具成功；不將最後草稿重複顯示，不保存私人 textDelta／reasoningDelta。純文字模型仍走原回答途徑，離線 FakeProvider 原先宣告工具能力卻不產生工具呼叫，現更正為 text-only，保留 Demo 回答。

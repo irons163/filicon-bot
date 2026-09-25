@@ -1,5 +1,7 @@
 # Filicon / Grok Bot 0.18 功能 parity matrix（current implementation）
 
+直接聊天引用回條（2026-09-25）：SendMessage text 已支援同對話 UUID `reply_to` 與成功保存後的 messageID 回條，同回合後續發布可以引用前一則新訊息。工具目錄不帶入其他對話，保存時重新檢查目標仍存在；使用既有直接聊天引用預覽／跳轉。此項取代下方「直接聊天 reply_to／UUID 回條完全未接線」的記錄。短地址、正文 sand-msg 導航及其餘圖片／widget／secret-request／cloud-agent 型別仍未完成，AGENT-02 仍 partial。
+
 直接聊天正式發布（2026-09-25）：有工具能力的直接聊天已接入 SendMessage text，進度與結果分則保存；草稿／reasoning 不投影、不進對話記憶，未發布且無工具活動時移除空佔位。停止、刪除或帳號切換後拒絕遲到發布，完成通知採最後正式發布。純文字模型與離線 Demo 保留文字回答。此項取代下方「直接聊天完全缺少 SendMessage 入口」的描述；直接聊天圖片／widget／secret-request／cloud-agent／reply_to 工具參數與回條地址仍未接線，AGENT-02 維持 partial，不能宣稱所有型別 parity。
 
 正式發布界線（2026-09-25）：有 SendMessage 的群組／背景群組／信箱不再顯示未發布的 final-text，工具狀態也不投影中途草稿；保存摘要與記憶整理只採用正式發布。純文字模型或未配置工具執行器保留正常回答途徑。此項取代舊記錄的 SendMessage final fallback 差異，直接聊天發布入口及其餘 AGENT-02 差異仍 partial；驗證詳見協作核對紀錄。
