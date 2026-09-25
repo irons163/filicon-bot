@@ -1,5 +1,11 @@
 # 協作能力核對紀錄（更新至 2026-09-25）
 
+## 引用重送與訊息 ID 邊界（2026-09-25）
+
+已保存的信箱發布先核對完整回條再查新引用目錄，因此原目標被最近 40 則目錄排除後，完全相同的重送仍成功且不重寫資料。變更引用的重送仍拒絕；新發布不能使用任何既有收件／發布 ID，新收件也不能撞到發布 ID。保留 running、lifetime、scope、作者、內容及新發布的圖片驗證與兩則上限。
+
+使用 pfw-testing／CustomDump 補上 40 則邊界、變更重送、雙向 ID 衝突與儲存內容不變的回歸測試。`mailbox-replay-tests.log` 21 tests 通過；擴大信箱與 session／App 假服務整合驗證 `mailbox-replay-final-tests.log` exit 0。未重啟 App、未使用真實資料。此為正確性修補，不代表穩定短地址或 sand-msg 導航完成，AGENT-02 仍 partial。
+
 ## 安全憑證請求引用（2026-09-25）
 
 獨立信箱 secret-request 現在接受 optional reply_to，透過既有目錄解析為 UUID，App 傳至 publishSecretRequest 並在保存時重驗參與者／origin／目標。回條重送比較內容與引用 UUID，改變引用不會重建請求。只增加訊息關聯，不改變目的地、帳號、credential writer、暫停、新回合或授權流程；value／text／path 等額外輸入仍拒絕。

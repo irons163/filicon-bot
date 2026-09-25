@@ -53,7 +53,9 @@ public actor AgentMessenger {
         guard let sender = await service.profile(id: message.senderID), sender.archivedAt == nil else { throw AgentServiceError.unknownAgent(message.senderID) }
         guard let recipient = await service.profile(id: message.recipientID), recipient.archivedAt == nil else { throw AgentServiceError.unknownAgent(message.recipientID) }
         try Task.checkCancellation()
-        guard !state.messages.contains(where: { $0.id == message.id }) else { throw AgentServiceError.duplicateMessage(message.id) }
+        guard !state.messages.contains(where: {
+            $0.id == message.id || ($0.delivery?.publications ?? []).contains(where: { $0.id == message.id })
+        }) else { throw AgentServiceError.duplicateMessage(message.id) }
         try lifetime.commit {
             var next = state
             if let movingOnAccount {
@@ -292,6 +294,15 @@ public actor AgentMessenger {
                   publication.text.count <= 8_000, publication.toolActivities.isEmpty,
                   publication.memberOutcome == nil,
                   publication.shortAddress == nil else { throw AgentPublicationError.invalid }
+            let prior = delivery.publications ?? []
+            // A saved receipt remains replayable after its target leaves the bounded directory.
+            if let existing = prior.first(where: { $0.id == publication.id }) {
+                guard existing == publication else { throw AgentPublicationError.invalid }
+                return
+            }
+            guard !state.messages.contains(where: {
+                $0.id == publication.id || ($0.delivery?.publications ?? []).contains(where: { $0.id == publication.id })
+            }) else { throw AgentPublicationError.invalid }
             if let target = publication.replyToMessageID {
                 guard target != publication.id,
                       try replyDirectory(replyingTo: id).contains(where: { $0.id == target }) else {
@@ -302,11 +313,6 @@ public actor AgentMessenger {
             guard images.count <= 4, Set(images.map(\.id)).count == images.count,
                   images.allSatisfy({ image in state.messages[index].images?.contains(where: { image.isAnnotation(of: $0) }) == true }) else {
                 throw AgentPublicationError.invalid
-            }
-            let prior = delivery.publications ?? []
-            if let existing = prior.first(where: { $0.id == publication.id }) {
-                guard existing == publication else { throw AgentPublicationError.invalid }
-                return
             }
             guard !prior.contains(where: { $0.question != nil || $0.secretRequest != nil }) else { throw AgentQuestionError.unavailable }
             guard prior.count < 2 else { throw AgentPublicationError.limit }
