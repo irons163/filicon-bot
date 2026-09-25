@@ -1,5 +1,7 @@
 # Filicon / Grok Bot 0.18 功能 parity matrix（current implementation）
 
+直接聊天正式發布（2026-09-25）：有工具能力的直接聊天已接入 SendMessage text，進度與結果分則保存；草稿／reasoning 不投影、不進對話記憶，未發布且無工具活動時移除空佔位。停止、刪除或帳號切換後拒絕遲到發布，完成通知採最後正式發布。純文字模型與離線 Demo 保留文字回答。此項取代下方「直接聊天完全缺少 SendMessage 入口」的描述；直接聊天圖片／widget／secret-request／cloud-agent／reply_to 工具參數與回條地址仍未接線，AGENT-02 維持 partial，不能宣稱所有型別 parity。
+
 正式發布界線（2026-09-25）：有 SendMessage 的群組／背景群組／信箱不再顯示未發布的 final-text，工具狀態也不投影中途草稿；保存摘要與記憶整理只採用正式發布。純文字模型或未配置工具執行器保留正常回答途徑。此項取代舊記錄的 SendMessage final fallback 差異，直接聊天發布入口及其餘 AGENT-02 差異仍 partial；驗證詳見協作核對紀錄。
 
 雲端 ID 校正（2026-09-25）：以原版 trimmed opaque ID 契約取代上一批 bc- 英數限制；Unicode／特殊字元編碼為固定 cursor.com 下單一路徑片段。仍保留 canonical summary 8,000-byte 預算、控制字元及純 dot-segment 拒絕，不接外部認證／title resolver。此項取代下方「只接受有界 bc- ID」的描述。聚焦測試、原生建置、封裝與簽章通過；解鎖後完整回歸 exit 0，同時關閉前輪雲端卡片的待補驗缺口。整體仍 partial。

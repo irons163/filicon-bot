@@ -320,6 +320,7 @@ final class AppModel: ObservableObject {
     private lazy var coordinator = TurnCoordinator(registry: registry, toolCatalog: toolCatalog, agentScheduler: agentExecutionScheduler)
     private var modelRefreshGuard = ModelRefreshGuard()
     private var turnTasks: [UUID: Task<Void, Never>] = [:]
+    private var directPublicationIDs: [UUID: [UUID]] = [:]
     private var draftSaveTask: Task<Void, Never>?
     private var navigationSaveTask: Task<Void, Never>?
     private var draftLoadGeneration = 0
@@ -1624,8 +1625,12 @@ final class AppModel: ObservableObject {
     ) {
         running.insert(id)
         workspaceFolders.beginTurn(conversationID: id)
-        let turnTask = Task {
+        let accountScope = settings.accountScope ?? "local"
+        let publicationGeneration = autoReviewAccountGeneration
+        let turnTask = Task { [self] in
             var succeeded = false
+            var publisher: AgentUserMessageTool?
+            defer { directPublicationIDs.removeValue(forKey: assistantID) }
             do {
                 await persist(conversationID: id)
                 var attachmentsByMessageID: [UUID: [InferenceAttachment]] = [:]
@@ -1652,7 +1657,18 @@ final class AppModel: ObservableObject {
                     attachmentsByMessageID: attachmentsByMessageID,
                     reasoningEffort: reasoningEffort
                 )
-                try await coordinator.send(request: request, providerID: providerID) { [weak self] event in
+                let provider = await registry.provider(id: providerID)
+                if provider?.descriptor.supportsToolCalling == true {
+                    directPublicationIDs[assistantID] = []
+                    publisher = AgentUserMessageTool(conversationID: id) { [weak self] text in
+                        guard let self else { throw CancellationError() }
+                        try await self.publishDirectText(text, conversationID: id,
+                            assistantID: assistantID, accountScope: accountScope,
+                            generation: publicationGeneration)
+                    }
+                }
+                let tools: [any ToolExecutor] = publisher.map { [$0] } ?? []
+                try await coordinator.send(request: request, providerID: providerID, additionalTools: tools) { [weak self] event in
                     await self?.consume(event, conversationID: id, assistantID: assistantID)
                 }
                 succeeded = true
@@ -1662,7 +1678,18 @@ final class AppModel: ObservableObject {
                 errorMessage = error.localizedDescription
                 setDeliveryStatus(.failed, error: error.localizedDescription, conversationID: id, assistantID: assistantID)
             }
+            await publisher?.close()
             finishTurn(conversationID: id, assistantID: assistantID, succeeded: succeeded)
+            if succeeded, directPublicationIDs[assistantID]?.isEmpty == true,
+               let ci = conversations.firstIndex(where: { $0.id == id }),
+               let mi = conversations[ci].messages.firstIndex(where: { $0.id == assistantID }),
+               conversations[ci].messages[mi].toolActivities.isEmpty,
+               conversations[ci].messages[mi].transcriptCards.isEmpty {
+                // Silence is not an indefinitely waiting ellipsis. Keep actual
+                // tool activity, but remove the unused streaming placeholder.
+                loadedMessageIDs[id, default: []].insert(assistantID)
+                conversations[ci].messages.remove(at: mi)
+            }
             do {
                 try await persistOrThrow(conversationID: id)
             } catch {
@@ -1673,10 +1700,12 @@ final class AppModel: ObservableObject {
             }
             if succeeded {
                 do {
-                    _ = try await store.recordFinalAssistantTurn(
-                        conversationID: id,
-                        assistantMessageID: assistantID
-                    )
+                    let publishedIDs = directPublicationIDs[assistantID] ?? [assistantID]
+                    for messageID in publishedIDs {
+                        _ = try await store.recordFinalAssistantTurn(
+                            conversationID: id, assistantMessageID: messageID
+                        )
+                    }
                 } catch {
                     // The assistant turn is already canonical and durable. A
                     // replica-memory failure remains visible and is never
@@ -1688,7 +1717,9 @@ final class AppModel: ObservableObject {
             turnTasks.removeValue(forKey: id)
             if succeeded,
                let conversation = conversations.first(where: { $0.id == id }),
-               let preview = conversation.messages.first(where: { $0.id == assistantID })?.text,
+               let preview = conversation.messages.first(where: {
+                   $0.id == (directPublicationIDs[assistantID]?.last ?? assistantID)
+               })?.text,
                !preview.isEmpty {
                 await systemNotifications.deliverCompletion(conversationID: id, title: conversation.title, preview: preview)
             }
@@ -1717,7 +1748,49 @@ final class AppModel: ObservableObject {
             accumulated.mergeCumulative(usage)
             pendingTurnUsage[assistantID] = accumulated
         }
+        if directPublicationIDs[assistantID] != nil {
+            switch event {
+            case .textDelta, .reasoningDelta: return
+            default: break
+            }
+        }
         conversations[ci].messages[mi].consume(event)
+    }
+
+    /// Bind publications to the active turn, never the currently selected chat.
+    /// A failed save must not be acknowledged as a delivered message.
+    private func publishDirectText(_ text: String, conversationID: UUID,
+                                   assistantID: UUID, accountScope: String, generation: UInt64) async throws {
+        try Task.checkCancellation()
+        guard !agentMessagingAccountTransition, generation == autoReviewAccountGeneration,
+              accountScope == (settings.accountScope ?? "local"),
+              !deletedConversationIDs.contains(conversationID), running.contains(conversationID),
+              let published = directPublicationIDs[assistantID],
+              let ci = conversations.firstIndex(where: { $0.id == conversationID }),
+              let mi = conversations[ci].messages.firstIndex(where: { $0.id == assistantID }) else {
+            throw CancellationError()
+        }
+        let messageID: UUID
+        if published.isEmpty {
+            messageID = assistantID
+            conversations[ci].messages[mi].text = text
+        } else {
+            let message = ChatMessage(role: .assistant, text: text,
+                replyToMessageID: conversations[ci].messages[mi].replyToMessageID)
+            messageID = message.id
+            conversations[ci].messages.append(message)
+        }
+        do { try await persistOrThrow(conversationID: conversationID) }
+        catch {
+            if let ci = conversations.firstIndex(where: { $0.id == conversationID }) {
+                if messageID == assistantID,
+                   let mi = conversations[ci].messages.firstIndex(where: { $0.id == messageID }) {
+                    conversations[ci].messages[mi].text = ""
+                } else { conversations[ci].messages.removeAll { $0.id == messageID } }
+            }
+            throw error
+        }
+        directPublicationIDs[assistantID]?.append(messageID)
     }
 
     private func finishTurn(conversationID: UUID, assistantID: UUID, succeeded: Bool) {

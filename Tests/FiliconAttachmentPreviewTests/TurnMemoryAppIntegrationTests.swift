@@ -21,11 +21,19 @@ private struct SuccessfulTurnMemoryProvider: AIProvider {
     func stream(_ request: InferenceRequest) -> AsyncThrowingStream<InferenceEvent, Error> {
         AsyncThrowingStream { continuation in
             Task {
-                await probe.append(request)
-                continuation.yield(.responseStarted(id: UUID().uuidString))
-                continuation.yield(.textDelta("durable answer"))
-                continuation.yield(.completed(.stop))
-                continuation.finish()
+                do {
+                    if request.toolExchanges.isEmpty {
+                        await probe.append(request)
+                        let call = try NormalizedToolCall(id: "publish-answer", name: "SendMessage",
+                            argumentsJSON: JSONEncoder().encode(["text": "durable answer"]))
+                        continuation.yield(.responseStarted(id: UUID().uuidString))
+                        continuation.yield(.textDelta("private draft"))
+                        continuation.yield(.toolCallStarted(id: call.id, name: call.name))
+                        continuation.yield(.toolCallCompleted(call))
+                        continuation.yield(.completed(.toolUse))
+                    } else { continuation.yield(.completed(.stop)) }
+                    continuation.finish()
+                } catch { continuation.finish(throwing: error) }
             }
         }
     }
@@ -67,8 +75,9 @@ struct TurnMemoryAppIntegrationTests {
         // Live host metadata accompanies inference, not durable conversation
         // memory. It must occur once and must not duplicate hydrated messages.
         let hostContext = requests[1].messages.filter { $0.role == .system }
-        expectNoDifference(hostContext.count, 1)
-        #expect(hostContext.first?.text.hasPrefix("Current Filicon host-tool permissions") == true)
+        expectNoDifference(hostContext.count, 2)
+        expectNoDifference(hostContext.filter { $0.text.hasPrefix("Current Filicon host-tool permissions") }.count, 1)
+        expectNoDifference(hostContext.filter { $0.text.contains("SendMessage publishes text") }.count, 1)
         let transcript = requests[1].messages.filter { $0.role != .system }
         expectNoDifference(transcript.map(\.role), [.user, .assistant, .user])
         expectNoDifference(transcript.map(\.text), ["first question", "durable answer", "second question"])

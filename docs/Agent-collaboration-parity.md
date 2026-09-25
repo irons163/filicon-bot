@@ -1,5 +1,15 @@
 # 協作能力核對紀錄（更新至 2026-09-25）
 
+## 直接聊天文字發布入口（2026-09-25）
+
+原版 `send-message-tool.ts` 將 SendMessage 定義為使用者可見的唯一 voice，包含一般聊天與簡短社交回答；本機原先只在群組／信箱提供該工具。本批將有工具能力的直接聊天接入每回合的 AgentUserMessageTool。進度與結果最多兩則，分別保存為 assistant 訊息，成功保存才回覆工具成功；不將最後草稿重複顯示，不保存私人 textDelta／reasoningDelta。純文字模型仍走原回答途徑，離線 FakeProvider 原先宣告工具能力卻不產生工具呼叫，現更正為 text-only，保留 Demo 回答。
+
+發布綁定原 conversation／assistant turn 與帳號 generation，不隨選中的聊天改變；停止、刪除聊天及帳號切換後拒絕遲到發布。完成後關閉發布器，未發布且無工具／互動活動的 placeholder 移除，不留下永久省略號。實際工具活動保留；成功正式發布逐則進入回合記憶，通知採最後一則而不是開場進度。存檔失敗會回復未交付文字，不把存檔失敗報成送達；本批未新增存檔故障注入案例。
+
+依 Swift testing／CustomDump 技能加入隔離 App 測試：四組工具能力／是否發布、停止／刪除／帳號切換的三組遲到結果，以及離線 Demo 真正回答。驗證分則文字、SQLite 重新讀取、無私人草稿及回合記憶數量；舊記憶測試改成真正呼叫 SendMessage。首次完整回歸只失敗於舊記憶夾具，修正後及 Demo 更正後的完整非並行回歸均 exit 0（最終 `.build/validation/direct-publication-demo-full.log`）。最終原生建置、封裝與 deep strict 簽章通過（`direct-publication-native-final.log`、`direct-publication-package.log`），未啟動／重啟使用者 App、未改真實聊天或帳號。
+
+這是直接聊天 text 入口，不是全部 SendMessage 型別完成。直接聊天的圖片發布、widget、secret-request、cloud-agent、模型指定 reply_to 與正式回條地址仍須接入及驗收；既有 host 人類回覆引用不等於模型 reply_to 已完成。整體 AGENT-02 維持 partial。
+
 ## 連結預覽程序等待修正（2026-09-25）
 
 追查上一批完整回歸的程序取樣，確認停留在 FoundationSafeLinkProcessRunner 的 `waitUntilExit()`；當時未觀察到仍存活的子程序。這是已觀察到的等待位置，不足以斷言 Foundation 內部競態的唯一成因。本批移除該同步等待，以啟動前註冊的 terminationHandler 加 AsyncStream 緩存退出碼，避免短命程序先退出而呼叫端尚未開始等候。stdout／stderr 的阻塞讀取改由 Dispatch 工作佇列執行，不占 Swift cooperative executor，且讀完關閉 handle。補上啟動前取消檢查、無效上限／期限拒絕，以及 Int.max 上限計算的溢位防護；不改 curl 網路權限、DNS pinning 或 SSRF 政策。

@@ -93,7 +93,7 @@ public actor ProviderRegistry {
 }
 
 public struct FakeProvider: AIProvider {
-    public let descriptor = ProviderDescriptor(id: "fake", displayName: "Demo (offline)", requiresAPIKey: false)
+    public let descriptor = ProviderDescriptor(id: "fake", displayName: "Demo (offline)", requiresAPIKey: false, supportsToolCalling: false)
     private let delay: Duration
     private let chunks: [String]
     private let observer: (@Sendable (UUID) async -> Void)?
