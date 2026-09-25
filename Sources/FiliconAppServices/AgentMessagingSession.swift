@@ -563,7 +563,11 @@ public actor AgentMessagingSession {
             }
             // Human question/secret answers have a separate receipt flow. Never
             // relabel them as messages authored by another agent.
-            let peerProjection: PeerMessageHandler? = inbound.questionResponse == nil && inbound.secretResponse == nil ? onPeerMessage : nil
+            let isHumanResponse = inbound.questionResponse != nil || inbound.secretResponse != nil
+            // A direct question answer is human input, but the resulting agent
+            // publication still belongs in that agent's own chat.
+            let peerProjection: PeerMessageHandler? = !isHumanResponse || (directOriginBinding != nil && inbound.questionResponse != nil)
+                ? onPeerMessage : nil
             let projectPublication: UpdateHandler = { [accountID, originConversationID] publication in
                 guard let peerProjection else { return }
                 let source = try AgentMessageSource(accountID: accountID, originConversationID: originConversationID,
@@ -612,7 +616,7 @@ public actor AgentMessagingSession {
                 }
             } else { receiptPublisher = nil }
             let cloudPublisher: AgentUserMessageTool.CursorAgentPublisher?
-            if supportsMailboxQuestions {
+            if supportsMailboxQuestions, directOriginBinding == nil {
                 cloudPublisher = { [messenger, onChange, publicationLifetime] reference, target in
                     let saved = try await output.publish(reference.summary, images: [], replyTo: target, cursorAgent: reference) { publication in
                         try await messenger.publish(publication, replyingTo: inbound.id, lifetime: publicationLifetime)
@@ -696,7 +700,7 @@ public actor AgentMessagingSession {
                     priority: inbound.priority == .priority, executionTimeout: turnTimeout, onStart: { [messenger, onChange, accountID, originConversationID] in
                         try await self.checkOpen()
                         try await messenger.updateDelivery(id: inbound.id, state: .running)
-                        if let peerProjection {
+                        if let peerProjection, !isHumanResponse {
                             let source = try AgentMessageSource(accountID: accountID, originConversationID: originConversationID,
                                 deliveryID: inbound.id, senderAgentID: inbound.senderID, recipientAgentID: inbound.recipientID, kind: .incoming)
                             let incoming = RoomMessage(id: inbound.id, groupID: originConversationID,

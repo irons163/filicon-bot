@@ -18,6 +18,41 @@ private actor AgentWakeProbe {
     func inspect(_ messages: [ChatMessage]) { inspectedMessages = messages }
 }
 
+private struct PeerQuestionAppProvider: InteractiveToolProvider {
+    let descriptor = ProviderDescriptor(id: "delegate-fixture", displayName: "Question fixture", requiresAPIKey: false)
+    let recipient: UUID
+    let probe: AgentWakeProbe
+    let pauseAnswer: Bool
+    func models() async throws -> [AIModel] { [.init(id: "test")] }
+    func stream(_ request: InferenceRequest) -> AsyncThrowingStream<InferenceEvent, Error> {
+        AsyncThrowingStream { $0.finish(throwing: ProviderError.invalidResponse) }
+    }
+    func stream(_ request: InferenceRequest, executeTool: @escaping @Sendable (NormalizedToolCall) async throws -> NormalizedToolResult) -> AsyncThrowingStream<InferenceEvent, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    let last = request.messages.last?.text ?? ""
+                    if last.hasPrefix("Incoming peer message") {
+                        _ = try await executeTool(.init(id: "ask", name: "SendMessage", argumentsJSON: Data(#"{"type":"widget","widget":{"prompt":"Which layout?","options":[{"label":"Compact"},{"label":"Spacious"}],"allowCustom":true}}"#.utf8)))
+                        Issue.record("Question must suspend")
+                    } else if last.hasPrefix("Human answer") {
+                        #expect(last.contains("grants no tool access"))
+                        await probe.record(recipient)
+                        if pauseAnswer { try await Task.sleep(for: .seconds(30)) }
+                        _ = try await executeTool(.init(id: "answer", name: "SendMessage", argumentsJSON: Data(#"{"text":"Layout decision received"}"#.utf8)))
+                    } else {
+                        let args = ["recipientID": recipient.uuidString, "message": "Choose a layout"]
+                        _ = try await executeTool(.init(id: "delegate", name: "SendToAgent", argumentsJSON: JSONEncoder().encode(args)))
+                        _ = try await executeTool(.init(id: "ack", name: "SendMessage", argumentsJSON: Data(#"{"text":"Asked the designer"}"#.utf8)))
+                    }
+                    continuation.yield(.completed(.stop)); continuation.finish()
+                } catch { continuation.finish(throwing: error) }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+}
+
 private struct PeerHistoryInspectionProvider: AIProvider {
     let descriptor = ProviderDescriptor(id: "delegate-fixture", displayName: "Inspection fixture", requiresAPIKey: false)
     let probe: AgentWakeProbe
@@ -76,6 +111,68 @@ private struct DelegatingGroupProvider: InteractiveToolProvider {
 
 @Suite("SendToAgent app integration", .timeLimit(.minutes(1)))
 @MainActor struct SendToAgentAppIntegrationTests {
+    @Test(arguments: ["option", "custom", "dismissed", "foreign", "delete", "stop", "restart"])
+    func directPeerQuestionReturnsAnswerToOwnChat(mode: String) async throws {
+        let (root, initialModel, _, sender, recipient, probe) = try await fixture()
+        var model = initialModel
+        defer { try? FileManager.default.removeItem(at: root) }
+        await model.bootstrap()
+        await model.registry.register(PeerQuestionAppProvider(recipient: recipient, probe: probe, pauseAnswer: mode == "stop"))
+        let origin = try #require(await model.addConversation(agentID: sender))
+        model.draft = "Ask the designer for a layout"
+        model.send()
+        let approval = try await pending(model)
+        model.handleTranscriptCardIntent(.approveReview(reviewID: approval.id))
+        let deadline = ContinuousClock.now + .seconds(10)
+        while model.isConversationWorking(origin), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(!model.isConversationWorking(origin))
+        if mode == "restart" {
+            model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+            await model.bootstrap()
+            await model.registry.register(PeerQuestionAppProvider(recipient: recipient, probe: probe, pauseAnswer: false))
+            let reopened = try #require(model.conversations.first(where: { $0.agentBinding?.agentID == recipient }))
+            model.selection = reopened.id
+            await model.loadLatestMessages(for: reopened.id)
+        }
+        let incoming = try #require(model.agentMessages.first)
+        let publication = try #require(incoming.delivery?.publications?.first(where: { $0.question != nil }))
+        let peer = try #require(model.conversations.first(where: { $0.agentBinding?.agentID == recipient }))
+        if mode == "restart" {
+            let projected = try #require(peer.messages.first(where: { $0.id == publication.id }))
+            expectNoDifference(projected.text, publication.text)
+            #expect(projected.agentMessageSource != nil)
+            expectNoDifference(incoming.delivery?.directOriginBinding?.accountID, "local")
+        }
+        #expect(model.directPeerQuestion(conversationID: peer.id, messageID: publication.id) != nil)
+        #expect(model.canAnswerMailboxQuestion(incoming, publication: publication))
+        if mode == "foreign", let index = model.conversations.firstIndex(where: { $0.id == origin }) {
+            model.conversations[index].agentBinding = .init(accountID: "other", agentID: sender)
+        }
+        if mode == "delete" { model.deleteConversation(id: peer.id) }
+        let answer: AgentQuestionAnswer = mode == "custom" ? .custom("Spacious please") : mode == "dismissed" ? .dismissed : .option(0)
+        await model.answerMailboxQuestion(incomingID: incoming.id, publicationID: publication.id, answer: answer)
+        if mode == "stop" {
+            while await probe.wakes.isEmpty, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+            model.selection = peer.id
+            model.cancel()
+        }
+        while model.isConversationWorking(origin), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(!model.isConversationWorking(origin) && !model.isConversationWorking(peer.id))
+        let blocked = ["foreign", "delete"].contains(mode)
+        expectNoDifference(model.agentMessages.count, blocked ? 1 : 2)
+        if !blocked {
+            expectNoDifference(model.agentMessages.last?.questionResponse?.answer, answer)
+            expectNoDifference(model.agentMessages.last?.delivery?.state, mode == "stop" ? .cancelled : .completed)
+            let output = model.conversations.first(where: { $0.id == peer.id })?.messages.filter { $0.text == "Layout decision received" } ?? []
+            expectNoDifference(output.count, mode == "stop" ? 0 : 1)
+            #expect(!model.conversations.first(where: { $0.id == origin })!.messages.contains { $0.text == "Layout decision received" })
+            #expect(output.allSatisfy { $0.agentMessageSource?.authorAgentID == recipient })
+            let count = model.agentMessages.count
+            await model.answerMailboxQuestion(incomingID: incoming.id, publicationID: publication.id, answer: answer)
+            expectNoDifference(model.agentMessages.count, count)
+        }
+    }
+
     @Test(arguments: ["missing-chat", "missing-message", "deleted", "foreign", "write-failure", "conflict", "restart", "restart-deleted"])
     func recoversCanonicalTextWithoutRerunningAgents(mode: String) async throws {
         let (root, initialModel, _, sender, recipient, probe) = try await fixture()

@@ -1476,7 +1476,13 @@ struct TranscriptMessageView: View {
                 }
                 .font(.callout)
             }
-            if !message.text.isEmpty && !message.transcriptCards.contains(where: {
+            if let peer = model.directPeerQuestion(conversationID: conversation.id, messageID: message.id),
+               let question = peer.publication.question {
+                GroupQuestionCard(card: question,
+                    enabled: model.canAnswerMailboxQuestion(peer.incoming, publication: peer.publication)) { answer in
+                    Task { await model.answerMailboxQuestion(incomingID: peer.incoming.id, publicationID: peer.publication.id, answer: answer) }
+                }
+            } else if !message.text.isEmpty && !message.transcriptCards.contains(where: {
                 $0.externalCursorReference?.summary == message.text || $0.directQuestion?.question.prompt == message.text
             }) {
                 if message.role == .user {

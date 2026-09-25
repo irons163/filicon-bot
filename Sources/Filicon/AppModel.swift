@@ -278,7 +278,7 @@ final class AppModel: ObservableObject {
     private var cancelledPeerRecoveries: Set<UUID> = []
 
     func isConversationWorking(_ id: UUID) -> Bool {
-        running.contains(id) || directPeerExecutions[id] != nil || recoveringPeerConversations.contains(id)
+        running.contains(id) || runningAgentMessageScopes.contains(id) || directPeerExecutions[id] != nil || recoveringPeerConversations.contains(id)
     }
 
     private func clearDirectPeerExecutions(originID: UUID, sessionID: UUID) {
@@ -2059,6 +2059,7 @@ final class AppModel: ObservableObject {
                                     exchangeID: exchangeID, lifetime: lifetime, originID: id,
                                     generation: publicationGeneration)
                             }),
+                        supportsMailboxQuestions: true,
                         authorize: { [weak self] sender, recipient, text, call, context in
                             guard let self else { throw CancellationError() }
                             try await self.validateDirectDelegation(conversationID: id, binding: agentBinding,
@@ -2195,6 +2196,11 @@ final class AppModel: ObservableObject {
     }
 
     private func cancelConversationWork(_ selection: UUID) {
+        if runningAgentMessageScopes.contains(selection) {
+            agentMessagingSessions[selection]?.revokeProfileChanges()
+            agentMessageTasks[selection]?.cancel()
+            Task { await stopAgentMessages(scopeID: selection) }
+        }
         invalidateDirectSecrets(conversationID: selection)
         cancelDirectMessaging(conversationID: selection)
         turnTasks[selection]?.cancel()
@@ -3441,7 +3447,35 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func directPeerQuestion(conversationID: UUID, messageID: UUID) -> (incoming: AgentMessage, publication: RoomMessage)? {
+        guard !agentMessagingAccountTransition,
+              let chat = conversations.first(where: { $0.id == conversationID }),
+              let message = chat.messages.first(where: { $0.id == messageID }),
+              let source = message.agentMessageSource, source.kind == .publication,
+              source.accountID == (settings.accountScope ?? "local"),
+              chat.agentBinding == .init(accountID: source.accountID, agentID: source.recipientAgentID),
+              let incoming = agentMessages.first(where: { $0.id == source.deliveryID }),
+              incoming.senderID == source.senderAgentID, incoming.recipientID == source.recipientAgentID,
+              incoming.delivery?.originConversationID == source.originConversationID,
+              incoming.delivery?.directOriginBinding?.accountID == source.accountID,
+              let publication = incoming.delivery?.publications?.first(where: { $0.id == messageID }),
+              publication.senderID == source.authorAgentID, publication.text == message.text,
+              publication.question?.accountID == source.accountID else { return nil }
+        return (incoming, publication)
+    }
+
     func canAnswerMailboxQuestion(_ incoming: AgentMessage, publication: RoomMessage) -> Bool {
+        if let binding = incoming.delivery?.directOriginBinding {
+            guard binding.accountID == (settings.accountScope ?? "local"),
+                  let origin = incoming.delivery?.originConversationID,
+                  !isConversationWorking(origin), !deletedConversationIDs.contains(origin),
+                  conversations.contains(where: { $0.id == origin && $0.agentBinding == binding }),
+                  agents.contains(where: { $0.id == binding.agentID && $0.archivedAt == nil }),
+                  let chat = conversations.first(where: { chat in
+                      chat.agentBinding == .init(accountID: binding.accountID, agentID: incoming.recipientID)
+                          && chat.messages.contains(where: { $0.id == publication.id && $0.agentMessageSource?.deliveryID == incoming.id })
+                  }), !isConversationWorking(chat.id) else { return false }
+        }
         guard !agentMessagingAccountTransition,
               let current = agentMessages.first(where: { $0.id == incoming.id }),
               current.delivery?.publications?.first(where: { $0.id == publication.id }) == publication,
@@ -3459,10 +3493,20 @@ final class AppModel: ObservableObject {
               let publication = incoming.delivery?.publications?.first(where: { $0.id == publicationID }),
               canAnswerMailboxQuestion(incoming, publication: publication),
               let scopeID = incoming.delivery?.originConversationID,
-              let session = makeAgentMessagingSession(originID: scopeID, supportsMailboxQuestions: true) else { return }
+              let session = makeAgentMessagingSession(originID: scopeID, supportsMailboxQuestions: true,
+                  directBinding: incoming.delivery?.directOriginBinding) else { return }
         let generation = autoReviewAccountGeneration
         runningAgentMessageScopes.insert(scopeID)
         agentMessagingSessions[scopeID] = session
+        if let binding = incoming.delivery?.directOriginBinding {
+            directMessagingScopes.insert(scopeID)
+            directMessagingBindings[scopeID] = binding
+            for chat in conversations where chat.id != scopeID && chat.messages.contains(where: {
+                $0.id == publicationID && $0.agentMessageSource?.deliveryID == incomingID
+            }) {
+                directPeerExecutions[chat.id] = .init(originID: scopeID, sessionID: session.id)
+            }
+        }
         workspaceFolders.beginTurn(conversationID: scopeID)
         do {
             try await session.enqueueQuestionAnswer(incomingID: incomingID, publicationID: publicationID, answer: answer)
@@ -3476,13 +3520,25 @@ final class AppModel: ObservableObject {
             await cancelAgentMessageTools(scopeID: scopeID)
             agentMessagingSessions[scopeID] = nil
             runningAgentMessageScopes.remove(scopeID)
+            clearDirectPeerExecutions(originID: scopeID, sessionID: session.id)
+            directMessagingScopes.remove(scopeID)
+            directMessagingBindings[scopeID] = nil
             if !(error is CancellationError) { errorMessage = FiliconLocalization.string(error.localizedDescription) }
             await reloadAgentMessages()
         }
     }
 
     private func runAgentMessages(scopeID: UUID, session: AgentMessagingSession) async {
-        do { try await session.drain() }
+        let generation = autoReviewAccountGeneration
+        let isDirect = directMessagingBindings[scopeID] != nil
+        let projection: AgentMessagingSession.PeerMessageHandler?
+        if isDirect {
+            projection = { [weak self] source, message in
+                guard let self else { throw CancellationError() }
+                try await self.projectDirectPeerMessage(source, message: message, sessionID: session.id, generation: generation)
+            }
+        } else { projection = nil }
+        do { try await session.drain(onPeerMessage: projection) }
         catch is CancellationError {}
         catch { errorMessage = error.localizedDescription }
         do { try await session.close() }
@@ -3492,6 +3548,9 @@ final class AppModel: ObservableObject {
         agentMessagingSessions[scopeID] = nil
         agentMessageTasks[scopeID] = nil
         runningAgentMessageScopes.remove(scopeID)
+        clearDirectPeerExecutions(originID: scopeID, sessionID: session.id)
+        directMessagingScopes.remove(scopeID)
+        directMessagingBindings[scopeID] = nil
     }
 
     func importAgentMessageImages(_ urls: [URL]) async throws -> [AttachmentMetadata] {
@@ -3599,10 +3658,26 @@ final class AppModel: ObservableObject {
             })
     }
 
-    private func makeAgentMessagingSession(originID: UUID, supportsMailboxQuestions: Bool = false) -> AgentMessagingSession? {
+    private func makeAgentMessagingSession(originID: UUID, supportsMailboxQuestions: Bool = false,
+                                           directBinding: DirectConversationAgentBinding? = nil) -> AgentMessagingSession? {
         guard let agentService, let agentMessenger, let agentConversations else { return nil }
         let generation = autoReviewAccountGeneration
         let management = makeAgentManagementSession(originID: originID)
+        if let directBinding {
+            return AgentMessagingSession(originConversationID: originID, agents: agentService, messenger: agentMessenger,
+                registry: registry, coordinator: coordinator, conversations: agentConversations,
+                accountID: settings.accountScope ?? "local", management: management,
+                directOriginBinding: directBinding, supportsMailboxQuestions: supportsMailboxQuestions,
+                authorize: { [weak self] sender, recipient, text, call, context in
+                    guard let self else { throw CancellationError() }
+                    try await MainActor.run {
+                        guard generation == self.autoReviewAccountGeneration,
+                              self.isAgentMessagingScopeActive(originID) else { throw CancellationError() }
+                    }
+                    try await self.authorizeAgentDelegation(sender: sender, recipient: recipient,
+                        text: text, call: call, context: context)
+                }, onChange: { [weak self] in await self?.reloadAgentMessages() })
+        }
         let secretPublisher: AgentMessagingSession.SecretPublisher?
         if supportsMailboxQuestions, channelService != nil {
             secretPublisher = { [weak self] request, incoming, target, lifetime in
@@ -4211,7 +4286,13 @@ final class AppModel: ObservableObject {
     }
 
     private func isAgentMessagingScopeActive(_ scopeID: UUID) -> Bool {
-        !agentMessagingAccountTransition && (
+        if let binding = directMessagingBindings[scopeID] {
+            guard binding.accountID == (settings.accountScope ?? "local"),
+                  !deletedConversationIDs.contains(scopeID),
+                  conversations.contains(where: { $0.id == scopeID && $0.agentBinding == binding }),
+                  agents.contains(where: { $0.id == binding.agentID && $0.archivedAt == nil }) else { return false }
+        }
+        return !agentMessagingAccountTransition && (
             (runningGroups.contains(scopeID) && !cancelledGroupRuns.contains(scopeID))
                 || (runningAgentMessageScopes.contains(scopeID) && agentMessageTasks[scopeID]?.isCancelled == false)
                 || (directMessagingScopes.contains(scopeID) && running.contains(scopeID)
@@ -4254,13 +4335,14 @@ final class AppModel: ObservableObject {
               delivery.chainID == sessionID, delivery.originConversationID == origin,
               delivery.directOriginBinding == owner,
               canonical.senderID == source.senderAgentID, canonical.recipientID == source.recipientAgentID,
-              canonical.questionResponse == nil, canonical.secretResponse == nil,
+              canonical.secretResponse == nil,
               message.groupID == origin, message.senderID == source.authorAgentID,
-              message.question == nil, message.secretRequest == nil, message.cursorAgent == nil,
+              message.secretRequest == nil, message.cursorAgent == nil,
               message.images?.isEmpty != false else { throw AgentMessagingError.scopeMismatch }
         switch source.kind {
         case .incoming:
-            guard delivery.state == .running, message.id == canonical.id,
+            guard canonical.questionResponse == nil, message.question == nil,
+                  delivery.state == .running, message.id == canonical.id,
                   message.text == canonical.text else { throw AgentMessagingError.scopeMismatch }
         case .publication:
             if var saved = delivery.publications?.first(where: { $0.id == message.id }) {

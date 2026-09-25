@@ -73,6 +73,58 @@ struct ConversationDesignTests {
         }
     }
 
+    @Test func peerQuestionRendersInOwnTranscript() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "peer-question-render-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let service = try AgentService(storeURL: root.appending(path: "agents.json"))
+        let owner = try await service.create(name: "Engineer", instructions: "")
+        let designer = try await service.create(name: "Designer", instructions: "")
+        let messenger = try AgentMessenger(service: service, storeURL: root.appending(path: "agent-messages.json"))
+        var origin = Conversation()
+        origin.agentBinding = .init(accountID: "local", agentID: owner.id)
+        var incoming = AgentMessage(senderID: owner.id, recipientID: designer.id, text: "Review the layout",
+            delivery: .init(chainID: UUID(), originConversationID: origin.id, directOriginBinding: origin.agentBinding))
+        let question = try AgentQuestion.parse(Data(#"{"prompt":"Which layout should I use?","options":[{"label":"Compact"},{"label":"Spacious"}],"allowCustom":true}"#.utf8))
+        try await messenger.send(incoming)
+        try await messenger.updateDelivery(id: incoming.id, state: .running)
+        _ = try await messenger.publishQuestion(question, replyingTo: incoming.id, accountID: "local",
+            originID: origin.id, lifetime: .init())
+        try await messenger.updateDelivery(id: incoming.id, state: .completed)
+        let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+        await model.reloadWorkspaceData()
+        incoming = try #require(model.agentMessages.first)
+        let publication = try #require(incoming.delivery?.publications?.first)
+        let source = try AgentMessageSource(accountID: "local", originConversationID: origin.id, deliveryID: incoming.id,
+            senderAgentID: owner.id, recipientAgentID: designer.id, kind: .publication)
+        let message = ChatMessage(id: publication.id, role: .assistant, text: publication.text, agentMessageSource: source)
+        var chat = Conversation(messages: [message])
+        chat.agentBinding = .init(accountID: "local", agentID: designer.id)
+        model.conversations = [origin, chat]
+        #expect(model.directPeerQuestion(conversationID: chat.id, messageID: message.id) != nil)
+        #expect(model.canAnswerMailboxQuestion(incoming, publication: publication))
+        let output = ProcessInfo.processInfo.environment["FILICON_UI_REVIEW_OUTPUT"].map { URL(fileURLWithPath: $0, isDirectory: true) }
+        if let output { try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true) }
+        for language in ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"] {
+            try await withUIRenderTurn(language: language) {
+                for dark in [false, true] {
+                    let view = TranscriptMessageView(message: message, conversation: chat, onJumpToMessage: { _ in })
+                        .padding(24).frame(width: 620, height: 450).background(FiliconTheme.canvas)
+                        .environmentObject(model).environment(\.locale, Locale(identifier: language))
+                        .environment(\.colorScheme, dark ? .dark : .light)
+                    let host = NSHostingView(rootView: view)
+                    host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+                    host.frame = NSRect(x: 0, y: 0, width: 620, height: 450)
+                    host.layoutSubtreeIfNeeded()
+                    let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                    host.cacheDisplay(in: host.bounds, to: bitmap)
+                    let png = try #require(bitmap.representation(using: .png, properties: [:]))
+                    #expect(!png.isEmpty)
+                    if let output { try png.write(to: output.appending(path: "peer-question-\(language)-\(dark ? "dark" : "light").png")) }
+                }
+            }
+        }
+    }
+
     @Test func groupOutcomeNoticesAreLocalizedAndRender() async throws {
         let agent = AgentProfile(name: "設計師", avatar: .pet(.dewey))
         let groupID = UUID()
