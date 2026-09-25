@@ -390,10 +390,11 @@ struct AgentMessagingSessionTests {
         let probe: MessagingProbe
         let origin = UUID()
         func session(approve: Bool = true, timeout: Duration = .seconds(10), management: AgentManagementSession? = nil,
-                     questions: Bool = false) -> AgentMessagingSession {
+                     questions: Bool = false, binding: DirectConversationAgentBinding? = nil) -> AgentMessagingSession {
             AgentMessagingSession(originConversationID: origin, agents: agents, messenger: messenger,
                 registry: registry, coordinator: coordinator, turnTimeout: timeout,
                 management: management,
+                directOriginBinding: binding,
                 supportsMailboxQuestions: questions,
                 authorize: { sender, recipient, text, _, _ in
                     await probe.authorize(sender, recipient, text)
@@ -454,9 +455,10 @@ struct AgentMessagingSessionTests {
         expectNoDifference(incoming.delivery?.state, enabled ? .completed : .failed)
     }
 
-    @Test(arguments: [AgentQuestionAnswer.option(0), .custom("Human clarification"), .dismissed])
-    func mailboxQuestionPausesAndHumanAnswerStartsFreshTurn(answer: AgentQuestionAnswer) async throws {
+    @Test(arguments: [AgentQuestionAnswer.option(0), .custom("Human clarification"), .dismissed], [false, true])
+    func mailboxQuestionPausesAndHumanAnswerStartsFreshTurn(answer: AgentQuestionAnswer, direct: Bool) async throws {
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let binding: DirectConversationAgentBinding? = direct ? .init(accountID: "local", agentID: f.sender.id) : nil
         await f.registry.register(MessagingProvider { request, execute in
             let count = await f.probe.request(request)
             if count == 1 {
@@ -478,8 +480,14 @@ struct AgentMessagingSessionTests {
             }
             return "Resolved"
         })
-        let first = f.session(questions: true)
-        try await first.enqueueUserMessage(senderID: f.sender.id, recipientID: f.recipient.id, text: "Choose a layout")
+        let first = f.session(questions: true, binding: binding)
+        if direct {
+            let result = try await first.tool(for: f.sender.id).execute(sendCall(f.recipient.id, "Choose a layout"),
+                context: .init(conversationID: f.origin))
+            #expect(!result.isError)
+        } else {
+            try await first.enqueueUserMessage(senderID: f.sender.id, recipientID: f.recipient.id, text: "Choose a layout")
+        }
         try await first.drain()
         try await first.close()
         let stored = await f.messenger.allMessages()
@@ -490,14 +498,14 @@ struct AgentMessagingSessionTests {
         expectNoDifference(publication.replyToMessageID, incoming.id)
         let initialRequestCount = await f.probe.requests.count
         expectNoDifference(initialRequestCount, 1)
-        let stopped = f.session(questions: true)
+        let stopped = f.session(questions: true, binding: binding)
         stopped.revokeProfileChanges()
         await #expect(throws: (any Error).self) {
             try await stopped.enqueueQuestionAnswer(incomingID: incoming.id, publicationID: publication.id, answer: answer)
         }
         let afterStop = await f.messenger.allMessages()
         expectNoDifference(afterStop, stored)
-        let response = f.session(approve: false, questions: true)
+        let response = f.session(approve: false, questions: true, binding: binding)
         try await response.enqueueQuestionAnswer(incomingID: incoming.id, publicationID: publication.id, answer: answer)
         try await response.drain()
         try await response.close()
@@ -506,10 +514,12 @@ struct AgentMessagingSessionTests {
         expectNoDifference(after.first?.delivery?.publications?.first?.question?.answer, answer)
         expectNoDifference(after.last?.delivery?.state, .completed)
         expectNoDifference(after.last?.recipientID, f.recipient.id)
+        expectNoDifference(after.last?.delivery?.directOriginBinding, binding)
+        expectNoDifference(after.last?.delivery?.chainID, response.id)
         let resumedRequestCount = await f.probe.requests.count
         expectNoDifference(resumedRequestCount, 2)
         await #expect(throws: AgentQuestionError.unavailable) {
-            try await f.session(questions: true).enqueueQuestionAnswer(incomingID: incoming.id, publicationID: publication.id, answer: answer)
+            try await f.session(questions: true, binding: binding).enqueueQuestionAnswer(incomingID: incoming.id, publicationID: publication.id, answer: answer)
         }
     }
 

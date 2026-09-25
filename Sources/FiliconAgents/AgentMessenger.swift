@@ -144,6 +144,8 @@ public actor AgentMessenger {
     /// restarting never automatically executes this queued response.
     public func answerQuestion(replyingTo id: UUID, publicationID: UUID, answer: AgentQuestionAnswer,
                                accountID: String, originID: UUID, responseID: UUID = UUID(),
+                               chainID: UUID? = nil,
+                               directOriginBinding: DirectConversationAgentBinding? = nil,
                                at: Date = Date(), lifetime: AgentPublicationLifetime) async throws -> AgentMessage {
         guard let before = state.messages.first(where: { $0.id == id }) else { throw AgentQuestionError.unavailable }
         let active = await service.list()
@@ -155,6 +157,8 @@ public actor AgentMessenger {
         try lifetime.commit {
             guard let index = state.messages.firstIndex(where: { $0.id == id }), state.messages[index] == before,
                   let delivery = before.delivery, delivery.state == .completed, delivery.originConversationID == originID,
+                  delivery.directOriginBinding == directOriginBinding,
+                  directOriginBinding == nil || directOriginBinding?.accountID == accountID,
                   let questionIndex = delivery.publications?.firstIndex(where: { $0.id == publicationID }),
                   let publication = delivery.publications?[questionIndex],
                   publication.groupID == originID, publication.senderID == before.recipientID,
@@ -163,7 +167,8 @@ public actor AgentMessenger {
                   !containsMessageID(responseID) else { throw AgentQuestionError.unavailable }
             let text = try pending.question.reply(for: answer)
             var response = AgentMessage(id: responseID, senderID: before.senderID, recipientID: before.recipientID,
-                text: text, createdAt: at, delivery: .init(chainID: responseID, originConversationID: originID))
+                text: text, createdAt: at, delivery: .init(chainID: chainID ?? responseID, originConversationID: originID,
+                    directOriginBinding: directOriginBinding))
             response.questionResponse = .init(incomingMessageID: id, publicationID: publicationID,
                 question: pending.question, answer: answer, accountID: accountID)
             pending.answer = answer

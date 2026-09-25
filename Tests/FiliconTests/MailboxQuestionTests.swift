@@ -16,14 +16,15 @@ struct MailboxQuestionTests {
         let incoming: AgentMessage
         var file: URL { root.appending(path: "mail.json") }
     }
-    private func fixture() async throws -> Fixture {
+    private func fixture(direct: Bool = false) async throws -> Fixture {
         let root = FileManager.default.temporaryDirectory.appending(path: "mailbox-question-\(UUID())")
         let agents = try AgentService(storeURL: root.appending(path: "agents.json"))
         let sender = try await agents.create(name: "Sender", instructions: "fixture", at: date)
         let asker = try await agents.create(name: "Asker", instructions: "fixture", at: date)
         let messenger = try AgentMessenger(service: agents, storeURL: root.appending(path: "mail.json"))
         let incoming = AgentMessage(senderID: sender.id, recipientID: asker.id, text: "Review", createdAt: date,
-                                    delivery: .init(chainID: scope, originConversationID: scope))
+                                    delivery: .init(chainID: scope, originConversationID: scope,
+                                        directOriginBinding: direct ? .init(accountID: "account-A", agentID: sender.id) : nil))
         try await messenger.send(incoming)
         try await messenger.updateDelivery(id: incoming.id, state: .running, at: date)
         return .init(root: root, agents: agents, messenger: messenger, incoming: incoming)
@@ -34,6 +35,41 @@ struct MailboxQuestionTests {
     private func publish(_ f: Fixture) async throws -> RoomMessage {
         try await f.messenger.publishQuestion(question(), replyingTo: f.incoming.id, accountID: "account-A",
             originID: scope, publicationID: publicationID, at: date, lifetime: .init())
+    }
+
+    @Test(arguments: ["matching", "missing", "other-agent", "other-account", "legacy-injection"])
+    func directAnswerRetainsOnlyMatchingHostOrigin(mode: String) async throws {
+        let f = try await fixture(direct: mode != "legacy-injection")
+        defer { try? FileManager.default.removeItem(at: f.root) }
+        _ = try await publish(f)
+        try await f.messenger.updateDelivery(id: f.incoming.id, state: .completed, at: date)
+        var binding = f.incoming.delivery?.directOriginBinding
+        switch mode {
+        case "missing": binding = nil
+        case "other-agent": binding = .init(accountID: "account-A", agentID: f.incoming.recipientID)
+        case "other-account": binding = .init(accountID: "account-B", agentID: f.incoming.senderID)
+        case "legacy-injection": binding = .init(accountID: "account-A", agentID: f.incoming.senderID)
+        default: break
+        }
+        let bytes = try Data(contentsOf: f.file)
+        if mode == "matching" {
+            let response = try await f.messenger.answerQuestion(replyingTo: f.incoming.id,
+                publicationID: publicationID, answer: .option(0), accountID: "account-A", originID: scope,
+                responseID: responseID, directOriginBinding: binding, at: date, lifetime: .init())
+            expectNoDifference(response.delivery?.directOriginBinding, binding)
+            expectNoDifference(response.questionResponse?.answer, .option(0))
+            let restarted = try AgentMessenger(service: f.agents, storeURL: f.file)
+            let restored = await restarted.allMessages().last
+            expectNoDifference(restored?.delivery?.directOriginBinding, binding)
+            expectNoDifference(restored?.delivery?.state, .cancelled)
+        } else {
+            await #expect(throws: AgentQuestionError.unavailable) {
+                _ = try await f.messenger.answerQuestion(replyingTo: f.incoming.id,
+                    publicationID: publicationID, answer: .option(0), accountID: "account-A", originID: scope,
+                    responseID: responseID, directOriginBinding: binding, at: date, lifetime: .init())
+            }
+            expectNoDifference(try Data(contentsOf: f.file), bytes)
+        }
     }
 
     @Test(arguments: ["input", "missing", "self", "foreignScope"])

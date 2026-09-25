@@ -313,7 +313,8 @@ public actor AgentMessagingSession {
         hostEnqueueReserved = true
         defer { hostEnqueueReserved = false }
         let response = try await messenger.answerQuestion(replyingTo: incomingID, publicationID: publicationID,
-            answer: answer, accountID: accountID, originID: originConversationID, lifetime: publicationLifetime)
+            answer: answer, accountID: accountID, originID: originConversationID,
+            chainID: id, directOriginBinding: directOriginBinding, lifetime: publicationLifetime)
         if closed || Task.isCancelled {
             try await messenger.updateDelivery(id: response.id, state: .cancelled)
             throw CancellationError()
