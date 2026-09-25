@@ -4,6 +4,27 @@ import FiliconDomain
 import FiliconAgents
 
 extension TranscriptCard {
+    var directSecretRequest: DirectSecretRequest? {
+        guard case .secretRequest(let value) = payload else { return nil }
+        return value.directRequest
+    }
+
+    // The generic renderer has no live submission authority. A saved pending
+    // request must not expose a credential field or an indefinite spinner.
+    var rendererLifecycle: TranscriptCardLifecycle {
+        guard let request = directSecretRequest else { return lifecycle }
+        switch request.state {
+        case .pending, .retired: return .retired
+        case .stored: return .provided
+        case .dismissed: return .cancelled
+        }
+    }
+
+    var rendererActions: [TranscriptCardAction] {
+        guard directSecretRequest == nil else { return [] }
+        return actions.filter { $0.intent.isRendererSafe }
+    }
+
     var directQuestion: GroupQuestion? {
         guard case .widget(let value) = payload, value.widgetKind == "choice",
               let question = value.question, (try? question.question.validate()) != nil else { return nil }
@@ -53,6 +74,18 @@ enum TranscriptCardPresenter {
         case .listener(let value):
             return .init(kind: .listener, title: l10n("Connect \(humanized(value.connector)) Listener"), subtitle: l10n("Listener · \(status)"), symbolName: "dot.radiowaves.left.and.right", detail: value.event, fields: value.filterSummary.map { [(l10n("Filter"), $0)] } ?? [], longTextTitle: nil, longText: nil)
         case .secretRequest(let value):
+            if let request = value.directRequest {
+                let message: String
+                switch request.state {
+                case .pending, .retired: message = "This credential request is no longer available."
+                case .stored: message = "Credential stored. Remote authentication has not been verified."
+                case .dismissed: message = "Cancelled"
+                }
+                return .init(kind: .secretRequest, title: l10n("Secure credential request"),
+                             subtitle: FiliconLocalization.string(message), symbolName: "lock.shield",
+                             detail: [request.request.label, request.request.description].compactMap { $0 }.joined(separator: "\n"),
+                             fields: [(l10n("Service"), request.request.connector)], longTextTitle: nil, longText: nil)
+            }
             var fields = [(l10n("Service"), value.service)]
             if let account = value.account { fields.append((l10n("Account"), account)) }
             if let scope = value.scope { fields.append((l10n("Scope"), scope)) }
@@ -149,7 +182,7 @@ struct TranscriptCardRow: View {
                     }
                 }.font(.caption)
             }
-            let safeActions = card.actions.filter { $0.intent.isRendererSafe }
+            let safeActions = card.rendererActions
             if !safeActions.isEmpty {
                 HStack(spacing: 6) {
                     ForEach(safeActions) { action in
@@ -173,7 +206,7 @@ struct TranscriptCardRow: View {
     }
 
     @ViewBuilder private var lifecycleAccessory: some View {
-        switch card.lifecycle {
+        switch card.rendererLifecycle {
         case .running, .waiting: ProgressView().controlSize(.small)
         case .failed, .denied: Image(systemName: "xmark.circle.fill").foregroundStyle(.red)
         case .succeeded, .sent, .provided, .connected, .approved: Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
@@ -183,7 +216,7 @@ struct TranscriptCardRow: View {
     }
 
     private var borderColor: Color {
-        switch card.lifecycle {
+        switch card.rendererLifecycle {
         case .failed, .denied: .red
         case .succeeded, .sent, .provided, .connected, .approved: .green
         default: .secondary

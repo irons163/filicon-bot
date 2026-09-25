@@ -72,6 +72,9 @@ actor TranscriptCardActionRouter {
     }
 
     private static func matches(_ intent: TranscriptCardActionIntent, payload: TranscriptCardPayload, cardID: UUID) -> Bool {
+        // Even generic retry/dismiss must go through the bound host flow so the
+        // durable request and its receipt cannot disagree with the card status.
+        if case .secretRequest(let value) = payload, value.directRequest != nil { return false }
         switch (intent, payload) {
         case (.approveReview(let lhs), .autoReview(let rhs)), (.rejectReview(let lhs), .autoReview(let rhs)):
             return lhs == rhs.reviewID

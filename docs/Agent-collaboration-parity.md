@@ -1,5 +1,11 @@
 # 協作能力核對紀錄（更新至 2026-09-26）
 
+## 憑證歷史卡片的唯讀降級（2026-09-26）
+
+通用 TranscriptCardRow 不具有 live submission，遇到 DirectSecretRequest 時只顯示歷史狀態：pending／retired 為失效且不轉圈，stored 顯示已儲存但未驗證遠端登入，dismissed 為取消。狀態依 typed request 投影，不依外層可能過時的 lifecycle；呈現不回寫歷史。安全標籤沿用七語系字串，服務／說明取自嚴格 request 元資料。
+
+此類卡片不呈現通用動作，router 亦拒絕 retry／dismiss／provideSecret，避免只改外層狀態卻未處理實際 submission 與回條。舊式無 directRequest 的卡片保留既有行為。32 項聚焦測試通過，包含四種狀態、路由拒絕、舊資料相容與七語系明暗色渲染；人工檢視繁中 light 與法文 dark，文字未截斷。direct-secret-renderer-full.log 完整非並行回歸 exit 0；direct-secret-renderer-native.log 原生建置與封裝／deep strict 簽章通過。本批未啟用直接聊天的憑證發布／輸入／恢復，整體仍 partial。
+
 ## 直接憑證請求的持久契約與回條證據（2026-09-26）
 
 重新核對 reconstructed 的 sand-secret-request.ts 與 secret-request-actions.ts：submitSecret(entryId,value,agentId) 帶帳號／代理人作用域，提交後只以不含值的 acknowledgement 恢復。Filicon 將既有嚴格 AgentSecretRequest 元資料移至 Domain（Agents 保留 re-export），SecretRequestTranscriptCard 加入可選 DirectSecretRequest，記錄 requestID、account/agent binding、conversationID、connectionID、pending/stored/dismissed/retired 與 responseMessageID，不新增憑證值欄位。舊卡片缺欄位仍可讀；矛盾的完成狀態／response ID 被拒絕。

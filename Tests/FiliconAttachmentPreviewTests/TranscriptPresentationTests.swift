@@ -1,10 +1,49 @@
 import Foundation
 import Testing
+import CustomDump
 import FiliconDomain
 @testable import Filicon
 
 @Suite("Transcript presentation", EnglishUITrait())
 struct TranscriptPresentationTests {
+    @Test(arguments: [DirectSecretRequest.State.pending, .stored, .dismissed, .retired])
+    func savedSecretCardsAreReadOnlyAndDoNotSpin(state: DirectSecretRequest.State) throws {
+        let id = UUID(uuidString: "40000000-0000-0000-0000-000000000001")!
+        let request = try AgentSecretRequest.parse(Data(#"{"label":"Bot token","description":"Fixture help","connector":"slack","field":"token"}"#.utf8))
+        var direct = DirectSecretRequest(requestID: id, request: request,
+            binding: .init(accountID: "local", agentID: id), conversationID: id, connectionID: id)
+        switch state {
+        case .pending: break
+        case .stored, .dismissed: try direct.resolve(provided: state == .stored, responseMessageID: id)
+        case .retired: direct.retire()
+        }
+        let card = TranscriptCard(id: id, lifecycle: .waiting,
+            payload: .secretRequest(.init(requestID: id.uuidString, service: "untrusted wrapper",
+                prompt: "stale wrapper prompt", directRequest: direct)),
+            actions: [.init(id: "submit", label: "Submit", intent: .provideSecret(requestID: id.uuidString))])
+        let presentation = TranscriptCardPresenter.presentation(for: card)
+        expectNoDifference(presentation.title, "Secure credential request")
+        expectNoDifference(presentation.detail, "Bot token\nFixture help")
+        expectNoDifference(presentation.fields.map(\.value), ["slack"])
+        expectNoDifference(card.rendererActions, [])
+        switch state {
+        case .pending, .retired:
+            expectNoDifference(card.rendererLifecycle, .retired)
+            expectNoDifference(presentation.subtitle, "This credential request is no longer available.")
+        case .stored:
+            expectNoDifference(card.rendererLifecycle, .provided)
+            expectNoDifference(presentation.subtitle, "Credential stored. Remote authentication has not been verified.")
+        case .dismissed:
+            expectNoDifference(card.rendererLifecycle, .cancelled)
+            expectNoDifference(presentation.subtitle, "Cancelled")
+        }
+        expectNoDifference(card.lifecycle, .waiting) // Rendering does not rewrite persisted history.
+        var legacy = card
+        legacy.payload = .secretRequest(.init(requestID: id.uuidString, service: "slack"))
+        expectNoDifference(legacy.rendererLifecycle, .waiting)
+        expectNoDifference(legacy.rendererActions, legacy.actions)
+    }
+
     @Test func conversationLoadFenceRejectsStaleAndSwitchedSelections() {
         let firstID = UUID(), secondID = UUID()
         var fence = ConversationLoadFence()

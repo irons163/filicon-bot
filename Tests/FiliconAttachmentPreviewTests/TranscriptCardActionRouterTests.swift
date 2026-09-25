@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import CustomDump
 import FiliconDomain
 @testable import Filicon
 
@@ -15,6 +16,15 @@ struct TranscriptCardActionRouterTests {
             service: "slack", directRequest: direct)), intents: [intent])
         await expectRoutingError(.mismatchedTarget) {
             try await TranscriptCardActionRouter().begin(card: card, intent: intent)
+        }
+        for action in [TranscriptCardActionIntent.retry(cardID: card.id), .dismiss(cardID: card.id)] {
+            var altered = card
+            altered.lifecycle = .failed
+            altered.actions = [.init(id: "action", label: "Action", intent: action)]
+            expectNoDifference(altered.rendererActions, [])
+            await expectRoutingError(.mismatchedTarget) {
+                try await TranscriptCardActionRouter().begin(card: altered, intent: action)
+            }
         }
     }
 

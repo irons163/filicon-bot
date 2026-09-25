@@ -3,10 +3,47 @@ import SwiftUI
 import Testing
 import CustomDump
 import FiliconAppServices
+import FiliconDomain
 @testable import Filicon
 
 @MainActor @Suite("Secure credential card", .timeLimit(.minutes(1)))
 struct AgentSecretRequestCardTests {
+    @Test(arguments: ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"])
+    func rendersSavedPendingRequestAsUnavailable(language: String) async throws {
+        let id = UUID(uuidString: "40000000-0000-0000-0000-000000000001")!
+        let request = try AgentSecretRequest.parse(Data(#"{"label":"Bot token","connector":"slack","field":"token"}"#.utf8))
+        let direct = DirectSecretRequest(requestID: id, request: request,
+            binding: .init(accountID: "local", agentID: id), conversationID: id, connectionID: id)
+        let card = TranscriptCard(id: id, lifecycle: .waiting,
+            payload: .secretRequest(.init(requestID: id.uuidString, service: "slack", directRequest: direct)))
+        for dark in [false, true] {
+            try await withUIRenderTurn(language: language) {
+                let presentation = TranscriptCardPresenter.presentation(for: card)
+                if language != "en" {
+                    #expect(presentation.subtitle != "This credential request is no longer available.")
+                }
+                let host = NSHostingView(rootView: TranscriptCardRow(card: card) { _ in
+                    Issue.record("Saved credential cards must not perform actions")
+                }.padding(16).frame(width: 380).background(FiliconTheme.canvas)
+                    .environment(\.locale, Locale(identifier: language))
+                    .environment(\.colorScheme, dark ? .dark : .light))
+                host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+                let size = host.fittingSize
+                #expect(size.height > 80 && size.height < 450)
+                host.frame = .init(origin: .zero, size: size)
+                host.layoutSubtreeIfNeeded()
+                let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                host.cacheDisplay(in: host.bounds, to: bitmap)
+                if let path = ProcessInfo.processInfo.environment["FILICON_UI_REVIEW_OUTPUT"] {
+                    let directory = URL(fileURLWithPath: path)
+                    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                    try #require(bitmap.representation(using: .png, properties: [:]))
+                        .write(to: directory.appending(path: "secret-history-\(language)-\(dark ? "dark" : "light").png"))
+                }
+            }
+        }
+    }
+
     private func receipt() throws -> AgentSecretReceipt {
         try JSONDecoder().decode(AgentSecretReceipt.self,
             from: Data(#"{"requestID":"00000000-0000-0000-0000-000000000004"}"#.utf8))
