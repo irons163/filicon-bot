@@ -385,7 +385,8 @@ final class AppModel: ObservableObject {
         bootstrapImmediately: Bool = true,
         localToolRuntime: LocalToolRuntime? = nil,
         mcpOAuthTransport: any MCPOAuthTokenTransport = URLSessionMCPOAuthTokenTransport(),
-        mcpOAuthBrowserOpener: @escaping @MainActor @Sendable (URL) -> Bool = { NSWorkspace.shared.open($0) }
+        mcpOAuthBrowserOpener: @escaping @MainActor @Sendable (URL) -> Bool = { NSWorkspace.shared.open($0) },
+        quotaFaultInjector: @escaping StorageQuotaLedger.FaultInjector = { _ in }
     ) {
         let context: AppStartupContext = (try? .isolated(root: applicationSupportRoot, reason: .isolatedUserData))
             ?? .init(root: applicationSupportRoot, settlement: .init(route: .unchanged, reason: .isolatedUserData, root: applicationSupportRoot), warning: "The isolated data root could not be fully verified.")
@@ -394,7 +395,8 @@ final class AppModel: ObservableObject {
             bootstrapImmediately: bootstrapImmediately,
             localToolRuntime: localToolRuntime,
             mcpOAuthTransport: mcpOAuthTransport,
-            mcpOAuthBrowserOpener: mcpOAuthBrowserOpener
+            mcpOAuthBrowserOpener: mcpOAuthBrowserOpener,
+            quotaFaultInjector: quotaFaultInjector
         )
     }
 
@@ -403,7 +405,8 @@ final class AppModel: ObservableObject {
         bootstrapImmediately: Bool = true,
         localToolRuntime: LocalToolRuntime? = nil,
         mcpOAuthTransport: any MCPOAuthTokenTransport = URLSessionMCPOAuthTokenTransport(),
-        mcpOAuthBrowserOpener: @escaping @MainActor @Sendable (URL) -> Bool = { NSWorkspace.shared.open($0) }
+        mcpOAuthBrowserOpener: @escaping @MainActor @Sendable (URL) -> Bool = { NSWorkspace.shared.open($0) },
+        quotaFaultInjector: @escaping StorageQuotaLedger.FaultInjector = { _ in }
     ) {
         let root = startupContext.root
         dataRoot = root
@@ -411,7 +414,7 @@ final class AppModel: ObservableObject {
         startupBanner = startupContext.warning
         store = ConversationStore(fileURL: root.appending(path: "conversations.json"))
         draftStore = ComposerDraftStore(url: root.appending(path: "composer-drafts.json"))
-        let liveQuota = try? StorageQuotaLedger.live(dataRoot: root)
+        let liveQuota = try? StorageQuotaLedger.live(dataRoot: root, faultInjector: quotaFaultInjector)
         quotaLedger = liveQuota
         quotaWriter = liveQuota.map(AppQuotaWriter.init)
         attachmentStore = AttachmentStore(rootURL: root.appending(path: "attachments", directoryHint: .isDirectory))

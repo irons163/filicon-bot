@@ -1,5 +1,13 @@
 # 協作能力核對紀錄（更新至 2026-09-25）
 
+## 正式發布存檔故障與重試（2026-09-25）
+
+補驗直接聊天先前保留的存檔故障注入缺口。依 Swift testing／Dependencies／CustomDump 技能，把既有 StorageQuotaLedger fault injector 接到 AppModel 建構依賴（正式預設仍無故障），只在隔離測試的模型即將發布時啟用一次。原版 SendMessage 的「已交付」不能用未保存文字冒充；測試核對失敗工具結果沒有 saved-message receipt，以及重試後 SQLite、畫面訊息與回合記憶一致。
+
+初次測試實際失敗（`.build/validation/direct-save-failure-red.log`）：reserve 已建立保留後拋錯，AppQuotaWriter 尚未取得 token，無法清理自己的保留；commit 已保存後拋錯則讓 writer 快取 generation 落後。兩者都會讓後續發布／最終保存繼續失敗。修正 writer 在 reserve 前自行建立 token，整個 reserve／operation／commit 包在同一失敗處理，僅釋放自己那次的 token，再向 ledger 同步實際 generation。失敗仍拋回，不把不確定結果改報成功。
+
+三個故障點（temporary write before rename、reservation persisted、commit persisted）各測第一則／第二則發布失敗，共六組：原進度保留、失敗不給回條、重試只保存一次結果、記憶數量正確；重新開啟 ledger 後 reservationCount 為零，projectedBytes 等於 committedBytes。最終聚焦 exit 0（`direct-save-failure-final.log`），完整非並行回歸 exit 0（`direct-save-failure-full.log`，其後僅追加重開 ledger 斷言並補跑聚焦）；原生建置、封裝及 deep strict 簽章通過（`direct-save-failure-native.log`、`direct-save-failure-package.log`）。未啟動使用者 App、未改真實資料。本批證明單次可恢復故障的重試，不宣稱持續磁碟故障或所有並行配額情況皆已驗收；其他功能 parity 缺口不變。
+
 ## 直接聊天 UUID 引用與保存回條（2026-09-25）
 
 接續原版 SendMessage 的 reply_to／保存訊息身份契約，直接聊天 text 現可引用同對話目錄內的 UUID，並在保存成功後回傳 messageID。後續同回合呼叫可引用剛發布的訊息，不需等下一次使用者輸入。只投影該次請求中可見的 user／assistant 文字至引用目錄，不帶其他對話、system 指示、附件內容或私人推理；沿用共用工具的 40 則目錄界線與重复／未知引用拒絕。內部 RoomMessage 僅用作工具回條介面，直接聊天仍以 ChatMessage 保存，不建立群組或代理人。

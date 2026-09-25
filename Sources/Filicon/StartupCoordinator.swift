@@ -147,14 +147,22 @@ actor AppQuotaWriter {
         if let known = generations[identity] { current = known }
         else { current = await ledger.record(scope: scope, key: key)?.generation ?? 0 }
         let generation = current + 1
-        let reservation = try await ledger.reserve(.init(scope: scope, key: key, byteCount: Int64(data.count), generation: generation))
+        // Own the token before reserve: a durable reservation may exist even
+        // when reserve throws after its write. Release only our own attempt.
+        let token = UUID()
         do {
+            let reservation = try await ledger.reserve(.init(scope: scope, key: key, byteCount: Int64(data.count), generation: generation), token: token)
             let value = try await operation()
             _ = try await ledger.commit(reservation.id)
             generations[identity] = generation
             return value
         } catch {
-            try? await ledger.release(reservation.id)
+            try? await ledger.release(token)
+            // Commit can also persist before reporting an error. Never retry
+            // using a cached generation older than the ledger's actual record.
+            if let record = await ledger.record(scope: scope, key: key) {
+                generations[identity] = max(generations[identity] ?? 0, record.generation)
+            }
             throw error
         }
     }
