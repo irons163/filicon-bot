@@ -942,6 +942,7 @@ struct ChatDetailView: View {
 
     var body: some View {
         let _ = uiLocale.identifier
+        let references = model.directMessageReferences(for: conversation.id)
         VStack(spacing: 0) {
             FiliconChatHeader(
                 title: conversation.title == "New conversation" ? l10n("New Conversation") : conversation.title,
@@ -996,20 +997,11 @@ struct ChatDetailView: View {
                             TranscriptMessageView(
                                 message: message,
                                 conversation: conversation,
+                                inlineReferences: references,
                                 isFindMatch: transcript.isMatch(message.id),
                                 isActiveFindMatch: transcript.activeMatchID == message.id,
                                 isReplyJumpTarget: replyJumpTargetID == message.id,
-                                onJumpToMessage: { id in
-                                    guard transcript.exposeMessage(id: id, in: conversation.messages) else { return }
-                                    replyJumpTargetID = id
-                                    DispatchQueue.main.async {
-                                        withAnimation { proxy.scrollTo(id, anchor: .center) }
-                                    }
-                                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) {
-                                        guard replyJumpTargetID == id else { return }
-                                        withAnimation { replyJumpTargetID = nil }
-                                    }
-                                }
+                                onJumpToMessage: { referenceTapped($0, proxy: proxy) }
                             )
                             .id(message.id)
                         }
@@ -1156,6 +1148,9 @@ struct ChatDetailView: View {
             .background(FiliconTheme.canvas)
             .disabled(!model.isBootstrapped)
         }.navigationTitle(conversation.title).task(id: conversation.id) { await model.refreshModels() }
+            .task(id: "\(conversation.id)-\(conversation.messages.contains { $0.role == .assistant && $0.text.contains("sand-msg:") })") {
+                await model.prepareDirectMessageReferences(for: conversation.id)
+            }
             .onChange(of: conversation.id) { _, _ in
                 transcript.reset(messages: conversation.messages)
                 showingFind = false
@@ -1258,6 +1253,21 @@ struct ChatDetailView: View {
             withAnimation { replyJumpTargetID = nil }
         }
     }
+
+    private func referenceTapped(_ id: UUID, proxy: ScrollViewProxy) {
+        guard model.selection == conversation.id, let current = model.selectedConversation,
+              transcript.exposeMessage(id: id, in: current.messages) else { return }
+        replyJumpTargetID = id
+        DispatchQueue.main.async {
+            guard model.selection == conversation.id,
+                  model.selectedConversation?.messages.contains(where: { $0.id == id }) == true else { return }
+            withAnimation { proxy.scrollTo(id, anchor: .center) }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) {
+            guard model.selection == conversation.id, replyJumpTargetID == id else { return }
+            withAnimation { replyJumpTargetID = nil }
+        }
+    }
 }
 
 private struct VoiceComposerControls: View {
@@ -1349,6 +1359,7 @@ private struct TranscriptMessageView: View {
     @EnvironmentObject private var model: AppModel
     let message: ChatMessage
     let conversation: Conversation
+    var inlineReferences: DirectMessageReferenceDirectory? = nil
     var isFindMatch = false
     var isActiveFindMatch = false
     var isReplyJumpTarget = false
@@ -1424,7 +1435,8 @@ private struct TranscriptMessageView: View {
                         .foregroundStyle(FiliconTheme.userBubbleText)
                         .fixedSize(horizontal: false, vertical: true)
                 } else {
-                    MarkdownText(source: message.text).foregroundStyle(FiliconTheme.textPrimary)
+                    MarkdownText(source: message.text, messageReferences: referenceNavigation)
+                        .foregroundStyle(FiliconTheme.textPrimary)
                 }
             } else if message.reasoningText.isEmpty && message.toolActivities.isEmpty && message.transcriptCards.isEmpty {
                 Text(message.deliveryStatus == .failed ? l10n("No response was delivered.") : "…")
@@ -1507,6 +1519,22 @@ private struct TranscriptMessageView: View {
     }
 
     private var roleLabel: String { FiliconLocalization.string(message.role == .user ? "You" : message.role == .assistant ? "Assistant" : message.role.rawValue.capitalized) }
+    private var referenceNavigation: RichMarkdownMessageReferences? {
+        guard message.role == .assistant, let inlineReferences else { return nil }
+        return .init(target: { url in
+            guard let target = inlineReferences.target(for: url, from: message.id, in: conversation.id),
+                  model.directMessageReferences(for: conversation.id)?.target(
+                    for: url, from: message.id, in: conversation.id) == target else { return nil }
+            return target
+        }, show: { id in
+            // Recheck against current host state: a rendered link may outlive its target.
+            guard model.selection == conversation.id,
+                  let current = model.conversations.first(where: { $0.id == conversation.id }),
+                  current.messages.contains(where: { $0.id == id }) else { return }
+            onJumpToMessage(id)
+        })
+    }
+
     private var statusLabel: String { FiliconLocalization.string(message.deliveryStatus.rawValue.capitalized) }
     private var statusIcon: String {
         switch message.deliveryStatus {
@@ -1528,9 +1556,10 @@ private struct TranscriptMessageView: View {
 struct MarkdownText: View {
     @Environment(\.locale) private var uiLocale
     let source: String
+    var messageReferences: RichMarkdownMessageReferences? = nil
     var body: some View {
         let _ = uiLocale.identifier
-        RichMarkdownView.transcript(source: source, openLink: TranscriptSafeLinkOpener.open)
+        RichMarkdownView.transcript(source: source, messageReferences: messageReferences, openLink: TranscriptSafeLinkOpener.open)
     }
 }
 

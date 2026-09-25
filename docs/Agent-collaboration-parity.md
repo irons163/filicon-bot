@@ -1,5 +1,13 @@
 # 協作能力核對紀錄（更新至 2026-09-25）
 
+## 直接聊天引用畫面與歷史載入（2026-09-25）
+
+直接聊天 Markdown 接入 sand-msg 引用索引；有引用且歷史未完整時由畫面 task 載入完整歷史，再啟用可解析連結。使用既有 transcript exposeMessage／scrollTo 高亮定位，包含早於顯示視窗的訊息。不把私人 reasoning 或工具卡變成引用入口；無效引用保持純文字，不開外部 URL、不建立 thread 或授權。點擊時再次以目前對話索引驗證，跳轉排程也檢查選取對話與目標是否仍存在。loadAllMessages 補取消與帳號 generation 檢查，避免舊帳號非同步載入回寫。正式 SendMessage 開啟 supportsReferenceNavigation，移除直接聊天不支援的過期提示，仍使用原有受限公開目錄與回條。
+
+依 SwiftUI 技能將跳轉行為抽成 action method，依測試技能增加 160 則訊息的實際儲存／分頁／載入與 Markdown open 整合驗證，涵蓋顯示窗口展開、目標刪除、切換對話及不開外部 URL；provider 測試確認提示正式啟用。direct-reference-ui-final.log 27 項／5 suites 通過；加強顯示視窗斷言後 direct-reference-ui-recheck-focused.log 同樣 27 項通過，但同輪另外加入的未修改 MCP 儲存測試單獨失敗。原生 build 與 package／deep strict 簽章（direct-reference-ui-native.log、direct-reference-ui-package.log）exit 0。未重啟 App，尚無使用者真實視窗手動點擊驗收。
+
+完整回歸 direct-reference-ui-full.log 與 full-recheck.log 均 exit 1：多個未修改模組讀取自己建立的暫存 JSON 出現 NSCocoaError 257／EPERM，updater 亦有保存相關斷言失敗。指定獨立 TMPDIR 重驗時 Xcode test runner 仍使用原系統暫存目錄，不能宣稱已完成隔離。MCP configurationStoreUpsertRenameAndRemoveAreAtomic 單獨重跑也重現 EPERM。此完整回歸缺口尚待診斷，不能將本批記為全綠；其他 parity partial 不變。
+
 ## 直接聊天引用安全索引（2026-09-25）
 
 新增 DirectMessageReferenceDirectory，重用群組 canonical sand-msg 解析與先後順序規則，輸入明確標示是否為完整對話歷史；分頁／部分歷史一律不解析，避免漏掉未載入的重複地址。解析要求同一對話、唯一訊息身份、公開且有文字的目標，以及地址與角色相符；地址保留紀錄若指向其他／已刪除身份也拒絕，不讓舊連結被新訊息接管。無 URL 開啟、檔案讀取或工具授權副作用。

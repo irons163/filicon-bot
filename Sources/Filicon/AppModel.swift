@@ -972,6 +972,8 @@ final class AppModel: ObservableObject {
     /// Explicitly used by operations whose semantics require the whole thread
     /// (provider context, resend before an old turn, and find-in-chat).
     func loadAllMessages(for conversationID: UUID) async throws {
+        let accountGeneration = autoReviewAccountGeneration
+        guard !agentMessagingAccountTransition else { throw CancellationError() }
         if completeMessageHistories.contains(conversationID) { return }
         let ticket: ConversationLoadTicket? = if selection == conversationID {
             conversationLoadFence.begin(conversationID: conversationID)
@@ -985,7 +987,12 @@ final class AppModel: ObservableObject {
                 loadingMessageHistory.remove(conversationID)
             }
         }
-        guard let canonical = try await store.conversation(id: conversationID),
+        let canonical = try await store.conversation(id: conversationID)
+        try Task.checkCancellation()
+        guard accountGeneration == autoReviewAccountGeneration, !agentMessagingAccountTransition else {
+            throw CancellationError()
+        }
+        guard let canonical,
               let index = conversations.firstIndex(where: { $0.id == conversationID }) else { return }
         let loaded = loadedMessageIDs[conversationID] ?? []
         let locallyCurrent = conversations[index].messages
@@ -994,6 +1001,22 @@ final class AppModel: ObservableObject {
         loadedMessageIDs[conversationID] = Set(conversations[index].messages.map(\.id))
         messageContinuations[conversationID] = nil
         completeMessageHistories.insert(conversationID)
+    }
+
+    func directMessageReferences(for conversationID: UUID) -> DirectMessageReferenceDirectory? {
+        guard !agentMessagingAccountTransition, selection == conversationID,
+              let conversation = conversations.first(where: { $0.id == conversationID }) else { return nil }
+        return DirectMessageReferenceDirectory(conversation: conversation,
+            historyComplete: completeMessageHistories.contains(conversationID))
+    }
+
+    func prepareDirectMessageReferences(for conversationID: UUID) async {
+        guard selection == conversationID,
+              conversations.first(where: { $0.id == conversationID })?.messages.contains(where: {
+                  $0.role == .assistant && $0.text.contains("sand-msg:")
+              }) == true else { return }
+        // Failure leaves references as plain text, never guessed from a partial page.
+        try? await loadAllMessages(for: conversationID)
     }
 
     func refreshModels(forceRefresh: Bool = false) async {
@@ -1806,7 +1829,7 @@ final class AppModel: ObservableObject {
                                 assistantID: assistantID, accountScope: accountScope,
                                 generation: publicationGeneration, replyTo: replyTo, cursorAgent: reference)
                         },
-                        replyHistory: replyHistory, receiptSenderID: id, supportsReferenceNavigation: false,
+                        replyHistory: replyHistory, receiptSenderID: id, supportsReferenceNavigation: true,
                         directConversationPresentation: true,
                         publishQuestionReceipt: { [weak self] question, replyTo in
                             guard let self else { throw CancellationError() }

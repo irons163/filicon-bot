@@ -1,5 +1,7 @@
 # Filicon / Grok Bot 0.18 功能 parity matrix（current implementation）
 
+直接聊天引用 UI（2026-09-25）：已接入 Markdown、完整歷史載入、顯示視窗展開與跳轉，SendMessage 正式啟用 sand-msg 提示。本批 27 項整合測試、原生建置及封裝通過；完整回歸有多模組暫存 JSON EPERM 與 updater 保存斷言失敗，MCP 單獨重驗亦失敗，待診斷。取代下方尚未接 UI 的狀態，但不代表整體 AGENT-02 或完整驗收完成。
+
 直接聊天引用索引（2026-09-25）：新增完整歷史限定、對話隔離、重複／已刪除地址保留檢查的 sand-msg 索引，聚焦 10 項測試通過。尚未接 UI 與分頁跳轉，工具仍不宣告支援 inline navigation；AGENT-02 保持 partial。
 
 工具事件順序補驗（2026-09-25）：修正工具執行可能超前主程式 pending 狀態保存的競態；正式工具迴圈現在等待事件處理成功後再繼續。完整回歸 tool-event-order-full.log exit 0，新增六組慢速／失敗保存案例通過；關閉上一輪群組事件順序失敗，未改剩餘功能 partial 狀態。

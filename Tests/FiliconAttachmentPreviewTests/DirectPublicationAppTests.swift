@@ -25,6 +25,8 @@ private struct DirectPublicationProvider: AIProvider {
                 else { #expect(!tools.contains("SendMessage")) }
                 if replyMode != nil {
                     #expect(request.messages.contains { $0.role == .system && $0.text.contains("This is a direct conversation.") })
+                    #expect(request.messages.contains { $0.role == .system && $0.text.contains("[descriptive label](sand-msg:<shortAddress>)") })
+                    #expect(!request.messages.contains { $0.role == .system && $0.text.contains("Inline sand-msg navigation is not available here.") })
                     #expect(!request.messages.contains { $0.role == .system && $0.text.contains("Private foreign message") })
                 }
                 continuation.yield(.textDelta(toolSupport ? "PRIVATE DRAFT" : "Plain answer"))

@@ -237,6 +237,7 @@ struct RichMarkdownView: View {
 
     static func transcript(
         source: String,
+        messageReferences: RichMarkdownMessageReferences? = nil,
         openLink: @escaping @MainActor (URL) -> Bool = RichMarkdownDefaultLinkOpener.open
     ) -> Self {
         .init(
@@ -244,6 +245,7 @@ struct RichMarkdownView: View {
             metadataController: AppRichLinkMetadata.productionController,
             maximumMetadataCards: 3,
             fillsWidth: false,
+            messageReferences: messageReferences,
             openLink: openLink
         )
     }
