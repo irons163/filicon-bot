@@ -269,7 +269,7 @@ struct ConversationSidebarRow: View {
                 subtitle: conversation.messages.last?.text ?? "",
                 date: conversation.messages.last?.createdAt,
                 selected: model.route == .conversation(conversation.id),
-                isWorking: model.running.contains(conversation.id)
+                isWorking: model.isConversationWorking(conversation.id)
             ) { PetAvatarImage(pet: .codex).padding(1) }
         }
         .buttonStyle(.plain)

@@ -1,5 +1,11 @@
 # 協作能力核對紀錄（更新至 2026-09-26）
 
+## 同儕聊天室忙碌與取消連動（2026-09-26）
+
+同儕 incoming 保存後，以來源 conversation／live session 建立暫時執行關聯。列表、標題及輸入列共用忙碌判斷；不偽造 foreground running。背景委派期間拒絕競爭送出、重新產生及模型同步；在收件人聊天室按停止會取消來源委派，刪除收件人聊天室也先取消，避免晚到結果重建聊天室。每次 wake 收尾與整條鏈 cleanup 依 session 清除關聯。
+
+直接整合測試擴充至 11 種情況，新增從收件人聊天停止／刪除、忙碌競爭操作與關聯清理驗證。peer-busy-focused.log、peer-busy-full.log 完整非並行回歸及 peer-busy-native.log 原生建置皆 exit 0；封裝與 deep strict 簽章通過。未重啟使用者 App／Xcode。補齊上一節的背景忙碌／停止缺口；投影保存失敗恢復、互動媒體卡與原版全域唯一代理人聊天仍未完成。
+
 ## 綁定直接聊天的同儕文字投影（2026-09-26）
 
 AppModel 的直接委派 drain 已接 onPeerMessage。投影核對目前帳號 generation、起始 binding、live session ID、canonical delivery 的 chain／origin／寄收件人及原文；發布對照 canonical publication，純文字 fallback 對照 completed response。沒有從模型名稱猜身份。收件人是原聊天代理人時回到原聊天，其他代理人使用 AgentConversationStore 的 account／origin／agent 穩定 context ID，另建持久綁定的聊天；不挪用任意同名或其他既有聊天、不自動切換 selection。

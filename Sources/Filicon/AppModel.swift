@@ -268,6 +268,21 @@ final class AppModel: ObservableObject {
     private var agentMessagingSessions: [UUID: AgentMessagingSession] = [:]
     private var directMessagingScopes: Set<UUID> = []
     private var directMessagingBindings: [UUID: DirectConversationAgentBinding] = [:]
+    private struct DirectPeerExecution {
+        let originID: UUID
+        let sessionID: UUID
+    }
+    @Published private var directPeerExecutions: [UUID: DirectPeerExecution] = [:]
+
+    func isConversationWorking(_ id: UUID) -> Bool {
+        running.contains(id) || directPeerExecutions[id] != nil
+    }
+
+    private func clearDirectPeerExecutions(originID: UUID, sessionID: UUID) {
+        directPeerExecutions = directPeerExecutions.filter {
+            $0.value.originID != originID || $0.value.sessionID != sessionID
+        }
+    }
     @Published private(set) var mailboxSecretCards: [UUID: AgentSecretRequestCardModel] = [:]
     private struct MailboxSecretContext {
         let incomingID: UUID
@@ -713,7 +728,7 @@ final class AppModel: ObservableObject {
 
     @discardableResult
     func syncAgentModel(conversationID id: UUID) async -> Bool {
-        guard isBootstrapped, !agentMessagingAccountTransition, !running.contains(id),
+        guard isBootstrapped, !agentMessagingAccountTransition, !isConversationWorking(id),
               !synchronizingAgentConversations.contains(id), let agentService,
               let original = conversations.first(where: { $0.id == id }),
               let binding = original.agentBinding,
@@ -725,7 +740,7 @@ final class AppModel: ObservableObject {
         guard let profile = await agentService.profile(id: binding.agentID), profile.archivedAt == nil,
               generation == autoReviewAccountGeneration, !agentMessagingAccountTransition,
               binding.accountID == (settings.accountScope ?? "local"),
-              !running.contains(id), let ci = conversations.firstIndex(where: { $0.id == id }),
+              !isConversationWorking(id), let ci = conversations.firstIndex(where: { $0.id == id }),
               conversations[ci].agentBinding == binding else {
             errorMessage = l10n("The selected agent is unavailable.")
             return false
@@ -984,6 +999,7 @@ final class AppModel: ObservableObject {
     }
 
     func deleteConversation(id: UUID) {
+        if let peer = directPeerExecutions[id] { cancelConversationWork(peer.originID) }
         invalidateDirectSecrets(conversationID: id)
         cancelDirectMessaging(conversationID: id)
         if running.contains(id) {
@@ -1292,7 +1308,7 @@ final class AppModel: ObservableObject {
 
     func send() {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard isBootstrapped, (!text.isEmpty || !pendingAttachments.isEmpty), let id = selection, !running.contains(id), conversations.contains(where: { $0.id == id }) else { return }
+        guard isBootstrapped, (!text.isEmpty || !pendingAttachments.isEmpty), let id = selection, !isConversationWorking(id), conversations.contains(where: { $0.id == id }) else { return }
         guard !synchronizingAgentConversations.contains(id) else { return }
         guard let conversation = selectedConversation else { return }
         if !pendingAttachments.isEmpty, let attachmentError = selectedModelAttachmentError {
@@ -1487,7 +1503,7 @@ final class AppModel: ObservableObject {
     func resend(messageID: UUID) {
         guard isBootstrapped,
               let conversationID = selection,
-              !running.contains(conversationID),
+              !isConversationWorking(conversationID),
               conversations.first(where: { $0.id == conversationID })?.messages.contains(where: {
                   $0.id == messageID && $0.role == .assistant && $0.agentMessageSource == nil && [.failed, .cancelled].contains($0.deliveryStatus)
               }) == true else { return }
@@ -2062,7 +2078,11 @@ final class AppModel: ObservableObject {
                     let response = conversations.first(where: { $0.id == id })?.messages
                         .filter { ids.contains($0.id) }.map(\.text).joined(separator: "\n") ?? ""
                     await messaging.remember(agentID: agentIdentity.agentID, messages: requestMessages, response: response)
-                    try await messaging.drain(onPeerMessage: { [weak self] source, message in
+                    try await messaging.drain(onAgentChange: { [weak self] agentID in
+                        if agentID == nil {
+                            await self?.clearDirectPeerExecutions(originID: id, sessionID: messaging.id)
+                        }
+                    }, onPeerMessage: { [weak self] source, message in
                         guard let self else { throw CancellationError() }
                         try await self.validateDirectDelegation(conversationID: id, binding: agentBinding,
                             account: accountScope, generation: publicationGeneration,
@@ -2085,6 +2105,7 @@ final class AppModel: ObservableObject {
                 do { try await messaging.close() }
                 catch { errorMessage = error.localizedDescription }
                 await cancelAgentMessageTools(scopeID: id)
+                clearDirectPeerExecutions(originID: id, sessionID: messaging.id)
                 agentMessagingSessions[id] = nil
                 directMessagingScopes.remove(id)
                 directMessagingBindings[id] = nil
@@ -2139,6 +2160,10 @@ final class AppModel: ObservableObject {
 
     func cancel() {
         guard isBootstrapped, let selection else { return }
+        cancelConversationWork(directPeerExecutions[selection]?.originID ?? selection)
+    }
+
+    private func cancelConversationWork(_ selection: UUID) {
         invalidateDirectSecrets(conversationID: selection)
         cancelDirectMessaging(conversationID: selection)
         turnTasks[selection]?.cancel()
@@ -4256,6 +4281,9 @@ final class AppModel: ObservableObject {
         do {
             try await persistOrThrow(conversationID: destination)
             try checkScope()
+            if source.kind == .incoming && destination != origin {
+                directPeerExecutions[destination] = .init(originID: origin, sessionID: sessionID)
+            }
         } catch {
             // Preserve a committed canonical mailbox receipt for later recovery.
             // Never undo other messages or recreate a deleted destination.

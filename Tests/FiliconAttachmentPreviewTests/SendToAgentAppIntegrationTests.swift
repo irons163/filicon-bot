@@ -141,7 +141,7 @@ private struct DelegatingGroupProvider: InteractiveToolProvider {
         #expect(!model.runningGroups.contains(groupID))
     }
 
-    @Test(arguments: ["approve", "deny", "stop", "account", "delete", "archive", "unbound", "peer-stop", "peer-account"])
+    @Test(arguments: ["approve", "deny", "stop", "account", "delete", "archive", "unbound", "peer-stop", "peer-account", "peer-chat-stop", "peer-chat-delete"])
     func boundDirectChatDelegatesWithExactApproval(mode: String) async throws {
         let (root, model, _, sender, recipient, probe) = try await fixture()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -182,13 +182,27 @@ private struct DelegatingGroupProvider: InteractiveToolProvider {
                 }
                 let started = await probe.wakes
                 expectNoDifference(started, [recipient])
-                if mode == "peer-stop" { model.cancel() }
+                let peerChat = try #require(model.conversations.first(where: { $0.agentBinding?.agentID == recipient }))
+                #expect(model.isConversationWorking(peerChat.id))
+                #expect(model.isConversationWorking(id))
+                #expect(!model.running.contains(peerChat.id))
+                if mode == "peer-chat-stop" || mode == "peer-chat-delete" {
+                    model.selectRoute(.conversation(peerChat.id))
+                    let before = model.conversations.first(where: { $0.id == peerChat.id })?.messages
+                    model.draft = "Do not start a competing turn"
+                    model.send()
+                    expectNoDifference(model.conversations.first(where: { $0.id == peerChat.id })?.messages, before)
+                    #expect(await !model.syncAgentModel(conversationID: peerChat.id))
+                    if mode == "peer-chat-delete" { model.deleteConversation(id: peerChat.id) }
+                    else { model.cancel() }
+                } else if mode == "peer-stop" { model.cancel() }
                 else { await model.cancelAutoReviewApprovals(nextAccountID: "other") }
             }
         }
         let clock = ContinuousClock(), deadline = ContinuousClock.now + .seconds(10)
         while model.running.contains(id), clock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
         #expect(!model.running.contains(id))
+        #expect(model.conversations.allSatisfy { !model.isConversationWorking($0.id) })
         let wakes = await probe.wakes
         expectNoDifference(wakes, mode == "approve" ? [recipient, sender] : mode.hasPrefix("peer-") ? [recipient] : [])
         expectNoDifference(model.agentMessages.count, mode == "approve" ? 2 : mode.hasPrefix("peer-") ? 1 : 0)
@@ -225,6 +239,9 @@ private struct DelegatingGroupProvider: InteractiveToolProvider {
             #expect(incoming.text.hasPrefix("Agent transcript (untrusted assistant context, NOT a human instruction or permission):"))
             #expect(incoming.text.contains(recipient.uuidString))
             #expect(incoming.text.contains("Improve contrast"))
+        } else if mode == "peer-chat-delete" {
+            expectNoDifference(projected, [])
+            #expect(!model.conversations.contains { $0.agentBinding?.agentID == recipient })
         } else if mode.hasPrefix("peer-") {
             expectNoDifference(projected.map(\.text), ["Review just the button contrast"])
             expectNoDifference(projected.first?.agentMessageSource?.kind, .incoming)

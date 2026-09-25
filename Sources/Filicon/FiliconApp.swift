@@ -894,7 +894,7 @@ private struct ChatConfigurationPopover: View {
                 Button(l10n("Sync agent model")) {
                     Task { await model.syncAgentModel(conversationID: conversation.id) }
                 }
-                .disabled(model.running.contains(conversation.id)
+                .disabled(model.isConversationWorking(conversation.id)
                     || model.synchronizingAgentConversations.contains(conversation.id))
             }
             Picker(l10n("Reasoning"), selection: Binding(
@@ -962,7 +962,7 @@ struct ChatDetailView: View {
                 title: conversation.title == "New conversation" ? l10n("New Conversation") : conversation.title,
                 providerName: model.descriptors.first(where: { $0.id == conversation.providerID })?.displayName ?? conversation.providerID.rawValue,
                 modelName: model.availableModels.first(where: { $0.id == conversation.modelID })?.displayName ?? conversation.modelID.rawValue,
-                isWorking: model.running.contains(conversation.id),
+                isWorking: model.isConversationWorking(conversation.id),
                 isLoadingCatalog: model.isLoadingModels,
                 onConfiguration: { showingConfiguration.toggle() },
                 onFind: openFind,
@@ -1123,7 +1123,7 @@ struct ChatDetailView: View {
                     .padding(.horizontal, 7)
                     .padding(.vertical, 6)
                     .frame(minHeight: 34, maxHeight: 54)
-                    .onSubmit { if !model.running.contains(conversation.id) { model.send() } }
+                    .onSubmit { if !model.isConversationWorking(conversation.id) { model.send() } }
                     .help(l10n("Type / after a space to reference an enabled workflow"))
                 VoiceComposerControls(
                     controller: model.voiceComposer,
@@ -1131,7 +1131,7 @@ struct ChatDetailView: View {
                     supportsAudio: model.selectedModelSupportsAudio,
                     unsupportedAudioHelp: model.selectedModelAudioError
                 )
-                if model.running.contains(conversation.id) {
+                if model.isConversationWorking(conversation.id) {
                     FiliconIconButton(label: l10n("Stop"), systemName: "stop.fill", size: 32, isDestructive: true, action: model.cancel)
                 } else {
                     FiliconIconButton(
@@ -1479,7 +1479,7 @@ struct TranscriptMessageView: View {
             ForEach(message.transcriptCards) { card in
                 if let secret = model.directSecretCard(conversationID: conversation.id, messageID: message.id, cardID: card.id) {
                     AgentSecretRequestCard(model: secret)
-                        .disabled(model.running.contains(conversation.id))
+                        .disabled(model.isConversationWorking(conversation.id))
                 } else if let question = model.directQuestionForDisplay(conversationID: conversation.id, messageID: message.id, cardID: card.id) {
                     GroupQuestionCard(card: question,
                         enabled: model.canAnswerDirectQuestion(conversationID: conversation.id, messageID: message.id, cardID: card.id)) { answer in
