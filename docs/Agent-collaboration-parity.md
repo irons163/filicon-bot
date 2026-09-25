@@ -1,5 +1,9 @@
 # 協作能力核對紀錄（更新至 2026-09-26）
 
+## 解鎖後完整回歸補驗（2026-09-26）
+
+唯讀確認 IOConsoleLocked=No 後，在 c606a21 執行完整非並行 swift test，direct-secret-unlocked-full.log exit 0。包含 DirectSecretAppTests 的 13 個情況（新增 dismissal-failure），關閉下方直接聊天憑證接線最後 UI 調整及取消回條重試的完整回歸缺口。未降低檔案保護、未重啟使用者 App／Xcode、未操作真實 Keychain。整體 parity 仍未完成：重新核對 startTurn，綁定代理人的直接聊天目前僅註冊 SendMessage，尚未接入 AgentMessagingSession 的 SendToAgent 與管理工具；不可將群組／信箱支援推論為單獨聊天也已支援。
+
 ## 取消憑證請求的回條重試（2026-09-26）
 
 安全卡片新增 dismissalReceiptFailed：取消先清空輸入並關閉 submission，保存取消回條失敗時保留不含憑證的重試動作，不重新開啟 SecureField、不再次呼叫 close／submit。重複取消與處理中的重試不重入；Stop／失效後晚到的成功或失敗不重新開啟卡片。實際寫入／回條提交期間停用 Dismiss，避免取消與成功提交競爭。取消保存中使用「儲存中」而非「儲存憑證」；失敗說明已加入七語系。

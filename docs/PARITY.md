@@ -1,5 +1,7 @@
 # Filicon / Grok Bot 0.18 功能 parity matrix（current implementation）
 
+解鎖完整補驗（2026-09-26）：c606a21 的完整非並行 direct-secret-unlocked-full.log exit 0，包含直接憑證 13 個整合情況，關閉下方兩輪因鎖定留下的完整回歸缺口。未操作真實憑證／外部登入。另確認綁定代理人的直接聊天只接 SendMessage，SendToAgent／管理工具仍未接線，整體維持 partial。
+
 憑證取消回條重試（2026-09-26）：取消保存失敗可重試，不重開輸入、不重寫憑證；重複取消與失效後晚到結果不重入。七語系明暗色畫面及 34 項聚焦測試、原生建置與封裝／簽章通過。新增 SQLite 取消失敗整合案例與完整回歸仍待螢幕解鎖補驗，不變更整體 partial 判定。
 
 直接憑證接線（2026-09-26）：綁定代理人的直接聊天已串接 SendMessage secret-request、安全輸入、實際 submission 回條保存與新回合恢復；限既有唯一 Slack／Discord bot token 目的地。12 個隔離生命週期案例及首輪完整回歸通過，最終原生建置／封裝通過；最後 UI 調整後完整重驗遇 macOS 鎖定及受保護 fixture EPERM，待解鎖補驗，不能宣稱最終全綠。未進行真實 Keychain／外部登入驗收，其他平台／欄位仍未完成。
