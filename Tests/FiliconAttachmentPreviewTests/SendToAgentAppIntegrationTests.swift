@@ -39,7 +39,9 @@ private struct DelegatingGroupProvider: InteractiveToolProvider {
                         let result = try await executeTool(.init(id: "delegate", name: "SendToAgent", argumentsJSON: JSONEncoder().encode(args)))
                         text = result.isError ? "Delegation was not sent" : (inbound ? "Design review sent" : "Queued design review")
                     }
-                    continuation.yield(.textDelta(text)); continuation.yield(.completed(.stop)); continuation.finish()
+                    let report = try await executeTool(.init(id: "report", name: "SendMessage", argumentsJSON: JSONEncoder().encode(["text": text])))
+                    #expect(!report.isError)
+                    continuation.yield(.completed(.stop)); continuation.finish()
                 } catch { continuation.finish(throwing: error) }
             }
             continuation.onTermination = { _ in task.cancel() }

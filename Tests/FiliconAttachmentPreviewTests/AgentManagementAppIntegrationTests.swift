@@ -1561,7 +1561,9 @@ private actor ManagementWakeProbe {
                     let result = try await execute(.init(id: "self-update", name: "update_state",
                         argumentsJSON: Data(#"{"target":"profile","action":"set","name":"Project engineer","description":"Implementation and accessibility"}"#.utf8)))
                     #expect(!result.isError)
-                    return "Profile updated after user approval"
+                    let report = try await execute(.init(id: "report", name: "SendMessage", argumentsJSON: JSONEncoder().encode(["text": "Profile updated after user approval"])))
+                    #expect(!report.isError)
+                    return "PRIVATE FINAL"
                 }
                 #expect(persona.contains("Your name is Project engineer,"))
                 #expect(persona.contains("Implementation and accessibility"))
@@ -1572,7 +1574,9 @@ private actor ManagementWakeProbe {
             #expect(!request.messages.map(\.text).joined().contains("ENGINEER_PRIVATE_PERSONA"))
             let metadata = request.messages.first { $0.text.hasPrefix("Room metadata") }?.text ?? ""
             #expect(metadata.contains("Project engineer"))
-            return "The design review is complete"
+            let report = try await execute(.init(id: "report", name: "SendMessage", argumentsJSON: JSONEncoder().encode(["text": "The design review is complete"])))
+            #expect(!report.isError)
+            return "PRIVATE FINAL"
         })
         let run = Task { await model.sendGroupMessage(groupID: groupID, text: "Rename the engineer and then review the design together") }
         let approval = try await pending(model, tool: "update_state")

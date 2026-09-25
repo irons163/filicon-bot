@@ -37,6 +37,34 @@ private actor MessagingProbe {
     func context(_ value: ToolContext) { contexts.append(value) }
 }
 
+private struct MailboxVoiceProvider: AIProvider {
+    let mode: String
+    var descriptor: ProviderDescriptor {
+        .init(id: "messaging-test", displayName: "Voice fixture", requiresAPIKey: false,
+              supportsToolCalling: mode != "text-only")
+    }
+    func models() async throws -> [AIModel] { [.init(id: "test")] }
+    func stream(_ request: InferenceRequest) -> AsyncThrowingStream<InferenceEvent, any Error> {
+        AsyncThrowingStream { continuation in
+            do {
+                if !["text-only", "silent", "unconfigured"].contains(mode), request.toolExchanges.isEmpty {
+                    #expect(request.tools.contains { $0.name == "SendMessage" && $0.description?.contains("only voice") == true })
+                    let call = try NormalizedToolCall(id: "voice", name: mode == "none" ? "fixture_read" : "SendMessage",
+                        argumentsJSON: Data((mode == "none" ? "{}" : mode == "failed" ? #"{"text":""}"# : #"{"text":"Published result"}"#).utf8))
+                    continuation.yield(.textDelta("PRIVATE INTERMEDIATE DRAFT"))
+                    continuation.yield(.toolCallStarted(id: call.id, name: call.name))
+                    continuation.yield(.toolCallCompleted(call))
+                    continuation.yield(.completed(.toolUse))
+                } else {
+                    continuation.yield(.textDelta(["text-only", "unconfigured"].contains(mode) ? "Plain model answer" : "PRIVATE FINAL DRAFT"))
+                    continuation.yield(.completed(.stop))
+                }
+                continuation.finish()
+            } catch { continuation.finish(throwing: error) }
+        }
+    }
+}
+
 private struct MessagingReadTool: ToolExecutor {
     let probe: MessagingProbe
     let descriptor = ToolDescriptor(name: "fixture_read", inputSchema: Data(#"{"type":"object","properties":{},"additionalProperties":false}"#.utf8))
@@ -57,6 +85,33 @@ private func prioritySendCall(_ target: UUID, _ text: String, id: ToolCallID = "
 
 @Suite("SendToAgent messaging session", .timeLimit(.minutes(1)))
 struct AgentMessagingSessionTests {
+    @Test(arguments: ["none", "silent", "published", "failed", "text-only", "unconfigured"])
+    func onlyExplicitPublicationsReachMailboxAndProjection(mode: String) async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        await f.registry.register(MailboxVoiceProvider(mode: mode))
+        let contextURL = f.root.appending(path: "private-context.json")
+        let session = AgentMessagingSession(originConversationID: f.origin, agents: f.agents,
+            messenger: f.messenger, registry: f.registry,
+            coordinator: mode == "unconfigured" ? TurnCoordinator(registry: f.registry) : f.coordinator,
+            conversations: try AgentConversationStore(url: contextURL),
+            authorizePublication: { _, _, _, _, _ in })
+        try await session.enqueueUserMessage(senderID: f.sender.id, recipientID: f.recipient.id, text: "Report the result")
+        try await session.drain(onUpdate: { await f.probe.update($0) })
+        try await session.close()
+        let saved = await f.messenger.allMessages(), projected = await f.probe.messages
+        let delivery = try #require(saved.first?.delivery)
+        expectNoDifference(delivery.state, .completed)
+        let usesPlainText = ["text-only", "unconfigured"].contains(mode)
+        expectNoDifference(delivery.response, usesPlainText ? "Plain model answer" : mode == "published" ? "Published result" : "")
+        expectNoDifference(delivery.publications?.map(\.text) ?? [], mode == "published" ? ["Published result"] : [])
+        #expect(!projected.contains { $0.text.contains("PRIVATE") })
+        #expect(!String(decoding: try Data(contentsOf: f.root.appending(path: "messages.json")), as: UTF8.self).contains("PRIVATE"))
+        #expect(!String(decoding: try Data(contentsOf: contextURL), as: UTF8.self).contains("PRIVATE"))
+        if usesPlainText { #expect(projected.contains { $0.text == "Plain model answer" }) }
+        else if mode == "silent" { #expect(projected.allSatisfy { $0.text.isEmpty && $0.toolActivities.isEmpty }) }
+        else { #expect(projected.contains { !$0.toolActivities.isEmpty && $0.text.isEmpty }) }
+    }
+
     @Test(arguments: [false, true]) func groupCloudReferenceAdaptersPreserveScope(background: Bool) async throws {
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
         let groups = try GroupService(agents: f.agents, storeURL: f.root.appending(path: "groups.json"))

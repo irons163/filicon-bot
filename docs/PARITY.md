@@ -1,5 +1,7 @@
 # Filicon / Grok Bot 0.18 功能 parity matrix（current implementation）
 
+正式發布界線（2026-09-25）：有 SendMessage 的群組／背景群組／信箱不再顯示未發布的 final-text，工具狀態也不投影中途草稿；保存摘要與記憶整理只採用正式發布。純文字模型或未配置工具執行器保留正常回答途徑。此項取代舊記錄的 SendMessage final fallback 差異，直接聊天發布入口及其餘 AGENT-02 差異仍 partial；驗證詳見協作核對紀錄。
+
 雲端 ID 校正（2026-09-25）：以原版 trimmed opaque ID 契約取代上一批 bc- 英數限制；Unicode／特殊字元編碼為固定 cursor.com 下單一路徑片段。仍保留 canonical summary 8,000-byte 預算、控制字元及純 dot-segment 拒絕，不接外部認證／title resolver。此項取代下方「只接受有界 bc- ID」的描述。聚焦測試、原生建置、封裝與簽章通過；解鎖後完整回歸 exit 0，同時關閉前輪雲端卡片的待補驗缺口。整體仍 partial。
 
 雲端引用卡片（2026-09-25）：有保存回條的一般／背景群組及独立信箱已接入 `SendMessage type:cursor-agent` 與 `bcId`／reply_to，沿用發布額度、身份、保存和引用限制。七語言卡片點擊開啟固定 cursor.com 網址，不在發布時查詢或啟動遠端工作。只接受有界 bc- ID，不支援自訂網站 base、遠端 title resolver 或直接聊天入口；不是雲端帳號完整驗收。此項取代「完全缺少供應商 cloud-agent 卡」的歷史描述，其餘 AGENT-02 差異仍 partial，詳見協作核對紀錄。

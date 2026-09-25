@@ -46,7 +46,8 @@ private struct CollaborationFileProvider: InteractiveToolProvider {
                         #expect(!result.isError)
                         text = round == 1 ? "Implementation ready for design review." : "Contrast corrected based on the designer's feedback."
                     }
-                    continuation.yield(.textDelta(text))
+                    let report = try await executeTool(.init(id: ToolCallID(rawValue: "report-\(suffix)"), name: "SendMessage", argumentsJSON: JSONEncoder().encode(["text": text])))
+                    #expect(!report.isError)
                     continuation.yield(.completed(.stop))
                     continuation.finish()
                 } catch { continuation.finish(throwing: error) }
@@ -75,7 +76,8 @@ private struct GroupWriteProvider: InteractiveToolProvider {
                     // Even a model ignoring `never` must be blocked by the real executor.
                     let arguments = try JSONEncoder().encode(["root": root.path, "path": "created.txt", "content": "approved fixture write"])
                     let result = try await executeTool(.init(id: "write", name: "local__write_file", argumentsJSON: arguments))
-                    continuation.yield(.textDelta(result.isError ? "No file written." : "Fixture written successfully."))
+                    let report = try await executeTool(.init(id: "report", name: "SendMessage", argumentsJSON: JSONEncoder().encode(["text": result.isError ? "No file written." : "Fixture written successfully."])))
+                    #expect(!report.isError)
                     continuation.yield(.completed(.stop))
                     continuation.finish()
                 } catch { continuation.finish(throwing: error) }
@@ -100,10 +102,22 @@ private struct ResumeLiveProvider: InteractiveToolProvider {
         }
     }
     func stream(_ request: InferenceRequest, executeTool: @escaping @Sendable (NormalizedToolCall) async throws -> NormalizedToolResult) -> AsyncThrowingStream<InferenceEvent, Error> {
-        guard live else { return stream(request) }
+        guard live else {
+            return AsyncThrowingStream { continuation in
+                let task = Task {
+                    do {
+                        let text = "Folder authorization is confirmed, but this workspace is read-only. No project files were read or written."
+                        let result = try await executeTool(.init(id: "diagnostic-report", name: "SendMessage", argumentsJSON: JSONEncoder().encode(["text": text])))
+                        #expect(!result.isError)
+                        continuation.yield(.completed(.stop)); continuation.finish()
+                    } catch { continuation.finish(throwing: error) }
+                }
+                continuation.onTermination = { _ in task.cancel() }
+            }
+        }
         let bounded = InferenceRequest(conversationID: request.conversationID, modelID: "gpt-5.6-sol",
             messages: request.messages,
-            tools: request.tools.filter { ["local__workspace_folders", "local__write_file"].contains($0.name.rawValue) },
+            tools: request.tools.filter { ["local__workspace_folders", "local__write_file", "SendMessage"].contains($0.name.rawValue) },
             toolExchanges: request.toolExchanges)
         return CodexCLIProvider().stream(bounded) { call in
             let arguments = try JSONSerialization.jsonObject(with: call.argumentsJSON) as? [String: Any]
@@ -113,7 +127,11 @@ private struct ResumeLiveProvider: InteractiveToolProvider {
                 && arguments?["path"] as? String == "created.txt"
                 && arguments?["content"] as? String == "approved fixture write"
                 && arguments?["replace"] as? Bool != true
-            guard discovery || fixtureWrite else {
+            let publication = call.name.rawValue == "SendMessage"
+                && Set(arguments?.keys.map { $0 } ?? []).isSubset(of: ["type", "text", "content"])
+                && (arguments?["type"] == nil || arguments?["type"] as? String == "text")
+                && (arguments?["text"] is String || arguments?["content"] is String)
+            guard discovery || fixtureWrite || publication else {
                 Issue.record("Live regression attempted an operation outside its isolated fixture")
                 return .init(callID: call.id, content: [.text("Outside this test's permitted operation. No action ran.")], isError: true)
             }
@@ -136,12 +154,14 @@ private struct GroupApprovalProvider: AIProvider {
                     continuation.yield(.toolCallStarted(id: call.id, name: call.name))
                     continuation.yield(.toolCallCompleted(call))
                     continuation.yield(.completed(.toolUse))
-                } else {
+                } else if request.toolExchanges.count == 1 {
                     let result = request.toolExchanges[0].results[0]
                     if !result.isError { #expect(result.wireText.contains("fixture-only")) }
-                    continuation.yield(.textDelta(result.isError ? "No file read." : "Fixture read successfully."))
-                    continuation.yield(.completed(.stop))
-                }
+                    let call = try NormalizedToolCall(id: "report", name: "SendMessage", argumentsJSON: JSONEncoder().encode(["text": result.isError ? "No file read." : "Fixture read successfully."]))
+                    continuation.yield(.toolCallStarted(id: call.id, name: call.name))
+                    continuation.yield(.toolCallCompleted(call))
+                    continuation.yield(.completed(.toolUse))
+                } else { continuation.yield(.completed(.stop)) }
                 continuation.finish()
             } catch { continuation.finish(throwing: error) }
         }
@@ -162,7 +182,8 @@ private struct InteractiveGroupApprovalProvider: InteractiveToolProvider {
                     let call = try NormalizedToolCall(id: "group-local-read", name: "local__read_file", argumentsJSON: arguments)
                     let result = try await executeTool(call)
                     if !result.isError { #expect(result.wireText.contains("fixture-only")) }
-                    continuation.yield(.textDelta(result.isError ? "No file read." : "Fixture read successfully."))
+                    let report = try await executeTool(.init(id: "report", name: "SendMessage", argumentsJSON: JSONEncoder().encode(["text": result.isError ? "No file read." : "Fixture read successfully."])))
+                    #expect(!report.isError)
                     continuation.yield(.completed(.stop))
                     continuation.finish()
                 } catch { continuation.finish(throwing: error) }
@@ -175,6 +196,17 @@ private struct InteractiveGroupApprovalProvider: InteractiveToolProvider {
 @Suite("Group tool approval integration", .timeLimit(.minutes(1)))
 @MainActor
 struct GroupToolApprovalIntegrationTests {
+    @Test func staleDiagnosticFixturePublishesThroughTheSameToolBoundary() async throws {
+        let (root, model, groupID) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        await model.registry.register(ResumeLiveProvider(root: root))
+        await model.sendGroupMessage(groupID: groupID, text: "Diagnostic only")
+        let messages = model.groupMessages[groupID] ?? []
+        expectNoDifference(messages.filter { $0.senderID != nil && !$0.text.isEmpty }.map(\.text),
+            ["Folder authorization is confirmed, but this workspace is read-only. No project files were read or written."])
+        expectNoDifference(messages.flatMap(\.toolActivities).map(\.name), ["SendMessage"])
+    }
+
     @Test func engineerAndDesignerPerformApprovedFileHandoffsInTheExistingGroup() async throws {
         let (root, model, groupID) = try await fixture()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -218,8 +250,10 @@ struct GroupToolApprovalIntegrationTests {
         expectNoDifference(approvals, [.writeFile, .readFile, .writeFile, .readFile])
         let replies = (model.groupMessages[groupID] ?? []).filter { $0.senderID != nil && !$0.text.isEmpty }
         expectNoDifference(replies.map(\.senderID), [engineer.id, designer.id, engineer.id, designer.id])
-        expectNoDifference(replies.map { $0.toolActivities.last?.name }, ["local__write_file", "local__read_file", "local__write_file", "local__read_file"])
-        #expect(replies.allSatisfy { $0.toolActivities.allSatisfy { $0.status == .succeeded } })
+        let fileActivities = (model.groupMessages[groupID] ?? []).flatMap(\.toolActivities)
+            .filter { ["local__write_file", "local__read_file"].contains($0.name) }
+        expectNoDifference(fileActivities.map(\.name), ["local__write_file", "local__read_file", "local__write_file", "local__read_file"])
+        expectNoDifference(fileActivities.map(\.status), [.succeeded, .succeeded, .succeeded, .succeeded])
         expectNoDifference(replies.last?.text, "Design review passed after inspecting the corrected file.")
         #expect(!model.runningGroups.contains(groupID))
         #expect(model.errorMessage == nil)
@@ -293,7 +327,7 @@ struct GroupToolApprovalIntegrationTests {
             #expect(!FileManager.default.fileExists(atPath: destination.path))
         }
         expectNoDifference(model.groupMessages[groupID]?.last?.text, allow ? "Fixture written successfully." : "No file written.")
-        expectNoDifference(model.groupMessages[groupID]?.last?.toolActivities.last?.status, allow ? .succeeded : .failed)
+        expectNoDifference(model.groupMessages[groupID]?.flatMap(\.toolActivities).first { $0.name == "local__write_file" }?.status, allow ? .succeeded : .failed)
         #expect(model.pendingAutoReviewApprovals.isEmpty)
         #expect(model.pendingToolApprovals.isEmpty)
     }
@@ -303,7 +337,7 @@ struct GroupToolApprovalIntegrationTests {
         defer { try? FileManager.default.removeItem(at: root) }
         await model.sendGroupMessage(groupID: groupID, text: "Create the requested fixture file.")
         expectNoDifference(model.groupMessages[groupID]?.last?.text, "No file written.")
-        expectNoDifference(model.groupMessages[groupID]?.last?.toolActivities.last?.status, .failed)
+        expectNoDifference(model.groupMessages[groupID]?.flatMap(\.toolActivities).first { $0.name == "local__write_file" }?.status, .failed)
         #expect(!FileManager.default.fileExists(atPath: root.appending(path: "created.txt").path))
         #expect(model.pendingAutoReviewApprovals.isEmpty)
         #expect(model.pendingToolApprovals.isEmpty)
@@ -379,7 +413,7 @@ struct GroupToolApprovalIntegrationTests {
         model.resolveLocalToolApproval(id: local.id, allowed: true)
         await run.value
         expectNoDifference(model.groupMessages[groupID]?.last?.text, "Fixture read successfully.")
-        expectNoDifference(model.groupMessages[groupID]?.last?.toolActivities.first?.status, .succeeded)
+        expectNoDifference(model.groupMessages[groupID]?.flatMap(\.toolActivities).first { $0.name == "local__read_file" }?.status, .succeeded)
         #expect(model.pendingWorkspaceFolders.isEmpty)
         let roots = await model.localToolRuntime.workspaceStore.authorizations().map(\.path)
         expectNoDifference(roots, [root.path])
@@ -397,7 +431,7 @@ struct GroupToolApprovalIntegrationTests {
         #expect(model.pendingToolApprovals.isEmpty)
         #expect(await model.localToolRuntime.workspaceStore.authorizations().isEmpty)
         expectNoDifference(model.groupMessages[groupID]?.last?.text, "No file read.")
-        expectNoDifference(model.groupMessages[groupID]?.last?.toolActivities.first?.status, .failed)
+        expectNoDifference(model.groupMessages[groupID]?.flatMap(\.toolActivities).first { $0.name == "local__read_file" }?.status, .failed)
     }
 
     @Test(arguments: [false, true]) func stoppingFolderSelectionRejectsLateSelection(interactive: Bool) async throws {
@@ -438,7 +472,7 @@ struct GroupToolApprovalIntegrationTests {
         await run.value
         #expect(model.errorMessage == nil)
         #expect(model.groupMessages[groupID]?.last?.text == "Fixture read successfully.")
-        #expect(model.groupMessages[groupID]?.last?.toolActivities.first?.status == .succeeded)
+        expectNoDifference(model.groupMessages[groupID]?.flatMap(\.toolActivities).first { $0.name == "local__read_file" }?.status, .succeeded)
         #expect(!model.runningGroups.contains(groupID))
         #expect(model.pendingAutoReviewApprovals.isEmpty)
         await model.resolveGroupApproval(approval, groupID: groupID, approve: true)

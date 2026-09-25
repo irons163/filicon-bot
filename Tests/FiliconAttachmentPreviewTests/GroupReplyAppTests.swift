@@ -64,6 +64,12 @@ private struct GroupReplyReceiptLoopProvider: AIProvider {
     }
 }
 
+private func publishReplyFixture(_ text: String, using execute: @Sendable (NormalizedToolCall) async throws -> NormalizedToolResult) async throws -> String {
+    let result = try await execute(.init(id: "fixture-report", name: "SendMessage", argumentsJSON: JSONEncoder().encode(["text": text])))
+    #expect(!result.isError)
+    return "PRIVATE FINAL"
+}
+
 private struct GroupReplyAppProvider: InteractiveToolProvider {
     let descriptor = ProviderDescriptor(id: "group-reply-fixture", displayName: "Replies", requiresAPIKey: false)
     let run: @Sendable (InferenceRequest, @Sendable (NormalizedToolCall) async throws -> NormalizedToolResult) async throws -> String
@@ -95,7 +101,7 @@ private struct GroupReplyAppProvider: InteractiveToolProvider {
         let designer = try #require(await model.createAgent(name: "Designer", summary: "", instructions: "", providerID: "group-reply-fixture", modelID: "test"))
         #expect(await model.createGroup(name: "Team", summary: "", memberIDs: [engineer.id, designer.id]))
         let group = try #require(model.groups.first)
-        await model.registry.register(GroupReplyAppProvider { _, _ in "Design proposal" })
+        await model.registry.register(GroupReplyAppProvider { _, execute in try await publishReplyFixture("Design proposal", using: execute) })
         await model.sendGroupMessage(groupID: group.id, text: "@Designer propose a design")
         let original = try #require(model.groupMessages[group.id]?.first { $0.senderID == designer.id && $0.text == "Design proposal" })
         var images: [AttachmentMetadata] = []
@@ -166,13 +172,13 @@ private struct GroupReplyAppProvider: InteractiveToolProvider {
         var current = RoomMessage(groupID: group.id, senderID: nil, text: "Review the selected proposal")
         current.replyToMessageID = original.id
         let probe = GroupReplyAppProbe()
-        await model.registry.register(GroupReplyAppProvider { request, _ in
+        await model.registry.register(GroupReplyAppProvider { request, execute in
             _ = await probe.record(request)
             let quote = try #require(request.messages.first { $0.text.contains("The user selected this earlier message") })
             #expect(quote.text.contains(original.id.uuidString) && quote.text.contains("Unique old proposal"))
             #expect(quote.text.count < 3_000 && !quote.text.contains(original.text))
             #expect(quote.text.contains("omittedImageCount") && request.attachmentsByMessageID.isEmpty)
-            return "Reviewed"
+            return try await publishReplyFixture("Reviewed", using: execute)
         })
         let responder = GroupConversationResponder(groupID: group.id, registry: model.registry,
             coordinator: TurnCoordinator(registry: model.registry, toolCatalog: ToolCatalog()),
@@ -181,8 +187,12 @@ private struct GroupReplyAppProvider: InteractiveToolProvider {
         let history = [original] + middle + [current]
         let results = try await responder.respond(agent: agent, history: history,
             context: context,
-            onTools: { _ in }, onSavedPublication: { _ in nil })
-        expectNoDifference(results, ["Reviewed"])
+            onTools: { _ in }, onSavedPublication: { [current] publication in
+                expectNoDifference(publication.text, "Reviewed")
+                expectNoDifference(publication.replyToMessageID, current.id)
+                return nil
+            })
+        expectNoDifference(results, [])
         let requests = await probe.requests
         expectNoDifference(requests.count, 1)
     }
@@ -410,7 +420,7 @@ private struct GroupReplyAppProvider: InteractiveToolProvider {
         let designer = try #require(await model.createAgent(name: "Designer", summary: "", instructions: "", providerID: "group-reply-fixture", modelID: "test"))
         #expect(await model.createGroup(name: "Team", summary: "", memberIDs: [engineer.id, designer.id]))
         let group = try #require(model.groups.first)
-        await model.registry.register(GroupReplyAppProvider { _, _ in "Design proposal" })
+        await model.registry.register(GroupReplyAppProvider { _, execute in try await publishReplyFixture("Design proposal", using: execute) })
         await model.sendGroupMessage(groupID: group.id, text: "@Designer propose a layout")
         let original = try #require(model.groupMessages[group.id]?.first { $0.senderID == designer.id && $0.text == "Design proposal" })
         let address = try #require(original.shortAddress)
@@ -484,8 +494,9 @@ private struct GroupReplyAppProvider: InteractiveToolProvider {
         #expect(await model.createGroup(name: "Review team", summary: "", memberIDs: [engineer.id, designer.id]))
         let group = try #require(model.groups.first)
         let initial = GroupReplyAppProbe()
-        await model.registry.register(GroupReplyAppProvider { request, _ in
-            await initial.record(request) == 1 ? "Design proposal for review" : "PASS"
+        await model.registry.register(GroupReplyAppProvider { request, execute in
+            guard await initial.record(request) == 1 else { return "PASS" }
+            return try await publishReplyFixture("Design proposal for review", using: execute)
         })
         await model.sendGroupMessage(groupID: group.id, text: "@Designer propose a design")
         let source = try #require(model.groupMessages[group.id]?.first(where: { $0.senderID == designer.id && $0.text == "Design proposal for review" }))
@@ -702,7 +713,7 @@ private struct GroupReplyAppProvider: InteractiveToolProvider {
             }
             expectNoDifference(step, 2)
             #expect(request.messages.contains { $0.role == .system && $0.text.contains("answers or dismisses your saved question") })
-            return "Use the selected grid layout"
+            return try await publishReplyFixture("Use the selected grid layout", using: execute)
         })
         let first = try await groups.run(groupID: group.id,
             responder: GroupConversationResponder(groupID: group.id, registry: registry, coordinator: coordinator,
@@ -789,8 +800,9 @@ private struct GroupReplyAppProvider: InteractiveToolProvider {
         #expect(await model.createGroup(name: "Review team", summary: "", memberIDs: [engineer.id, designer.id]))
         let group = try #require(model.groups.first)
         let initial = GroupReplyAppProbe()
-        await model.registry.register(GroupReplyAppProvider { request, _ in
-            await initial.record(request) == 1 ? "Design proposal to discuss" : "PASS"
+        await model.registry.register(GroupReplyAppProvider { request, execute in
+            guard await initial.record(request) == 1 else { return "PASS" }
+            return try await publishReplyFixture("Design proposal to discuss", using: execute)
         })
         await model.sendGroupMessage(groupID: group.id, text: "@Designer propose a design")
         let original = try #require(model.groupMessages[group.id]?.first { $0.senderID == designer.id && $0.text == "Design proposal to discuss" })
@@ -844,12 +856,12 @@ private struct GroupReplyAppProvider: InteractiveToolProvider {
         #expect(restored.canAnswerGroupQuestion(pending))
         let askerID = try #require(question.senderID)
         let probe = GroupReplyAppProbe()
-        await restored.registry.register(GroupReplyAppProvider { request, _ in
+        await restored.registry.register(GroupReplyAppProvider { request, execute in
             _ = await probe.record(request)
             #expect(request.messages.first?.text.contains(askerID.uuidString) == true)
             #expect(request.messages.contains { $0.role == .system && $0.text.contains("not a tool approval") })
             #expect(request.attachmentsByMessageID.isEmpty)
-            return "Decision noted."
+            return try await publishReplyFixture("Decision noted.", using: execute)
         })
         let permission = await restored.localToolPermissionPolicy.effectivePermission(for: .writeFile)
         await restored.groupQuestionAnswered(pending, answer: answer)

@@ -339,9 +339,11 @@ private struct PlainScheduledAgentProvider: AIProvider {
         let (root, first, sender, recipient) = try await fixture()
         defer { try? FileManager.default.removeItem(at: root) }
         let probe = BackgroundProbe()
-        let provider = BackgroundAgentProvider { request, _ in
+        let provider = BackgroundAgentProvider { request, execute in
             await probe.record(request)
-            return "PERSISTED_REVIEW_RESULT"
+            let result = try await execute(.init(id: "report", name: "SendMessage", argumentsJSON: JSONEncoder().encode(["text": "PERSISTED_REVIEW_RESULT"])))
+            #expect(!result.isError)
+            return "PRIVATE FINAL"
         }
         await first.registry.register(provider)
         #expect(await first.sendAgentMessage(senderID: sender.id, recipientID: recipient.id, text: "First task"))
@@ -420,7 +422,9 @@ private struct PlainScheduledAgentProvider: AIProvider {
         await model.registry.register(BackgroundAgentProvider { _, execute in
             let args = try JSONEncoder().encode(["root": root.path, "path": "result.txt", "content": "approved result"])
             let result = try await execute(.init(id: "write", name: "local__write_file", argumentsJSON: args))
-            return result.isError ? "No write" : "Written"
+            let report = try await execute(.init(id: "report", name: "SendMessage", argumentsJSON: JSONEncoder().encode(["text": result.isError ? "No write" : "Written"])))
+            #expect(!report.isError)
+            return "PRIVATE FINAL"
         })
         #expect(await model.sendAgentMessage(senderID: sender.id, recipientID: recipient.id, text: "Write result.txt"))
         try await waitUntil { !model.pendingAutoReviewApprovals.isEmpty }

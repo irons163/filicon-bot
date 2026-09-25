@@ -1,5 +1,13 @@
 # 協作能力核對紀錄（更新至 2026-09-25）
 
+## 正式發布與私有草稿界線（2026-09-25）
+
+核對 reconstructed `send-message-tool.ts` 的「only voice」契約後，移除有 SendMessage 的群組（含背景）／獨立信箱之 final-text 相容回退。成功的 SendMessage 才進入可見文字及回覆摘要；沒呼叫、工具拒絕或只有其他工具活動都不把最後草稿冒充已發布答案。信箱 tool-start 狀態投影固定清空文字，避免中途草稿先洩漏到群組投影。群組記憶整理與信箱持久上下文也只採用正式發布內容。未發布草稿不是錯誤訊息，安靜結束仍可表示沒有要送給使用者的消息；不合成模型結果。
+
+規則依據實際 host 工具執行器及 provider 能力，且群組必須有發布 transport：純文字模型、未配置工具目錄的 host，以及沒有發布 callback 的底層 responder 保留正常 final-text 路徑，不讓無法呼叫工具的模型失聲。工具說明、群組角色指示與委派指示同步改為實際結果須正式發布，開場 acknowledgement 不算交付。此批不新增直接聊天 SendMessage 入口、私人推理地址或改寫舊紀錄。
+
+依 Swift testing／CustomDump 技能新增群組 host/provider 四組能力組合，以及信箱六組（成功發布、沒有發布、完全沒有工具呼叫、發布拒絕、純文字模型、沒有工具目錄）測試；檢查狀態投影、durable delivery 和獨立 context JSON 均不含私有草稿。既有協作／核准／引用／記憶測試的模型夾具改成真的呼叫 SendMessage，而非以最後文字暗中建立可見訊息。首次全套指出舊記憶夾具等待不存在的發布事件，已修正。後續完整回歸另在既有連結預覽 Foundation process runner 等待停住，已保留取樣 `/private/tmp/filicon-voice-richcontent-sample.txt`；不將該次視為通過。最終完整非並行測試 exit 0（`.build/validation/explicit-voice-full-final.log`），隨後 opt-in 前置夾具與核心輸出測試補驗亦 exit 0（`explicit-voice-final-fixtures.log`）；真實 Codex 模型測試未啟用。最終原生建置、封裝與 deep strict 簽章通過（`explicit-voice-native-final.log`、`explicit-voice-package-final.log`），未啟動／重啟使用者 App 或改真實資料。連結預覽那次等待原因未在本批修正，重跑通過不代表競態已排除。整體 AGENT-02 仍 partial。
+
 ## 雲端引用長 ID 顯示補驗（2026-09-25）
 
 opaque ID 修正已提交為 `b1322db`。沿用 SwiftUI／Swift testing 技能，在既有七語言明暗 14 個渲染案例外，增加最大 ASCII、接近 UTF-8 預算的中文字及 URL 形狀特殊字元 ID，各測 260／340 點寬，共 20 個案例通過（`.build/validation/cloud-opaque-ui.log`）。人工檢視 260 點繁中深色的最大 Unicode 及特殊字元卡片，三行 ID 截斷、目的網站說明與開啟圖示均保留，沒有擠出卡片。渲染中開啟網址會直接令測試失敗；未開啟瀏覽器、使用者 App 或遠端帳號。本批僅補測試，未改產品程式；前一批完整回歸／原生建置／封裝驗證仍適用。

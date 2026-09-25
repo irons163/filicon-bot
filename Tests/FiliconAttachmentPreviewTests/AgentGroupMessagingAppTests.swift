@@ -101,7 +101,10 @@ private actor BroadcastGate {
             #expect(!all.contains("SOURCE_ONLY_SECRET")); #expect(!all.contains("ENGINEER_PRIVATE_PERSONA"))
             #expect(all.contains("NOT a new user request"))
             if count > 1 { return "PASS" }
-            return request.messages[0].text.contains("Designer") ? "Contrast reviewed by design" : "Contrast checked by QA"
+            let text = request.messages[0].text.contains("Designer") ? "Contrast reviewed by design" : "Contrast checked by QA"
+            let report = try await execute(.init(id: "report", name: "SendMessage", argumentsJSON: JSONEncoder().encode(["text": text])))
+            #expect(!report.isError)
+            return "PRIVATE FINAL"
         })
         let task = Task { await f.model.sendGroupMessage(groupID: sourceID, text: "SOURCE_ONLY_SECRET. Ask the review team to check contrast.") }
         let approval = try await pending(f.model)

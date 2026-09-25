@@ -66,6 +66,8 @@ public actor TurnCoordinator {
 
     private let registry: ProviderRegistry
     private let toolCatalog: ToolCatalog?
+    /// Provider support alone does not mean the host will supply tools.
+    public nonisolated var supportsToolExecution: Bool { toolCatalog != nil }
     private let agentScheduler: AgentExecutionScheduler
     private var active: [UUID: ActiveTurn] = [:]
     private var pending: [UUID: [Submission]] = [:]

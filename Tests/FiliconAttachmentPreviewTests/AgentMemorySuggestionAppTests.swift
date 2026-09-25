@@ -32,6 +32,18 @@ private struct MemorySuggestionAppProvider: AIProvider {
             let task = Task {
                 await probe.record(request)
                 let extraction = request.messages.first?.text == AgentMemorySuggestionExtractor.instructions
+                if !extraction {
+                    if request.toolExchanges.isEmpty {
+                        do {
+                            let call = try NormalizedToolCall(id: "report", name: "SendMessage",
+                                argumentsJSON: JSONEncoder().encode(["text": "Understood. I will review the layout."]))
+                            continuation.yield(.toolCallStarted(id: call.id, name: call.name))
+                            continuation.yield(.toolCallCompleted(call))
+                            continuation.yield(.completed(.toolUse))
+                        } catch { continuation.finish(throwing: error); return }
+                    } else { continuation.yield(.completed(.stop)) }
+                    continuation.finish(); return
+                }
                 if extraction && gated { await probe.hold() }
                 let text = extraction
                     ? (malformed ? "Not a valid suggestion response" : #"{"suggestions":[{"fact":"Prefers accessible layouts","evidence":"accessible layouts","tier":"profile"}]}"#)
@@ -78,7 +90,7 @@ private struct MemorySuggestionAppProvider: AIProvider {
         expectNoDifference(extra.count, enabled ? 1 : 0)
         #expect(extra.allSatisfy { $0.tools.isEmpty && $0.toolExchanges.isEmpty && $0.attachmentsByMessageID.isEmpty })
         let history = f.model.groupMessages[f.group.id, default: []]
-        expectNoDifference(history.filter { $0.senderID != nil }.map(\.senderID), [f.owner.id])
+        expectNoDifference(history.filter { $0.senderID != nil && !$0.text.isEmpty }.map(\.senderID), [f.owner.id])
         #expect(!history.contains { $0.text.contains("suggestions") })
         let snapshot = try await f.model.memorySuggestionSnapshot(agentID: f.owner.id)
         expectNoDifference(snapshot.suggestions.map(\.fact), enabled ? ["Prefers accessible layouts"] : [])
@@ -139,7 +151,7 @@ private struct MemorySuggestionAppProvider: AIProvider {
         expectNoDifference(current.suggestions, [])
         let requests = await f.probe.requests
         expectNoDifference(requests.filter { $0.messages.first?.text == AgentMemorySuggestionExtractor.instructions }.count, 1)
-        expectNoDifference(f.model.groupMessages[f.group.id, default: []].filter { $0.senderID != nil }.count, 1)
+        expectNoDifference(f.model.groupMessages[f.group.id, default: []].filter { $0.senderID != nil && !$0.text.isEmpty }.count, 1)
     }
 
     @Test(.serialized, arguments: ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"])

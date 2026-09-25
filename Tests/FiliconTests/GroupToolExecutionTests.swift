@@ -44,6 +44,11 @@ private func groupCallEvents(name: ToolName = "fixture_read") throws -> [Inferen
     return [.textDelta("I will read it."), .toolCallStarted(id: call.id, name: name), .toolCallCompleted(call), .completed(.toolUse)]
 }
 
+private func groupPublicationEvents(_ text: String) throws -> [InferenceEvent] {
+    let call = try NormalizedToolCall(id: "publication", name: "SendMessage", argumentsJSON: JSONEncoder().encode(["text": text]))
+    return [.toolCallStarted(id: call.id, name: call.name), .toolCallCompleted(call), .completed(.toolUse)]
+}
+
 private actor CollaborationResponder: GroupAgentResponder {
     struct Turn: Sendable {
         let agent: AgentProfile
@@ -189,6 +194,7 @@ struct GroupCollaborationTests {
         try await agents.update(engineer)
         let registry = ProviderRegistry()
         await registry.register(GroupScriptProvider { request in
+            if !request.toolExchanges.isEmpty { return [.completed(.stop)] }
             let metadataText = try #require(request.messages.first { $0.text.hasPrefix("Room metadata") }?.text)
             let metadata = try #require(JSONSerialization.jsonObject(with: Data(metadataText.split(separator: "\n", maxSplits: 1)[1].utf8)) as? [String: Any])
             expectNoDifference(metadata["name"] as? String, group.name)
@@ -205,7 +211,7 @@ struct GroupCollaborationTests {
             }
             expectNoDifference(request.messages.last?.text, "Build the website together and review the result.")
             let round = metadata["round"] as? Int
-            return [.textDelta(round == 1 ? (isEngineer ? "Implementation ready." : "Design reviewed.") : "PASS"), .completed(.stop)]
+            return round == 1 ? try groupPublicationEvents(isEngineer ? "Implementation ready." : "Design reviewed.") : [.textDelta("PASS"), .completed(.stop)]
         })
         let responder = GroupConversationResponder(groupID: group.id, registry: registry, coordinator: .init(registry: registry, toolCatalog: ToolCatalog()))
         let result = try await service.run(groupID: group.id, responder: responder)
@@ -215,6 +221,23 @@ struct GroupCollaborationTests {
 
 @Suite("Group tool execution", .timeLimit(.minutes(1)))
 struct GroupToolExecutionTests {
+    @Test(arguments: [false, true], [false, true])
+    func unpublishedFinalTextIsPrivateOnlyWhenPublicationToolIsAvailable(tools: Bool, catalog: Bool) async throws {
+        let (root, _, service, group) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let registry = ProviderRegistry()
+        await registry.register(GroupScriptProvider(tools: tools) { request in
+            expectNoDifference(request.tools.contains { $0.name == "SendMessage" }, tools && catalog)
+            return [.textDelta("Unpublished answer"), .completed(.stop)]
+        })
+        let responder = GroupConversationResponder(groupID: group.id, registry: registry,
+            coordinator: .init(registry: registry, toolCatalog: catalog ? ToolCatalog() : nil))
+        let result = try await service.run(groupID: group.id, responder: responder)
+        expectNoDifference(result.map(\.text), tools && catalog ? [] : ["Unpublished answer"])
+        let stored = await service.messages(groupID: group.id)
+        #expect(!(tools && catalog) || !stored.contains { $0.text == "Unpublished answer" })
+    }
+
     @Test func latestRequestIsSeparateFromOldDiagnosticAndPeerReplies() async throws {
         let groupID = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
         let agent = AgentProfile(name: "Engineer", providerID: "group-test", modelID: "test")
@@ -261,11 +284,12 @@ struct GroupToolExecutionTests {
         let registry = ProviderRegistry()
         await registry.register(GroupScriptProvider { request in
             #expect(request.conversationID == group.id)
+            if request.toolExchanges.last?.calls.first?.name == "SendMessage" { return [.completed(.stop)] }
             expectNoDifference(request.tools.map(\.name), ["SendMessage", "fixture_read"])
             #expect(request.messages.contains { $0.text.contains("no built-in Gmail connector") })
             if request.toolExchanges.isEmpty { return try groupCallEvents() }
             #expect(request.toolExchanges[0].results[0].wireText == "private fixture result")
-            return [.textDelta("Read completed."), .completed(.stop)]
+            return try groupPublicationEvents("Read completed.")
         })
         let executor = GroupTestExecutor { call, context in
             await probe.execute(context)
@@ -274,12 +298,14 @@ struct GroupToolExecutionTests {
         let responder = GroupConversationResponder(groupID: group.id, registry: registry, coordinator: .init(registry: registry, toolCatalog: ToolCatalog([executor])))
         let produced = try await service.run(groupID: group.id, responder: responder, onMessage: { await probe.record($0) })
         #expect(await probe.contexts.map(\.conversationID) == [group.id])
-        #expect(await probe.messages.map { $0.toolActivities.first?.status } == [.pending, .succeeded, .succeeded])
+        #expect(await probe.messages.first?.toolActivities.first?.status == .pending)
+        #expect(await probe.messages.last?.toolActivities.first?.status == .succeeded)
         #expect(produced.map(\.text) == ["Read completed."])
         let reopened = try GroupService(agents: agents, storeURL: root.appending(path: "groups.json"))
         let stored = await reopened.messages(groupID: group.id)
-        #expect(stored.count == 2)
-        #expect(stored.last?.toolActivities.first?.status == .succeeded)
+        expectNoDifference(stored.count, 3) // user, host activity, explicit publication
+        expectNoDifference(stored[1].toolActivities.map(\.status), [.succeeded, .succeeded])
+        expectNoDifference(stored.last?.toolActivities, [])
         #expect(stored.last?.id == produced.first?.id)
         let json = try String(contentsOf: root.appending(path: "groups.json"), encoding: .utf8)
         #expect(!json.contains("private fixture result"))
@@ -322,11 +348,14 @@ struct GroupToolExecutionTests {
         defer { try? FileManager.default.removeItem(at: root) }
         let registry = ProviderRegistry()
         await registry.register(GroupScriptProvider { request in
-            request.toolExchanges.isEmpty ? try groupCallEvents() : [.textDelta("Access denied."), .completed(.stop)]
+            if request.toolExchanges.last?.calls.first?.name == "SendMessage" { return [.completed(.stop)] }
+            return request.toolExchanges.isEmpty ? try groupCallEvents() : try groupPublicationEvents("Access denied.")
         })
         let executor = GroupTestExecutor { call, _ in .init(callID: call.id, content: [.text("denied")], isError: true) }
         let result = try await service.run(groupID: group.id, responder: GroupConversationResponder(groupID: group.id, registry: registry, coordinator: .init(registry: registry, toolCatalog: ToolCatalog([executor]))))
-        #expect(result.last?.toolActivities.first?.status == .failed)
+        expectNoDifference(result.map(\.text), ["Access denied."])
+        let stored = await service.messages(groupID: group.id)
+        expectNoDifference(stored.first { !$0.toolActivities.isEmpty }?.toolActivities.map(\.status), [.failed, .succeeded])
     }
 
     @Test func stopCancelsTheExecutorAndPreservesCancelledStatus() async throws {
@@ -429,7 +458,7 @@ struct GroupToolExecutionTests {
         let registry = ProviderRegistry()
         await registry.register(GroupScriptProvider { request in
             #expect(request.messages[0].text.contains("Your name is Engineer"))
-            return [.textDelta("@everyone hi"), .completed(.stop)]
+            return request.toolExchanges.isEmpty ? try groupPublicationEvents("@everyone hi") : [.completed(.stop)]
         })
         let responder = GroupConversationResponder(groupID: group.id, registry: registry, coordinator: .init(registry: registry, toolCatalog: ToolCatalog()))
         let result = try await service.run(groupID: group.id, responder: responder)
