@@ -1,5 +1,15 @@
 # 協作能力核對紀錄（更新至 2026-09-25）
 
+## 信箱引用索引（2026-09-25）
+
+上一批 `c78721d` 已提交，接續將每次引用查找時的全歷史掃描，改為快照建立時一次按 origin／sender／recipient 建立不可變索引。正文、UUID 引用與點擊重驗共用位置及地址索引；不再於每個連結查找時重新分組整份歷史。沒有改動持久化格式、模型的 40 則目錄或 UI 的 500 則收件上限，亦未宣稱已測量實際視窗的效能提升。
+
+所有輸入與發布（包含跨範圍及不合法發布）先全域統計 ID，重複 ID 不得藉篩選變成有效目標或來源。來源必須是指定收件的有效發布，不能將收件本身當發布；既有嚴格 sand-msg 文法、地址唯一性、方向隔離與只能引用前文限制保持不變。
+
+依 Swift testing／CustomDump 技能新增跨範圍 ID 碰撞、錯誤作者／群組及快照獨立性測試；1,000 個獨立信箱重用相同短地址仍定位自身收件，並重跑既有長歷史、App 導航與七語言明暗渲染回歸。本批是查找實作與防回歸補強，不增加 parity complete 計數，AGENT-02 仍 partial。未啟動 App／Xcode、未碰真實聊天或帳號。
+
+驗證紀錄：`.build/validation/mailbox-index-focused.log` 聚焦測試、`mailbox-index-full.log` 完整非並行回歸、`mailbox-index-native.log` 原生建置、`mailbox-index-package.log` 封裝及 deep strict codesign 均 exit 0。
+
 ## 信箱引用與短地址導航（2026-09-25）
 
 新增與訊息同一次 actor 讀取的完整導航快照；以 origin／sender／recipient、正式發布來源、唯一 ID／地址及先後順序驗證目標。正文 sand-msg 連結沿用群組的網址文法檢查與 RichMarkdown 內部連結處理，非法／不存在的連結保持一般文字，不交給外部網址開啟器。引用卡片新增「檢視原訊息」，從正式保存的 replyToMessageID 定位，不把點擊視為新訊息、問題答案或工具批准。

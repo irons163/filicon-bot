@@ -10,6 +10,64 @@ struct MailboxMessageReferenceTests {
     private let owner = UUID(uuidString: "00000000-0000-0000-0000-000000000003")!
     private let date = Date(timeIntervalSince1970: 1_000)
 
+    @Test(arguments: ["targetCollision", "sourceCollision", "inputCollision", "wrongAuthor", "wrongGroup"])
+    func invalidIdentitiesCannotEnterIndex(mode: String) throws {
+        var incoming = AgentMessage(senderID: sender, recipientID: owner, text: "Input", createdAt: date,
+            delivery: .init(chainID: scope, originConversationID: scope))
+        var publication = RoomMessage(groupID: mode == "wrongGroup" ? sender : scope,
+            senderID: mode == "wrongAuthor" ? sender : owner, text: "Reply", createdAt: date)
+        publication.replyToMessageID = incoming.id
+        incoming.delivery?.publications = [publication]
+        var history = [incoming]
+        if mode.hasSuffix("Collision") {
+            // Even a foreign, invalid publication must reserve its identity globally.
+            let duplicateID = mode == "sourceCollision" ? publication.id : incoming.id
+            var foreign = AgentMessage(senderID: owner, recipientID: sender, text: "Foreign", createdAt: date,
+                delivery: .init(chainID: owner, originConversationID: owner))
+            if mode == "inputCollision" {
+                foreign = AgentMessage(id: duplicateID, senderID: owner, recipientID: sender, text: "Foreign", createdAt: date)
+            } else {
+                foreign.delivery?.publications = [RoomMessage(id: duplicateID, groupID: sender,
+                    senderID: sender, text: "Invalid foreign copy", createdAt: date)]
+            }
+            history.append(foreign)
+        }
+        let references = MailboxMessageReferences(history: history, addresses: [incoming.id: "t0u"], humanInputs: [incoming.id])
+        expectNoDifference(references.target(for: URL(string: "sand-msg:t0u")!, from: publication.id, replyingTo: incoming.id)?.message.id, nil)
+        expectNoDifference(references.quotedTarget(from: publication.id, replyingTo: incoming.id)?.message.id, nil)
+        expectNoDifference(references.referenceTarget(incoming.id, from: publication.id, replyingTo: incoming.id)?.message.id, nil)
+    }
+
+    @Test func repeatedLookupsAreScopedAndSnapshotIsImmutable() throws {
+        var history: [AgentMessage] = []
+        var addresses: [UUID: String] = [:]
+        for number in 0..<1_000 {
+            let origin = UUID(uuidString: String(format: "10000000-0000-0000-0000-%012d", number))!
+            var input = AgentMessage(senderID: sender, recipientID: owner, text: "Input \(number)", createdAt: date,
+                delivery: .init(chainID: origin, originConversationID: origin))
+            var reply = RoomMessage(groupID: origin, senderID: owner, text: "Reply", createdAt: date)
+            reply.replyToMessageID = input.id
+            input.delivery?.publications = [reply]
+            history.append(input)
+            addresses[input.id] = "t0u"
+        }
+        let references = MailboxMessageReferences(history: history, addresses: addresses, humanInputs: Set(history.map(\.id)))
+        for input in history {
+            let reply = try #require(input.delivery?.publications?.first)
+            expectNoDifference(references.target(for: URL(string: "sand-msg:t0u")!, from: reply.id, replyingTo: input.id)?.message.id, input.id)
+            expectNoDifference(references.quotedTarget(from: reply.id, replyingTo: input.id)?.incoming.id, input.id)
+            expectNoDifference(references.referenceTarget(input.id, from: reply.id, replyingTo: input.id)?.message.id, input.id)
+            expectNoDifference(references.quotedTarget(from: input.id, replyingTo: input.id)?.message.id, nil)
+        }
+        let first = try #require(history.first)
+        let reply = try #require(first.delivery?.publications?.first)
+        history.removeAll()
+        addresses.removeAll()
+        expectNoDifference(references.referenceTarget(first.id, from: reply.id, replyingTo: first.id)?.message.text, "Input 0")
+        expectNoDifference(MailboxMessageReferences(history: history, addresses: addresses)
+            .referenceTarget(first.id, from: reply.id, replyingTo: first.id)?.message.id, nil)
+    }
+
     @Test(arguments: ["valid", "foreignScope", "reverse", "duplicateID", "duplicateAddress", "future", "wrongSource"])
     func navigationIsEarlierUniqueAndDirected(mode: String) throws {
         let original = AgentMessage(senderID: mode == "reverse" ? owner : sender,
