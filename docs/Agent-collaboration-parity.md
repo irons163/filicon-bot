@@ -1,5 +1,15 @@
 # 協作能力核對紀錄（更新至 2026-09-25）
 
+## 工具事件保存與執行順序（2026-09-25）
+
+最終驗證：完整非並行回歸 tool-event-order-full.log exit 0，先前群組順序失敗通過；加強「事件確實抵達且只呼叫一次」斷言後，tool-event-order-final-focused.log 共 20 項／3 suites（含六組順序案例）通過。封裝與 deep strict 簽章 tool-event-order-package.log 通過，關閉上一輪直接地址接線的完整回歸待補驗。
+
+追查上一輪群組工具測試偶發失敗，確認 AsyncThrowingStream.yield 只入列、不等待 TurnCoordinator 的 onEvent 保存；工具可能先發布訊息，之後 pending 狀態才抵達。新增慢速 pending 保存測試在舊碼重現三個斷言失敗（tool-event-order-red.log）：正常保存尚未完成已執行，保存失敗時也已執行，並非單純測試預期太嚴。
+
+ToolLoop.start 增加可等待的主程式事件處理器，TurnCoordinator 的正式執行路徑使用它；每個事件先等待處理成功才繼續，串流仍用於生命週期／取消，但不重複呼叫處理器。一般、可平行、互動式工具與提問暫停的結果事件共用此出口，事件處理錯誤或取消往上傳遞。未改工具核准、身份或執行權限。既有未提供處理器的原始 ToolLoop stream API 維持串流語意，不宣稱它自動等待任意外部消費者。
+
+依 Swift testing 技能新增三種工具路徑 × 正常／失敗保存六個案例，驗證待執行狀態確實抵達且只處理一次、工具在保存成功後才執行、保存失敗不執行。初次聚焦 28 項通過（tool-event-order-focused.log）；原生建置 tool-event-order-native.log 通過，完整回歸與最後六案例待本輪補記。未重啟 App、未動真實群組或帳號。其他 parity 缺口不變。
+
 ## 直接聊天短地址配置與回條（2026-09-25）
 
 最終驗證：完整回歸 direct-address-allocation-full.log 中本批地址、直接發布與復原案例通過，但既有 realExecutionUsesGroupScopeAndPersistsHostStatus 出現 pending／工具狀態與正式發布順序失敗；獨立重跑 direct-address-group-recheck.log exit 0。不能把這輪記為全綠。初查 TurnCoordinator 透過非同步 ToolLoop events 消費狀態，工具 publisher 可先執行保存，事件消費未必先抵達；須另做可控排程重現及修正，不能只移除順序斷言。下方完整回歸待補記由此結果取代。

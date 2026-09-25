@@ -1,5 +1,7 @@
 # Filicon / Grok Bot 0.18 功能 parity matrix（current implementation）
 
+工具事件順序補驗（2026-09-25）：修正工具執行可能超前主程式 pending 狀態保存的競態；正式工具迴圈現在等待事件處理成功後再繼續。完整回歸 tool-event-order-full.log exit 0，新增六組慢速／失敗保存案例通過；關閉上一輪群組事件順序失敗，未改剩餘功能 partial 狀態。
+
 直接聊天短地址接線（2026-09-25）：完整歷史保存時配置 tNu／tNsM（啟動前發布為 tbsM），schema 11 保存已用地址保留紀錄，刪除訊息不重用地址。SendMessage 目錄與成功保存回條帶入短地址，reply_to 可引用本對話目錄或同回合回條；只發布工具的空白佔位／私人推理不分配公開地址。此項取代下方「配置／工具目錄與回條未接線」的缺口；sand-msg 正文點擊跳轉尚未接上，其他 secret-request／外部服務等仍 partial。
 
 直接聊天短地址儲存基礎（2026-09-25）：ChatMessage 與 SQLite schema 10 增加可選 shortAddress，完整讀寫、分頁、JSON 相容及有效資料復原均保存此欄位。舊資料不猜測地址。這是接入原版持久引用身份的必要基礎，尚未啟用直接聊天地址配置、工具目錄／回條或 sand-msg UI；AGENT-02 仍 partial，不算完整短地址功能。

@@ -96,17 +96,19 @@ public actor ToolLoop {
         start(request, context: context).events
     }
 
-    public func start(_ request: InferenceRequest, context: ToolContext) -> ToolLoopRun {
+    public func start(_ request: InferenceRequest, context: ToolContext,
+                      onEvent: (@Sendable (InferenceEvent) async throws -> Void)? = nil) -> ToolLoopRun {
         let (events, continuation) = AsyncThrowingStream<InferenceEvent, Error>.makeStream()
+        let sink = ToolLoopEventSink(continuation: continuation, onEvent: onEvent)
         let task = Task { [self] in
-            do { try await execute(request, context: context, continuation: continuation); continuation.finish() }
+            do { try await execute(request, context: context, continuation: sink); continuation.finish() }
             catch { continuation.finish(throwing: error) }
         }
         continuation.onTermination = { @Sendable _ in task.cancel() }
         return .init(events: events, task: task)
     }
 
-    private func execute(_ initial: InferenceRequest, context: ToolContext, continuation: AsyncThrowingStream<InferenceEvent, Error>.Continuation) async throws {
+    private func execute(_ initial: InferenceRequest, context: ToolContext, continuation: ToolLoopEventSink) async throws {
         let snapshot = try await catalog.snapshot(for: context, additionalTools: additionalTools)
         if let interactive = provider as? any InteractiveToolProvider {
             try await executeInteractive(interactive, initial: initial, snapshot: snapshot, context: context, continuation: continuation)
@@ -127,7 +129,7 @@ public actor ToolLoop {
                 // Only our executors may produce results. A provider event is not
                 // evidence that an operation actually ran on the user's machine.
                 if case .toolResult = event { throw ProviderError.invalidResponse }
-                continuation.yield(event)
+                try await continuation.yield(event)
                 if case .toolCallStarted(let id, _) = event {
                     guard !seen.contains(id), pending.insert(id).inserted else { throw ToolLoopError.duplicateCallID(id) }
                 }
@@ -155,14 +157,14 @@ public actor ToolLoop {
             let results = try await (allParallelSafe ? executeParallel(work, context: context) : executeSequential(work, step: step, context: context, continuation: continuation))
             try Task.checkCancellation()
             try await transactionHook.persist(step: step, calls: calls, results: results, context: context)
-            for result in results { continuation.yield(.toolResult(result)) }
+            for result in results { try await continuation.yield(.toolResult(result)) }
             exchanges.append(ToolExchange(assistantText: assistantText, calls: calls, results: results))
         }
     }
 
     private func executeInteractive(_ provider: any InteractiveToolProvider, initial: InferenceRequest,
                                     snapshot: ToolCatalogSnapshot, context: ToolContext,
-                                    continuation: AsyncThrowingStream<InferenceEvent, Error>.Continuation) async throws {
+                                    continuation: ToolLoopEventSink) async throws {
         let messages = try await snapshot.messages(addingRuntimeContextTo: initial.messages, context: context)
         let request = InferenceRequest(conversationID: initial.conversationID, modelID: initial.modelID,
             messages: messages, tools: snapshot.descriptors, toolExchanges: initial.toolExchanges,
@@ -187,7 +189,7 @@ public actor ToolLoop {
                 switch event {
                 case .toolCallStarted, .toolCallArgumentsDelta, .toolCallCompleted, .toolResult:
                     throw ProviderError.invalidResponse
-                default: continuation.yield(event)
+                default: try await continuation.yield(event)
                 }
             }
             await calls.closeAndWait()
@@ -200,11 +202,11 @@ public actor ToolLoop {
 
     private func executeInteractiveCall(_ call: NormalizedToolCall, step: Int, snapshot: ToolCatalogSnapshot,
                                         context: ToolContext,
-                                        continuation: AsyncThrowingStream<InferenceEvent, Error>.Continuation) async throws -> NormalizedToolResult {
+                                        continuation: ToolLoopEventSink) async throws -> NormalizedToolResult {
         guard let executor = snapshot.executor(named: call.name) else { throw ToolLoopError.unknownTool(call.name) }
         try validate(arguments: call.argumentsJSON, schema: executor.descriptor.inputSchema, callID: call.id)
-        continuation.yield(.toolCallStarted(id: call.id, name: call.name))
-        continuation.yield(.toolCallCompleted(call))
+        try await continuation.yield(.toolCallStarted(id: call.id, name: call.name))
+        try await continuation.yield(.toolCallCompleted(call))
         let result: NormalizedToolResult
         do { result = try await executor.execute(call, context: context) }
         catch let pause as ToolTurnSuspension {
@@ -214,12 +216,12 @@ public actor ToolLoop {
         try Task.checkCancellation()
         guard result.callID == call.id else { throw ToolLoopError.resultCallIDMismatch(expected: call.id, actual: result.callID) }
         try await transactionHook.persist(step: step, calls: [call], results: [result], context: context)
-        continuation.yield(.toolResult(result))
+        try await continuation.yield(.toolResult(result))
         return result
     }
 
     private func executeSequential(_ work: [(NormalizedToolCall, any ToolExecutor)], step: Int, context: ToolContext,
-                                   continuation: AsyncThrowingStream<InferenceEvent, Error>.Continuation) async throws -> [NormalizedToolResult] {
+                                   continuation: ToolLoopEventSink) async throws -> [NormalizedToolResult] {
         var results: [NormalizedToolResult] = []
         for (call, executor) in work {
             try Task.checkCancellation()
@@ -238,16 +240,16 @@ public actor ToolLoop {
     }
 
     private func suspend(_ pause: ToolTurnSuspension, step: Int, calls: [NormalizedToolCall], results: [NormalizedToolResult],
-                         context: ToolContext, continuation: AsyncThrowingStream<InferenceEvent, Error>.Continuation) async throws -> Never {
+                         context: ToolContext, continuation: ToolLoopEventSink) async throws -> Never {
         do { try await transactionHook.persist(step: step, calls: calls, results: results, context: context) }
         catch {
-            for result in results.dropLast() { continuation.yield(.toolResult(result)) }
+            for result in results.dropLast() { try await continuation.yield(.toolResult(result)) }
             let failed = NormalizedToolResult(callID: pause.result.callID,
                 content: [.text("Question saved, but its tool execution record could not be saved. The turn is paused. \(error.localizedDescription)")], isError: true)
-            continuation.yield(.toolResult(failed))
+            try await continuation.yield(.toolResult(failed))
             throw ToolTurnSuspension(result: failed)
         }
-        for result in results { continuation.yield(.toolResult(result)) }
+        for result in results { try await continuation.yield(.toolResult(result)) }
         throw pause
     }
 
@@ -322,4 +324,18 @@ private actor InteractiveCallLedger {
         guard active != 0 else { return }
         await withCheckedContinuation { waiters.append($0) }
     }
+}
+
+/// Production consumers acknowledge each event before its causally dependent
+/// tool runs. Merely buffering an AsyncStream event does not provide that order.
+private struct ToolLoopEventSink: Sendable {
+    let continuation: AsyncThrowingStream<InferenceEvent, Error>.Continuation
+    let onEvent: (@Sendable (InferenceEvent) async throws -> Void)?
+    func yield(_ event: InferenceEvent) async throws {
+        try Task.checkCancellation()
+        try await onEvent?(event)
+        try Task.checkCancellation()
+        continuation.yield(event)
+    }
+    func finish(throwing error: any Error) { continuation.finish(throwing: error) }
 }

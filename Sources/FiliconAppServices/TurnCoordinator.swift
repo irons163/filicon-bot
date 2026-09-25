@@ -199,14 +199,16 @@ public actor TurnCoordinator {
         let toolRun: ToolLoopRun?
         if let catalog, submission.provider.descriptor.supportsToolCalling {
             let run = await ToolLoop(provider: submission.provider, catalog: catalog, additionalTools: submission.additionalTools).start(
-                submission.request, context: submission.toolContext
+                submission.request, context: submission.toolContext, onEvent: submission.onEvent
             )
             toolRun = run; stream = run.events
         } else { toolRun = nil; stream = submission.provider.stream(submission.request) }
         do {
             for try await event in stream {
                 try Task.checkCancellation()
-                try await submission.onEvent(event)
+                // ToolLoop awaited this callback before execution. Drain its
+                // stream for completion/cancellation without delivering twice.
+                if toolRun == nil { try await submission.onEvent(event) }
             }
             try Task.checkCancellation()
             await toolRun?.finish()
