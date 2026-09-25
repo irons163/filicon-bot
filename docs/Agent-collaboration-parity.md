@@ -1,5 +1,11 @@
 # 協作能力核對紀錄（更新至 2026-09-25）
 
+## 雲端引用長 ID 顯示補驗（2026-09-25）
+
+opaque ID 修正已提交為 `b1322db`。沿用 SwiftUI／Swift testing 技能，在既有七語言明暗 14 個渲染案例外，增加最大 ASCII、接近 UTF-8 預算的中文字及 URL 形狀特殊字元 ID，各測 260／340 點寬，共 20 個案例通過（`.build/validation/cloud-opaque-ui.log`）。人工檢視 260 點繁中深色的最大 Unicode 及特殊字元卡片，三行 ID 截斷、目的網站說明與開啟圖示均保留，沒有擠出卡片。渲染中開啟網址會直接令測試失敗；未開啟瀏覽器、使用者 App 或遠端帳號。本批僅補測試，未改產品程式；前一批完整回歸／原生建置／封裝驗證仍適用。
+
+再次核對原版 settings `hidden_from_sidebar`：原版代理人即側欄聊天列，而 Filicon 群組／一般對話與 AgentProfile 並非一對一。現行 settings 只支援通知設定，不能把缺少的隱藏語意替換為會影響執行資格的 archive；該差異仍未實作，整體 partial 不變。
+
 ## 雲端引用 opaque ID 相容性校正（2026-09-25）
 
 再次核對 reconstructed `send-message-schema.ts` 的 `z.string().trim()` 與 `main-edge.ts` 的 `encodeURIComponent(bcId)`，確認上一批強制 `bc-`／英數／200 字元不是原版契約。本輪移除該限制，按原版保留 trimmed opaque ID（包含 Unicode、空白及標點），網址由 host 將 ID 編碼為單一路徑片段；即使 ID 看起來像網址、帶 `/`、`?`、`#` 或已編碼 `%`，也不作為 host／query／fragment 或預先編碼路徑解讀。既有 bc- ID 與儲存鍵相容，trim 後相同的 ID 共用同一重送收據。
