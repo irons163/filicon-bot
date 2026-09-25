@@ -1,5 +1,7 @@
 # Filicon / Grok Bot 0.18 功能 parity matrix（current implementation）
 
+同儕來源持久化（2026-09-26）：新增 ChatMessage 可選 AgentMessageSource（account／origin／delivery／sender／recipient／incoming 或 publication），schema 13、JSON、分頁、部分歷史更新與 salvage 保留；非法来源與角色不降級成無歸屬文字，舊資料不猜測身份。這是後續每位代理人自己的直接聊天室投影基礎，尚未接顯示或模型上下文，不提升整體 partial 判定。
+
 綁定直接聊天管理接線（2026-09-26）：共用既有管理 session 的 CreateAgent／UpdateAgent／update_state／記憶搜尋／連接器狀態工具，核准預覽與群組共用完整變更元件，保存起始 binding 並拒絕途中替換；改名後委派仍需各別核准。32 個直接整合情況、七語系預覽、完整回歸、原生建置、封裝及簽章通過。記憶分享說明已納入綁定直接聊天。取代下方「管理／記憶工具未接線」狀態；自動記憶建議／重寫、同儕投影、群組／圖片轉送、同儕互動卡及真實外部驗收仍 partial。
 
 綁定直接聊天文字委派（2026-09-26）：SendToAgent 已接明確收件人／完整內容核准、原身份重驗及 foreground lane 釋放後的有界同儕回覆鏈；信箱保存交付與回覆，Stop／刪除／封存／帳號轉換取消。新增 9 個直接整合情況，最後完整回歸、原生建置、封裝與簽章通過。未綁定聊天不開放。管理／記憶工具、群組與圖片转送、同儕互動卡與直接對話投影仍未接線；整體 partial 不變。

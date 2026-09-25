@@ -1,5 +1,15 @@
 # 協作能力核對紀錄（更新至 2026-09-26）
 
+## 同儕訊息來源持久化基礎（2026-09-26）
+
+重新核對原版 source/host/agents/agent-messaging.ts：每位代理人有自己的聊天；收到的同儕訊息放在收件人的聊天，收件人 SendMessage 的發布也屬於收件人的聊天，不應冒充發起委派的代理人。直接聊天目前的 drain 尚未接 UI 投影，不能把所有同儕輸出一律塞回來源聊天室。
+
+新增 AgentMessageSource，保留 account、來源 conversation、canonical delivery、寄件／收件 agent 與 incoming／publication 類型，區分實際發言者。這只是歸屬資料，不是授權證明；後續 host 仍必須驗證 canonical mailbox 與 live binding。ChatMessage 可選保存來源，舊 JSON／schema 12 訊息維持 nil、不靠名稱猜測；schema 13 的 load、分頁、保存與 salvage 都保留。損壞來源不靜默丟棄；有來源的訊息不能以 user／system／tool 角色讀取或保存。資料庫復原隔離損壞列，正常列保持來源；非法角色保存由交易回滾。
+
+測試涵蓋兩種來源 JSON、五類非法 metadata／角色、SQLite 重開與跨頁、schema 12 重複升級、三種 salvage 故障、保存回滾、只載入末頁後改名不遺失舊訊息來源。使用固定時間避免 SQLite 浮點精度造成 fixture 差異。這批只完成資料契約與持久化；同儕訊息進入各自直接聊天室、發言者 UI、模型上下文封裝、互動卡與整體 parity 仍未完成。
+
+驗證：peer-source-full.log 完整非並行回歸 exit 0，包含新來源 suite 的 7 項測試／14 個情況；peer-source-native.log 原生 Debug 建置 exit 0，verify-package 與 deep strict codesign 通過。未啟動／重啟使用者 App 或 Xcode，未搬移或修改真實聊天資料。
+
 ## 綁定直接聊天管理工具與完整核准預覽（2026-09-26）
 
 抽出共用 makeAgentManagementSession，直接聊天的 AgentMessagingSession 使用同一組管理 authorizer／committer，提供 CreateAgent、UpdateAgent、update_state、記憶搜尋及已配置的連接器狀態工具；既有來源範圍、明確核准、quota、mutation lifetime 與帳號 generation 檢查保留。起始 binding 保存到 directMessagingBindings，核准／提交期間換成另一代理人或帳號即失效；未綁定聊天不提供這些工具。工具提示和七語系記憶分享說明同步包含綁定直接聊天，避免仍宣稱只供群組／信箱使用。

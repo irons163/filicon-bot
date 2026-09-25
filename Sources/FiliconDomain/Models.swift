@@ -69,6 +69,7 @@ public struct ChatMessage: Identifiable, Codable, Hashable, Sendable {
     public var reactions: [ChatReaction]
     /// Host-assigned reference identity; never derived from a paginated view.
     public var shortAddress: String?
+    public var agentMessageSource: AgentMessageSource?
 
     public init(
         id: UUID = UUID(),
@@ -83,7 +84,8 @@ public struct ChatMessage: Identifiable, Codable, Hashable, Sendable {
         transcriptCards: [TranscriptCard] = [],
         replyToMessageID: UUID? = nil,
         reactions: [ChatReaction] = [],
-        shortAddress: String? = nil
+        shortAddress: String? = nil,
+        agentMessageSource: AgentMessageSource? = nil
     ) {
         self.id = id
         self.role = role
@@ -98,6 +100,7 @@ public struct ChatMessage: Identifiable, Codable, Hashable, Sendable {
         self.replyToMessageID = replyToMessageID
         self.reactions = reactions
         self.shortAddress = shortAddress
+        self.agentMessageSource = agentMessageSource
     }
 
     public mutating func toggleReaction(emoji: String, actorID: String) -> Bool {
@@ -123,6 +126,7 @@ public struct ChatMessage: Identifiable, Codable, Hashable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case id, role, text, createdAt, attachments, deliveryStatus, deliveryError
         case reasoningText, toolActivities, transcriptCards, replyToMessageID, reactions, shortAddress
+        case agentMessageSource
     }
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -138,6 +142,10 @@ public struct ChatMessage: Identifiable, Codable, Hashable, Sendable {
         transcriptCards = (try? values.decode([TranscriptCard].self, forKey: .transcriptCards)) ?? []
         replyToMessageID = try values.decodeIfPresent(UUID.self, forKey: .replyToMessageID)
         shortAddress = try values.decodeIfPresent(String.self, forKey: .shortAddress)
+        agentMessageSource = try values.decodeIfPresent(AgentMessageSource.self, forKey: .agentMessageSource)
+        guard agentMessageSource == nil || role == .assistant else {
+            throw DecodingError.dataCorruptedError(forKey: .agentMessageSource, in: values, debugDescription: "Peer messages must have assistant role")
+        }
         reactions = try values.decodeIfPresent([ChatReaction].self, forKey: .reactions) ?? []
     }
 }
