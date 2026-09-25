@@ -1,5 +1,15 @@
 # 協作能力核對紀錄（更新至 2026-09-26）
 
+## 綁定直接聊天的文字 SendToAgent（2026-09-26）
+
+重新核對 reconstructed 的 sand-agent-management-tools.ts：SendToAgent 是傳給其他代理人的非同步訊息，回傳送達回條而不是對方答案，對方回覆可再喚醒寄件者。Filicon 的綁定直接聊天現在註冊文字 SendToAgent；未綁定聊天仍不提供。新收件人一律經直接聊天卡片核准，卡片顯示收件人、完整內容及一般／優先狀態，不因 auto-review allow 規則跳過。核准前後重新驗證原對話 binding、帳號 generation、存活 profile 與模型。
+
+foreground coordinator.send 返回並釋放 agent lane 後才 drain，避免對方回覆喚醒原代理人時互鎖。沿用既有具來源範圍的 AgentMessenger／AgentConversationStore、明確發布及有界回覆鏈；原寄件者只記住自己的文字歷史，不把整段私聊交給對方。委派／回覆與交付狀態保存在代理人信箱，目前不將同儕訊息投影成直接聊天的原代理人發言。整條鏈收尾前保留 running；Stop、刪除、封存寄件者與帳號轉換均取消 session。授權／核准卡清理由 owning turn 在釋放 running 前完成，避免背景清理誤撤銷下一回合的權限。
+
+SendToAgentAppIntegrationTests 新增 9 種直接聊天情況：核准、拒絕、核准前 Stop／帳號轉換／刪除／封存、未綁定，以及同儕已執行時 Stop／帳號轉換。驗證核准內容確實在卡片、核准前沒有訊息／wake、成功後依序喚醒對方及寄件者、取消交付收尾、沒有隱性群組執行。direct-delegation-full-final.log 完整非並行回歸 exit 0；direct-delegation-native-final.log 原生建置 exit 0，verify-package 與 deep strict 簽章通過。測試使用隔離根目錄與假 provider，未啟動使用者 App／Xcode 或操作真實訊息。
+
+此批只補文字對代理人委派：直接聊天管理／記憶工具、群組轉送、圖片轉送、同儕問題／憑證互動及原版直接對話投影仍未接上，不把既有群組／信箱功能算成直接聊天已具備。下一步管理工具還需完整變更預覽；通用直接核准卡目前不會呈現群組管理卡的所有 metadata，不可只附加 tools 就視為完成。
+
 ## 解鎖後完整回歸補驗（2026-09-26）
 
 唯讀確認 IOConsoleLocked=No 後，在 c606a21 執行完整非並行 swift test，direct-secret-unlocked-full.log exit 0。包含 DirectSecretAppTests 的 13 個情況（新增 dismissal-failure），關閉下方直接聊天憑證接線最後 UI 調整及取消回條重試的完整回歸缺口。未降低檔案保護、未重啟使用者 App／Xcode、未操作真實 Keychain。整體 parity 仍未完成：重新核對 startTurn，綁定代理人的直接聊天目前僅註冊 SendMessage，尚未接入 AgentMessagingSession 的 SendToAgent 與管理工具；不可將群組／信箱支援推論為單獨聊天也已支援。

@@ -9,7 +9,9 @@ import FiliconAutoReview
 
 private actor AgentWakeProbe {
     var wakes: [UUID] = []
+    var pausesAfterWake = false
     func record(_ id: UUID) { wakes.append(id) }
+    func pauseAfterWake() { pausesAfterWake = true }
 }
 
 private struct DelegatingGroupProvider: InteractiveToolProvider {
@@ -33,7 +35,10 @@ private struct DelegatingGroupProvider: InteractiveToolProvider {
                         #expect(request.messages.last?.text.contains("Improve contrast") == true)
                         text = "Updated implementation after the designer's review"
                     } else {
-                        if inbound { await probe.record(recipient) }
+                        if inbound {
+                            await probe.record(recipient)
+                            if await probe.pausesAfterWake { try await Task.sleep(for: .seconds(30)) }
+                        }
                         let args = ["recipientID": (inbound ? sender : recipient).uuidString,
                                     "message": inbound ? "Improve contrast" : "Review just the button contrast"]
                         let result = try await executeTool(.init(id: "delegate", name: "SendToAgent", argumentsJSON: JSONEncoder().encode(args)))
@@ -115,5 +120,61 @@ private struct DelegatingGroupProvider: InteractiveToolProvider {
         expectNoDifference(model.agentMessages, [])
         #expect(model.pendingAutoReviewApprovals.isEmpty)
         #expect(!model.runningGroups.contains(groupID))
+    }
+
+    @Test(arguments: ["approve", "deny", "stop", "account", "delete", "archive", "unbound", "peer-stop", "peer-account"])
+    func boundDirectChatDelegatesWithExactApproval(mode: String) async throws {
+        let (root, model, _, sender, recipient, probe) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        await model.bootstrap()
+        let id = try #require(await model.addConversation(agentID: sender))
+        if mode.hasPrefix("peer-") { await probe.pauseAfterWake() }
+        if mode == "unbound", let index = model.conversations.firstIndex(where: { $0.id == id }) {
+            model.conversations[index].agentBinding = nil
+        }
+        model.draft = "Ask the designer for a contrast review"
+        model.send()
+        if mode != "unbound" {
+            let approval = try await pending(model)
+            expectNoDifference(approval.action.context.conversationID, id)
+            expectNoDifference(approval.action.target, .recipient(identifier: recipient.uuidString))
+            expectNoDifference(approval.action.context.metadata["agentMessage"], "Review just the button contrast")
+            let card = try #require(model.conversations.first(where: { $0.id == id })?.messages
+                .flatMap(\.transcriptCards).first(where: {
+                    if case .autoReview(let value) = $0.payload { return value.reviewID == approval.id }
+                    return false
+                }))
+            if case .autoReview(let value) = card.payload {
+                #expect(value.findings.contains("Review just the button contrast"))
+            }
+            let before = await probe.wakes
+            expectNoDifference(before, [])
+            expectNoDifference(model.agentMessages.count, 0)
+            if mode == "stop" { model.cancel() }
+            if mode == "account" { await model.cancelAutoReviewApprovals(nextAccountID: "other") }
+            if mode == "delete" { model.deleteConversation(id: id) }
+            if mode == "archive" { await model.archiveAgent(id: sender) }
+            model.handleTranscriptCardIntent(mode == "deny"
+                ? .rejectReview(reviewID: approval.id) : .approveReview(reviewID: approval.id))
+            if mode.hasPrefix("peer-") {
+                let deadline = ContinuousClock.now + .seconds(10)
+                while await probe.wakes.isEmpty, ContinuousClock.now < deadline {
+                    try await Task.sleep(for: .milliseconds(10))
+                }
+                let started = await probe.wakes
+                expectNoDifference(started, [recipient])
+                if mode == "peer-stop" { model.cancel() }
+                else { await model.cancelAutoReviewApprovals(nextAccountID: "other") }
+            }
+        }
+        let clock = ContinuousClock(), deadline = ContinuousClock.now + .seconds(10)
+        while model.running.contains(id), clock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(!model.running.contains(id))
+        let wakes = await probe.wakes
+        expectNoDifference(wakes, mode == "approve" ? [recipient, sender] : mode.hasPrefix("peer-") ? [recipient] : [])
+        expectNoDifference(model.agentMessages.count, mode == "approve" ? 2 : mode.hasPrefix("peer-") ? 1 : 0)
+        #expect(model.agentMessages.allSatisfy { $0.delivery?.state == (mode.hasPrefix("peer-") ? .cancelled : .completed) })
+        #expect(model.pendingAutoReviewApprovals.isEmpty)
+        #expect(model.runningGroups.isEmpty)
     }
 }

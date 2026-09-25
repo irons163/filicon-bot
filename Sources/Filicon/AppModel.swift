@@ -266,6 +266,7 @@ final class AppModel: ObservableObject {
     private let agentMessenger: AgentMessenger?
     private let agentConversations: AgentConversationStore?
     private var agentMessagingSessions: [UUID: AgentMessagingSession] = [:]
+    private var directMessagingScopes: Set<UUID> = []
     @Published private(set) var mailboxSecretCards: [UUID: AgentSecretRequestCardModel] = [:]
     private struct MailboxSecretContext {
         let incomingID: UUID
@@ -983,6 +984,7 @@ final class AppModel: ObservableObject {
 
     func deleteConversation(id: UUID) {
         invalidateDirectSecrets(conversationID: id)
+        cancelDirectMessaging(conversationID: id)
         if running.contains(id) {
             turnTasks[id]?.cancel()
             Task { await coordinator.cancel(conversationID: id) }
@@ -1913,6 +1915,7 @@ final class AppModel: ObservableObject {
         let turnTask = Task { [self] in
             var succeeded = false
             var publisher: AgentUserMessageTool?
+            var messaging: AgentMessagingSession?
             defer { directPublicationIDs.removeValue(forKey: assistantID) }
             do {
                 try await persistOrThrow(conversationID: id)
@@ -2007,7 +2010,29 @@ final class AppModel: ObservableObject {
                                 generation: publicationGeneration, replyTo: replyTo, images: images)
                         }, publish: { _, _ in throw CancellationError() })
                 }
-                let tools: [any ToolExecutor] = publisher.map { [$0] } ?? []
+                var tools: [any ToolExecutor] = publisher.map { [$0] } ?? []
+                if publisher != nil, let agentIdentity, let agentService, let agentMessenger, let agentConversations {
+                    // Only text delegation is enabled here. Management, group
+                    // fan-out and image forwarding need their own host wiring.
+                    let session = AgentMessagingSession(originConversationID: id, agents: agentService,
+                        messenger: agentMessenger, registry: registry, coordinator: coordinator,
+                        conversations: agentConversations, accountID: accountScope,
+                        authorize: { [weak self] sender, recipient, text, call, context in
+                            guard let self else { throw CancellationError() }
+                            try await self.validateDirectDelegation(conversationID: id, binding: agentBinding,
+                                account: accountScope, generation: publicationGeneration,
+                                providerID: providerID, modelID: requestModelID, identity: agentIdentity)
+                            try await self.authorizeAgentDelegation(sender: sender, recipient: recipient,
+                                text: text, call: call, context: context)
+                            try await self.validateDirectDelegation(conversationID: id, binding: agentBinding,
+                                account: accountScope, generation: publicationGeneration,
+                                providerID: providerID, modelID: requestModelID, identity: agentIdentity)
+                        }, onChange: { [weak self] in await self?.reloadAgentMessages() })
+                    messaging = session
+                    agentMessagingSessions[id] = session
+                    directMessagingScopes.insert(id)
+                    tools.append(session.tool(for: agentIdentity.agentID))
+                }
                 try await coordinator.send(request: request, providerID: providerID, additionalTools: tools,
                     agentID: agentIdentity?.agentID, onStart: { [weak self] in
                         guard let self else { throw CancellationError() }
@@ -2017,6 +2042,16 @@ final class AppModel: ObservableObject {
                         guard liveIdentity == agentIdentity else { throw CancellationError() }
                     }) { [weak self] event in
                     await self?.consume(event, conversationID: id, assistantID: assistantID)
+                }
+                // send has released the foreground agent lane. Draining inside
+                // that lane would deadlock when a peer replies to the sender.
+                if let messaging, let agentIdentity {
+                    try Task.checkCancellation()
+                    let ids = directPublicationIDs[assistantID] ?? [assistantID]
+                    let response = conversations.first(where: { $0.id == id })?.messages
+                        .filter { ids.contains($0.id) }.map(\.text).joined(separator: "\n") ?? ""
+                    await messaging.remember(agentID: agentIdentity.agentID, messages: requestMessages, response: response)
+                    try await messaging.drain()
                 }
                 succeeded = true
             } catch is ToolTurnSuspension {
@@ -2028,6 +2063,13 @@ final class AppModel: ObservableObject {
                 setDeliveryStatus(.failed, error: error.localizedDescription, conversationID: id, assistantID: assistantID)
             }
             await publisher?.close()
+            if let messaging {
+                do { try await messaging.close() }
+                catch { errorMessage = error.localizedDescription }
+                await cancelAgentMessageTools(scopeID: id)
+                agentMessagingSessions[id] = nil
+                directMessagingScopes.remove(id)
+            }
             finishTurn(conversationID: id, assistantID: assistantID, succeeded: succeeded)
             if succeeded, directPublicationIDs[assistantID]?.isEmpty == true,
                let ci = conversations.firstIndex(where: { $0.id == id }),
@@ -2079,6 +2121,7 @@ final class AppModel: ObservableObject {
     func cancel() {
         guard isBootstrapped, let selection else { return }
         invalidateDirectSecrets(conversationID: selection)
+        cancelDirectMessaging(conversationID: selection)
         turnTasks[selection]?.cancel()
         workspaceFolders.cancel(conversationID: selection)
         Task {
@@ -2957,6 +3000,9 @@ final class AppModel: ObservableObject {
 
     func archiveAgent(id: UUID) async {
         guard let agentService else { return }
+        for conversation in conversations where conversation.agentBinding?.agentID == id {
+            cancelDirectMessaging(conversationID: conversation.id)
+        }
         for (key, context) in directSecretContexts where context.submission.destination.agentID == id {
             invalidateDirectSecret(key)
         }
@@ -4087,7 +4133,28 @@ final class AppModel: ObservableObject {
         !agentMessagingAccountTransition && (
             (runningGroups.contains(scopeID) && !cancelledGroupRuns.contains(scopeID))
                 || (runningAgentMessageScopes.contains(scopeID) && agentMessageTasks[scopeID]?.isCancelled == false)
+                || (directMessagingScopes.contains(scopeID) && running.contains(scopeID)
+                    && turnTasks[scopeID]?.isCancelled == false && !deletedConversationIDs.contains(scopeID))
         )
+    }
+
+    private func validateDirectDelegation(conversationID: UUID, binding: DirectConversationAgentBinding?,
+                                          account: String, generation: UInt64, providerID: ProviderID,
+                                          modelID: ModelID, identity: DirectAgentExecutionIdentity) async throws {
+        try Task.checkCancellation()
+        let current = try await directTurnAgentIdentity(conversationID: conversationID, binding: binding,
+            accountScope: account, generation: generation, providerID: providerID, modelID: modelID)
+        guard current == identity, isAgentMessagingScopeActive(conversationID) else { throw CancellationError() }
+    }
+
+    private func cancelDirectMessaging(conversationID: UUID) {
+        guard directMessagingScopes.contains(conversationID) else { return }
+        turnTasks[conversationID]?.cancel()
+        let session = agentMessagingSessions[conversationID]
+        session?.revokeProfileChanges()
+        // The owning turn performs grant/card cleanup before releasing running.
+        // A detached cleanup must not revoke a subsequent turn's approvals.
+        Task { try? await session?.close() }
     }
 
     func markAgentMessagesRead(recipientID: UUID) async {
@@ -5752,6 +5819,13 @@ final class AppModel: ObservableObject {
         pendingAutoReviewByID[pending.id] = pending
         pendingAutoReviewApprovals = pendingAutoReviewByID.values.sorted { $0.createdAt < $1.createdAt }
         var publicationDetails: [String] = []
+        if pending.action.context.metadata["tool"] == "SendToAgent",
+           let text = pending.action.context.metadata["agentMessage"] {
+            publicationDetails.append(text)
+            if let priority = pending.action.context.metadata["agentMessagePriority"] {
+                publicationDetails.append(l10n(priority == "priority" ? "Priority" : "Normal"))
+            }
+        }
         if pending.action.context.metadata["agentImagePublication"] == "true",
            let raw = pending.action.context.metadata["agentImages"],
            let images = try? JSONDecoder().decode([AttachmentMetadata].self, from: Data(raw.utf8)) {
@@ -5842,7 +5916,10 @@ final class AppModel: ObservableObject {
         await agentExecutionScheduler.cancelAll()
         await subagentService?.cancelAll()
         for scopeID in Array(agentMessagingSessions.keys) {
-            if runningAgentMessageScopes.contains(scopeID) { await stopAgentMessages(scopeID: scopeID) }
+            if directMessagingScopes.contains(scopeID) {
+                cancelDirectMessaging(conversationID: scopeID)
+                try? await agentMessagingSessions[scopeID]?.close()
+            } else if runningAgentMessageScopes.contains(scopeID) { await stopAgentMessages(scopeID: scopeID) }
             else { await stopGroup(id: scopeID) }
         }
         let agentIDs = Set(pendingAutoReviewByID.values.map(\.fence.agentID))
