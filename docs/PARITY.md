@@ -1,5 +1,7 @@
 # Filicon / Grok Bot 0.18 功能 parity matrix（current implementation）
 
+直接聊天短地址儲存基礎（2026-09-25）：ChatMessage 與 SQLite schema 10 增加可選 shortAddress，完整讀寫、分頁、JSON 相容及有效資料復原均保存此欄位。舊資料不猜測地址。這是接入原版持久引用身份的必要基礎，尚未啟用直接聊天地址配置、工具目錄／回條或 sand-msg UI；AGENT-02 仍 partial，不算完整短地址功能。
+
 圖片發布補驗（2026-09-25）：修正既有安全金鑰測試的排程等待上限後，完整非並行回歸 direct-images-full-recheck.log exit 0；下列該輪偶發測試失敗已補驗，功能範圍與 partial 狀態不變。
 
 直接聊天圖片發布（2026-09-25）：SendMessage 現可發布本回合最後一則使用者訊息所附的 PNG／JPEG，支援附文字或獨立 attachment、UUID reply_to／保存回條。發布前顯示檔名、替代文字與說明供核准，核准前後重新驗證來源及內容；保存後建立獨立附件引用。此項取代直接聊天圖片完全未接線的描述，但任意路徑／HTTPS／生成檔案、影片及一般文件發布仍未完成，secret-request／短地址等缺口不變，AGENT-02 仍 partial。驗證與完整回歸中的既有安全金鑰測試偶發失敗詳見協作紀錄。

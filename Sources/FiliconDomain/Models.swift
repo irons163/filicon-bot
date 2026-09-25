@@ -67,6 +67,8 @@ public struct ChatMessage: Identifiable, Codable, Hashable, Sendable {
     public var transcriptCards: [TranscriptCard]
     public var replyToMessageID: UUID?
     public var reactions: [ChatReaction]
+    /// Host-assigned reference identity; never derived from a paginated view.
+    public var shortAddress: String?
 
     public init(
         id: UUID = UUID(),
@@ -80,7 +82,8 @@ public struct ChatMessage: Identifiable, Codable, Hashable, Sendable {
         toolActivities: [ToolActivity] = [],
         transcriptCards: [TranscriptCard] = [],
         replyToMessageID: UUID? = nil,
-        reactions: [ChatReaction] = []
+        reactions: [ChatReaction] = [],
+        shortAddress: String? = nil
     ) {
         self.id = id
         self.role = role
@@ -94,6 +97,7 @@ public struct ChatMessage: Identifiable, Codable, Hashable, Sendable {
         self.transcriptCards = transcriptCards
         self.replyToMessageID = replyToMessageID
         self.reactions = reactions
+        self.shortAddress = shortAddress
     }
 
     public mutating func toggleReaction(emoji: String, actorID: String) -> Bool {
@@ -118,7 +122,7 @@ public struct ChatMessage: Identifiable, Codable, Hashable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case id, role, text, createdAt, attachments, deliveryStatus, deliveryError
-        case reasoningText, toolActivities, transcriptCards, replyToMessageID, reactions
+        case reasoningText, toolActivities, transcriptCards, replyToMessageID, reactions, shortAddress
     }
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -133,6 +137,7 @@ public struct ChatMessage: Identifiable, Codable, Hashable, Sendable {
         toolActivities = try values.decodeIfPresent([ToolActivity].self, forKey: .toolActivities) ?? []
         transcriptCards = (try? values.decode([TranscriptCard].self, forKey: .transcriptCards)) ?? []
         replyToMessageID = try values.decodeIfPresent(UUID.self, forKey: .replyToMessageID)
+        shortAddress = try values.decodeIfPresent(String.self, forKey: .shortAddress)
         reactions = try values.decodeIfPresent([ChatReaction].self, forKey: .reactions) ?? []
     }
 }

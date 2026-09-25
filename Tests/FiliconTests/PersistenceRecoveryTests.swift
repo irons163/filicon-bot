@@ -4,6 +4,7 @@ import FiliconDomain
 import FiliconPersistence
 import Foundation
 import Testing
+import CustomDump
 
 private func recoveryDirectory() throws -> URL {
     let value = FileManager.default.temporaryDirectory.appending(path: "persistence-recovery-\(UUID().uuidString)", directoryHint: .isDirectory)
@@ -28,7 +29,7 @@ private func seedRecoveryDatabase(_ url: URL) async throws -> Conversation {
     let conversation = Conversation(
         id: UUID(uuidString: "10000000-0000-0000-0000-000000000001")!, title: "Recovery fixture",
         messages: [
-            .init(id: UUID(uuidString: "20000000-0000-0000-0000-000000000001")!, role: .user, text: "valid first"),
+            .init(id: UUID(uuidString: "20000000-0000-0000-0000-000000000001")!, role: .user, text: "valid first", shortAddress: "t3u"),
             .init(id: UUID(uuidString: "20000000-0000-0000-0000-000000000002")!, role: .assistant, text: "bad second"),
         ]
     )
@@ -62,6 +63,8 @@ private func seedRecoveryDatabase(_ url: URL) async throws -> Conversation {
     #expect(report.kind == .salvaged)
     #expect(report.recoveredConversations == 1)
     #expect(report.recoveredMessages == 1)
+    let recoveredValues = try await reopened.load()
+    expectNoDifference(recoveredValues.first?.messages.first?.shortAddress, "t3u")
     #expect(report.rejectedRows.contains { $0.table == "messages" && $0.rowIdentifier == "20000000-0000-0000-0000-000000000002" })
     let loaded = try await reopened.load()
     #expect(loaded.map(\.id) == [expected.id])

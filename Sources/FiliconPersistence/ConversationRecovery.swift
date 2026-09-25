@@ -303,13 +303,13 @@ enum ConversationRecovery {
             }
         } catch { rejected.append(.init(table: "conversations", rowIdentifier: "query", reason: bounded(error.localizedDescription))); completed = false }
         do {
-            let rows = try database.prepare("SELECT id,role,text,created_at,attachments_json,delivery_status,delivery_error,reasoning_text,tool_activities_json,reply_to_message_id,reactions_json,transcript_cards_json,conversation_id,ordinal FROM messages ORDER BY rowid", operation: "scan messages for recovery")
+            let rows = try database.prepare("SELECT id,role,text,created_at,attachments_json,delivery_status,delivery_error,reasoning_text,tool_activities_json,reply_to_message_id,reactions_json,transcript_cards_json,short_address,conversation_id,ordinal FROM messages ORDER BY rowid", operation: "scan messages for recovery")
             var seenMessageIDs: Set<UUID> = []
             while true {
                 let code: Int32
                 do { code = try rows.step() } catch { rejected.append(.init(table: "messages", rowIdentifier: "scan", reason: bounded(error.localizedDescription))); completed = false; break }
                 if code == SQLITE_DONE { break }
-                let rawID = rows.text(0), rawConversationID = rows.text(12), ordinal = rows.int(13)
+                let rawID = rows.text(0), rawConversationID = rows.text(13), ordinal = rows.int(14)
                 do {
                     guard let conversationID = UUID(uuidString: rawConversationID), values[conversationID] != nil else { throw PersistenceError.invalidData(table: "messages", row: rawID, field: "conversation_id") }
                     guard ordinal >= 0 else { throw PersistenceError.invalidData(table: "messages", row: rawID, field: "ordinal") }
@@ -338,7 +338,7 @@ enum ConversationRecovery {
         try ConversationRepository.migrate(database)
         try database.transaction("write recovered conversations") {
             let conversation = try database.prepare("INSERT INTO conversations(id,title,provider_id,model_id,updated_at,hidden_at,next_message_ordinal,reasoning_effort) VALUES(?,?,?,?,?,?,?,?)", operation: "recover conversation")
-            let message = try database.prepare("INSERT INTO messages(id,conversation_id,ordinal,role,text,created_at,attachments_json,delivery_status,delivery_error,reasoning_text,tool_activities_json,reply_to_message_id,reactions_json,transcript_cards_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)", operation: "recover message")
+            let message = try database.prepare("INSERT INTO messages(id,conversation_id,ordinal,role,text,created_at,attachments_json,delivery_status,delivery_error,reasoning_text,tool_activities_json,reply_to_message_id,reactions_json,transcript_cards_json,short_address) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", operation: "recover message")
             let search = try database.prepare("INSERT INTO conversation_search(conversation_id,content) VALUES(?,?)", operation: "recover search")
             for item in values {
                 let value = item.value
@@ -347,7 +347,7 @@ enum ConversationRecovery {
                 for row in item.messages {
                     let value = row.value
                     let attachments = try JSONEncoder().encode(value.attachments), activities = try JSONEncoder().encode(value.toolActivities), reactions = try JSONEncoder().encode(value.reactions), cards = try JSONEncoder().encode(value.transcriptCards)
-                    try message.bind(value.id.uuidString, at: 1); try message.bind(item.value.id.uuidString, at: 2); try message.bind(row.ordinal, at: 3); try message.bind(value.role.rawValue, at: 4); try message.bind(value.text, at: 5); try message.bind(value.createdAt.timeIntervalSince1970, at: 6); try message.bind(String(decoding: attachments, as: UTF8.self), at: 7); try message.bind(value.deliveryStatus.rawValue, at: 8); try message.bind(value.deliveryError ?? "", at: 9); try message.bind(value.reasoningText, at: 10); try message.bind(String(decoding: activities, as: UTF8.self), at: 11); try message.bind(value.replyToMessageID?.uuidString ?? "", at: 12); try message.bind(String(decoding: reactions, as: UTF8.self), at: 13); try message.bind(String(decoding: cards, as: UTF8.self), at: 14); _ = try message.step(); message.reset()
+                    try message.bind(value.id.uuidString, at: 1); try message.bind(item.value.id.uuidString, at: 2); try message.bind(row.ordinal, at: 3); try message.bind(value.role.rawValue, at: 4); try message.bind(value.text, at: 5); try message.bind(value.createdAt.timeIntervalSince1970, at: 6); try message.bind(String(decoding: attachments, as: UTF8.self), at: 7); try message.bind(value.deliveryStatus.rawValue, at: 8); try message.bind(value.deliveryError ?? "", at: 9); try message.bind(value.reasoningText, at: 10); try message.bind(String(decoding: activities, as: UTF8.self), at: 11); try message.bind(value.replyToMessageID?.uuidString ?? "", at: 12); try message.bind(String(decoding: reactions, as: UTF8.self), at: 13); try message.bind(String(decoding: cards, as: UTF8.self), at: 14); try message.bind(value.shortAddress ?? "", at: 15); _ = try message.step(); message.reset()
                 }
                 try search.bind(value.id.uuidString, at: 1); try search.bind(([value.title] + value.messages.map(\.text)).joined(separator: "\n"), at: 2); _ = try search.step(); search.reset()
             }
@@ -359,7 +359,7 @@ enum ConversationRecovery {
     private static func validateCurrentSchema(_ database: SQLiteDatabase) throws {
         let expected: [String: [String]] = [
             "conversations": ["id", "title", "provider_id", "model_id", "updated_at", "hidden_at", "next_message_ordinal", "reasoning_effort"],
-            "messages": ["id", "conversation_id", "ordinal", "role", "text", "created_at", "attachments_json", "delivery_status", "delivery_error", "reasoning_text", "tool_activities_json", "reply_to_message_id", "reactions_json", "transcript_cards_json"],
+            "messages": ["id", "conversation_id", "ordinal", "role", "text", "created_at", "attachments_json", "delivery_status", "delivery_error", "reasoning_text", "tool_activities_json", "reply_to_message_id", "reactions_json", "transcript_cards_json", "short_address"],
         ]
         for (table, columns) in expected {
             let statement = try database.prepare("PRAGMA table_info(\(table))", operation: "validate \(table) schema")

@@ -1,5 +1,15 @@
 # 協作能力核對紀錄（更新至 2026-09-25）
 
+## 直接聊天短地址的保存基礎（2026-09-25）
+
+最終補驗：direct-address-storage-full-final.log 完整非並行回歸 exit 0；新增三項保存測試與既有損壞復原測試通過。下方完整回歸待補記已關閉，短地址配置／工具／UI 接線仍未完成。
+
+核對原版 source/host/extensions/transcript/transcript-entry-ids.ts：人類訊息使用 tNu，正式 SendMessage 使用 tNsM，私有 assistant-message 使用不同的 a 命名空間。不能從畫面分頁索引或僅最近 40 則工具目錄重新編號，也不能把私有推理當成正式發布。
+
+本批先在 ChatMessage 加入可選 shortAddress，SQLite schema 10 遷移增加欄位；同步完整讀取、keyset 分頁欄位索引、保存、損壞行隔離後有效資料重建及 schema 檢查。舊 JSON／schema 9 紀錄維持 nil，不擅自重建歷史身份。地址配置、唯一性／刪除後保留規則、模型目錄／成功回條與 sand-msg UI 尚待接入，不能宣稱直接聊天短地址可用。
+
+依 Swift testing／CustomDump 技能，驗證 JSON 舊欄位缺省、61 則訊息跨多頁／重開／編輯後整筆資料一致、schema 9 升級可重複執行，以及損壞相鄰紀錄被隔離後有效地址保留。測試使用固定時間，避免 Date 與 SQLite REAL 往返的微小精度差干擾身份驗證；未改正式時間或資料。原生建置 direct-address-storage-native.log、封裝 direct-address-storage-package.log（含 deep strict 簽章）通過，完整回歸結果待本輪完成補記。未啟動 App 或操作真實聊天資料。
+
 ## 直接聊天圖片發布（2026-09-25）
 
 補驗：將安全金鑰測試固定 1,000 次 Task.yield 等待改為五秒單調時鐘期限及短暫非阻塞等待；失敗保留呼叫端位置，產品的注入時鐘、心跳與核准政策皆未改動。完整非並行回歸 direct-images-full-recheck.log 最終 exit 0，安全金鑰 14 項與圖片 18 案例通過，關閉下方本輪全綠待補驗項目。此修正不代表真實硬體／遠端帳號驗收。
