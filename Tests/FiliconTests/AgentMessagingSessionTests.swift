@@ -87,6 +87,49 @@ private func prioritySendCall(_ target: UUID, _ text: String, id: ToolCallID = "
 
 @Suite("SendToAgent messaging session", .timeLimit(.minutes(1)))
 struct AgentMessagingSessionTests {
+    @Test(arguments: ["local", "other", "", " "])
+    func directOriginRejectsMismatchedAccountAndHumanMailboxInput(account: String) async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let session = AgentMessagingSession(originConversationID: f.origin, agents: f.agents,
+            messenger: f.messenger, registry: f.registry, coordinator: f.coordinator,
+            directOriginBinding: .init(accountID: account, agentID: f.sender.id),
+            authorize: { _, _, _, _, _ in })
+        await #expect(throws: AgentMessagingError.scopeMismatch) {
+            try await session.enqueueUserMessage(senderID: f.sender.id, recipientID: f.recipient.id, text: "Human mailbox input")
+        }
+        let messages = await f.messenger.allMessages()
+        expectNoDifference(messages, [])
+        let call = try sendCall(f.recipient.id)
+        if account == "local" {
+            let receipt = try await session.tool(for: f.sender.id).execute(call, context: .init(conversationID: f.origin))
+            #expect(!receipt.isError)
+            let saved = try #require(await f.messenger.allMessages().first)
+            expectNoDifference(saved.delivery?.directOriginBinding, .init(accountID: account, agentID: f.sender.id))
+        } else {
+            await #expect(throws: AgentMessagingError.scopeMismatch) {
+                _ = try await session.tool(for: f.sender.id).execute(call, context: .init(conversationID: f.origin))
+            }
+            let after = await f.messenger.allMessages()
+            expectNoDifference(after, [])
+        }
+        try await session.close()
+    }
+
+    @Test func directOriginRoundTripAndLegacyAbsence() throws {
+        let chain = UUID(), origin = UUID(), agent = UUID()
+        let binding = DirectConversationAgentBinding(accountID: "account-A", agentID: agent)
+        let delivery = AgentMessageDelivery(chainID: chain, originConversationID: origin, directOriginBinding: binding)
+        let encoder = JSONEncoder(), decoder = JSONDecoder()
+        expectNoDifference(try decoder.decode(AgentMessageDelivery.self, from: encoder.encode(delivery)), delivery)
+        // Old records have neither a direct origin nor a canonical final report.
+        let legacy = try JSONSerialization.data(withJSONObject: ["chainID": chain.uuidString,
+            "originConversationID": origin.uuidString, "state": "completed", "response": "Old report"])
+        let old = try decoder.decode(AgentMessageDelivery.self, from: legacy)
+        expectNoDifference(old.directOriginBinding, nil)
+        expectNoDifference(old.finalPublication, nil)
+        expectNoDifference(old.response, "Old report")
+    }
+
     @Test(arguments: ["valid", "author", "scope", "identity", "text", "pending"])
     func finalReceiptIsAtomicAndPreservesFullText(mode: String) async throws {
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }

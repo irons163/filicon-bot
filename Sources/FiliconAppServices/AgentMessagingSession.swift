@@ -63,6 +63,7 @@ public actor AgentMessagingSession {
     private var reservedGroups: Set<UUID> = []
     private var activeGroupID: UUID?
     private let accountID: String
+    private let directOriginBinding: DirectConversationAgentBinding?
     private let supportsMailboxQuestions: Bool
     public typealias SecretPublisher = @Sendable (AgentSecretRequest, AgentMessage, UUID?, AgentPublicationLifetime) async throws -> RoomMessage
     private let publishSecret: SecretPublisher?
@@ -101,6 +102,7 @@ public actor AgentMessagingSession {
     public init(id: UUID = UUID(), originConversationID: UUID, agents: AgentService, messenger: AgentMessenger,
                 registry: ProviderRegistry, coordinator: TurnCoordinator, turnTimeout: Duration = .seconds(180),
                 conversations: AgentConversationStore? = nil, accountID: String = "local", management: AgentManagementSession? = nil,
+                directOriginBinding: DirectConversationAgentBinding? = nil,
                 memoryExtractor: AgentMemorySuggestionExtractor? = nil,
                 supportsMailboxQuestions: Bool = false,
                 publishSecret: SecretPublisher? = nil,
@@ -116,6 +118,7 @@ public actor AgentMessagingSession {
         self.id = id; self.originConversationID = originConversationID
         self.agents = agents; self.messenger = messenger; self.registry = registry; self.coordinator = coordinator
         self.conversations = conversations; self.accountID = accountID
+        self.directOriginBinding = directOriginBinding
         self.supportsMailboxQuestions = supportsMailboxQuestions
         self.publishSecret = publishSecret
         self.management = management
@@ -277,6 +280,7 @@ public actor AgentMessagingSession {
     public func enqueueUserMessage(senderID: UUID, recipientID: UUID, text: String,
                                    priority: AgentMessagePriority = .normal, images: [AttachmentMetadata] = []) async throws {
         try checkOpen()
+        guard directOriginBinding == nil else { throw AgentMessagingError.scopeMismatch }
         guard accepted.isEmpty, groupPosts.isEmpty, reservations.isEmpty, !hostEnqueueReserved else { throw AgentMessagingError.limitReached }
         hostEnqueueReserved = true
         defer { hostEnqueueReserved = false }
@@ -467,7 +471,8 @@ public actor AgentMessagingSession {
         }
         try checkOpen()
         let message = AgentMessage(senderID: senderID, recipientID: recipient.id, text: text, priority: args.priority ? .priority : .normal,
-                                   delivery: .init(chainID: id, originConversationID: originConversationID), images: images)
+                                   delivery: .init(chainID: id, originConversationID: originConversationID,
+                                                   directOriginBinding: directOriginBinding), images: images)
         try await messenger.send(message)
         // Cancellation during the store hop must never acknowledge or wake work.
         if closed || Task.isCancelled {
@@ -768,6 +773,11 @@ public actor AgentMessagingSession {
     private func checkOpen() throws {
         try Task.checkCancellation()
         guard !closed else { throw AgentMessagingError.closed }
+        if let binding = directOriginBinding {
+            guard binding.accountID == accountID,
+                  !accountID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  accountID.utf8.count <= 1_024 else { throw AgentMessagingError.scopeMismatch }
+        }
     }
 
     private func acknowledgement(callID: ToolCallID, messageID: UUID) -> NormalizedToolResult {

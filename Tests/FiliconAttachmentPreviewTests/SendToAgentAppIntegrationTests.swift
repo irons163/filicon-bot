@@ -115,6 +115,7 @@ private struct DelegatingGroupProvider: InteractiveToolProvider {
         expectNoDifference(wakes, approve ? [recipient, sender] : [])
         expectNoDifference(model.agentMessages.count, approve ? 2 : 0)
         #expect(model.agentMessages.allSatisfy { $0.delivery?.state == .completed })
+        #expect(model.agentMessages.allSatisfy { $0.delivery?.directOriginBinding == nil })
         #expect(model.pendingAutoReviewApprovals.isEmpty)
         #expect(!model.runningGroups.contains(groupID))
         #expect(model.thinkingGroupMembers[groupID] == nil)
@@ -207,6 +208,9 @@ private struct DelegatingGroupProvider: InteractiveToolProvider {
         expectNoDifference(wakes, mode == "approve" ? [recipient, sender] : mode.hasPrefix("peer-") ? [recipient] : [])
         expectNoDifference(model.agentMessages.count, mode == "approve" ? 2 : mode.hasPrefix("peer-") ? 1 : 0)
         #expect(model.agentMessages.allSatisfy { $0.delivery?.state == (mode.hasPrefix("peer-") ? .cancelled : .completed) })
+        #expect(model.agentMessages.allSatisfy {
+            $0.delivery?.directOriginBinding == DirectConversationAgentBinding(accountID: "local", agentID: sender)
+        })
         #expect(model.pendingAutoReviewApprovals.isEmpty)
         #expect(model.runningGroups.isEmpty)
         let projected = model.conversations.flatMap(\.messages).filter { $0.agentMessageSource != nil }

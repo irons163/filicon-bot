@@ -2042,6 +2042,7 @@ final class AppModel: ObservableObject {
                         messenger: agentMessenger, registry: registry, coordinator: coordinator,
                         conversations: agentConversations, accountID: accountScope,
                         management: makeAgentManagementSession(originID: id),
+                        directOriginBinding: agentBinding,
                         authorize: { [weak self] sender, recipient, text, call, context in
                             guard let self else { throw CancellationError() }
                             try await self.validateDirectDelegation(conversationID: id, binding: agentBinding,
@@ -4221,6 +4222,7 @@ final class AppModel: ObservableObject {
               let canonical = await messenger.allMessages().first(where: { $0.id == source.deliveryID }),
               let delivery = canonical.delivery,
               delivery.chainID == sessionID, delivery.originConversationID == origin,
+              delivery.directOriginBinding == owner,
               canonical.senderID == source.senderAgentID, canonical.recipientID == source.recipientAgentID,
               canonical.questionResponse == nil, canonical.secretResponse == nil,
               message.groupID == origin, message.senderID == source.authorAgentID,

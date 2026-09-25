@@ -1,5 +1,13 @@
 # 協作能力核對紀錄（更新至 2026-09-26）
 
+## 直接委派來源持久化（2026-09-26）
+
+新的直接聊天委派在 delivery 保存不可變 directOriginBinding（帳號與原始代理人 UUID）；由 AppModel 的已驗證起始 binding 傳入 session，同一回覆鏈保持原始身份，而非改成每次寄件人。即時投影除 live session／chain／origin 外也核對 canonical binding。群組及人類信箱路徑不加標記；帶直接來源的 session 拒絕 enqueueUserMessage，帳號不符／空白則拒絕工具送出。這是來源歸屬，不是工具授權或重跑權限。
+
+舊 JSON 缺欄位保持 nil，不根據現有登入帳號或同名代理人回填。整合測試核對群組為 nil、直接聊天含取消情況與回覆鏈均保留原綁定；service 測試涵蓋四種帳號、人類輸入拒絕與 JSON 新舊相容。恢復入口仍須核對目前原聊天、收件人及 canonical 訊息，並辨識真正已開始交付的 incoming；不可單憑來源標記自動執行或重播。
+
+驗證：peer-origin-full.log 最終完整非並行回歸 exit 0；peer-origin-native.log 原生建置 exit 0，verify-package 和 deep strict codesign 通過。使用 pfw-testing 的隔離 fixture／完整值比較；未啟動或重啟 App／Xcode，未改真實帳號或群組資料。
+
 ## 純文字最終回覆的恢復紀錄（2026-09-26）
 
 確認恢復缺口：純文字 provider 先前只保存最多 8,000 字的 response 摘要，投影所用 RoomMessage UUID／完整文字未保存。新增 delivery.finalPublication，與 completed 狀態同一寫入保存；只允許 running → completed、相同作者／來源／全文、沒有明確發布或互動／媒體／工具卡的最終報告，拒絕重複訊息 UUID。舊資料保持 nil，不從摘要猜測舊 UUID。直接聊天改為核對這份 canonical 紀錄，避免長回覆因摘要截斷無法投影。

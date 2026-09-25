@@ -315,6 +315,9 @@ public struct AgentMessageDelivery: Codable, Hashable, Sendable {
     public enum State: String, Codable, Sendable { case queued, running, completed, failed, cancelled }
     public let chainID: UUID
     public let originConversationID: UUID
+    /// Host-selected direct-chat origin. Nil for groups, mailbox input and legacy records.
+    /// Provenance only: this never grants permission to replay execution.
+    public let directOriginBinding: DirectConversationAgentBinding?
     public var state: State
     public var response: String?
     /// Explicit SendMessage output; nil in older text-only mailboxes.
@@ -323,8 +326,10 @@ public struct AgentMessageDelivery: Codable, Hashable, Sendable {
     /// Separate from explicit SendMessage receipts; absent in older mailboxes.
     public var finalPublication: RoomMessage?
 
-    public init(chainID: UUID, originConversationID: UUID, state: State = .queued, response: String? = nil) {
+    public init(chainID: UUID, originConversationID: UUID, state: State = .queued, response: String? = nil,
+                directOriginBinding: DirectConversationAgentBinding? = nil) {
         self.chainID = chainID; self.originConversationID = originConversationID
+        self.directOriginBinding = directOriginBinding
         self.state = state; self.response = response
     }
 }
