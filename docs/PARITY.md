@@ -1,5 +1,7 @@
 # Filicon / Grok Bot 0.18 功能 parity matrix（current implementation）
 
+代理人聊天入口（2026-09-26）：代理人列表已可建立持久綁定的新單獨聊天；保存成功才導覽，封存／缺失／寫入失敗不新增畫面，一般模型控制不可覆寫綁定設定。聚焦 10 項測試通過。profile 模型修改後的同步、direct secret-request 及真實 UI 驗收仍待完成，不上調整體 partial。
+
 單獨聊天代理人執行驗證（2026-09-26）：持久 binding 已接 startTurn 的帳號／存活 profile／模型檢查、身份指令與共用 agent lane；排隊後再驗證，失效不退回一般聊天。聚焦測試通過。尚未新增 UI 選擇／建立入口或 direct secret-request，不將 binding 當作工具授權，整體仍為 partial。
 
 單獨聊天代理人關聯儲存（2026-09-25）：新增 accountID＋agentID 可選持久身份，schema 12、JSON、分頁與 salvage 均保留；舊資料不猜測關聯。16 項聚焦測試通過。UI 選擇／建立、執行身份與權限套用及 direct secret-request 仍待接線，不上調 partial 狀態。

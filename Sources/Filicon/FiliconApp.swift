@@ -875,6 +875,7 @@ private struct ChatConfigurationPopover: View {
                 }
             }
             .pickerStyle(.menu)
+            .disabled(conversation.agentBinding != nil)
             Picker(l10n("Model"), selection: Binding(
                 get: { conversation.modelID },
                 set: { model.updateRoute(providerID: conversation.providerID, modelID: $0) }
@@ -884,6 +885,13 @@ private struct ChatConfigurationPopover: View {
                 }
             }
             .pickerStyle(.menu)
+            .disabled(conversation.agentBinding != nil)
+            if let binding = conversation.agentBinding {
+                Text(model.agents.first(where: { $0.id == binding.agentID })?.name
+                    ?? l10n("The selected agent is unavailable."))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             Picker(l10n("Reasoning"), selection: Binding(
                 get: { conversation.reasoningEffort },
                 set: { model.setReasoningEffort($0) }

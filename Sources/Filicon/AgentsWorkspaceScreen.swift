@@ -185,6 +185,12 @@ private struct AgentRosterRow: View {
                     .background(.tint, in: Capsule()).foregroundStyle(.white)
             }
             AgentStatusLabel(status: profile.status)
+            if profile.archivedAt == nil {
+                Button { Task { await model.addConversation(agentID: profile.id) } } label: {
+                    Label(agentString("New conversation"), systemImage: "bubble.left")
+                }
+                .disabled(model.isCreatingAgentConversation)
+            }
             Menu {
                 Button(agentString("Edit…")) { inspectedAgent = profile }
                 Button(agentString(model.pinnedAgentIDs.contains(profile.id) ? l10n("Unpin") : l10n("Pin"))) { model.toggleAgentPinned(id: profile.id) }

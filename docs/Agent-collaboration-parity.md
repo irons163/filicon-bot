@@ -1,5 +1,13 @@
 # 協作能力核對紀錄（更新至 2026-09-26）
 
+## 建立代理人單獨聊天入口（2026-09-26）
+
+代理人列表的存活 profile 新增「新增對話」按鈕；host 從 AgentService 重新查詢，不信任舊 UI profile，建立全新 accountID＋agentID 綁定歷史並採用該代理人 provider/model。先經 quota 與 SQLite 保存，再加入列表／導覽；並行建立被擋下，寫入失敗不開空殼聊天室，保存後帳號／代理人失效則移除本次尚未呈現的新紀錄。若使用者已導覽到其他頁面，不搶回焦點。舊一般聊天不推測／重綁代理人。
+
+綁定對話的一般 provider/model picker 停用，host updateRoute 也拒絕覆寫；模型設定顯示代理人名稱。既有無綁定聊天仍可切換模型。這不授予任何新工具權限；代理人 profile 的模型後續修改，目前仍由上一批執行驗證拒絕舊配置，尚待同步設定流程。direct secret-request 仍未完成。
+
+聚焦 direct-agent-creation.log 10 項測試（含參數案例）通過：新歷史／持久 binding／保留舊對話、封存與不存在代理人拒絕、SQLite trigger 注入保存失敗，以及前批直接發送回歸。完整非並行 direct-agent-creation-full.log、原生 direct-agent-creation-native.log、封裝／deep strict 簽章 direct-agent-creation-package.log 均 exit 0。尚未操作使用者 App 驗收畫面；未重啟 App／Xcode 或變更真實帳號資料。
+
 ## 單獨聊天代理人執行驗證（2026-09-26）
 
 持久 binding 接入直接聊天 startTurn：查詢 AgentService 的存活 profile，確認 accountID、agentID、對話 binding、provider/model 與帳號 generation，帶入該代理人的名稱／職務／說明／指令，並使用共用 agent execution lane。取得 lane 後、呼叫 provider 前再次查詢；排隊期間封存、解除／改動綁定或變更執行指令均拒絕舊請求，不退回無綁定聊天。presence、unreadCount 等非執行欄位變化不使快照失效。舊無綁定對話不猜測代理人。

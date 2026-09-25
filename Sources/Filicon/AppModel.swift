@@ -696,6 +696,68 @@ final class AppModel: ObservableObject {
         Task { await persist(conversationID: selection) }
     }
 
+    @Published private(set) var isCreatingAgentConversation = false
+
+    /// A new, explicitly bound history; never repurpose an existing chat or
+    /// infer an agent from its title. Failed writes must not open a phantom chat.
+    @discardableResult
+    func addConversation(agentID: UUID, id: UUID = UUID(), now: Date = Date()) async -> UUID? {
+        guard isBootstrapped, !isCreatingAgentConversation, !agentMessagingAccountTransition,
+              let agentService, !conversations.contains(where: { $0.id == id }) else { return nil }
+        isCreatingAgentConversation = true
+        defer { isCreatingAgentConversation = false }
+        let generation = autoReviewAccountGeneration
+        let account = settings.accountScope ?? "local"
+        let previousSelection = selection
+        let previousRoute = route
+        guard let profile = await agentService.profile(id: agentID), profile.archivedAt == nil,
+              generation == autoReviewAccountGeneration, !agentMessagingAccountTransition else {
+            errorMessage = l10n("The selected agent is unavailable.")
+            return nil
+        }
+        var value = Conversation(id: id, title: profile.name, providerID: profile.providerID,
+            modelID: profile.modelID, updatedAt: now)
+        value.agentBinding = .init(accountID: account, agentID: agentID)
+        let conversation = value
+        do {
+            guard try await store.conversation(id: id) == nil,
+                  generation == autoReviewAccountGeneration, !agentMessagingAccountTransition else { return nil }
+            let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .secondsSince1970
+            try await quotaWrite(scope: "conversation", key: id.uuidString, data: encoder.encode(conversation)) { [store] in
+                try await store.upsert(conversation, replacingLoadedMessageIDs: [], historyComplete: true)
+            }
+            let live = await agentService.profile(id: agentID)
+            guard generation == autoReviewAccountGeneration, !agentMessagingAccountTransition,
+                  (settings.accountScope ?? "local") == account, live?.archivedAt == nil,
+                  live?.id == agentID, live?.providerID == profile.providerID, live?.modelID == profile.modelID else {
+                // Only this freshly created, never-presented history is removed.
+                try await store.delete(id: id)
+                try await quotaLedger?.remove(scope: "conversation", key: id.uuidString)
+                throw CancellationError()
+            }
+            conversations.insert(conversation, at: 0)
+            deletedConversationIDs.remove(id)
+            loadedMessageIDs[id] = []
+            completeMessageHistories.insert(id)
+            draftCache[id] = ""
+            if selection == previousSelection, route == previousRoute {
+                persistCurrentDraftImmediately()
+                selection = id
+                setRoute(.conversation(id), recordingHistory: true)
+                isRestoringDraft = true
+                draft = ""
+                isRestoringDraft = false
+                await refreshModels()
+            }
+            return id
+        } catch is CancellationError {
+            return nil
+        } catch {
+            errorMessage = error.localizedDescription
+            return nil
+        }
+    }
+
     private func addConversationUnchecked() {
         persistCurrentDraftImmediately()
         let conversation: Conversation
@@ -807,6 +869,7 @@ final class AppModel: ObservableObject {
     func updateRoute(providerID: ProviderID, modelID: ModelID? = nil) {
         guard isBootstrapped else { return }
         guard let selection, let index = conversations.firstIndex(where: { $0.id == selection }) else { return }
+        guard conversations[index].agentBinding == nil else { return }
         conversations[index].providerID = providerID
         if let modelID {
             conversations[index].modelID = modelID
