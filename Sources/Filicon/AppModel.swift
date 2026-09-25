@@ -1058,6 +1058,70 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func canAnswerDirectQuestion(conversationID: UUID, messageID: UUID, cardID: UUID) -> Bool {
+        guard isBootstrapped, !agentMessagingAccountTransition, !running.contains(conversationID),
+              !deletedConversationIDs.contains(conversationID),
+              let conversation = conversations.first(where: { $0.id == conversationID }),
+              let message = conversation.messages.first(where: { $0.id == messageID }), message.role == .assistant,
+              let question = message.transcriptCards.first(where: { $0.id == cardID })?.directQuestion else { return false }
+        return question.isPending && question.accountID == (settings.accountScope ?? "local")
+    }
+
+    func directQuestionAnswered(conversationID id: UUID, messageID: UUID, cardID: UUID, answer: AgentQuestionAnswer) async {
+        let initialGeneration = autoReviewAccountGeneration
+        guard canAnswerDirectQuestion(conversationID: id, messageID: messageID, cardID: cardID) else { return }
+        do { try await loadAllMessages(for: id) }
+        catch { errorMessage = error.localizedDescription; return }
+        guard initialGeneration == autoReviewAccountGeneration else { return }
+        guard canAnswerDirectQuestion(conversationID: id, messageID: messageID, cardID: cardID),
+              let ci = conversations.firstIndex(where: { $0.id == id }),
+              let mi = conversations[ci].messages.firstIndex(where: { $0.id == messageID }),
+              let ki = conversations[ci].messages[mi].transcriptCards.firstIndex(where: { $0.id == cardID }),
+              var question = conversations[ci].messages[mi].transcriptCards[ki].directQuestion else { return }
+        let original = conversations[ci].messages[mi].transcriptCards[ki]
+        let generation = autoReviewAccountGeneration
+        let account = settings.accountScope ?? "local"
+        var insertedIDs = Set<UUID>()
+        do {
+            let reply = try question.question.reply(for: answer)
+            let user = ChatMessage(role: .user, text: reply, replyToMessageID: messageID)
+            let assistant = ChatMessage(role: .assistant, text: "", deliveryStatus: .queued)
+            question.answer = answer
+            question.responseMessageID = user.id
+            var resolved = original
+            resolved.lifecycle = .succeeded
+            resolved.updatedAt = Date()
+            resolved.payload = .widget(.init(title: question.question.prompt, widgetKind: "choice", question: question))
+            running.insert(id)
+            conversations[ci].messages[mi].transcriptCards[ki] = resolved
+            conversations[ci].messages.append(contentsOf: [user, assistant])
+            insertedIDs = [user.id, assistant.id]
+            loadedMessageIDs[id, default: []].formUnion(insertedIDs)
+            try await persistOrThrow(conversationID: id)
+            guard generation == autoReviewAccountGeneration, account == (settings.accountScope ?? "local"),
+                  !agentMessagingAccountTransition, running.contains(id),
+                  let current = conversations.first(where: { $0.id == id }),
+                  current.messages.contains(where: { $0.id == assistant.id }) else { return }
+            startTurn(conversationID: id, assistantID: assistant.id,
+                requestMessages: current.messages.filter { $0.id != assistant.id },
+                modelID: current.modelID, providerID: current.providerID, reasoningEffort: current.reasoningEffort)
+        } catch {
+            if generation == autoReviewAccountGeneration, account == (settings.accountScope ?? "local"),
+               let ci = conversations.firstIndex(where: { $0.id == id }) {
+                conversations[ci].messages.removeAll { insertedIDs.contains($0.id) }
+                if let mi = conversations[ci].messages.firstIndex(where: { $0.id == messageID }),
+                   let ki = conversations[ci].messages[mi].transcriptCards.firstIndex(where: { $0.id == cardID }) {
+                    conversations[ci].messages[mi].transcriptCards[ki] = original
+                }
+                // A quota commit may report failure after the SQLite write.
+                // Persist the restored question before allowing another answer.
+                try? await persistOrThrow(conversationID: id)
+                running.remove(id)
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
     func send() {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard isBootstrapped, (!text.isEmpty || !pendingAttachments.isEmpty), let id = selection, !running.contains(id), conversations.contains(where: { $0.id == id }) else { return }
@@ -1084,12 +1148,29 @@ final class AppModel: ObservableObject {
         replyingToMessageID = nil
         running.insert(id)
         Task {
+            var retiredQuestions: [UUID: [TranscriptCard]] = [:]
             do {
                 try await loadAllMessages(for: id)
                 guard let hydratedIndex = conversations.firstIndex(where: { $0.id == id }) else {
                     throw CancellationError()
                 }
                 let userMessage = ChatMessage(role: .user, text: text, attachments: attachments, replyToMessageID: replyToMessageID)
+                for index in conversations[hydratedIndex].messages.indices {
+                    let previous = conversations[hydratedIndex].messages[index].transcriptCards
+                    var cards = previous
+                    for k in cards.indices {
+                        guard var question = cards[k].directQuestion, question.isPending,
+                              question.accountID == (settings.accountScope ?? "local"),
+                              question.question.dismissOnMoveOn == true else { continue }
+                        question.retired = true
+                        cards[k].payload = .widget(.init(title: question.question.prompt, widgetKind: "choice", question: question))
+                        cards[k].lifecycle = .retired
+                    }
+                    if cards != previous {
+                        retiredQuestions[conversations[hydratedIndex].messages[index].id] = previous
+                        conversations[hydratedIndex].messages[index].transcriptCards = cards
+                    }
+                }
                 conversations[hydratedIndex].messages.append(userMessage)
                 let assistantMessage = ChatMessage(role: .assistant, text: "", deliveryStatus: .queued)
                 conversations[hydratedIndex].messages.append(assistantMessage)
@@ -1141,6 +1222,13 @@ final class AppModel: ObservableObject {
                     reasoningEffort: conversations[hydratedIndex].reasoningEffort
                 )
             } catch {
+                if let ci = conversations.firstIndex(where: { $0.id == id }) {
+                    for mi in conversations[ci].messages.indices {
+                        if let cards = retiredQuestions[conversations[ci].messages[mi].id] {
+                            conversations[ci].messages[mi].transcriptCards = cards
+                        }
+                    }
+                }
                 running.remove(id)
                 if selection == id {
                     draft = originalDraft
@@ -1676,6 +1764,12 @@ final class AppModel: ObservableObject {
                         },
                         replyHistory: replyHistory, receiptSenderID: id, supportsReferenceNavigation: false,
                         directConversationPresentation: true,
+                        publishQuestionReceipt: { [weak self] question, replyTo in
+                            guard let self else { throw CancellationError() }
+                            return try await self.publishDirectText(question.prompt, conversationID: id,
+                                assistantID: assistantID, accountScope: accountScope,
+                                generation: publicationGeneration, replyTo: replyTo, question: question)
+                        },
                         publishReceipt: { [weak self] text, _, replyTo in
                             guard let self else { throw CancellationError() }
                             return try await self.publishDirectText(text, conversationID: id,
@@ -1687,6 +1781,8 @@ final class AppModel: ObservableObject {
                 try await coordinator.send(request: request, providerID: providerID, additionalTools: tools) { [weak self] event in
                     await self?.consume(event, conversationID: id, assistantID: assistantID)
                 }
+                succeeded = true
+            } catch is ToolTurnSuspension {
                 succeeded = true
             } catch is CancellationError {
                 setDeliveryStatus(.cancelled, conversationID: id, assistantID: assistantID)
@@ -1777,7 +1873,8 @@ final class AppModel: ObservableObject {
     /// A failed save must not be acknowledged as a delivered message.
     private func publishDirectText(_ text: String, conversationID: UUID,
                                    assistantID: UUID, accountScope: String, generation: UInt64,
-                                   replyTo: UUID?, cursorAgent: CursorAgentReference? = nil) async throws -> RoomMessage {
+                                   replyTo: UUID?, cursorAgent: CursorAgentReference? = nil,
+                                   question: AgentQuestion? = nil) async throws -> RoomMessage {
         try Task.checkCancellation()
         guard !agentMessagingAccountTransition, generation == autoReviewAccountGeneration,
               accountScope == (settings.accountScope ?? "local"),
@@ -1798,10 +1895,16 @@ final class AppModel: ObservableObject {
         }
         let previousReply = conversations[ci].messages[mi].replyToMessageID
         let previousCards = conversations[ci].messages[mi].transcriptCards
-        let cards: [TranscriptCard] = cursorAgent.map { reference in
+        var cards: [TranscriptCard] = cursorAgent.map { reference in
             [TranscriptCard(lifecycle: .succeeded, payload: .cloudAgent(.init(
                 agentID: "", title: "Cursor cloud agent", externalReferenceID: reference.bcID)))]
         } ?? []
+        let savedQuestion = question.map { GroupQuestion(question: $0, accountID: accountScope, memberIDs: []) }
+        if let savedQuestion {
+            try savedQuestion.question.validate()
+            cards.append(TranscriptCard(lifecycle: .waiting, payload: .widget(.init(
+                title: savedQuestion.question.prompt, widgetKind: "choice", question: savedQuestion))))
+        }
         let messageID: UUID
         if published.isEmpty {
             messageID = assistantID
@@ -1831,6 +1934,7 @@ final class AppModel: ObservableObject {
         var receipt = RoomMessage(id: messageID, groupID: conversationID, senderID: conversationID, text: text)
         receipt.replyToMessageID = replyTo
         receipt.cursorAgent = cursorAgent
+        receipt.question = savedQuestion
         return receipt
     }
 

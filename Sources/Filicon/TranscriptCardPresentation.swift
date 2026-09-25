@@ -4,6 +4,11 @@ import FiliconDomain
 import FiliconAgents
 
 extension TranscriptCard {
+    var directQuestion: GroupQuestion? {
+        guard case .widget(let value) = payload, value.widgetKind == "choice",
+              let question = value.question, (try? question.question.validate()) != nil else { return nil }
+        return question
+    }
     var externalCursorReference: CursorAgentReference? {
         guard case .cloudAgent(let value) = payload,
               let id = value.externalReferenceID else { return nil }

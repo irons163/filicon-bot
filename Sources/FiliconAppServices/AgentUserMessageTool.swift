@@ -91,6 +91,7 @@ public actor AgentUserMessageTool: ToolExecutor, ToolRuntimeContextProviding {
                 supportsReferenceNavigation: Bool = true,
                 mailboxPresentation: Bool = false,
                 directConversationPresentation: Bool = false,
+                publishQuestionReceipt: (@Sendable (AgentQuestion, UUID?) async throws -> RoomMessage)? = nil,
                 publishReceipt: (@Sendable (String, [AttachmentMetadata], UUID?) async throws -> RoomMessage)? = nil,
                 publish: @escaping @Sendable (String, [AttachmentMetadata]) async throws -> Void) {
         self.conversationID = conversationID; self.availableImages = availableImages
@@ -107,22 +108,28 @@ public actor AgentUserMessageTool: ToolExecutor, ToolRuntimeContextProviding {
             self.publish = { try await publishReceipt($0, $1, nil) }
         } else { self.publish = { try await publish($0, $1); return nil } }
         supportsImages = imageStore != nil && !availableImages.isEmpty
-        if let publishQuestion { self.publishQuestion = { try await publishQuestion($0); return nil } }
-        else { self.publishQuestion = nil }
-        if publishQuestion != nil, let publishQuestionReply {
-            self.publishQuestionReply = { try await publishQuestionReply($0, $1); return nil }
-        } else { self.publishQuestionReply = nil }
         let hasReceipts = publishReceipt != nil && receiptSenderID != nil
         if let publishReceipt, hasReceipts {
             self.publishReply = { try await publishReceipt($0, $1, $2) }
         } else if let publishReply { self.publishReply = { try await publishReply($0, $1, $2); return nil } }
         else { self.publishReply = nil }
-        let questionReplies = publishQuestion != nil && publishQuestionReply != nil
+        if let publishQuestionReceipt, hasReceipts {
+            self.publishQuestion = { try await publishQuestionReceipt($0, nil) }
+            self.publishQuestionReply = { try await publishQuestionReceipt($0, $1) }
+        } else {
+            if let publishQuestion { self.publishQuestion = { try await publishQuestion($0); return nil } }
+            else { self.publishQuestion = nil }
+            if publishQuestion != nil, let publishQuestionReply {
+                self.publishQuestionReply = { try await publishQuestionReply($0, $1); return nil }
+            } else { self.publishQuestionReply = nil }
+        }
+        let questionReceipts = publishQuestionReceipt != nil && hasReceipts
+        let questionReplies = questionReceipts || (publishQuestion != nil && publishQuestionReply != nil)
         let targets = publishReply == nil && !questionReplies && !hasReceipts ? [] : Self.replyTargets(in: replyHistory, groupID: conversationID)
         replyTargets = targets
         knownMessageIDs = Set(replyHistory.filter { $0.groupID == conversationID }.map(\.id))
         knownShortAddresses = Set(replyHistory.filter { $0.groupID == conversationID }.compactMap(\.shortAddress))
-        descriptor = Self.makeDescriptor(supportsImages: supportsImages, supportsQuestions: publishQuestion != nil,
+        descriptor = Self.makeDescriptor(supportsImages: supportsImages, supportsQuestions: questionReceipts || publishQuestion != nil,
             supportsReplies: hasReceipts || !targets.isEmpty, supportsTextReplies: hasReceipts || publishReply != nil, supportsQuestionReplies: questionReplies,
             supportsSecrets: publishSecret != nil, supportsCloudAgents: publishCursorAgent != nil)
     }

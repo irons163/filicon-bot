@@ -75,11 +75,13 @@ public struct TranscriptCardLifecycle: RawRepresentable, Codable, Hashable, Send
 }
 
 public struct WidgetTranscriptCard: Codable, Hashable, Sendable {
+    public var question: GroupQuestion?
     public var title: String
     public var body: String
     public var widgetKind: String
     public var facts: [String: String]
-    public init(title: String, body: String = "", widgetKind: String = "summary", facts: [String: String] = [:]) {
+    public init(title: String, body: String = "", widgetKind: String = "summary", facts: [String: String] = [:], question: GroupQuestion? = nil) {
+        self.question = question
         self.title = title; self.body = body; self.widgetKind = widgetKind; self.facts = facts
     }
 }

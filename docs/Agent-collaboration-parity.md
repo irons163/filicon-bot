@@ -1,5 +1,17 @@
 # 協作能力核對紀錄（更新至 2026-09-25）
 
+## 直接聊天選項問題與續聊（2026-09-25）
+
+重新核對原版 `source/shared/sand-widgets.ts` 和 `source/host/runner/tools/send-message-tool.ts`：widget 包含 prompt、1–6 選項、helpText、allowCustom、dismissOnMoveOn；選項 value 回傳為人類訊息，發布問題即終止該回合，回答／取消後續聊。dismissOnMoveOn 預設 false，不可一律把所有問題隨新訊息失效。
+
+共用 AgentQuestion／GroupQuestion 值移至 Domain，Agents 重新匯出以保留既有來源 import；WidgetTranscriptCard 增加可選的 typed question，舊摘要卡缺欄位仍保持原本行為，SQLite 沿用 transcript_cards_json 保存，不另建一套未接線的 UI 狀態。直接聊天 SendMessage 提供 question receipt publisher，和文字／cloud 共用發布界線、保存失敗回滾及引用目錄，只有保存成功才取得 UUID 回條。ToolTurnSuspension 是正常等待人類，而非錯誤回答。
+
+依 SwiftUI 技能沿用既有 GroupQuestionCard 多語言介面。主程式重新驗證帳號、待回答狀態、對話／訊息／卡片身份；先補齊完整歷史，再同次保存已回答狀態、人類答案與新回合佔位。無效／跨帳號／重複回答不啟動新回合；新回合仍受原本工具核准政策約束。普通新訊息只退休有 dismissOnMoveOn 的 pending 問題。保存故障後恢復原卡片，並重存回滾結果，避免 quota commit 回報錯誤但 SQLite 已寫入造成重複回答。
+
+Swift testing／CustomDump 的隔離 App 測試涵蓋選項、自訂、取消、無效選項、帳號不符、重複回答、UUID reply_to、暫停不再呼叫模型、寫入工具權限不變，以及兩種 move-on 旗標。三個 quota 故障點逐一驗證回答未保存成功時恢復 pending 並可重試。這不是對持續磁碟損壞、所有並行切換或真實使用者視窗互動的完整驗收；圖片／安全憑證／短地址等後續差異仍未完成。
+
+驗證：`direct-widget-focused.log` 與最終完整非並行回歸 `direct-widget-full.log` exit 0；Xcode 原生建置 `direct-widget-native.log`、封裝 `direct-widget-package.log`、deep strict codesign 通過。未啟動或重啟使用者 App／Xcode，未改真實群組／帳號資料。
+
 ## 直接聊天外部雲端引用（2026-09-25）
 
 接續原版 SendMessage cursor-agent 引用契約，直接聊天 publisher 現提供 CursorAgentPublisher；沿用既有 opaque ID 驗證、固定 cursor.com 安全路徑、發布額度、取消／帳號世代及同對話引用檢查。卡片與 canonical summary 同次保存，保存成功才給帶 cursorAgent 的 RoomMessage 回條；直接聊天資料仍是 ChatMessage，不新增群組。下一則發布可用回條 UUID 引用該卡片。

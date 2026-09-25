@@ -1417,7 +1417,7 @@ private struct TranscriptMessageView: View {
                 .font(.callout)
             }
             if !message.text.isEmpty && !message.transcriptCards.contains(where: {
-                $0.externalCursorReference?.summary == message.text
+                $0.externalCursorReference?.summary == message.text || $0.directQuestion?.question.prompt == message.text
             }) {
                 if message.role == .user {
                     Text(message.text).textSelection(.enabled)
@@ -1434,7 +1434,14 @@ private struct TranscriptMessageView: View {
                 ToolActivityRow(activity: activity)
             }
             ForEach(message.transcriptCards) { card in
-                TranscriptCardRow(card: card) { model.handleTranscriptCardIntent($0) }
+                if let question = card.directQuestion {
+                    GroupQuestionCard(card: question,
+                        enabled: model.canAnswerDirectQuestion(conversationID: conversation.id, messageID: message.id, cardID: card.id)) { answer in
+                        Task { await model.directQuestionAnswered(conversationID: conversation.id, messageID: message.id, cardID: card.id, answer: answer) }
+                    }
+                } else {
+                    TranscriptCardRow(card: card) { model.handleTranscriptCardIntent($0) }
+                }
             }
             if !message.attachments.isEmpty {
                 ScrollView(.horizontal) {

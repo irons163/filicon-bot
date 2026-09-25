@@ -1,5 +1,7 @@
 # Filicon / Grok Bot 0.18 功能 parity matrix（current implementation）
 
+直接聊天選項問答（2026-09-25）：SendMessage `type:widget` 已接入正式保存、UUID 引用／回條、暫停回合，以及人類選項／自訂文字／取消後的續聊。沿用群組問答介面；`dismissOnMoveOn` 只在明確設為 true 時隨新訊息失效，回答不改工具權限。此項取代下方直接聊天 widget 尚未接線的描述。圖片、secret-request、短地址／sand-msg 和外部服務驗收等仍有缺口，AGENT-02 仍 partial。
+
 直接聊天雲端引用（2026-09-25）：SendMessage `type:cursor-agent`／`bcId` 已接入正式保存、UUID 回條與 reply_to，可由同回合下一則文字引用。外部卡片沿用七語言 Cursor 引用介面，只在使用者點擊時開啟固定 cursor.com；與既有本機代理導航分離。此項取代下方直接聊天 cloud-agent 入口尚未接線的記錄。圖片／widget／secret-request、短地址／sand-msg，以及遠端 title／status／帳號驗收仍未完成，AGENT-02 維持 partial。
 
 直接聊天引用回條（2026-09-25）：SendMessage text 已支援同對話 UUID `reply_to` 與成功保存後的 messageID 回條，同回合後續發布可以引用前一則新訊息。工具目錄不帶入其他對話，保存時重新檢查目標仍存在；使用既有直接聊天引用預覽／跳轉。此項取代下方「直接聊天 reply_to／UUID 回條完全未接線」的記錄。短地址、正文 sand-msg 導航及其餘圖片／widget／secret-request／cloud-agent 型別仍未完成，AGENT-02 仍 partial。
