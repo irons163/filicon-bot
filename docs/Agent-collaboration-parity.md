@@ -1,6 +1,18 @@
 # 協作能力核對紀錄（更新至 2026-09-26）
 
+## 綁定代理人的直接聊天安全憑證流程（2026-09-26）
+
+直接聊天 SendMessage 啟用 secret-request，但只限具有已驗證 account／agent binding 的對話；未綁定對話不提供這項能力。沿用既有 destination 規則，只能為該代理人已配置、啟用且唯一的 Slack／Discord bot token 連接器提出請求，不能用模型指定任意 credential reference 或建立連接器。
+
+發布先保存 typed transcript card 再提供 transient AgentSecretRequestCardModel；工具暫停原回合。使用者在 SecureField 輸入，值清除後只交給 AgentSecretSubmission 的 writer，不進訊息、模型或持久化卡片。提交核對現行帳號／代理人綁定、群組以外的直接對話身分、連接器與當前 lifecycle；恢復前再次驗證目的地。實際 stored／dismissed 結果才可產生不含值的 user acknowledgement，與 resolved card 一起保存，再用既有 startTurn 重新取得代理人執行身分。
+
+回條保存失敗還原卡片／訊息並保留 transient receipt，使用固定 response／assistant IDs 重試，不再寫入憑證。Stop、刪除、封存代理人、帳號轉換、同步模型及新使用者回合會關閉 submission；重開 App 不從資料庫復活提交流程。存入憑證不等於遠端登入成功，也不增加工具授權。Live 卡片在回合收尾期間保持可見但停用，避免短暫顯示成失效歷史卡片。
+
+DirectSecretAppTests 以隔離根目錄、假 provider／credential writer 驗證 12 個情況：成功、取消、SQLite 回條失敗重試、帳號切換、代理人封存、Stop、新人類回合、刪除、連接器停用、未綁定、重開與替換綁定。核對回條／卡片在 SQLite 的狀態、模型與保存資料沒有假憑證值、writer 次數及工具權限不變。首輪完整回歸 direct-secret-host-full.log（含 12 案例）通過。最後 UI 收尾調整後，direct-secret-host-native-final.log 原生建置與 verify-package／deep strict 簽章通過；direct-secret-host-full-final.log 則在多個既有 agents.json／channels.json 等受保護暫存檔發生 Cocoa 257／POSIX 1。唯讀 ioreg 確認 IOConsoleLocked=Yes、CGSSessionScreenIsLocked=Yes，已請使用者解鎖後補驗；不能把最後完整回歸記為全綠。未降低檔案保護、未啟動使用者 App、未寫入真實 Keychain、未驗證外部服務登入；其他平台／欄位與整體 parity 仍未完成。
+
 ## 憑證歷史卡片的唯讀降級（2026-09-26）
+
+上一節接線後的 UI 聚焦補驗：direct-secret-host-ui-final.log 共 32 項／3 suites 通過（含七語系明暗色卡片），不取代鎖定期間失敗的完整回歸。
 
 通用 TranscriptCardRow 不具有 live submission，遇到 DirectSecretRequest 時只顯示歷史狀態：pending／retired 為失效且不轉圈，stored 顯示已儲存但未驗證遠端登入，dismissed 為取消。狀態依 typed request 投影，不依外層可能過時的 lifecycle；呈現不回寫歷史。安全標籤沿用七語系字串，服務／說明取自嚴格 request 元資料。
 

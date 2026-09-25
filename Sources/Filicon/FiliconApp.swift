@@ -1464,7 +1464,10 @@ private struct TranscriptMessageView: View {
                 ToolActivityRow(activity: activity)
             }
             ForEach(message.transcriptCards) { card in
-                if let question = model.directQuestionForDisplay(conversationID: conversation.id, messageID: message.id, cardID: card.id) {
+                if let secret = model.directSecretCard(conversationID: conversation.id, messageID: message.id, cardID: card.id) {
+                    AgentSecretRequestCard(model: secret)
+                        .disabled(model.running.contains(conversation.id))
+                } else if let question = model.directQuestionForDisplay(conversationID: conversation.id, messageID: message.id, cardID: card.id) {
                     GroupQuestionCard(card: question,
                         enabled: model.canAnswerDirectQuestion(conversationID: conversation.id, messageID: message.id, cardID: card.id)) { answer in
                         Task { await model.directQuestionAnswered(conversationID: conversation.id, messageID: message.id, cardID: card.id, answer: answer) }

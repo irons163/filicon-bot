@@ -273,6 +273,16 @@ final class AppModel: ObservableObject {
         let generation: UInt64
     }
     private var mailboxSecretContexts: [UUID: MailboxSecretContext] = [:]
+    @Published private(set) var directSecretCards: [UUID: AgentSecretRequestCardModel] = [:]
+    private struct DirectSecretContext {
+        let submission: AgentSecretSubmission
+        let generation: UInt64
+        let messageID: UUID
+        let responseID = UUID()
+        let assistantID = UUID()
+        let createdAt = Date()
+    }
+    private var directSecretContexts: [UUID: DirectSecretContext] = [:]
     var secretCredentialWriter: AgentSecretSubmission.Writer?
     private var delegatedGroupOrigins: [UUID: UUID] = [:]
     private var delegatedGroupPosts: [UUID: AgentGroupDispatch] = [:]
@@ -707,6 +717,7 @@ final class AppModel: ObservableObject {
               let binding = original.agentBinding,
               binding.accountID == (settings.accountScope ?? "local") else { return false }
         synchronizingAgentConversations.insert(id)
+        invalidateDirectSecrets(conversationID: id)
         defer { synchronizingAgentConversations.remove(id) }
         let generation = autoReviewAccountGeneration
         guard let profile = await agentService.profile(id: binding.agentID), profile.archivedAt == nil,
@@ -971,6 +982,7 @@ final class AppModel: ObservableObject {
     }
 
     func deleteConversation(id: UUID) {
+        invalidateDirectSecrets(conversationID: id)
         if running.contains(id) {
             turnTasks[id]?.cancel()
             Task { await coordinator.cancel(conversationID: id) }
@@ -1294,6 +1306,7 @@ final class AppModel: ObservableObject {
             errorMessage = validationError
             return
         }
+        invalidateDirectSecrets(conversationID: id)
         let attachments = pendingAttachments
         let replyToMessageID = replyingToMessageID
         let originalDraft = draft
@@ -1954,6 +1967,14 @@ final class AppModel: ObservableObject {
                         message.shortAddress = $0.shortAddress
                         return message
                     }
+                    let secretPublisher: AgentUserMessageTool.SecretPublisher?
+                    if agentIdentity != nil {
+                        secretPublisher = { [weak self] request, replyTo in
+                            guard let self else { throw CancellationError() }
+                            try await self.publishDirectSecret(request, conversationID: id, assistantID: assistantID,
+                                accountScope: accountScope, generation: publicationGeneration, replyTo: replyTo)
+                        }
+                    } else { secretPublisher = nil }
                     publisher = AgentUserMessageTool(conversationID: id, availableImages: images, imageStore: nil,
                         hostImageValidator: { [weak self] images in
                             guard let self, let imageSource else { throw AgentImageError.unavailable }
@@ -1964,6 +1985,7 @@ final class AppModel: ObservableObject {
                             guard let self else { throw CancellationError() }
                             try await self.authorizeDirectImagePublication(text: text, images: images, call: call, context: context)
                         },
+                        publishSecret: secretPublisher,
                         publishCursorAgent: { [weak self] reference, replyTo in
                             guard let self else { throw CancellationError() }
                             return try await self.publishDirectText(reference.summary, conversationID: id,
@@ -2056,6 +2078,7 @@ final class AppModel: ObservableObject {
 
     func cancel() {
         guard isBootstrapped, let selection else { return }
+        invalidateDirectSecrets(conversationID: selection)
         turnTasks[selection]?.cancel()
         workspaceFolders.cancel(conversationID: selection)
         Task {
@@ -2136,7 +2159,8 @@ final class AppModel: ObservableObject {
     private func publishDirectText(_ text: String, conversationID: UUID,
                                    assistantID: UUID, accountScope: String, generation: UInt64,
                                    replyTo: UUID?, cursorAgent: CursorAgentReference? = nil,
-                                   question: AgentQuestion? = nil, images: [AttachmentMetadata] = []) async throws -> RoomMessage {
+                                   question: AgentQuestion? = nil, images: [AttachmentMetadata] = [],
+                                   secret: DirectSecretRequest? = nil) async throws -> RoomMessage {
         try Task.checkCancellation()
         guard !agentMessagingAccountTransition, generation == autoReviewAccountGeneration,
               accountScope == (settings.accountScope ?? "local"),
@@ -2167,6 +2191,11 @@ final class AppModel: ObservableObject {
             try savedQuestion.question.validate()
             cards.append(TranscriptCard(lifecycle: .waiting, payload: .widget(.init(
                 title: savedQuestion.question.prompt, widgetKind: "choice", question: savedQuestion))))
+        }
+        if let secret {
+            cards.append(TranscriptCard(id: secret.requestID, lifecycle: .waiting,
+                payload: .secretRequest(.init(requestID: secret.requestID.uuidString,
+                    service: secret.request.connector, directRequest: secret))))
         }
         let messageID: UUID
         if published.isEmpty {
@@ -2928,6 +2957,9 @@ final class AppModel: ObservableObject {
 
     func archiveAgent(id: UUID) async {
         guard let agentService else { return }
+        for (key, context) in directSecretContexts where context.submission.destination.agentID == id {
+            invalidateDirectSecret(key)
+        }
         for (key, context) in mailboxSecretContexts where context.submission.destination.agentID == id
             || agentMessages.first(where: { $0.id == context.incomingID })?.senderID == id {
             invalidateMailboxSecret(key)
@@ -3043,6 +3075,153 @@ final class AppModel: ObservableObject {
             await reloadAgentMessages()
             return false
         }
+    }
+
+    private func invalidateDirectSecret(_ id: UUID) {
+        directSecretContexts[id]?.submission.close()
+        directSecretCards[id]?.invalidate()
+        directSecretContexts[id] = nil
+        directSecretCards[id] = nil
+    }
+
+    private func invalidateDirectSecrets(conversationID: UUID) {
+        for (id, context) in directSecretContexts where context.submission.destination.conversationID == conversationID {
+            invalidateDirectSecret(id)
+        }
+    }
+
+    func directSecretCard(conversationID: UUID, messageID: UUID, cardID: UUID) -> AgentSecretRequestCardModel? {
+        guard let context = directSecretContexts[cardID], context.messageID == messageID,
+              context.submission.destination.conversationID == conversationID,
+              canUseDirectSecret(cardID, forDisplay: true) else { return nil }
+        return directSecretCards[cardID]
+    }
+
+    private func canUseDirectSecret(_ id: UUID, forDisplay: Bool = false) -> Bool {
+        guard let context = directSecretContexts[id], context.generation == autoReviewAccountGeneration,
+              !agentMessagingAccountTransition else { return false }
+        let destination = context.submission.destination
+        guard destination.accountID == (settings.accountScope ?? "local"),
+              forDisplay || !running.contains(destination.conversationID),
+              !synchronizingAgentConversations.contains(destination.conversationID),
+              let conversation = conversations.first(where: { $0.id == destination.conversationID }),
+              conversation.agentBinding == .init(accountID: destination.accountID, agentID: destination.agentID),
+              agents.contains(where: { $0.id == destination.agentID && $0.archivedAt == nil
+                  && $0.providerID == conversation.providerID && $0.modelID == conversation.modelID }),
+              let mi = conversation.messages.firstIndex(where: { $0.id == context.messageID }),
+              let request = conversation.messages[mi].transcriptCards.first(where: { $0.id == id })?.directSecretRequest,
+              request.isPending, request.requestID == id, request.request == destination.request,
+              request.binding == conversation.agentBinding, request.conversationID == conversation.id,
+              request.connectionID == destination.connectionID,
+              !conversation.messages.dropFirst(mi + 1).contains(where: { $0.role == .user }) else { return false }
+        return true
+    }
+
+    private func publishDirectSecret(_ request: AgentSecretRequest, conversationID: UUID, assistantID: UUID,
+                                     accountScope: String, generation: UInt64, replyTo: UUID?) async throws {
+        guard let channelService,
+              let binding = conversations.first(where: { $0.id == conversationID })?.agentBinding,
+              binding.accountID == accountScope else { throw AgentSecretSubmissionError.unavailable }
+        let destination = try AgentSecretRequestDestination.resolve(request, accountID: accountScope,
+            agentID: binding.agentID, conversationID: conversationID, connections: await channelService.connections())
+        guard generation == autoReviewAccountGeneration,
+              conversations.first(where: { $0.id == conversationID })?.agentBinding == binding else { throw CancellationError() }
+        let submission = AgentSecretSubmission(destination: destination)
+        let metadata = DirectSecretRequest(requestID: submission.id, request: request, binding: binding,
+            conversationID: conversationID, connectionID: destination.connectionID)
+        let publication = try await publishDirectText("", conversationID: conversationID, assistantID: assistantID,
+            accountScope: accountScope, generation: generation, replyTo: replyTo, secret: metadata)
+        guard generation == autoReviewAccountGeneration, !Task.isCancelled,
+              conversations.first(where: { $0.id == conversationID })?.agentBinding == binding else {
+            submission.close(); throw CancellationError()
+        }
+        directSecretContexts[submission.id] = .init(submission: submission, generation: generation, messageID: publication.id)
+        directSecretCards[submission.id] = AgentSecretRequestCardModel(label: request.label,
+            helpText: request.description, destinationName: "\(request.connector) · \(destination.displayName)",
+            submit: { [weak self] value in
+                guard let self else { throw CancellationError() }
+                return try await self.submitDirectSecret(submission.id, value: value)
+            }, close: {
+                // Explicit dismissal closes input before the async receipt. Stop
+                // invalidates the submission first, so it cannot become dismissal.
+                try? submission.dismiss()
+                submission.close()
+            }, didStore: { _ in }, complete: { [weak self] _ in
+                guard let self else { throw CancellationError() }
+                try await self.resumeDirectSecret(submission.id)
+            }, dismiss: { [weak self] in
+                guard let self else { throw CancellationError() }
+                try await self.resumeDirectSecret(submission.id)
+            })
+    }
+
+    private func submitDirectSecret(_ id: UUID, value: AgentSecretValue) async throws -> AgentSecretReceipt {
+        guard canUseDirectSecret(id), let context = directSecretContexts[id], let channelService else {
+            throw AgentSecretSubmissionError.unavailable
+        }
+        let destination = context.submission.destination
+        return try await context.submission.submit(value, accountID: destination.accountID,
+            agentID: destination.agentID, conversationID: destination.conversationID,
+            channels: channelService, write: secretCredentialWriter ?? credentials.secretRequestWriter())
+    }
+
+    private func resumeDirectSecret(_ id: UUID) async throws {
+        guard canUseDirectSecret(id), let context = directSecretContexts[id] else { throw AgentSecretSubmissionError.unavailable }
+        let conversationID = context.submission.destination.conversationID
+        try await loadAllMessages(for: conversationID)
+        guard let channelService else { throw AgentSecretSubmissionError.unavailable }
+        let destination = context.submission.destination
+        try destination.validate(accountID: settings.accountScope ?? "local", agentID: destination.agentID,
+            conversationID: conversationID, connections: await channelService.connections())
+        guard canUseDirectSecret(id), let ci = conversations.firstIndex(where: { $0.id == conversationID }),
+              let mi = conversations[ci].messages.firstIndex(where: { $0.id == context.messageID }),
+              let ki = conversations[ci].messages[mi].transcriptCards.firstIndex(where: { $0.id == id }),
+              let request = conversations[ci].messages[mi].transcriptCards[ki].directSecretRequest else {
+            throw AgentSecretSubmissionError.unavailable
+        }
+        let resolved = try context.submission.resolvingDirectRequest(request, responseID: context.responseID)
+        guard let acknowledgement = resolved.acknowledgement else { throw AgentSecretSubmissionError.unavailable }
+        let original = conversations[ci].messages[mi].transcriptCards[ki]
+        var card = original
+        card.lifecycle = resolved.state == .stored ? .provided : .cancelled
+        card.payload = .secretRequest(.init(requestID: id.uuidString, service: request.request.connector, directRequest: resolved))
+        card.updatedAt = Date()
+        let response = ChatMessage(id: context.responseID, role: .user, text: acknowledgement,
+            createdAt: context.createdAt, replyToMessageID: context.messageID)
+        let assistant = ChatMessage(id: context.assistantID, role: .assistant, text: "", deliveryStatus: .queued)
+        running.insert(conversationID)
+        conversations[ci].messages[mi].transcriptCards[ki] = card
+        conversations[ci].messages.append(contentsOf: [response, assistant])
+        loadedMessageIDs[conversationID, default: []].formUnion([response.id, assistant.id])
+        do {
+            try await persistOrThrow(conversationID: conversationID)
+        } catch {
+            if context.generation == autoReviewAccountGeneration,
+               let ci = conversations.firstIndex(where: { $0.id == conversationID }) {
+                conversations[ci].messages.removeAll { $0.id == response.id || $0.id == assistant.id }
+                if let mi = conversations[ci].messages.firstIndex(where: { $0.id == context.messageID }),
+                   let ki = conversations[ci].messages[mi].transcriptCards.firstIndex(where: { $0.id == id }) {
+                    conversations[ci].messages[mi].transcriptCards[ki] = original
+                }
+                try? await persistOrThrow(conversationID: conversationID)
+                running.remove(conversationID)
+            }
+            throw error
+        }
+        guard context.generation == autoReviewAccountGeneration, directSecretContexts[id] != nil,
+              !agentMessagingAccountTransition, running.contains(conversationID),
+              let current = conversations.first(where: { $0.id == conversationID }) else {
+            if context.generation == autoReviewAccountGeneration {
+                running.remove(conversationID)
+                setDeliveryStatus(.cancelled, conversationID: conversationID, assistantID: assistant.id)
+                if !deletedConversationIDs.contains(conversationID) { try? await persistOrThrow(conversationID: conversationID) }
+            }
+            throw CancellationError()
+        }
+        invalidateDirectSecret(id)
+        startTurn(conversationID: conversationID, assistantID: assistant.id,
+            requestMessages: current.messages.filter { $0.id != assistant.id },
+            modelID: current.modelID, providerID: current.providerID, reasoningEffort: current.reasoningEffort)
     }
 
     private func invalidateMailboxSecret(_ id: UUID) {
@@ -5647,6 +5826,7 @@ final class AppModel: ObservableObject {
     func cancelAutoReviewApprovals(nextAccountID: String) async {
         // Queued peer work is scoped to the account that approved the exchange.
         agentMessagingAccountTransition = true
+        for key in Array(directSecretContexts.keys) { invalidateDirectSecret(key) }
         for key in Array(mailboxSecretContexts.keys) { invalidateMailboxSecret(key) }
         dismissAttachmentPreview()
         for lifetime in groupQuestionLifetimes.values { lifetime.close() }
