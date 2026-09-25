@@ -28,7 +28,7 @@ struct MailboxSecretRequestTests {
         let incoming = AgentMessage(senderID: sender.id, recipientID: owner.id, text: "Connect", priority: .priority,
             createdAt: date, delivery: .init(chainID: scope, originConversationID: scope))
         try await messenger.send(incoming)
-        try await messenger.updateDelivery(id: incoming.id, state: .running)
+        try await messenger.updateDelivery(id: incoming.id, state: .running, at: date)
         return .init(root: root, agents: agents, messenger: messenger, incoming: incoming)
     }
     private func request() throws -> AgentSecretRequest {

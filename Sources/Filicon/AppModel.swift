@@ -999,6 +999,7 @@ final class AppModel: ObservableObject {
     }
 
     func deleteConversation(id: UUID) {
+        let wasBound = conversations.first(where: { $0.id == id })?.agentBinding != nil
         if let peer = directPeerExecutions[id] { cancelConversationWork(peer.originID) }
         invalidateDirectSecrets(conversationID: id)
         cancelDirectMessaging(conversationID: id)
@@ -1028,6 +1029,10 @@ final class AppModel: ObservableObject {
         if conversations.isEmpty { addConversationUnchecked() }
         Task {
             do {
+                if wasBound {
+                    guard let agentConversations else { throw AgentMessagingError.scopeMismatch }
+                    try await agentConversations.retireProjection(conversationID: id)
+                }
                 try await store.delete(id: id)
                 try await attachmentLifecycle?.removeReferences(conversationID: id)
             }
@@ -4250,6 +4255,9 @@ final class AppModel: ObservableObject {
             destination = try await contexts.context(accountID: source.accountID, originID: origin,
                 agentID: source.recipientAgentID).conversationID
         }
+        try checkScope()
+        guard await !contexts.isProjectionRetired(conversationID: origin),
+              await !contexts.isProjectionRetired(conversationID: destination) else { throw CancellationError() }
         try checkScope()
         guard !deletedConversationIDs.contains(destination), destination == origin || !running.contains(destination) else {
             throw CancellationError()

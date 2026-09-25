@@ -1,5 +1,7 @@
 # Filicon / Grok Bot 0.18 功能 parity matrix（current implementation）
 
+投影刪除保護（2026-09-26）：綁定聊天刪除前持久保存 retiredProjectionIDs；即時投影核對 origin／destination，避免重開後把已刪除聊天建回。原始 mailbox／context 保留，保存失敗不執行資料庫刪除。恢復入口仍未完成，整體 partial。
+
 唯讀同儕恢復清單（2026-09-26）：持久 startedAt 區分已開始與只排隊；清單僅提供同來源、已結束的 canonical 文字，排除人類／互動／媒體／歧義紀錄，不執行模型或寫信箱。host 保存／恢復入口及 UI 尚未接上，整體維持 partial。
 
 直接委派來源（2026-09-26）：delivery 保存 host 選定的原始帳號／代理人 binding，即時投影重驗；群組／人類信箱與舊資料不猜測補值。帳號不符拒絕送出，同一回覆鏈保持原始身份。這是恢復來源基礎，尚非恢復 UI／執行授權；整體仍 partial。

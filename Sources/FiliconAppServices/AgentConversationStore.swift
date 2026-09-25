@@ -24,6 +24,8 @@ public actor AgentConversationStore {
     private struct State: Codable {
         var records: [Record] = []
         var mailboxes: [Mailbox] = []
+        /// Optional so older stores decode without silently resetting history.
+        var retiredProjectionIDs: Set<UUID>?
     }
 
     private let url: URL
@@ -58,6 +60,19 @@ public actor AgentConversationStore {
         next.records.append(.init(accountID: accountID, originID: originID, agentID: agentID, context: context))
         try save(next)
         return context
+    }
+
+    public func isProjectionRetired(conversationID: UUID) -> Bool {
+        state.retiredProjectionIDs?.contains(conversationID) == true
+    }
+
+    /// Persist before deleting a bound chat. Canonical mailbox/context history
+    /// remains intact, but projection and recovery must not resurrect its UI.
+    public func retireProjection(conversationID: UUID) throws {
+        guard !isProjectionRetired(conversationID: conversationID) else { return }
+        var next = state
+        next.retiredProjectionIDs = (next.retiredProjectionIDs ?? []).union([conversationID])
+        try save(next)
     }
 
     public func appendExchange(accountID: String, originID: UUID, agentID: UUID, incoming: ChatMessage, response: String) throws {

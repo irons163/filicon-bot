@@ -25,7 +25,7 @@ struct MailboxQuestionTests {
         let incoming = AgentMessage(senderID: sender.id, recipientID: asker.id, text: "Review", createdAt: date,
                                     delivery: .init(chainID: scope, originConversationID: scope))
         try await messenger.send(incoming)
-        try await messenger.updateDelivery(id: incoming.id, state: .running)
+        try await messenger.updateDelivery(id: incoming.id, state: .running, at: date)
         return .init(root: root, agents: agents, messenger: messenger, incoming: incoming)
     }
     private func question() throws -> AgentQuestion {

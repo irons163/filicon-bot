@@ -6,6 +6,51 @@ import FiliconDomain
 
 @Suite("Durable agent conversation isolation")
 struct AgentConversationStoreTests {
+    @Test func projectionRetirementSurvivesRestartWithoutErasingContext() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "agent-projection-retire-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appending(path: "contexts.json")
+        let store = try AgentConversationStore(url: url)
+        let origin = UUID(), agent = UUID()
+        try await store.appendExchange(accountID: "local", originID: origin, agentID: agent,
+            incoming: .init(role: .assistant, text: "Task"), response: "Report")
+        let before = try await store.context(accountID: "local", originID: origin, agentID: agent)
+        try await store.retireProjection(conversationID: before.conversationID)
+        let bytes = try Data(contentsOf: url)
+        try await store.retireProjection(conversationID: before.conversationID)
+        expectNoDifference(try Data(contentsOf: url), bytes)
+        let reopened = try AgentConversationStore(url: url)
+        let retired = await reopened.isProjectionRetired(conversationID: before.conversationID)
+        #expect(retired)
+        let unrelated = await reopened.isProjectionRetired(conversationID: origin)
+        #expect(!unrelated)
+        let after = try await reopened.context(accountID: "local", originID: origin, agentID: agent)
+        expectNoDifference(after, before)
+    }
+
+    @Test func legacyStoreHasNoGuessedRetirements() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "agent-projection-legacy-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let url = root.appending(path: "contexts.json")
+        try Data(#"{"records":[],"mailboxes":[]}"#.utf8).write(to: url)
+        let store = try AgentConversationStore(url: url)
+        let retired = await store.isProjectionRetired(conversationID: UUID())
+        #expect(!retired)
+    }
+
+    @Test func failedRetirementDoesNotClaimPersistence() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "agent-projection-failure-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appending(path: "contexts.json")
+        let store = try AgentConversationStore(url: url)
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        let id = UUID()
+        await #expect(throws: (any Error).self) { try await store.retireProjection(conversationID: id) }
+        let retired = await store.isProjectionRetired(conversationID: id)
+        #expect(!retired)
+    }
+
     @Test func reopeningPreservesContextButIsolatesAccountsOriginsAndAgents() async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "agent-context-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }

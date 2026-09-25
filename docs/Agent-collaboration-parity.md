@@ -1,5 +1,13 @@
 # 協作能力核對紀錄（更新至 2026-09-26）
 
+## 同儕投影刪除保護（2026-09-26）
+
+接恢復入口前發現：既有 deletedConversationIDs 僅在記憶體，重開後無法區分使用者刪除與初次投影保存失敗。AgentConversationStore 新增可選的持久 retiredProjectionIDs。AppModel 刪除已綁定聊天先保存標記再刪 canonical conversation；保存失敗則不執行資料庫刪除並顯示錯誤。同儕即時投影核對 origin／destination 標記，阻止晚到或後續鏈重建該聊天。保留原始 mailbox 與獨立 context，標記不是抹除代理人記憶。
+
+測試核對重開保留、重複標記不重寫、不影響其他聊天／上下文、舊 JSON 不猜測標記，以及保存失敗不更新記憶體；直接委派刪除整合案例核對標記實際落盤。使用 pfw-testing 隔離 fixture，沒有刪除使用者實際資料。UI 恢復入口仍待接線；這批是必要刪除邊界，不宣稱恢復操作完成。
+
+驗證：peer-retirement-focused.log 聚焦通過；首次完整回歸遇舊問答 fixture 的 startedAt 動態時間精度差異，問答與憑證 fixture 改用既有固定時間後，peer-retirement-full-final.log 完整非並行回歸 exit 0。peer-retirement-native.log 原生建置、verify-package 與 deep strict codesign 通過。未 push 或啟動／重啟 App／Xcode。
+
 ## 唯讀同儕恢復清單（2026-09-26）
 
 delivery 新增 startedAt，在 host 切換 running 時首次保存；Stop 或重開不抹除，也不把僅 queued 的工作當成已交付。directPeerTranscript 只傳回符合明確帳號／原代理人 binding、origin、已開始且 terminal 的 canonical incoming 與文字 publication；來源持久標記缺失、人類信箱／回答、圖片、互動卡、未開始及仍執行中的資料不列入。回覆核對實際作者與 origin，清除 mailbox 別名，拒絕跨紀錄碰撞 UUID。無模型呼叫、無信箱寫入。

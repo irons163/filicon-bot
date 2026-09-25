@@ -246,6 +246,10 @@ private struct DelegatingGroupProvider: InteractiveToolProvider {
         } else if mode == "peer-chat-delete" {
             expectNoDifference(projected, [])
             #expect(!model.conversations.contains { $0.agentBinding?.agentID == recipient })
+            let contexts = try AgentConversationStore(url: root.appending(path: "agent-conversations.json"))
+            let context = try await contexts.context(accountID: "local", originID: id, agentID: recipient)
+            let retired = await contexts.isProjectionRetired(conversationID: context.conversationID)
+            #expect(retired)
         } else if mode.hasPrefix("peer-") {
             expectNoDifference(projected.map(\.text), ["Review just the button contrast"])
             expectNoDifference(projected.first?.agentMessageSource?.kind, .incoming)
