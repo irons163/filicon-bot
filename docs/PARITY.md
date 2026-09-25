@@ -1,5 +1,7 @@
 # Filicon / Grok Bot 0.18 功能 parity matrix（current implementation）
 
+純文字最終回覆保存（2026-09-26）：新增 canonical finalPublication，與 completed 同步保存 UUID／完整文字，直接投影核對完整紀錄而非截斷摘要。非法作者／範圍／UUID／文字／狀態拒絕，投影失敗不重跑 provider。恢復 UI 與歷史帳號／來源證明仍未完成，不提升整體 partial。
+
 同儕聊天忙碌／停止連動（2026-09-26）：列表、標題和輸入列共用背景委派狀態，拒絕競爭送出及模型同步；從收件人聊天停止或刪除會取消來源委派，依 session 清理狀態。11 類直接委派整合情況、完整回歸、原生建置、封裝及簽章通過。關閉下方背景狀態缺口，其餘 partial 不變。
 
 直接同儕文字投影接線（2026-09-26）：已批准直接委派的 incoming／publication 依 canonical delivery 驗證後保存到收件人的綁定聊天室；回给原代理人則使用原聊天，顯示實際作者，後續模型 context 保留非人類／非授權標記。九類整合情況加驗四則訊息歸屬、SQLite 重開與模型上下文，明暗色發言者渲染已人工檢視。互動／媒體卡、保存失敗恢復、背景狀態連動及原版每代理人唯一聊天仍 partial。

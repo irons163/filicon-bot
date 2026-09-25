@@ -319,6 +319,9 @@ public struct AgentMessageDelivery: Codable, Hashable, Sendable {
     public var response: String?
     /// Explicit SendMessage output; nil in older text-only mailboxes.
     public var publications: [RoomMessage]?
+    /// Durable identity and full text for a tool-less provider's final report.
+    /// Separate from explicit SendMessage receipts; absent in older mailboxes.
+    public var finalPublication: RoomMessage?
 
     public init(chainID: UUID, originConversationID: UUID, state: State = .queued, response: String? = nil) {
         self.chainID = chainID; self.originConversationID = originConversationID

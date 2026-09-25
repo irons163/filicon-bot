@@ -87,6 +87,66 @@ private func prioritySendCall(_ target: UUID, _ text: String, id: ToolCallID = "
 
 @Suite("SendToAgent messaging session", .timeLimit(.minutes(1)))
 struct AgentMessagingSessionTests {
+    @Test(arguments: ["valid", "author", "scope", "identity", "text", "pending"])
+    func finalReceiptIsAtomicAndPreservesFullText(mode: String) async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let incoming = AgentMessage(senderID: f.sender.id, recipientID: f.recipient.id, text: "Report",
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+            delivery: .init(chainID: UUID(), originConversationID: f.origin))
+        try await f.messenger.send(incoming)
+        try await f.messenger.updateDelivery(id: incoming.id, state: .running)
+        let before = await f.messenger.allMessages()
+        let text = String(repeating: "Full report. ", count: 1_000)
+        let report = RoomMessage(id: mode == "identity" ? incoming.id : UUID(),
+            groupID: mode == "scope" ? UUID() : f.origin,
+            senderID: mode == "author" ? f.sender.id : f.recipient.id,
+            text: mode == "text" ? "Different text" : text,
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000))
+        if mode == "valid" {
+            try await f.messenger.updateDelivery(id: incoming.id, state: .completed, response: text, finalPublication: report)
+            let saved = try #require(await f.messenger.allMessages().first)
+            expectNoDifference(saved.delivery?.finalPublication, report)
+            expectNoDifference(saved.delivery?.response, String(text.prefix(8_000)))
+            let restored = try AgentMessenger(service: f.agents, storeURL: f.root.appending(path: "messages.json"))
+            let reopened = await restored.allMessages().first
+            expectNoDifference(reopened, saved)
+        } else {
+            await #expect(throws: AgentPublicationError.invalid) {
+                try await f.messenger.updateDelivery(id: incoming.id, state: mode == "pending" ? .running : .completed,
+                    response: text, finalPublication: report)
+            }
+            let after = await f.messenger.allMessages()
+            expectNoDifference(after, before)
+        }
+    }
+
+    @Test func textOnlyProjectionFailurePreservesDurableIdentity() async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        await f.registry.register(MailboxVoiceProvider(mode: "text-only"))
+        let session = f.session()
+        try await session.enqueueUserMessage(senderID: f.sender.id, recipientID: f.recipient.id, text: "Report")
+        try await session.drain(onPeerMessage: { source, message in
+            await f.probe.peer(source, message)
+            if source.kind == .publication { throw AgentMessagingError.scopeMismatch }
+        })
+        let saved = try #require(await f.messenger.allMessages().first)
+        let report = try #require(saved.delivery?.finalPublication)
+        expectNoDifference(saved.delivery?.state, .completed)
+        expectNoDifference(report.text, "Plain model answer")
+        let projected = await f.probe.peerMessages.last?.1
+        expectNoDifference(report, projected)
+        let restored = try AgentMessenger(service: f.agents, storeURL: f.root.appending(path: "messages.json"))
+        let reopened = await restored.allMessages().first
+        let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .millisecondsSince1970
+        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .millisecondsSince1970
+        let persisted = try decoder.decode(AgentMessage.self, from: encoder.encode(saved))
+        expectNoDifference(reopened, persisted)
+        try await session.drain(onPeerMessage: { _, _ in Issue.record("Must not rerun completed provider") })
+        let again = await f.messenger.allMessages().first
+        expectNoDifference(again, saved)
+        try await session.close()
+    }
+
     @Test(arguments: [AgentMessageSource.Kind.incoming, .publication])
     func peerProjectionFailureDoesNotRepublishCanonicalReceipt(kind: AgentMessageSource.Kind) async throws {
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
@@ -150,6 +210,7 @@ struct AgentMessagingSessionTests {
         }
         expectNoDifference(delivery.response, usesPlainText ? "Plain model answer" : mode == "published" ? "Published result" : "")
         expectNoDifference(delivery.publications?.map(\.text) ?? [], mode == "published" ? ["Published result"] : [])
+        expectNoDifference(delivery.finalPublication, usesPlainText ? peers.last?.1 : nil)
         #expect(!projected.contains { $0.text.contains("PRIVATE") })
         #expect(!String(decoding: try Data(contentsOf: f.root.appending(path: "messages.json")), as: UTF8.self).contains("PRIVATE"))
         #expect(!String(decoding: try Data(contentsOf: contextURL), as: UTF8.self).contains("PRIVATE"))

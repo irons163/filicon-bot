@@ -1,5 +1,15 @@
 # 協作能力核對紀錄（更新至 2026-09-26）
 
+## 純文字最終回覆的恢復紀錄（2026-09-26）
+
+確認恢復缺口：純文字 provider 先前只保存最多 8,000 字的 response 摘要，投影所用 RoomMessage UUID／完整文字未保存。新增 delivery.finalPublication，與 completed 狀態同一寫入保存；只允許 running → completed、相同作者／來源／全文、沒有明確發布或互動／媒體／工具卡的最終報告，拒絕重複訊息 UUID。舊資料保持 nil，不從摘要猜測舊 UUID。直接聊天改為核對這份 canonical 紀錄，避免長回覆因摘要截斷無法投影。
+
+新增六種保存／非法紀錄情況及純文字投影失敗整合測試：最終紀錄重開後仍有同一身份與完整長文，錯誤投影不重新執行已完成回合。測試以實際 millisecondsSince1970 保存精度比較動態時間，未改產品時間精度。
+
+這是恢復所需的完整紀錄，不是恢復入口。歷史 delivery 尚缺持久帳號／直接聊天来源證明；後續不可只用目前帳號加 origin UUID 推論並重播。恢復選擇、保存失敗提示與 UI 仍待接線。
+
+驗證：peer-final-receipt-full.log 完整非並行回歸 exit 0，包含 25 項 messaging session 測試及新增情況；peer-final-receipt-native.log 原生建置 exit 0，verify-package 與 deep strict codesign 通過。初次聚焦測試的 actor autoclosure 編譯問題及時間浮點比較已修正後完整重驗。未啟動使用者 App／Xcode，未操作真實資料。
+
 ## 同儕聊天室忙碌與取消連動（2026-09-26）
 
 同儕 incoming 保存後，以來源 conversation／live session 建立暫時執行關聯。列表、標題及輸入列共用忙碌判斷；不偽造 foreground running。背景委派期間拒絕競爭送出、重新產生及模型同步；在收件人聊天室按停止會取消來源委派，刪除收件人聊天室也先取消，避免晚到結果重建聊天室。每次 wake 收尾與整條鏈 cleanup 依 session 清除關聯。

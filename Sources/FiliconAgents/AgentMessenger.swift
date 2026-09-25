@@ -352,12 +352,26 @@ public actor AgentMessenger {
         }
     }
 
-    public func updateDelivery(id: UUID, state deliveryState: AgentMessageDelivery.State, response: String? = nil) throws {
+    public func updateDelivery(id: UUID, state deliveryState: AgentMessageDelivery.State, response: String? = nil,
+                               finalPublication: RoomMessage? = nil) throws {
         guard let index = state.messages.firstIndex(where: { $0.id == id }), state.messages[index].delivery != nil else { return }
         let previous = state.messages[index]
         // Terminal results cannot be resurrected by a late provider event.
         guard previous.delivery?.state == .queued || previous.delivery?.state == .running else { return }
+        if let report = finalPublication {
+            guard previous.delivery?.state == .running, deliveryState == .completed,
+                  previous.delivery?.publications?.isEmpty != false,
+                  report.groupID == previous.delivery?.originConversationID,
+                  report.senderID == previous.recipientID, report.text == response,
+                  !report.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  report.question == nil, report.secretRequest == nil, report.cursorAgent == nil,
+                  report.images?.isEmpty != false, report.toolActivities.isEmpty,
+                  report.memberOutcome == nil, report.shortAddress == nil,
+                  report.replyToMessageID == nil, report.questionReplyTo == nil,
+                  !containsMessageID(report.id) else { throw AgentPublicationError.invalid }
+        }
         state.messages[index].delivery?.state = deliveryState
+        state.messages[index].delivery?.finalPublication = finalPublication
         if deliveryState == .cancelled || deliveryState == .failed {
             if var publications = state.messages[index].delivery?.publications {
                 for item in publications.indices where publications[item].secretRequest?.isPending == true {
@@ -385,7 +399,7 @@ public actor AgentMessenger {
     /// All fresh insertion paths must reject a collision in either collection.
     private func containsMessageID(_ id: UUID) -> Bool {
         state.messages.contains {
-            $0.id == id || ($0.delivery?.publications ?? []).contains { $0.id == id }
+            $0.id == id || $0.delivery?.finalPublication?.id == id || ($0.delivery?.publications ?? []).contains { $0.id == id }
         }
     }
 

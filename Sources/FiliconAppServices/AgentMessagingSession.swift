@@ -719,10 +719,12 @@ public actor AgentMessagingSession {
                 }
                 try checkOpen()
                 try await output.finish()
-                try await messenger.updateDelivery(id: inbound.id, state: .completed, response: text)
+                let finalPublication = await output.textOnlyPublication
+                try await messenger.updateDelivery(id: inbound.id, state: .completed, response: text,
+                                                   finalPublication: finalPublication)
                 // Text-only providers have no SendMessage receipt. Mirror their
                 // final report only after the canonical delivery is committed.
-                if let report = await output.textOnlyPublication {
+                if let report = finalPublication {
                     try checkOpen()
                     try await projectPublication(report)
                 }

@@ -4236,7 +4236,7 @@ final class AppModel: ObservableObject {
                 guard saved == message else { throw AgentMessagingError.scopeMismatch }
             } else {
                 guard delivery.state == .completed, delivery.publications?.isEmpty != false,
-                      delivery.response == message.text else { throw AgentMessagingError.scopeMismatch }
+                      delivery.finalPublication == message else { throw AgentMessagingError.scopeMismatch }
             }
         }
         guard let profile = await service.profile(id: source.recipientAgentID), profile.archivedAt == nil else {
