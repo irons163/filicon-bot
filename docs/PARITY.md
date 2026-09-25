@@ -1,5 +1,7 @@
 # Filicon / Grok Bot 0.18 功能 parity matrix（current implementation）
 
+單獨聊天代理人關聯儲存（2026-09-25）：新增 accountID＋agentID 可選持久身份，schema 12、JSON、分頁與 salvage 均保留；舊資料不猜測關聯。16 項聚焦測試通過。UI 選擇／建立、執行身份與權限套用及 direct secret-request 仍待接線，不上調 partial 狀態。
+
 直接引用 scope 補強（2026-09-25）：畫面快照攜帶帳號 generation，帳號切換即撤銷舊解析／捲動，不因相同對話 UUID 重新啟用。direct secret-request 仍缺 host-owned 對話／代理人關聯；已核對原版提交與恢復語意，不能以任意既有連接器替代。
 
 直接引用完整回歸補驗（2026-09-25）：不改碼／不放寬檔案保護，確認當前系統未鎖定後，先前 MCP 與 updater 失敗案例重驗通過；完整非並行 direct-reference-ui-full-unlocked.log exit 0。關閉下方直接引用 UI 的完整回歸缺口。當時 EPERM 的唯一根因未被記錄證明；其他 parity 與真實 UI／外部驗收仍未完成。

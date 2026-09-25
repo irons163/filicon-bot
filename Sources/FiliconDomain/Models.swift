@@ -211,6 +211,17 @@ public enum DirectMessageAddressing {
     }
 }
 
+/// A host-selected identity, not a permission grant. Runtime consumers must
+/// revalidate the account and live agent before using instructions or tools.
+public struct DirectConversationAgentBinding: Codable, Hashable, Sendable {
+    public let accountID: String
+    public let agentID: UUID
+    public init(accountID: String, agentID: UUID) {
+        self.accountID = accountID
+        self.agentID = agentID
+    }
+}
+
 public struct Conversation: Identifiable, Codable, Hashable, Sendable {
     public let id: UUID
     public var title: String
@@ -222,12 +233,13 @@ public struct Conversation: Identifiable, Codable, Hashable, Sendable {
     public var hiddenAt: Date?
     /// Includes deleted messages so old references can never name new content.
     public var messageAddressReservations: [String: String] = [:]
+    public var agentBinding: DirectConversationAgentBinding?
     public init(id: UUID = UUID(), title: String = "New conversation", providerID: ProviderID = "fake", modelID: ModelID = "fake-stream", reasoningEffort: ReasoningEffort = .disabled, messages: [ChatMessage] = [], updatedAt: Date = Date(), hiddenAt: Date? = nil) {
         self.id = id; self.title = title; self.providerID = providerID; self.modelID = modelID; self.reasoningEffort = reasoningEffort; self.messages = messages; self.updatedAt = updatedAt; self.hiddenAt = hiddenAt
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, title, providerID, modelID, reasoningEffort, messages, updatedAt, hiddenAt, messageAddressReservations
+        case id, title, providerID, modelID, reasoningEffort, messages, updatedAt, hiddenAt, messageAddressReservations, agentBinding
     }
 
     public init(from decoder: Decoder) throws {
@@ -241,6 +253,7 @@ public struct Conversation: Identifiable, Codable, Hashable, Sendable {
         updatedAt = try values.decode(Date.self, forKey: .updatedAt)
         hiddenAt = try values.decodeIfPresent(Date.self, forKey: .hiddenAt)
         messageAddressReservations = try values.decodeIfPresent([String: String].self, forKey: .messageAddressReservations) ?? [:]
+        agentBinding = try values.decodeIfPresent(DirectConversationAgentBinding.self, forKey: .agentBinding)
     }
 
     @discardableResult

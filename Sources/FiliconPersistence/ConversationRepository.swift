@@ -3,7 +3,7 @@ import FiliconDomain
 import CSQLite
 
 public actor ConversationRepository {
-    public static let currentSchemaVersion = 11
+    public static let currentSchemaVersion = 12
     private let database: SQLiteDatabase
     public nonisolated let initialRecoveryReport: PersistenceRecoveryReport?
 
@@ -22,7 +22,7 @@ public actor ConversationRepository {
     }
 
     public func load() throws -> [Conversation] {
-        let conversations = try database.prepare("SELECT id, title, provider_id, model_id, updated_at, hidden_at, reasoning_effort, message_addresses_json FROM conversations ORDER BY updated_at DESC, id DESC", operation: "load conversations")
+        let conversations = try database.prepare("SELECT id, title, provider_id, model_id, updated_at, hidden_at, reasoning_effort, message_addresses_json, agent_binding_json FROM conversations ORDER BY updated_at DESC, id DESC", operation: "load conversations")
         let messages = try database.prepare("SELECT id, role, text, created_at, attachments_json, delivery_status, delivery_error, reasoning_text, tool_activities_json, reply_to_message_id, reactions_json, transcript_cards_json, short_address FROM messages WHERE conversation_id = ? ORDER BY ordinal", operation: "load messages")
         var result: [Conversation] = []
         while try conversations.step() == SQLITE_ROW {
@@ -46,9 +46,9 @@ public actor ConversationRepository {
         let limit = Self.normalizedLimit(request.limit)
         let sql: String
         if request.after == nil {
-            sql = "SELECT id, title, provider_id, model_id, updated_at, hidden_at, reasoning_effort, message_addresses_json FROM conversations ORDER BY updated_at DESC, id DESC LIMIT ?"
+            sql = "SELECT id, title, provider_id, model_id, updated_at, hidden_at, reasoning_effort, message_addresses_json, agent_binding_json FROM conversations ORDER BY updated_at DESC, id DESC LIMIT ?"
         } else {
-            sql = "SELECT id, title, provider_id, model_id, updated_at, hidden_at, reasoning_effort, message_addresses_json FROM conversations WHERE updated_at < ? OR (updated_at = ? AND id < ?) ORDER BY updated_at DESC, id DESC LIMIT ?"
+            sql = "SELECT id, title, provider_id, model_id, updated_at, hidden_at, reasoning_effort, message_addresses_json, agent_binding_json FROM conversations WHERE updated_at < ? OR (updated_at = ? AND id < ?) ORDER BY updated_at DESC, id DESC LIMIT ?"
         }
         let statement = try database.prepare(sql, operation: "page conversations")
         if let cursor = request.after {
@@ -126,7 +126,7 @@ public actor ConversationRepository {
             let delete = try database.prepare("DELETE FROM conversations WHERE id = ?", operation: "delete conversation")
             for id in remove { try delete.bind(id, at: 1); _ = try delete.step(); delete.reset() }
 
-            let upsert = try database.prepare("INSERT INTO conversations(id,title,provider_id,model_id,updated_at,hidden_at,reasoning_effort,message_addresses_json) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET title=excluded.title,provider_id=excluded.provider_id,model_id=excluded.model_id,updated_at=excluded.updated_at,hidden_at=excluded.hidden_at,reasoning_effort=excluded.reasoning_effort,message_addresses_json=excluded.message_addresses_json", operation: "upsert conversation")
+            let upsert = try database.prepare("INSERT INTO conversations(id,title,provider_id,model_id,updated_at,hidden_at,reasoning_effort,message_addresses_json,agent_binding_json) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET title=excluded.title,provider_id=excluded.provider_id,model_id=excluded.model_id,updated_at=excluded.updated_at,hidden_at=excluded.hidden_at,reasoning_effort=excluded.reasoning_effort,message_addresses_json=excluded.message_addresses_json,agent_binding_json=excluded.agent_binding_json", operation: "upsert conversation")
             let loadNextOrdinal = try database.prepare("SELECT next_message_ordinal FROM conversations WHERE id = ?", operation: "load next message ordinal")
             let storeNextOrdinal = try database.prepare("UPDATE conversations SET next_message_ordinal = ? WHERE id = ?", operation: "store next message ordinal")
             let existingOrdinals = try database.prepare("SELECT id, ordinal FROM messages WHERE conversation_id = ? ORDER BY ordinal", operation: "load stable message ordinals")
@@ -142,7 +142,9 @@ public actor ConversationRepository {
             let insertMediaFTS = try database.prepare("INSERT INTO media_search_fts(conversation_id,message_id,attachment_id,content) VALUES(?,?,?,?)", operation: "full-text index attachment")
             try database.execute("UPDATE global_search_state SET ready = 0 WHERE singleton = 1", operation: "mark global search update in progress")
             for conversation in values {
-                try upsert.bind(conversation.id.uuidString, at: 1); try upsert.bind(conversation.title, at: 2); try upsert.bind(conversation.providerID.rawValue, at: 3); try upsert.bind(conversation.modelID.rawValue, at: 4); try upsert.bind(conversation.updatedAt.timeIntervalSince1970, at: 5); try upsert.bind(conversation.hiddenAt?.timeIntervalSince1970 ?? 0, at: 6); try upsert.bind(conversation.reasoningEffort.rawValue, at: 7); try upsert.bind(String(decoding: JSONEncoder().encode(conversation.messageAddressReservations), as: UTF8.self), at: 8); _ = try upsert.step(); upsert.reset()
+                try upsert.bind(conversation.id.uuidString, at: 1); try upsert.bind(conversation.title, at: 2); try upsert.bind(conversation.providerID.rawValue, at: 3); try upsert.bind(conversation.modelID.rawValue, at: 4); try upsert.bind(conversation.updatedAt.timeIntervalSince1970, at: 5); try upsert.bind(conversation.hiddenAt?.timeIntervalSince1970 ?? 0, at: 6); try upsert.bind(conversation.reasoningEffort.rawValue, at: 7); try upsert.bind(String(decoding: JSONEncoder().encode(conversation.messageAddressReservations), as: UTF8.self), at: 8)
+                try upsert.bind(String(decoding: JSONEncoder().encode(conversation.agentBinding), as: UTF8.self), at: 9)
+                _ = try upsert.step(); upsert.reset()
                 try loadNextOrdinal.bind(conversation.id.uuidString, at: 1)
                 guard try loadNextOrdinal.step() == SQLITE_ROW else {
                     throw PersistenceError.corrupt(operation: "load next message ordinal")
@@ -400,6 +402,12 @@ public actor ConversationRepository {
                     try database.execute("UPDATE schema_version SET version=11 WHERE singleton=1", operation: "finish migration 11")
                 }
             }
+            if version < 12 {
+                try database.transaction("migration 12") {
+                    try database.execute("ALTER TABLE conversations ADD COLUMN agent_binding_json TEXT NOT NULL DEFAULT 'null'", operation: "migration 12 direct agent binding")
+                    try database.execute("UPDATE schema_version SET version=12 WHERE singleton=1", operation: "finish migration 12")
+                }
+            }
         } catch let error as PersistenceError { throw error }
         catch { throw PersistenceError.migration(version: 1, message: error.localizedDescription) }
     }
@@ -461,6 +469,7 @@ public actor ConversationRepository {
             hiddenAt: hiddenAt > 0 ? Date(timeIntervalSince1970: hiddenAt) : nil
         )
         conversation.messageAddressReservations = try decodeJSON(statement.text(7), table: "conversations", row: id.uuidString, field: "message_addresses_json")
+        conversation.agentBinding = try decodeJSON(statement.text(8), table: "conversations", row: id.uuidString, field: "agent_binding_json")
         return conversation
     }
 

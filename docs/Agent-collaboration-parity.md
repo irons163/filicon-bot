@@ -1,5 +1,13 @@
 # 協作能力核對紀錄（更新至 2026-09-25）
 
+## 單獨聊天代理人關聯儲存（2026-09-25）
+
+最終驗證：完整非並行 direct-agent-binding-storage-full.log exit 0；原生建置初次退出 0 但有 compiler「exit code 0 but produced no further output」異常訊息，因此再獨立重跑 native-recheck.log，exit 0 且無該異常。封裝與 deep strict 簽章 direct-agent-binding-storage-package.log exit 0。
+
+Conversation 增加可選 DirectConversationAgentBinding（accountID＋agentID），作為後續明確選擇代理人的持久身份。JSON 舊資料缺欄位維持 nil；SQLite schema 12 增加 agent_binding_json，完整讀寫、metadata 分頁、局部訊息編輯及資料復原同步保留。schema 11 升級不從名稱、模型或 UUID 猜測代理人，不碰既有真實資料。關聯不是權限授予；執行時仍須檢查目前帳號與存活代理人。
+
+依 Swift testing 技能新增 JSON／舊格式、分頁與部分編輯／解除、schema 11 重複升級案例，既有有效資料 salvage 也加入關聯保留斷言。direct-agent-binding-storage.log 16 項通過。此批只完成儲存基礎；尚未有建立／選擇入口、代理人指令與權限套用或 direct secret-request 接線，不能宣稱單獨代理人聊天已完成。完整／原生驗證另補記。
+
 ## 直接引用帳號世代隔離與憑證流程核對（2026-09-25）
 
 最終驗證：direct-reference-scope-full.log 完整非並行回歸、direct-reference-scope-native.log 原生建置及 direct-reference-scope-package.log 封裝／deep strict 簽章皆 exit 0。
