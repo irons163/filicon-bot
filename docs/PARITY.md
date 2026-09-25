@@ -1,5 +1,7 @@
 # Filicon / Grok Bot 0.18 功能 parity matrix（current implementation）
 
+唯讀同儕恢復清單（2026-09-26）：持久 startedAt 區分已開始與只排隊；清單僅提供同來源、已結束的 canonical 文字，排除人類／互動／媒體／歧義紀錄，不執行模型或寫信箱。host 保存／恢復入口及 UI 尚未接上，整體維持 partial。
+
 直接委派來源（2026-09-26）：delivery 保存 host 選定的原始帳號／代理人 binding，即時投影重驗；群組／人類信箱與舊資料不猜測補值。帳號不符拒絕送出，同一回覆鏈保持原始身份。這是恢復來源基礎，尚非恢復 UI／執行授權；整體仍 partial。
 
 純文字最終回覆保存（2026-09-26）：新增 canonical finalPublication，與 completed 同步保存 UUID／完整文字，直接投影核對完整紀錄而非截斷摘要。非法作者／範圍／UUID／文字／狀態拒絕，投影失敗不重跑 provider。恢復 UI 與歷史帳號／來源證明仍未完成，不提升整體 partial。

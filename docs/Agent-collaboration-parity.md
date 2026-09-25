@@ -1,5 +1,13 @@
 # 協作能力核對紀錄（更新至 2026-09-26）
 
+## 唯讀同儕恢復清單（2026-09-26）
+
+delivery 新增 startedAt，在 host 切換 running 時首次保存；Stop 或重開不抹除，也不把僅 queued 的工作當成已交付。directPeerTranscript 只傳回符合明確帳號／原代理人 binding、origin、已開始且 terminal 的 canonical incoming 與文字 publication；來源持久標記缺失、人類信箱／回答、圖片、互動卡、未開始及仍執行中的資料不列入。回覆核對實際作者與 origin，清除 mailbox 別名，拒絕跨紀錄碰撞 UUID。無模型呼叫、無信箱寫入。
+
+測試涵蓋 11 種生命週期／來源／純文字情況，逐一比較查詢前後檔案 bytes，重開後清單相同；另有三種重複 UUID／錯作者／錯範圍的隔離損壞 fixture。原有重開比較改依既有 millisecondsSince1970 保存精度，不更改產品時間精度。host 恢復操作與 UI 尚未接線，仍須重驗當前帳號 generation、原聊天 binding、收件人及刪除狀態，不能把清單當作執行授權。
+
+驗證：peer-recovery-candidates-full.log 完整非並行回歸 exit 0；peer-recovery-candidates-native.log 原生建置 exit 0，verify-package 與 deep strict codesign 通過。使用 pfw-testing 的隔離 fixture；未啟動 App／Xcode，未修改真實帳號／聊天。
+
 ## 直接委派來源持久化（2026-09-26）
 
 新的直接聊天委派在 delivery 保存不可變 directOriginBinding（帳號與原始代理人 UUID）；由 AppModel 的已驗證起始 binding 傳入 session，同一回覆鏈保持原始身份，而非改成每次寄件人。即時投影除 live session／chain／origin 外也核對 canonical binding。群組及人類信箱路徑不加標記；帶直接來源的 session 拒絕 enqueueUserMessage，帳號不符／空白則拒絕工具送出。這是來源歸屬，不是工具授權或重跑權限。

@@ -87,6 +87,73 @@ private func prioritySendCall(_ target: UUID, _ text: String, id: ToolCallID = "
 
 @Suite("SendToAgent messaging session", .timeLimit(.minutes(1)))
 struct AgentMessagingSessionTests {
+    @Test(arguments: ["duplicate", "author", "scope"])
+    func recoveryTranscriptRejectsAmbiguousOrMisattributedStoredRecords(mode: String) async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let binding = DirectConversationAgentBinding(accountID: "local", agentID: f.sender.id)
+        let incoming = AgentMessage(senderID: f.sender.id, recipientID: f.recipient.id, text: "Review",
+            delivery: .init(chainID: UUID(), originConversationID: f.origin, directOriginBinding: binding))
+        try await f.messenger.send(incoming)
+        try await f.messenger.updateDelivery(id: incoming.id, state: .running)
+        _ = try await f.messenger.publish(.init(groupID: f.origin, senderID: f.recipient.id, text: "Reviewed"),
+            replyingTo: incoming.id, lifetime: .init())
+        try await f.messenger.updateDelivery(id: incoming.id, state: .completed)
+        let url = f.root.appending(path: "messages.json")
+        var json = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        var messages = try #require(json["messages"] as? [[String: Any]])
+        if mode == "duplicate" { messages.append(messages[0]) }
+        else {
+            var delivery = try #require(messages[0]["delivery"] as? [String: Any])
+            var reports = try #require(delivery["publications"] as? [[String: Any]])
+            reports[0][mode == "author" ? "senderID" : "groupID"] = UUID().uuidString
+            delivery["publications"] = reports
+            messages[0]["delivery"] = delivery
+        }
+        json["messages"] = messages
+        try JSONSerialization.data(withJSONObject: json).write(to: url, options: .atomic)
+        let restored = try AgentMessenger(service: f.agents, storeURL: url)
+        let entries = try await restored.directPeerTranscript(originID: f.origin, binding: binding)
+        expectNoDifference(entries.map(\.message.text), mode == "duplicate" ? [] : ["Review"])
+    }
+
+    @Test(arguments: ["completed", "failed", "cancelled", "not-started", "running", "legacy", "account", "origin", "agent", "human", "plain"])
+    func recoveryTranscriptRequiresSettledStartedDirectOrigin(mode: String) async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let at = Date(timeIntervalSince1970: 1_700_000_000)
+        let binding = DirectConversationAgentBinding(accountID: "local", agentID: f.sender.id)
+        let incoming = AgentMessage(senderID: f.sender.id, recipientID: f.recipient.id, text: "Review",
+            createdAt: at, delivery: .init(chainID: UUID(), originConversationID: f.origin,
+                directOriginBinding: mode == "legacy" ? nil : binding))
+        if mode == "human" {
+            try await f.messenger.sendUserMessage(incoming, accountID: "local", lifetime: .init())
+        } else { try await f.messenger.send(incoming) }
+        let report = RoomMessage(groupID: f.origin, senderID: f.recipient.id, text: "Reviewed", createdAt: at)
+        if mode != "not-started" {
+            try await f.messenger.updateDelivery(id: incoming.id, state: .running, at: at)
+            if mode != "plain" { _ = try await f.messenger.publish(report, replyingTo: incoming.id, lifetime: .init()) }
+        }
+        if mode != "running" {
+            try await f.messenger.updateDelivery(id: incoming.id,
+                state: mode == "failed" ? .failed : ["cancelled", "not-started"].contains(mode) ? .cancelled : .completed,
+                response: "Reviewed", finalPublication: mode == "plain" ? report : nil)
+        }
+        let bytesBefore = try Data(contentsOf: f.root.appending(path: "messages.json"))
+        let selected = DirectConversationAgentBinding(accountID: mode == "account" ? "other" : "local",
+            agentID: mode == "agent" ? f.recipient.id : f.sender.id)
+        let origin = mode == "origin" ? UUID() : f.origin
+        let entries = try await f.messenger.directPeerTranscript(originID: origin, binding: selected)
+        let included = ["completed", "failed", "cancelled", "plain"].contains(mode)
+        expectNoDifference(entries.map(\.message.text), included ? ["Review", "Reviewed"] : [])
+        expectNoDifference(entries.map(\.source.kind), included ? [.incoming, .publication] : [])
+        expectNoDifference(entries.map(\.source.authorAgentID), included ? [f.sender.id, f.recipient.id] : [])
+        expectNoDifference(try Data(contentsOf: f.root.appending(path: "messages.json")), bytesBefore)
+        if mode != "running" {
+            let reopened = try AgentMessenger(service: f.agents, storeURL: f.root.appending(path: "messages.json"))
+            let restored = try await reopened.directPeerTranscript(originID: origin, binding: selected)
+            expectNoDifference(restored, entries)
+        }
+    }
+
     @Test(arguments: ["local", "other", "", " "])
     func directOriginRejectsMismatchedAccountAndHumanMailboxInput(account: String) async throws {
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
@@ -137,7 +204,7 @@ struct AgentMessagingSessionTests {
             createdAt: Date(timeIntervalSince1970: 1_700_000_000),
             delivery: .init(chainID: UUID(), originConversationID: f.origin))
         try await f.messenger.send(incoming)
-        try await f.messenger.updateDelivery(id: incoming.id, state: .running)
+        try await f.messenger.updateDelivery(id: incoming.id, state: .running, at: Date(timeIntervalSince1970: 1_700_000_000))
         let before = await f.messenger.allMessages()
         let text = String(repeating: "Full report. ", count: 1_000)
         let report = RoomMessage(id: mode == "identity" ? incoming.id : UUID(),
@@ -580,7 +647,10 @@ struct AgentMessagingSessionTests {
         let restored = try AgentMessenger(service: f.agents, storeURL: f.root.appending(path: "messages.json"))
         let durable = await restored.allMessages()
         expectNoDifference(durable.map(\.id), messages.map(\.id))
-        expectNoDifference(durable.map(\.delivery), messages.map(\.delivery))
+        let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .millisecondsSince1970
+        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .millisecondsSince1970
+        let persisted = try decoder.decode([AgentMessageDelivery?].self, from: encoder.encode(messages.map(\.delivery)))
+        expectNoDifference(durable.map(\.delivery), persisted)
         expectNoDifference(durable.map(\.text), messages.map(\.text))
     }
 

@@ -319,6 +319,8 @@ public struct AgentMessageDelivery: Codable, Hashable, Sendable {
     /// Provenance only: this never grants permission to replay execution.
     public let directOriginBinding: DirectConversationAgentBinding?
     public var state: State
+    /// Set only when the host starts execution, not when it merely queues work.
+    public var startedAt: Date?
     public var response: String?
     /// Explicit SendMessage output; nil in older text-only mailboxes.
     public var publications: [RoomMessage]?

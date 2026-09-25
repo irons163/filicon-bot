@@ -1,4 +1,11 @@
 import Foundation
+import FiliconDomain
+
+/// A canonical transcript candidate, never an execution or permission request.
+public struct AgentPeerTranscriptEntry: Hashable, Sendable {
+    public let source: AgentMessageSource
+    public let message: RoomMessage
+}
 
 public actor AgentMessenger {
     private let service: AgentService
@@ -353,7 +360,7 @@ public actor AgentMessenger {
     }
 
     public func updateDelivery(id: UUID, state deliveryState: AgentMessageDelivery.State, response: String? = nil,
-                               finalPublication: RoomMessage? = nil) throws {
+                               finalPublication: RoomMessage? = nil, at: Date = Date()) throws {
         guard let index = state.messages.firstIndex(where: { $0.id == id }), state.messages[index].delivery != nil else { return }
         let previous = state.messages[index]
         // Terminal results cannot be resurrected by a late provider event.
@@ -371,6 +378,9 @@ public actor AgentMessenger {
                   !containsMessageID(report.id) else { throw AgentPublicationError.invalid }
         }
         state.messages[index].delivery?.state = deliveryState
+        if deliveryState == .running, previous.delivery?.startedAt == nil {
+            state.messages[index].delivery?.startedAt = at
+        }
         state.messages[index].delivery?.finalPublication = finalPublication
         if deliveryState == .cancelled || deliveryState == .failed {
             if var publications = state.messages[index].delivery?.publications {
@@ -386,6 +396,50 @@ public actor AgentMessenger {
             state.messages[index].delivery?.response = String(publications.map(\.text).joined(separator: "\n\n").prefix(8_000))
         } else if let response { state.messages[index].delivery?.response = String(response.prefix(8_000)) }
         do { try persist() } catch { state.messages[index] = previous; throw error }
+    }
+
+    /// Read-only recovery input. The host must separately validate the current
+    /// origin binding, destination and account generation before saving a chat.
+    /// Legacy data is not assigned a guessed account or a guessed start event.
+    public func directPeerTranscript(originID: UUID, binding: DirectConversationAgentBinding) throws -> [AgentPeerTranscriptEntry] {
+        guard !binding.accountID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              binding.accountID.utf8.count <= 1_024 else { throw AgentPublicationError.invalid }
+        let allIDs = state.messages.flatMap { item in
+            [item.id] + (item.delivery?.publications ?? []).map(\.id) + [item.delivery?.finalPublication?.id].compactMap { $0 }
+        }
+        let counts = Dictionary(grouping: allIDs, by: { $0 }).mapValues(\.count)
+        var result: [AgentPeerTranscriptEntry] = []
+        for item in state.messages {
+            guard let delivery = item.delivery, delivery.originConversationID == originID,
+                  delivery.directOriginBinding == binding, delivery.startedAt != nil,
+                  [.completed, .failed, .cancelled].contains(delivery.state),
+                  !MailboxMessageAddressing.isHuman(item, in: state),
+                  item.questionResponse == nil, item.secretResponse == nil,
+                  item.senderID != item.recipientID, counts[item.id] == 1,
+                  item.images?.isEmpty != false else { continue }
+            let incoming = RoomMessage(id: item.id, groupID: originID, senderID: item.senderID,
+                text: item.text, createdAt: item.createdAt)
+            func append(_ message: RoomMessage, kind: AgentMessageSource.Kind) throws {
+                guard counts[message.id] == 1, message.groupID == originID,
+                      message.senderID == (kind == .incoming ? item.senderID : item.recipientID),
+                      !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                      message.images?.isEmpty != false, message.toolActivities.isEmpty,
+                      message.question == nil, message.secretRequest == nil, message.cursorAgent == nil,
+                      message.memberOutcome == nil, message.questionReplyTo == nil else { return }
+                var message = message
+                message.shortAddress = nil
+                result.append(.init(source: try AgentMessageSource(accountID: binding.accountID,
+                    originConversationID: originID, deliveryID: item.id, senderAgentID: item.senderID,
+                    recipientAgentID: item.recipientID, kind: kind), message: message))
+            }
+            try append(incoming, kind: .incoming)
+            for report in delivery.publications ?? [] { try append(report, kind: .publication) }
+            if delivery.state == .completed, delivery.publications?.isEmpty != false,
+               let report = delivery.finalPublication {
+                try append(report, kind: .publication)
+            }
+        }
+        return result
     }
 
     /// The durable address index is metadata, not model-owned publication content.
