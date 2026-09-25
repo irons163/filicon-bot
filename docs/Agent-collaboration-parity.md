@@ -1,5 +1,11 @@
 # 協作能力核對紀錄（更新至 2026-09-26）
 
+## 取消憑證請求的回條重試（2026-09-26）
+
+安全卡片新增 dismissalReceiptFailed：取消先清空輸入並關閉 submission，保存取消回條失敗時保留不含憑證的重試動作，不重新開啟 SecureField、不再次呼叫 close／submit。重複取消與處理中的重試不重入；Stop／失效後晚到的成功或失敗不重新開啟卡片。實際寫入／回條提交期間停用 Dismiss，避免取消與成功提交競爭。取消保存中使用「儲存中」而非「儲存憑證」；失敗說明已加入七語系。
+
+新增純記憶體狀態測試驗證失敗重試、重試前失效、並行取消與晚到 callback；既有七語系明暗色 receipt 渲染加上取消分支。secret-dismissal-ui-final.log 共 34 項／3 suites 通過；人工檢視繁中 light／法文 dark，文字未截斷且只提供重試、不顯示憑證輸入。secret-dismissal-native.log 原生建置、verify-package 與 deep strict 簽章通過。DirectSecretAppTests 另加入 dismissal-failure 的 SQLite 整合案例，需解鎖後與完整回歸一起補驗。本輪開始唯讀 ioreg 仍為 IOConsoleLocked=Yes，未重跑已知受保護 fixture 失敗的完整套件，也未降低檔案保護或操作真實憑證。
+
 ## 綁定代理人的直接聊天安全憑證流程（2026-09-26）
 
 直接聊天 SendMessage 啟用 secret-request，但只限具有已驗證 account／agent binding 的對話；未綁定對話不提供這項能力。沿用既有 destination 規則，只能為該代理人已配置、啟用且唯一的 Slack／Discord bot token 連接器提出請求，不能用模型指定任意 credential reference 或建立連接器。

@@ -49,6 +49,62 @@ struct AgentSecretRequestCardTests {
             from: Data(#"{"requestID":"00000000-0000-0000-0000-000000000004"}"#.utf8))
     }
 
+    @Test(arguments: [false, true])
+    func dismissalReceiptCanRetryWithoutSubmittingOrClosingAgain(invalidateBeforeRetry: Bool) async throws {
+        var attempts = 0
+        var closes = 0
+        let model = AgentSecretRequestCardModel(label: "Token", destinationName: "Fixture",
+            submit: { _ in Issue.record("Dismissal must not submit a value"); throw CancellationError() },
+            close: { closes += 1 }, didStore: { _ in Issue.record("Dismissal is not storage") },
+            dismiss: {
+                attempts += 1
+                if attempts == 1 { throw CocoaError(.fileWriteUnknown) }
+            })
+        model.draft = "FAKE-DISMISS-ONLY"
+        await expectDifference(model.status) {
+            await model.dismissButtonTapped()
+        } changes: { $0 = .dismissalReceiptFailed }
+        expectNoDifference(model.draft, "")
+        #expect(!model.canEdit)
+        await model.dismissButtonTapped()
+        expectNoDifference(attempts, 1)
+        if invalidateBeforeRetry { model.invalidate() }
+        await model.retryButtonTapped()
+        expectNoDifference(attempts, invalidateBeforeRetry ? 1 : 2)
+        expectNoDifference(model.status, .cancelled)
+        expectNoDifference(closes, 1)
+        await model.retryButtonTapped()
+        await model.dismissButtonTapped()
+        expectNoDifference(attempts, invalidateBeforeRetry ? 1 : 2)
+    }
+
+    @Test func duplicateDismissalAndInvalidationDoNotRestartPendingCallback() async throws {
+        var completion: CheckedContinuation<Void, Never>?
+        var attempts = 0
+        var closes = 0
+        let model = AgentSecretRequestCardModel(label: "Token", destinationName: "Fixture",
+            submit: { _ in throw CancellationError() }, close: { closes += 1 }, didStore: { _ in },
+            dismiss: {
+                attempts += 1
+                await withCheckedContinuation { completion = $0 }
+                throw CocoaError(.fileWriteUnknown)
+            })
+        let task = Task { await model.dismissButtonTapped() }
+        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while completion == nil && ContinuousClock.now < deadline { await Task.yield() }
+        try #require(completion != nil)
+        await model.dismissButtonTapped()
+        await model.retryButtonTapped()
+        expectNoDifference(attempts, 1)
+        model.invalidate()
+        completion?.resume()
+        await task.value
+        expectNoDifference(model.status, .cancelled)
+        expectNoDifference(closes, 1)
+        await model.dismissButtonTapped()
+        expectNoDifference(attempts, 1)
+    }
+
     @Test func clearsBeforeWriteAndAcknowledgesOnlyOnce() async throws {
         let receipt = try receipt()
         var writes = 0
@@ -132,19 +188,25 @@ struct AgentSecretRequestCardTests {
         expectNoDifference(closes, 1)
     }
 
-    @Test(arguments: ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"])
-    func rendersReceiptRetryWithoutInput(language: String) async throws {
+    @Test(arguments: ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"], [false, true])
+    func rendersReceiptRetryWithoutInput(language: String, dismissed: Bool) async throws {
         let receipt = try receipt()
         let model = AgentSecretRequestCardModel(label: "Bot token", destinationName: "slack · Fixture",
             submit: { _ in receipt }, close: {}, didStore: { _ in },
-            complete: { _ in throw AgentSecretSubmissionError.unavailable })
+            complete: { _ in throw AgentSecretSubmissionError.unavailable },
+            dismiss: { throw AgentSecretSubmissionError.unavailable })
         model.draft = "FAKE-ONLY"
-        await model.submitButtonTapped()
-        expectNoDifference(model.status, .receiptFailed)
+        if dismissed { await model.dismissButtonTapped() }
+        else { await model.submitButtonTapped() }
+        expectNoDifference(model.status, dismissed ? .dismissalReceiptFailed : .receiptFailed)
         expectNoDifference(model.draft, "")
         #expect(!model.canEdit)
         for dark in [false, true] {
             try await withUIRenderTurn(language: language) {
+                if dismissed && language != "en" {
+                    let key = "Request dismissed. The dismissal receipt could not be saved. Retry to continue the conversation."
+                    #expect(FiliconLocalization.string(key) != key)
+                }
                 let host = NSHostingView(rootView: AgentSecretRequestCard(model: model)
                     .padding(16).frame(width: 380).background(FiliconTheme.canvas)
                     .environment(\.locale, Locale(identifier: language))
@@ -160,7 +222,7 @@ struct AgentSecretRequestCardTests {
                     let directory = URL(fileURLWithPath: path)
                     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
                     try #require(bitmap.representation(using: .png, properties: [:]))
-                        .write(to: directory.appending(path: "secret-retry-\(language)-\(dark ? "dark" : "light").png"))
+                        .write(to: directory.appending(path: "secret-retry-\(dismissed ? "dismissed" : "stored")-\(language)-\(dark ? "dark" : "light").png"))
                 }
             }
         }

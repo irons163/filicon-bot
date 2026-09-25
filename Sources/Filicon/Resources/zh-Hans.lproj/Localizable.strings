@@ -1683,3 +1683,4 @@
 "Cursor cloud agent" = "Cursor 云端代理";
 "Open on cursor.com. Remote status has not been verified." = "在 cursor.com 打开。尚未验证远端状态。";
 "Sync agent model" = "同步代理人模型";
+"Request dismissed. The dismissal receipt could not be saved. Retry to continue the conversation." = "已取消请求。无法保存取消回执，请重试以继续对话。";

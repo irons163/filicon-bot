@@ -1683,3 +1683,4 @@
 "Cursor cloud agent" = "Agente en la nube de Cursor";
 "Open on cursor.com. Remote status has not been verified." = "Abrir en cursor.com. No se ha verificado el estado remoto.";
 "Sync agent model" = "Sincronizar el modelo del agente";
+"Request dismissed. The dismissal receipt could not be saved. Retry to continue the conversation." = "Solicitud cancelada. No se pudo guardar la confirmación de cancelación. Reintenta para continuar la conversación.";

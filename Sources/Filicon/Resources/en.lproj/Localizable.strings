@@ -1683,3 +1683,4 @@
 "Cursor cloud agent" = "Cursor cloud agent";
 "Open on cursor.com. Remote status has not been verified." = "Open on cursor.com. Remote status has not been verified.";
 "Sync agent model" = "Sync agent model";
+"Request dismissed. The dismissal receipt could not be saved. Retry to continue the conversation." = "Request dismissed. The dismissal receipt could not be saved. Retry to continue the conversation.";

@@ -6,7 +6,7 @@ import FiliconChannels
 @MainActor @Observable
 final class AgentSecretRequestCardModel: CustomReflectable, CustomStringConvertible {
     enum Status: Equatable {
-        case pending, submitting, stored, cancelled, invalidValue, writeFailed, unavailable, receiptFailed
+        case pending, submitting, stored, cancelled, invalidValue, writeFailed, unavailable, receiptFailed, dismissalReceiptFailed
     }
 
     var draft = ""
@@ -21,6 +21,7 @@ final class AgentSecretRequestCardModel: CustomReflectable, CustomStringConverti
     private let dismiss: (() async throws -> Void)?
     private var storedReceipt: AgentSecretReceipt?
     private var finishing = false
+    private var dismissalStarted = false
     private var active = true
 
     nonisolated var description: String { "<secure credential card>" }
@@ -59,6 +60,8 @@ final class AgentSecretRequestCardModel: CustomReflectable, CustomStringConverti
         active && (status == .pending || status == .invalidValue || status == .writeFailed)
     }
 
+    var isDismissing: Bool { dismissalStarted }
+
     func submitButtonTapped() async {
         guard canEdit else { return }
         let value: AgentSecretValue
@@ -96,6 +99,7 @@ final class AgentSecretRequestCardModel: CustomReflectable, CustomStringConverti
     }
 
     func retryButtonTapped() async {
+        if dismissalStarted { await finishDismissal(); return }
         guard active, !finishing, let receipt = storedReceipt else { return }
         finishing = true
         defer { finishing = false }
@@ -116,10 +120,30 @@ final class AgentSecretRequestCardModel: CustomReflectable, CustomStringConverti
     }
 
     func dismissButtonTapped() async {
+        guard active, !finishing, status != .submitting, !dismissalStarted else { return }
         guard storedReceipt == nil else { invalidate(); return }
-        invalidate()
-        do { try await dismiss?() }
-        catch { status = .unavailable }
+        draft = ""
+        dismissalStarted = true
+        closeSubmission()
+        await finishDismissal()
+    }
+
+    private func finishDismissal() async {
+        guard active, !finishing else { return }
+        finishing = true
+        defer { finishing = false }
+        status = .submitting
+        do {
+            try Task.checkCancellation()
+            try await dismiss?()
+            guard active else { return }
+            active = false
+            status = .cancelled
+        } catch {
+            guard active else { return }
+            if error is CancellationError { invalidate() }
+            else { status = .dismissalReceiptFailed }
+        }
     }
 
     func clearDraft() { draft = "" }
@@ -129,7 +153,7 @@ final class AgentSecretRequestCardModel: CustomReflectable, CustomStringConverti
         guard active else { return }
         active = false
         status = storedReceipt == nil ? .cancelled : .stored
-        closeSubmission()
+        if !dismissalStarted { closeSubmission() }
     }
 }
 
@@ -160,7 +184,7 @@ struct AgentSecretRequestCard: View {
                 Text(FiliconLocalization.string(message)).font(.caption)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            if model.canEdit || model.status == .submitting || model.status == .receiptFailed {
+            if model.canEdit || model.status == .submitting || model.status == .receiptFailed || model.status == .dismissalReceiptFailed {
                 ViewThatFits(in: .horizontal) {
                     HStack { actions }
                     VStack(alignment: .leading) { actions }
@@ -176,18 +200,19 @@ struct AgentSecretRequestCard: View {
     private var statusMessage: String? {
         switch model.status {
         case .pending: nil
-        case .submitting: "Saving credential securely…"
+        case .submitting: model.isDismissing ? "Saving…" : "Saving credential securely…"
         case .stored: "Credential stored. Remote authentication has not been verified."
         case .cancelled: "Cancelled"
         case .invalidValue: "Enter a nonempty credential without line breaks."
         case .writeFailed: "Could not store the credential. Enter it again to retry."
         case .unavailable: "This credential request is no longer available."
         case .receiptFailed: "Credential stored, but the conversation receipt could not be saved. Retry without entering the credential again."
+        case .dismissalReceiptFailed: "Request dismissed. The dismissal receipt could not be saved. Retry to continue the conversation."
         }
     }
 
     @ViewBuilder private var actions: some View {
-        if model.status == .receiptFailed {
+        if model.status == .receiptFailed || model.status == .dismissalReceiptFailed {
             Button(l10n("Retry")) { Task { await model.retryButtonTapped() } }
                 .buttonStyle(.borderedProminent)
         } else {
@@ -199,5 +224,6 @@ struct AgentSecretRequestCard: View {
         }
         Button(l10n("Dismiss")) { Task { await model.dismissButtonTapped() } }
             .buttonStyle(.bordered)
+            .disabled(model.status == .submitting || model.status == .dismissalReceiptFailed)
     }
 }

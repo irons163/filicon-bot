@@ -52,7 +52,7 @@ private struct DirectSecretProvider: AIProvider {
 
 @MainActor @Suite("Direct secure credential lifecycle", .timeLimit(.minutes(1)))
 struct DirectSecretAppTests {
-    @Test(arguments: ["provided", "dismissed", "receipt-failure", "account", "archive", "stop", "new-human", "delete", "disabled", "unbound", "restart", "foreign-binding"])
+    @Test(arguments: ["provided", "dismissed", "receipt-failure", "dismissal-failure", "account", "archive", "stop", "new-human", "delete", "disabled", "unbound", "restart", "foreign-binding"])
     func requestInputReceiptAndResume(mode: String) async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "direct-secret-app-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }
@@ -105,7 +105,7 @@ struct DirectSecretAppTests {
         let permissions = await model.localToolPermissionPolicy.effectivePermission(for: .writeFile)
         var database: OpaquePointer?
         defer { if let database { sqlite3_close(database) } }
-        if mode == "receipt-failure" {
+        if mode == "receipt-failure" || mode == "dismissal-failure" {
             #expect(sqlite3_open(root.appending(path: "conversations.sqlite3").path, &database) == SQLITE_OK)
             #expect(sqlite3_exec(database, "CREATE TRIGGER reject_secret_receipt BEFORE UPDATE ON conversations BEGIN SELECT RAISE(ABORT, 'fixture'); END", nil, nil, nil) == SQLITE_OK)
         }
@@ -119,16 +119,16 @@ struct DirectSecretAppTests {
             model.conversations[ci].agentBinding = .init(accountID: "other", agentID: owner.id)
         }
         if mode == "new-human" { model.draft = "Move on"; model.send(); try await wait(model) }
-        if mode == "dismissed" { await card.dismissButtonTapped() }
+        if mode == "dismissed" || mode == "dismissal-failure" { await card.dismissButtonTapped() }
         else { await card.submitButtonTapped() }
-        if mode == "receipt-failure" {
-            expectNoDifference(card.status, .receiptFailed)
-            expectNoDifference(writer.count, 1)
+        if mode == "receipt-failure" || mode == "dismissal-failure" {
+            expectNoDifference(card.status, mode == "receipt-failure" ? .receiptFailed : .dismissalReceiptFailed)
+            expectNoDifference(writer.count, mode == "receipt-failure" ? 1 : 0)
             #expect(sqlite3_exec(database, "DROP TRIGGER reject_secret_receipt", nil, nil, nil) == SQLITE_OK)
             await card.retryButtonTapped()
         }
         try await wait(model)
-        let resumed = ["provided", "dismissed", "receipt-failure"].contains(mode)
+        let resumed = ["provided", "dismissed", "receipt-failure", "dismissal-failure"].contains(mode)
         expectNoDifference(writer.count, ["provided", "receipt-failure"].contains(mode) ? 1 : 0)
         expectNoDifference(card.draft, "")
         let requests = await probe.requests
@@ -144,7 +144,7 @@ struct DirectSecretAppTests {
             let store = ConversationStore(fileURL: root.appending(path: "conversations.json"))
             let persisted = try #require(try await store.conversation(id: id))
             let restored = try #require(persisted.messages.flatMap(\.transcriptCards).first(where: { $0.id == savedCard.id }))
-            expectNoDifference(restored.directSecretRequest?.state, mode == "dismissed" ? .dismissed : .stored)
+            expectNoDifference(restored.directSecretRequest?.state, ["dismissed", "dismissal-failure"].contains(mode) ? .dismissed : .stored)
             expectNoDifference(restored.directSecretRequest?.responseMessageID, responses.first?.id)
             #expect(!String(decoding: try JSONEncoder().encode(persisted), as: UTF8.self).contains("FAKE-DIRECT-ONLY-SECRET"))
             expectNoDifference(model.directSecretCards.count, 0)

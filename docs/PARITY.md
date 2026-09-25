@@ -1,5 +1,7 @@
 # Filicon / Grok Bot 0.18 功能 parity matrix（current implementation）
 
+憑證取消回條重試（2026-09-26）：取消保存失敗可重試，不重開輸入、不重寫憑證；重複取消與失效後晚到結果不重入。七語系明暗色畫面及 34 項聚焦測試、原生建置與封裝／簽章通過。新增 SQLite 取消失敗整合案例與完整回歸仍待螢幕解鎖補驗，不變更整體 partial 判定。
+
 直接憑證接線（2026-09-26）：綁定代理人的直接聊天已串接 SendMessage secret-request、安全輸入、實際 submission 回條保存與新回合恢復；限既有唯一 Slack／Discord bot token 目的地。12 個隔離生命週期案例及首輪完整回歸通過，最終原生建置／封裝通過；最後 UI 調整後完整重驗遇 macOS 鎖定及受保護 fixture EPERM，待解鎖補驗，不能宣稱最終全綠。未進行真實 Keychain／外部登入驗收，其他平台／欄位仍未完成。
 
 憑證歷史卡片（2026-09-26）：typed direct request 在通用 renderer 中唯讀顯示；pending 無 live submission 時不轉圈、不提供動作，stored 不宣稱遠端登入已驗證。封鎖通用 retry／dismiss 繞過專用回條流程。32 項聚焦測試、七語系明暗色渲染、完整回歸、原生建置與封裝／簽章通過。此時的直接憑證輸入／恢復尚未接線，後續以上方接線紀錄為準。

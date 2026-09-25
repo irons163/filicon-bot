@@ -1683,3 +1683,4 @@
 "Cursor cloud agent" = "Cursor 클라우드 에이전트";
 "Open on cursor.com. Remote status has not been verified." = "cursor.com에서 엽니다. 원격 상태는 확인되지 않았습니다.";
 "Sync agent model" = "에이전트 모델 동기화";
+"Request dismissed. The dismissal receipt could not be saved. Retry to continue the conversation." = "요청이 취소되었습니다. 취소 확인을 저장하지 못했습니다. 대화를 계속하려면 다시 시도하세요.";

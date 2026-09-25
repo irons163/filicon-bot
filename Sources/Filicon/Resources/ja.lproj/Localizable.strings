@@ -1683,3 +1683,4 @@
 "Cursor cloud agent" = "Cursor クラウドエージェント";
 "Open on cursor.com. Remote status has not been verified." = "cursor.com で開きます。リモートの状態は未確認です。";
 "Sync agent model" = "エージェントのモデルを同期";
+"Request dismissed. The dismissal receipt could not be saved. Retry to continue the conversation." = "リクエストはキャンセルされました。キャンセルの確認を保存できませんでした。会話を続けるには再試行してください。";
