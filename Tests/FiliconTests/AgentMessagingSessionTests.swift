@@ -31,10 +31,12 @@ private actor MessagingProbe {
     var authorizations: [(UUID, UUID, String)] = []
     var messages: [RoomMessage] = []
     var contexts: [ToolContext] = []
+    var peerMessages: [(AgentMessageSource, RoomMessage)] = []
     func request(_ value: InferenceRequest) -> Int { requests.append(value); return requests.count }
     func authorize(_ sender: AgentProfile, _ recipient: AgentProfile, _ text: String) { authorizations.append((sender.id, recipient.id, text)) }
     func update(_ message: RoomMessage) { messages.append(message) }
     func context(_ value: ToolContext) { contexts.append(value) }
+    func peer(_ source: AgentMessageSource, _ value: RoomMessage) { peerMessages.append((source, value)) }
 }
 
 private struct MailboxVoiceProvider: AIProvider {
@@ -85,6 +87,28 @@ private func prioritySendCall(_ target: UUID, _ text: String, id: ToolCallID = "
 
 @Suite("SendToAgent messaging session", .timeLimit(.minutes(1)))
 struct AgentMessagingSessionTests {
+    @Test(arguments: [AgentMessageSource.Kind.incoming, .publication])
+    func peerProjectionFailureDoesNotRepublishCanonicalReceipt(kind: AgentMessageSource.Kind) async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        await f.registry.register(MailboxVoiceProvider(mode: "published"))
+        let session = f.session()
+        try await session.enqueueUserMessage(senderID: f.sender.id, recipientID: f.recipient.id, text: "Report")
+        try await session.drain(onPeerMessage: { source, message in
+            await f.probe.peer(source, message)
+            if source.kind == kind { throw AgentMessagingError.scopeMismatch }
+        })
+        let saved = try #require(await f.messenger.allMessages().first)
+        expectNoDifference(saved.delivery?.state, .failed)
+        expectNoDifference(saved.delivery?.publications?.count ?? 0, kind == .incoming ? 0 : 1)
+        let peers = await f.probe.peerMessages
+        expectNoDifference(peers.count, kind == .incoming ? 1 : 2)
+        // Draining again never invokes either callback or repeats SendMessage.
+        try await session.drain(onPeerMessage: { _, _ in Issue.record("Repeated projection") })
+        let again = try #require(await f.messenger.allMessages().first)
+        expectNoDifference(again, saved)
+        try await session.close()
+    }
+
     @Test(arguments: ["none", "silent", "published", "failed", "text-only", "unconfigured"])
     func onlyExplicitPublicationsReachMailboxAndProjection(mode: String) async throws {
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
@@ -96,12 +120,34 @@ struct AgentMessagingSessionTests {
             conversations: try AgentConversationStore(url: contextURL),
             authorizePublication: { _, _, _, _, _ in })
         try await session.enqueueUserMessage(senderID: f.sender.id, recipientID: f.recipient.id, text: "Report the result")
-        try await session.drain(onUpdate: { await f.probe.update($0) })
+        try await session.drain(onUpdate: { await f.probe.update($0) }, onPeerMessage: { source, message in
+            await f.probe.peer(source, message)
+        })
         try await session.close()
         let saved = await f.messenger.allMessages(), projected = await f.probe.messages
         let delivery = try #require(saved.first?.delivery)
         expectNoDifference(delivery.state, .completed)
         let usesPlainText = ["text-only", "unconfigured"].contains(mode)
+        let peers = await f.probe.peerMessages
+        expectNoDifference(peers.count, usesPlainText || mode == "published" ? 2 : 1)
+        expectNoDifference(peers.first?.0.kind, .incoming)
+        expectNoDifference(peers.first?.0.authorAgentID, f.sender.id)
+        expectNoDifference(peers.first?.1.text, "Report the result")
+        for (source, message) in peers {
+            expectNoDifference(source.accountID, "local")
+            expectNoDifference(source.originConversationID, f.origin)
+            expectNoDifference(source.deliveryID, saved.first?.id)
+            expectNoDifference(source.recipientAgentID, f.recipient.id)
+            expectNoDifference(source.authorAgentID, message.senderID)
+            #expect(!message.text.contains("PRIVATE"))
+            expectNoDifference(message.shortAddress, nil)
+        }
+        if peers.count == 2 {
+            expectNoDifference(peers.last?.0.kind, .publication)
+            expectNoDifference(peers.last?.0.authorAgentID, f.recipient.id)
+            expectNoDifference(peers.last?.1.text, usesPlainText ? "Plain model answer" : "Published result")
+            if mode == "published" { expectNoDifference(peers.last?.1.id, delivery.publications?.first?.id) }
+        }
         expectNoDifference(delivery.response, usesPlainText ? "Plain model answer" : mode == "published" ? "Published result" : "")
         expectNoDifference(delivery.publications?.map(\.text) ?? [], mode == "published" ? ["Published result"] : [])
         #expect(!projected.contains { $0.text.contains("PRIVATE") })

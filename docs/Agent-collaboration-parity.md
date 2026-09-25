@@ -1,5 +1,13 @@
 # 協作能力核對紀錄（更新至 2026-09-26）
 
+## 同儕訊息投影事件（2026-09-26）
+
+AgentMessagingSession.drain 新增可選 onPeerMessage 回呼，以 AgentMessageSource 和 RoomMessage 傳送 incoming／publication。incoming 在收件人的 lane 真正開始、交付標記 running 後才送出；SendMessage 在 canonical mailbox 發布成功後才送出，沿用發布 UUID 但不帶 mailbox 的 shortAddress。純文字 provider 的最終文字等 completed 保存成功後才送出；工具型 provider 的私有草稿、PASS 和工具活動不混入這個訊息回呼。原有群組 onUpdate 路徑保留。
+
+問答／憑證的人類回條不重新標記成同儕來源。投影回呼失敗不把已保存的 SendMessage 回條回報成可重試工具失敗；收尾記錄失敗，原始發布保留，不重複投遞。聚焦測試核對六種 provider 行為、來源／發言者／delivery ID／別名與草稿排除，另驗證 incoming／publication 投影故障及再次 drain 不重複。這是 service 到 host 的事件接點，AppModel 尚未接自己的直接聊天室保存／UI，不能宣稱直接聊天投影已完成。
+
+驗證：peer-events-focused.log 的 23 項 session 測試通過；peer-events-full.log 完整非並行回歸 exit 0；peer-events-native.log 原生 Debug 建置 exit 0，verify-package／deep strict codesign 通過。未啟動使用者 App／Xcode，未操作真實帳號或聊天資料。
+
 ## 同儕訊息來源持久化基礎（2026-09-26）
 
 重新核對原版 source/host/agents/agent-messaging.ts：每位代理人有自己的聊天；收到的同儕訊息放在收件人的聊天，收件人 SendMessage 的發布也屬於收件人的聊天，不應冒充發起委派的代理人。直接聊天目前的 drain 尚未接 UI 投影，不能把所有同儕輸出一律塞回來源聊天室。

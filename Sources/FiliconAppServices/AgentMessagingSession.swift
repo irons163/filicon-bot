@@ -37,6 +37,9 @@ public actor AgentMessagingSession {
     public typealias ImageAuthorizer = @Sendable (AgentProfile, AgentProfile, String, [AttachmentMetadata], NormalizedToolCall, ToolContext) async throws -> Void
     public typealias PublicationAuthorizer = @Sendable (AgentProfile, String, [AttachmentMetadata], NormalizedToolCall, ToolContext) async throws -> Void
     public typealias UpdateHandler = @Sendable (RoomMessage) async throws -> Void
+    /// A host projection into the recipient's own chat. This is not a new
+    /// permission boundary; consequential tools still require origin approval.
+    public typealias PeerMessageHandler = @Sendable (AgentMessageSource, RoomMessage) async throws -> Void
     public typealias GroupAuthorizer = @Sendable (AgentProfile, AgentGroupAudience, String, NormalizedToolCall, ToolContext) async throws -> Void
     public typealias GroupPoster = @Sendable (AgentGroupDispatch, AgentGroupPostLifetime) async throws -> Void
     public typealias GroupRunner = @Sendable (AgentGroupDispatch, AgentMessagingSession) async throws -> Void
@@ -525,7 +528,8 @@ public actor AgentMessagingSession {
     }
 
     public func drain(onAgentChange: @escaping @Sendable (UUID?) async -> Void = { _ in },
-                      onUpdate: @escaping UpdateHandler = { _ in }) async throws {
+                      onUpdate: @escaping UpdateHandler = { _ in },
+                      onPeerMessage: PeerMessageHandler? = nil) async throws {
         guard !draining else { return }
         draining = true
         defer { draining = false; activeConversationID = nil }
@@ -551,7 +555,17 @@ public actor AgentMessagingSession {
                 await onChange()
                 continue
             }
-            let output = AgentInboundOutput(groupID: originConversationID, agentID: agent.id, onUpdate: onUpdate)
+            // Human question/secret answers have a separate receipt flow. Never
+            // relabel them as messages authored by another agent.
+            let peerProjection: PeerMessageHandler? = inbound.questionResponse == nil && inbound.secretResponse == nil ? onPeerMessage : nil
+            let projectPublication: UpdateHandler = { [accountID, originConversationID] publication in
+                guard let peerProjection else { return }
+                let source = try AgentMessageSource(accountID: accountID, originConversationID: originConversationID,
+                    deliveryID: inbound.id, senderAgentID: inbound.senderID, recipientAgentID: inbound.recipientID, kind: .publication)
+                try await peerProjection(source, publication)
+            }
+            let output = AgentInboundOutput(groupID: originConversationID, agentID: agent.id,
+                onUpdate: onUpdate, onPublication: projectPublication)
             let questionPublisher: AgentUserMessageTool.QuestionPublisher?
             if supportsMailboxQuestions {
                 questionPublisher = { [messenger, accountID, originConversationID, publicationLifetime, onChange] question in
@@ -673,9 +687,17 @@ public actor AgentMessagingSession {
                 do { try await coordinator.send(request: request, providerID: agent.providerID,
                     additionalTools: [tool, publisher] + (management?.tools(for: agent.id, memoryQuery: inbound.text) ?? []), toolContext: ToolContext(conversationID: originConversationID),
                     agentID: agent.id, agentLane: inbound.id == userMessageID ? .user : .background,
-                    priority: inbound.priority == .priority, executionTimeout: turnTimeout, onStart: { [messenger, onChange] in
+                    priority: inbound.priority == .priority, executionTimeout: turnTimeout, onStart: { [messenger, onChange, accountID, originConversationID] in
                         try await self.checkOpen()
                         try await messenger.updateDelivery(id: inbound.id, state: .running)
+                        if let peerProjection {
+                            let source = try AgentMessageSource(accountID: accountID, originConversationID: originConversationID,
+                                deliveryID: inbound.id, senderAgentID: inbound.senderID, recipientAgentID: inbound.recipientID, kind: .incoming)
+                            let incoming = RoomMessage(id: inbound.id, groupID: originConversationID,
+                                senderID: inbound.senderID, text: inbound.text, createdAt: inbound.createdAt, images: inbound.images ?? [])
+                            try await peerProjection(source, incoming)
+                            try await self.checkOpen()
+                        }
                         await onChange()
                         await onAgentChange(agent.id)
                         try await self.checkOpen()
@@ -698,6 +720,12 @@ public actor AgentMessagingSession {
                 try checkOpen()
                 try await output.finish()
                 try await messenger.updateDelivery(id: inbound.id, state: .completed, response: text)
+                // Text-only providers have no SendMessage receipt. Mirror their
+                // final report only after the canonical delivery is committed.
+                if let report = await output.textOnlyPublication {
+                    try checkOpen()
+                    try await projectPublication(report)
+                }
             } catch {
                 await publisher.close()
                 let cancelled = closed || Task.isCancelled || error is CancellationError || error is AgentExecutionSuperseded
@@ -786,16 +814,22 @@ private struct SendToAgentTool: ToolExecutor, ToolRuntimeContextProviding {
 private actor AgentInboundOutput {
     private var message: RoomMessage
     private let onUpdate: AgentMessagingSession.UpdateHandler
+    private let onPublication: AgentMessagingSession.UpdateHandler
     private var afterTool = false
     private var publishedTexts: [String] = []
     private var projectionFailure: (any Error)?
     private var explicitPublicationRequired = false
     var publishedReport: String { publishedTexts.joined(separator: "\n\n") }
     var report: String { !explicitPublicationRequired && publishedTexts.isEmpty ? message.text : publishedReport }
+    var textOnlyPublication: RoomMessage? {
+        !explicitPublicationRequired && publishedTexts.isEmpty && !message.text.isEmpty && message.memberOutcome != .passed ? message : nil
+    }
     func setExplicitPublicationRequired(_ required: Bool) { explicitPublicationRequired = required }
-    init(groupID: UUID, agentID: UUID, onUpdate: @escaping AgentMessagingSession.UpdateHandler) {
+    init(groupID: UUID, agentID: UUID, onUpdate: @escaping AgentMessagingSession.UpdateHandler,
+         onPublication: @escaping AgentMessagingSession.UpdateHandler) {
         message = .init(groupID: groupID, senderID: agentID, text: "")
         self.onUpdate = onUpdate
+        self.onPublication = onPublication
     }
     @discardableResult
     func publish(_ text: String, images: [AttachmentMetadata], replyTo: UUID? = nil, cursorAgent: CursorAgentReference? = nil,
@@ -811,6 +845,7 @@ private actor AgentInboundOutput {
         // A mirrored group has its own address namespace. Only the mailbox
         // tool receives this receipt's alias; do not import it into that group.
         do { try await onUpdate(publication) } catch { projectionFailure = error }
+        do { try await onPublication(publication) } catch { projectionFailure = error }
         return saved
     }
     func recordQuestion(_ publication: RoomMessage) async {
@@ -818,6 +853,7 @@ private actor AgentInboundOutput {
         var projection = publication
         projection.shortAddress = nil
         do { try await onUpdate(projection) } catch { projectionFailure = error }
+        do { try await onPublication(projection) } catch { projectionFailure = error }
     }
     func consume(_ event: InferenceEvent) async throws {
         try Task.checkCancellation()
