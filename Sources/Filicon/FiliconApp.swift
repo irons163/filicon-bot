@@ -1434,7 +1434,7 @@ private struct TranscriptMessageView: View {
                 ToolActivityRow(activity: activity)
             }
             ForEach(message.transcriptCards) { card in
-                if let question = card.directQuestion {
+                if let question = model.directQuestionForDisplay(conversationID: conversation.id, messageID: message.id, cardID: card.id) {
                     GroupQuestionCard(card: question,
                         enabled: model.canAnswerDirectQuestion(conversationID: conversation.id, messageID: message.id, cardID: card.id)) { answer in
                         Task { await model.directQuestionAnswered(conversationID: conversation.id, messageID: message.id, cardID: card.id, answer: answer) }

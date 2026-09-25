@@ -1,5 +1,15 @@
 # 協作能力核對紀錄（更新至 2026-09-25）
 
+## 直接問題的歷史失效判定（2026-09-25）
+
+續查原版 `source/host/extensions/transcript/widget-responses.ts` 的 `hasLaterUserMoment`：dismissOnMoveOn 問題在回答時，也會檢查後續人類訊息或已回答／取消的 widget，不能只依當初保存的 pending 旗標。補測先重現未退休的歷史問題仍能回答（`direct-widget-history-red.log`，10 個案例中 6 個斷言失敗）。
+
+新增共用的直接問題呈現／有效性判定，僅對明確 dismissOnMoveOn 且尚待回答的問題掃描後續人類活動；同帳號另一張已回答或取消的問題亦視為人類活動。UI 顯示與主程式回答入口共用結果，舊／匯入資料不用先重寫就能拒絕過期回答。一般 assistant 文字、問題之前的人類訊息、以及預設不自動失效的問題不被誤退休。回答入口仍在載入完整歷史後再次核對。
+
+隔離測試以五種活動 × 兩種旗標覆蓋畫面投影、回答拒絕與 SQLite 保存後重新開啟；before 使用原本已保存的 Ask 訊息，after 才新增訊息，符合儲存層穩定 ordinal（不能用新 ID 假造插入舊位置）。資料旗標保持原樣，失效只由歷史推導；未變動真實聊天或啟動使用者 App。其餘直接聊天圖片、secret-request、短地址等差異保持待完成。
+
+最終驗證：完整非並行回歸 `direct-widget-history-full-final.log` exit 0，含十組歷史判定；原生建置 `direct-widget-history-native.log`、封裝 `direct-widget-history-package.log` 與 deep strict codesign 通過。未進行真實使用者視窗點擊。
+
 ## 直接聊天選項問題與續聊（2026-09-25）
 
 重新核對原版 `source/shared/sand-widgets.ts` 和 `source/host/runner/tools/send-message-tool.ts`：widget 包含 prompt、1–6 選項、helpText、allowCustom、dismissOnMoveOn；選項 value 回傳為人類訊息，發布問題即終止該回合，回答／取消後續聊。dismissOnMoveOn 預設 false，不可一律把所有問題隨新訊息失效。

@@ -1058,12 +1058,30 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func directQuestionForDisplay(conversationID: UUID, messageID: UUID, cardID: UUID) -> GroupQuestion? {
+        guard let conversation = conversations.first(where: { $0.id == conversationID }),
+              let index = conversation.messages.firstIndex(where: { $0.id == messageID }),
+              conversation.messages[index].role == .assistant,
+              var question = conversation.messages[index].transcriptCards.first(where: { $0.id == cardID })?.directQuestion else { return nil }
+        // Older imports or a different question's answer need not have stamped
+        // the retired flag. Timeline order is authoritative, not wall-clock time.
+        if question.isPending, question.question.dismissOnMoveOn == true {
+            let account = question.accountID
+            let movedOn = conversation.messages.suffix(from: index + 1).contains { message in
+                message.role == .user || message.transcriptCards.contains { card in
+                    guard let later = card.directQuestion else { return false }
+                    return later.accountID == account && later.answer != nil
+                }
+            }
+            if movedOn { question.retired = true }
+        }
+        return question
+    }
+
     func canAnswerDirectQuestion(conversationID: UUID, messageID: UUID, cardID: UUID) -> Bool {
         guard isBootstrapped, !agentMessagingAccountTransition, !running.contains(conversationID),
               !deletedConversationIDs.contains(conversationID),
-              let conversation = conversations.first(where: { $0.id == conversationID }),
-              let message = conversation.messages.first(where: { $0.id == messageID }), message.role == .assistant,
-              let question = message.transcriptCards.first(where: { $0.id == cardID })?.directQuestion else { return false }
+              let question = directQuestionForDisplay(conversationID: conversationID, messageID: messageID, cardID: cardID) else { return false }
         return question.isPending && question.accountID == (settings.accountScope ?? "local")
     }
 

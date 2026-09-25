@@ -49,6 +49,45 @@ private struct DirectQuestionProvider: AIProvider {
 
 @Suite("Direct question lifecycle", .timeLimit(.minutes(1)))
 @MainActor struct DirectQuestionAppTests {
+    @Test(arguments: ["user-after", "user-before", "assistant-after", "answered-after", "dismissed-after"], [false, true])
+    func oldPendingFlagsCannotOverrideLaterHumanActivity(activity: String, retire: Bool) async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "filicon-question-history-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+        let id = try await prepare(model, retire: retire)
+        let ci = try #require(model.conversations.firstIndex(where: { $0.id == id }))
+        let mi = try #require(model.conversations[ci].messages.firstIndex(where: { $0.transcriptCards.contains { $0.directQuestion != nil } }))
+        let message = model.conversations[ci].messages[mi]
+        let card = try #require(message.transcriptCards.first(where: { $0.directQuestion != nil }))
+        var later = ChatMessage(role: activity.hasPrefix("user") ? .user : .assistant, text: "Later activity",
+            createdAt: message.createdAt.addingTimeInterval(activity == "user-before" ? -1 : 1))
+        if activity == "answered-after" || activity == "dismissed-after" {
+            var answered = try #require(card.directQuestion)
+            answered.answer = activity == "answered-after" ? .option(0) : .dismissed
+            later.transcriptCards = [.init(lifecycle: .succeeded, payload: .widget(.init(
+                title: answered.question.prompt, widgetKind: "choice", question: answered)))]
+        }
+        // The fixture's real "Ask" message is already before the question.
+        // New IDs append to stable repository ordinals; don't fabricate a retroactive insert.
+        if activity != "user-before" { model.conversations[ci].messages.append(later) }
+        let expired = retire && activity != "user-before" && activity != "assistant-after"
+        expectNoDifference(model.canAnswerDirectQuestion(conversationID: id, messageID: message.id, cardID: card.id), !expired)
+        expectNoDifference(model.directQuestionForDisplay(conversationID: id, messageID: message.id, cardID: card.id)?.retired, expired)
+        // Save an unstamped historical card and reopen through the normal repository.
+        let store = ConversationStore(fileURL: root.appending(path: "conversations.json"))
+        try await store.upsert(model.conversations[ci], replacingLoadedMessageIDs: [], historyComplete: true)
+        let reopened = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+        await reopened.bootstrap()
+        try await reopened.loadAllMessages(for: id)
+        expectNoDifference(reopened.canAnswerDirectQuestion(conversationID: id, messageID: message.id, cardID: card.id), !expired)
+        expectNoDifference(reopened.directQuestionForDisplay(conversationID: id, messageID: message.id, cardID: card.id)?.retired, expired)
+        if expired {
+            let before = model.conversations[ci].messages
+            await model.directQuestionAnswered(conversationID: id, messageID: message.id, cardID: card.id, answer: .option(0))
+            expectNoDifference(model.conversations[ci].messages, before)
+        }
+    }
+
     @Test(arguments: [StorageQuotaFaultPoint.afterTemporaryWriteBeforeRename, .afterReservationPersist, .afterCommitPersist])
     func failedAnswerSaveRestoresPendingQuestion(point: StorageQuotaFaultPoint) async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-question-fault-\(UUID().uuidString)")
