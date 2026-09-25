@@ -1,5 +1,11 @@
 # 協作能力核對紀錄（更新至 2026-09-26）
 
+## 既有代理人聊天同步模型（2026-09-26）
+
+模型設定增加「同步代理人模型」（七語系）：明確從 AgentService 取回綁定代理人的當前 provider/model，將 reasoning 重設 disabled，保存後刷新 catalog。只操作同帳號、存活代理人且未執行的綁定對話；同步期間阻止再次同步、送出訊息、回答直接問題與調整 reasoning。失敗還原此次擁有的模型欄位，不以舊完整快照覆寫訊息或其他編輯。帳號 generation／綁定失效時不繼續套用。
+
+新增成功、SQLite UPDATE 失敗、封存、外帳號與執行中拒絕案例，並在具有既有訊息／short address 的對話驗證保存後歷史與 binding 不變；按鈕七語系翻譯有逐項斷言。第一輪聚焦 direct-agent-sync.log 15 項通過；新增歷史與翻譯斷言併入完整非並行 direct-agent-sync-full.log（exit 0）。原生 direct-agent-sync-native.log 與封裝／deep strict 簽章 direct-agent-sync-package.log 亦 exit 0。此批關閉下方 profile 模型修改後缺少手動同步的缺口；direct secret-request 與真實 UI／外部服務驗收仍未完成。
+
 ## 建立代理人單獨聊天入口（2026-09-26）
 
 代理人列表的存活 profile 新增「新增對話」按鈕；host 從 AgentService 重新查詢，不信任舊 UI profile，建立全新 accountID＋agentID 綁定歷史並採用該代理人 provider/model。先經 quota 與 SQLite 保存，再加入列表／導覽；並行建立被擋下，寫入失敗不開空殼聊天室，保存後帳號／代理人失效則移除本次尚未呈現的新紀錄。若使用者已導覽到其他頁面，不搶回焦點。舊一般聊天不推測／重綁代理人。

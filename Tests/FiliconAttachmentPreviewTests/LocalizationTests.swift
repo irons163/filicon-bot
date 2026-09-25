@@ -8,6 +8,15 @@ import Testing
 
 @Suite("UI localization")
 struct LocalizationTests {
+    @Test func agentModelSyncIsLocalized() {
+        let labels = ["en": "Sync agent model", "zh-Hant": "同步代理人模型", "zh-Hans": "同步代理人模型",
+            "fr": "Synchroniser le modèle de l’agent", "es": "Sincronizar el modelo del agente",
+            "ja": "エージェントのモデルを同期", "ko": "에이전트 모델 동기화"]
+        for (language, expected) in labels {
+            expectNoDifference(FiliconLocalization.string("Sync agent model", language: language), expected)
+        }
+    }
+
     @MainActor @Test func teamsAvailabilityRendersInSevenLanguagesAndBothAppearances() async throws {
         let output = ProcessInfo.processInfo.environment["FILICON_UI_REVIEW_OUTPUT"].map { URL(fileURLWithPath: $0) }
         for language in ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"] {

@@ -891,6 +891,11 @@ private struct ChatConfigurationPopover: View {
                     ?? l10n("The selected agent is unavailable."))
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                Button(l10n("Sync agent model")) {
+                    Task { await model.syncAgentModel(conversationID: conversation.id) }
+                }
+                .disabled(model.running.contains(conversation.id)
+                    || model.synchronizingAgentConversations.contains(conversation.id))
             }
             Picker(l10n("Reasoning"), selection: Binding(
                 get: { conversation.reasoningEffort },
@@ -901,7 +906,7 @@ private struct ChatConfigurationPopover: View {
                 }
             }
             .pickerStyle(.menu)
-            .disabled(model.selectedModel == nil)
+            .disabled(model.selectedModel == nil || model.synchronizingAgentConversations.contains(conversation.id))
             HStack(spacing: 5) {
                 if model.isLoadingModels { ProgressView().controlSize(.small) }
                 Text(model.modelCatalogStatusLabel)

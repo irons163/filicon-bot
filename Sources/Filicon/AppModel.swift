@@ -697,6 +697,50 @@ final class AppModel: ObservableObject {
     }
 
     @Published private(set) var isCreatingAgentConversation = false
+    @Published private(set) var synchronizingAgentConversations: Set<UUID> = []
+
+    @discardableResult
+    func syncAgentModel(conversationID id: UUID) async -> Bool {
+        guard isBootstrapped, !agentMessagingAccountTransition, !running.contains(id),
+              !synchronizingAgentConversations.contains(id), let agentService,
+              let original = conversations.first(where: { $0.id == id }),
+              let binding = original.agentBinding,
+              binding.accountID == (settings.accountScope ?? "local") else { return false }
+        synchronizingAgentConversations.insert(id)
+        defer { synchronizingAgentConversations.remove(id) }
+        let generation = autoReviewAccountGeneration
+        guard let profile = await agentService.profile(id: binding.agentID), profile.archivedAt == nil,
+              generation == autoReviewAccountGeneration, !agentMessagingAccountTransition,
+              binding.accountID == (settings.accountScope ?? "local"),
+              !running.contains(id), let ci = conversations.firstIndex(where: { $0.id == id }),
+              conversations[ci].agentBinding == binding else {
+            errorMessage = l10n("The selected agent is unavailable.")
+            return false
+        }
+        conversations[ci].providerID = profile.providerID
+        conversations[ci].modelID = profile.modelID
+        conversations[ci].reasoningEffort = .disabled
+        do {
+            try await persistOrThrow(conversationID: id)
+            guard generation == autoReviewAccountGeneration, !agentMessagingAccountTransition,
+                  conversations.contains(where: { $0.id == id && $0.agentBinding == binding }) else { return false }
+            if selection == id { await refreshModels() }
+            return true
+        } catch {
+            // Restore only the fields this action owns, not messages or edits
+            // that may have arrived while the persistence actor was working.
+            if generation == autoReviewAccountGeneration,
+               let index = conversations.firstIndex(where: { $0.id == id && $0.agentBinding == binding }),
+               conversations[index].providerID == profile.providerID,
+               conversations[index].modelID == profile.modelID {
+                conversations[index].providerID = original.providerID
+                conversations[index].modelID = original.modelID
+                conversations[index].reasoningEffort = original.reasoningEffort
+            }
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
 
     /// A new, explicitly bound history; never repurpose an existing chat or
     /// infer an agent from its title. Failed writes must not open a phantom chat.
@@ -886,6 +930,7 @@ final class AppModel: ObservableObject {
     func setReasoningEffort(_ effort: ReasoningEffort) {
         guard isBootstrapped,
               let selection,
+              !synchronizingAgentConversations.contains(selection),
               let index = conversations.firstIndex(where: { $0.id == selection }),
               let model = availableModels.first(where: { $0.id == conversations[index].modelID }),
               model.capabilities.supports(effort) else {
@@ -1169,6 +1214,7 @@ final class AppModel: ObservableObject {
 
     func canAnswerDirectQuestion(conversationID: UUID, messageID: UUID, cardID: UUID) -> Bool {
         guard isBootstrapped, !agentMessagingAccountTransition, !running.contains(conversationID),
+              !synchronizingAgentConversations.contains(conversationID),
               !deletedConversationIDs.contains(conversationID),
               let question = directQuestionForDisplay(conversationID: conversationID, messageID: messageID, cardID: cardID) else { return false }
         return question.isPending && question.accountID == (settings.accountScope ?? "local")
@@ -1232,6 +1278,7 @@ final class AppModel: ObservableObject {
     func send() {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard isBootstrapped, (!text.isEmpty || !pendingAttachments.isEmpty), let id = selection, !running.contains(id), conversations.contains(where: { $0.id == id }) else { return }
+        guard !synchronizingAgentConversations.contains(id) else { return }
         guard let conversation = selectedConversation else { return }
         if !pendingAttachments.isEmpty, let attachmentError = selectedModelAttachmentError {
             errorMessage = attachmentError

@@ -1682,3 +1682,4 @@
 "Credential stored, but the conversation receipt could not be saved. Retry without entering the credential again." = "憑證已儲存，但無法保存對話回條。請重試，不必再次輸入憑證。";
 "Cursor cloud agent" = "Cursor 雲端代理人";
 "Open on cursor.com. Remote status has not been verified." = "在 cursor.com 開啟。尚未驗證遠端狀態。";
+"Sync agent model" = "同步代理人模型";

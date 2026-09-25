@@ -1682,3 +1682,4 @@
 "Credential stored, but the conversation receipt could not be saved. Retry without entering the credential again." = "Credential stored, but the conversation receipt could not be saved. Retry without entering the credential again.";
 "Cursor cloud agent" = "Cursor cloud agent";
 "Open on cursor.com. Remote status has not been verified." = "Open on cursor.com. Remote status has not been verified.";
+"Sync agent model" = "Sync agent model";

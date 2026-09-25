@@ -1682,3 +1682,4 @@
 "Credential stored, but the conversation receipt could not be saved. Retry without entering the credential again." = "La credencial se ha guardado, pero no el recibo de la conversación. Reintenta sin volver a introducir la credencial.";
 "Cursor cloud agent" = "Agente en la nube de Cursor";
 "Open on cursor.com. Remote status has not been verified." = "Abrir en cursor.com. No se ha verificado el estado remoto.";
+"Sync agent model" = "Sincronizar el modelo del agente";
