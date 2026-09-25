@@ -1,5 +1,13 @@
 # 協作能力核對紀錄（更新至 2026-09-25）
 
+## 雲端引用 opaque ID 相容性校正（2026-09-25）
+
+再次核對 reconstructed `send-message-schema.ts` 的 `z.string().trim()` 與 `main-edge.ts` 的 `encodeURIComponent(bcId)`，確認上一批強制 `bc-`／英數／200 字元不是原版契約。本輪移除該限制，按原版保留 trimmed opaque ID（包含 Unicode、空白及標點），網址由 host 將 ID 編碼為單一路徑片段；即使 ID 看起來像網址、帶 `/`、`?`、`#` 或已編碼 `%`，也不作為 host／query／fragment 或預先編碼路徑解讀。既有 bc- ID 與儲存鍵相容，trim 後相同的 ID 共用同一重送收據。
+
+保留本機訊息的 8,000-byte canonical summary 預算（ID 上限扣除摘要前綴），不擴大工具 JSON 上限。空白 ID、內部控制字元及純 `.`／`..` 拒絕，避免 dot-segment 正規化改變目的路徑。這些是明示的本機安全邊界，不聲稱與原版無界字串完全等價；不改固定 cursor.com 網站政策，也未接上遠端名稱／認證。此紀錄取代上一節的 bc- 格式限制說明。
+
+依 Swift testing／CustomDump 技能驗證編碼後的 scheme／host／path segments／query／fragment、UTF-8 預算、解碼及標準化重送；測試不開啟瀏覽器或遠端服務。37 項聚焦測試、原生建置、封裝及 deep strict 簽章驗證通過。偵測解鎖後完整非並行回歸亦 exit 0（`.build/validation/cloud-opaque-id-full.log`），連同前輪雲端卡片最後的 protected-file 補驗缺口一併關閉；未降低檔案保護。整體目標與 AGENT-02 仍未完成。
+
 ## Cursor 雲端代理人引用卡片（2026-09-25）
 
 核對 reconstructed `send-message-schema.ts`、`send-message-tool.ts` 與 `electron-main/main-edge.ts`：`type:cursor-agent` 保存 bcId，可選擇解析遠端名稱；點擊使用 `/agents/<bcId>` 網頁，而不是由這張卡片啟動雲端工作。Filicon 現已接入有保存回條的一般群組、背景群組及獨立信箱 `SendMessage`，接受 `type:cursor-agent`、`bcId` 及可選的 `reply_to`。使用既有前文／同回合回條目錄、兩則共用發布額度、固定作者／目的地／lifetime、重送及保存失敗語意；不暫停回合、不修改外部 channel。

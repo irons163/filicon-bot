@@ -18,11 +18,36 @@ private actor CloudReferenceProbe {
 
 @Suite("Cursor agent references", .timeLimit(.minutes(1)))
 struct CursorAgentReferenceTests {
-    @Test(arguments: ["", "bc-", "bc-a/b", "bc-a?x", "bc-a#x", "bc-%2e", "https://cursor.com/agents/bc-a", "bc-中文", " bc-a", "bc-a\n", "BC-a", "bc-" + String(repeating: "a", count: 198)])
+    @Test(arguments: ["", " \n ", ".", "..", "a\nb", "a\u{0}b", "a\u{202E}b", String(repeating: "a", count: CursorAgentReference.maximumIDBytes + 1)])
     func invalidIDsCannotCreateOrDecodeLinks(id: String) throws {
         #expect(throws: (any Error).self) { try CursorAgentReference(bcID: id) }
         let data = try JSONEncoder().encode(["bcID": id])
         #expect(throws: (any Error).self) { try JSONDecoder().decode(CursorAgentReference.self, from: data) }
+    }
+
+    @Test(arguments: ["bc-", " bc-a\n", "BC-a", "opaque", "bc-中文", "bc-a/b", "bc-a?x=1#x", "bc-%2e%2e", "https://elsewhere.example/a", "//elsewhere.example", "a\\b", "a b"])
+    func opaqueIDsStayInOneEncodedPathSegment(id: String) throws {
+        let reference = try CursorAgentReference(bcID: id)
+        let trimmed = id.trimmingCharacters(in: .whitespacesAndNewlines)
+        expectNoDifference(reference.bcID, trimmed)
+        let components = try #require(URLComponents(url: reference.url, resolvingAgainstBaseURL: false))
+        expectNoDifference(components.scheme, "https")
+        expectNoDifference(components.host, "cursor.com")
+        expectNoDifference(components.user, nil)
+        expectNoDifference(components.query, nil)
+        expectNoDifference(components.fragment, nil)
+        let parts = components.percentEncodedPath.split(separator: "/")
+        expectNoDifference(parts.count, 2)
+        expectNoDifference(parts.first, "agents")
+        expectNoDifference(parts.last.flatMap { String($0).removingPercentEncoding }, trimmed)
+        expectNoDifference(try JSONDecoder().decode(CursorAgentReference.self, from: JSONEncoder().encode(reference)), reference)
+    }
+
+    @Test func identifierBudgetIncludesCanonicalSummaryAndCountsUTF8() throws {
+        let limit = CursorAgentReference.maximumIDBytes
+        let largest = try CursorAgentReference(bcID: String(repeating: "a", count: limit))
+        expectNoDifference(largest.summary.utf8.count, 8_000)
+        #expect(throws: (any Error).self) { try CursorAgentReference(bcID: String(repeating: "界", count: limit / 3 + 1)) }
     }
 
     @Test func cardRoundTripAndLegacyMessages() throws {
@@ -47,13 +72,15 @@ struct CursorAgentReferenceTests {
                 return try await probe.save(message)
             }, publish: { _, _ in Issue.record("Must use receipt transport") })
         let context = ToolContext(conversationID: scope)
-        let first = try call("first", ["type": "cursor-agent", "bcId": "bc-test"])
+        let first = try call("first", ["type": "cursor-agent", "bcId": " bc-test\n"])
         await probe.fail()
         #expect(try await tool.execute(first, context: context).isError)
         let receipt = try await tool.execute(first, context: context)
         #expect(!receipt.isError)
         let replay = try await tool.execute(first, context: context)
         expectNoDifference(replay, receipt)
+        let normalizedReplay = try await tool.execute(call("first", ["type": "cursor-agent", "bcId": "bc-test"]), context: context)
+        expectNoDifference(normalizedReplay, receipt)
         #expect(try await tool.execute(call("first", ["text": "Changed type"]), context: context).isError)
         #expect(try await tool.execute(call("changed", ["type": "cursor-agent", "bcId": "bc-test"]), context: context).isError)
         #expect(try await !tool.execute(call("second", ["text": "Details", "reply_to": "t0s0"]), context: context).isError)
