@@ -6,6 +6,9 @@ struct AgentPersistentState: Codable, Sendable {
     var subagents: [SubagentRecord] = []
     var wakes: [PendingAgentWake] = []
     var messages: [AgentMessage] = []
+    /// Host-owned address metadata; never supplied by SendToAgent or model prose.
+    var mailboxAddresses: [UUID: String] = [:]
+    var mailboxHumanInputs: Set<UUID> = []
     var groups: [AgentGroup] = []
     var roomMessages: [RoomMessage] = []
     var reactions: [MessageReaction] = []
@@ -18,6 +21,7 @@ struct AgentPersistentState: Codable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case schemaVersion, agents, subagents, wakes, messages, groups, roomMessages, reactions, memories, projects
         case memorySuggestionSettings, memorySuggestions, memorySuggestionReceipts
+        case mailboxAddresses, mailboxHumanInputs
     }
 
     init() {}
@@ -29,6 +33,8 @@ struct AgentPersistentState: Codable, Sendable {
         subagents = try values.decodeIfPresent([SubagentRecord].self, forKey: .subagents) ?? []
         wakes = try values.decodeIfPresent([PendingAgentWake].self, forKey: .wakes) ?? []
         messages = try values.decodeIfPresent([AgentMessage].self, forKey: .messages) ?? []
+        mailboxAddresses = try values.decodeIfPresent([UUID: String].self, forKey: .mailboxAddresses) ?? [:]
+        mailboxHumanInputs = try values.decodeIfPresent(Set<UUID>.self, forKey: .mailboxHumanInputs) ?? []
         groups = try values.decodeIfPresent([AgentGroup].self, forKey: .groups) ?? []
         roomMessages = try values.decodeIfPresent([RoomMessage].self, forKey: .roomMessages) ?? []
         reactions = try values.decodeIfPresent([MessageReaction].self, forKey: .reactions) ?? []

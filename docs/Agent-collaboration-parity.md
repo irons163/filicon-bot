@@ -1,5 +1,15 @@
 # 協作能力核對紀錄（更新至 2026-09-25）
 
+## 獨立信箱的持久短地址（2026-09-25）
+
+信箱新增主程式持有的地址索引及人類輸入來源集合，與訊息原子保存；按 origin／sender／recipient 分開編號，沿用 tNu／tNsM／tbsM 文法。配置器讀完整保存歷史而非最近 40 則，重啟補齊舊記錄時保留既有地址，不把來源不明的舊輸入推定為人類。問題答案與安全輸入回條使用既有主程式來源證明。
+
+replyDirectory 帶出短地址，先在完整可見範圍排除重複／無效地址後才截為 40 則。publish 回傳保存後的正式地址；AgentInboundOutput 將其交還工具，使同回合可用短地址作 reply_to。同步到群組的投影不攜帶信箱地址，避免污染另一命名空間。正式回條可重送，模型仍不能指定新地址。配置失敗／保存失敗不先更改記憶體狀態。
+
+使用 pfw-testing／CustomDump 測試來源分類、雙向信箱隔離、舊格式載入、保存再解碼、42 則目錄截斷／重啟、重複地址落在目錄外、正式回條重送及模型同回合 UUID／短地址引用。點擊跳轉仍未接到信箱 UI，因此信箱工具提示明確保留此限制；群組既有 sand-msg 導航與折疊提示不變。AGENT-02 仍 partial。
+
+驗證：`mailbox-address-full-final.log` 完整測試 exit 0；最後同步投影隔離調整以 `mailbox-address-mirror-final.log` 82 tests 驗證通過；`mailbox-address-mirror-native.log` 原生建置與 `mailbox-address-mirror-package.log` 封裝／deep strict codesign 均通過。沒有重啟使用者 App 或修改真實資料。
+
 ## 人工回應的訊息身分一致性（2026-09-25）
 
 延伸前一批 ID 邊界檢查至 answerQuestion／resolveSecretRequest：它們產生的新收件也必須避開全部既有收件與發布 ID，與普通 send／publish 共用 containsMessageID。問題答案及安全輸入回條不再能與原卡片共用 ID；拒絕時不更新卡片、不排入新工作、不寫入磁碟。

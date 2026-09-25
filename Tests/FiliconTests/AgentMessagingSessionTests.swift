@@ -80,7 +80,7 @@ struct AgentMessagingSessionTests {
         }
     }
 
-    @Test func mailboxCanReplyToItsOwnSavedPublicationInTheSameTurn() async throws {
+    @Test(arguments: [false, true]) func mailboxCanReplyToItsOwnSavedPublicationInTheSameTurn(shortAddress: Bool) async throws {
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
         await f.registry.register(MessagingProvider { _, execute in
             let first = try NormalizedToolCall(id: "first", name: "SendMessage", argumentsJSON: Data(#"{"text":"Progress"}"#.utf8))
@@ -90,15 +90,20 @@ struct AgentMessagingSessionTests {
             let saved = try #require(input.delivery?.publications?.first)
             let resultText = receipt.content.compactMap { if case .text(let text) = $0 { return text }; return nil }.joined()
             #expect(resultText.contains(saved.id.uuidString))
+            #expect(resultText.contains("t0s0"))
+            #expect(!resultText.contains("sand-msg"))
             let second = try NormalizedToolCall(id: "second", name: "SendMessage", argumentsJSON:
-                JSONEncoder().encode(["text": "Details", "reply_to": saved.id.uuidString]))
+                JSONEncoder().encode(["text": "Details", "reply_to": shortAddress ? "t0s0" : saved.id.uuidString]))
             #expect(try await !execute(second).isError)
             return "Done"
         })
         let session = f.session(questions: true)
         try await session.enqueueUserMessage(senderID: f.sender.id, recipientID: f.recipient.id, text: "Explain")
-        try await session.drain()
+        try await session.drain(onUpdate: { await f.probe.update($0) })
         try await session.close()
+        let projected = await f.probe.messages
+        #expect(projected.contains(where: { $0.text == "Progress" }))
+        #expect(projected.allSatisfy { $0.shortAddress == nil })
         let input = try #require(await f.messenger.allMessages().first)
         let publications = try #require(input.delivery?.publications)
         expectNoDifference(publications.count, 2)

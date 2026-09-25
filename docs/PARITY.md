@@ -1,5 +1,7 @@
 # Filicon / Grok Bot 0.18 功能 parity matrix（current implementation）
 
+信箱短地址（2026-09-25）：已按 directed mailbox 持久保存 tNu／tNsM 地址，工具目錄與正式回條可用於 reply_to；人類來源由 host 記錄、舊記錄不猜測來源、重啟及超過 40 則不重新編號。群組同步不帶入信箱地址。完整回歸、最後 82 項信箱／群組整合測試、原生建置與封裝通過。信箱 sand-msg UI 跳轉仍待完成，AGENT-02 partial；詳見協作核對紀錄。
+
 安全請求引用（2026-09-25）：獨立信箱 secret-request reply_to 已串接模型、App 與保存層，重送核對引用且保持憑證不進模型。工具測試、七種 App 安全生命週期、完整回歸、原生建置及封裝通過。短地址、sand-msg 導航及其他入口差異仍待補齊，AGENT-02 partial。
 
 引用完整補驗（2026-09-25）：解鎖後 `mailbox-reply-complete-recheck.log` 完整測試 exit 0，先前信箱引用相關待補驗已完成。另七語言 light／dark 共 14 渲染案例通過，人工檢視繁中及法文 dark。短地址／sand-msg 導航、展開與圖片互動驗收、secret-request reply_to 仍待完成，不改 complete 計數。

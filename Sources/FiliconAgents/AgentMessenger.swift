@@ -26,7 +26,8 @@ public actor AgentMessenger {
             }
             loaded.messages[index].delivery?.publications = publications
         }
-        if recovered { try Self.save(loaded, to: storeURL) }
+        let addressed = MailboxMessageAddressing.assignMissing(in: &loaded)
+        if recovered || addressed { try Self.save(loaded, to: storeURL) }
         state = loaded
     }
 
@@ -73,6 +74,8 @@ public actor AgentMessenger {
                 }
             }
             next.messages.append(message)
+            if movingOnAccount != nil { next.mailboxHumanInputs.insert(message.id) }
+            MailboxMessageAddressing.assignMissing(in: &next)
             try Self.save(next, to: storeURL)
             state = next
         }
@@ -96,9 +99,11 @@ public actor AgentMessenger {
 
     /// The mailbox is the canonical publication receipt. Its identity, author,
     /// image capability and atomic persistence are checked in the same actor turn.
-    public func publish(_ publication: RoomMessage, replyingTo id: UUID, lifetime: AgentPublicationLifetime) throws {
+    @discardableResult
+    public func publish(_ publication: RoomMessage, replyingTo id: UUID, lifetime: AgentPublicationLifetime) throws -> RoomMessage {
         guard publication.question == nil, publication.secretRequest == nil else { throw AgentPublicationError.invalid }
         try publishValidated(publication, replyingTo: id, lifetime: lifetime)
+        return addressedReceipt(publication)
     }
 
     /// The host supplies account/scope; the model supplies only question content.
@@ -118,7 +123,7 @@ public actor AgentMessenger {
                                             memberIDs: [incoming.senderID, incoming.recipientID])
         publication.replyToMessageID = replyToMessageID
         try publishValidated(publication, replyingTo: id, lifetime: lifetime)
-        return publication
+        return addressedReceipt(publication)
     }
 
     /// Resolving a question and queuing its response are one durable write.
@@ -153,6 +158,7 @@ public actor AgentMessenger {
             var next = state
             next.messages[index].delivery?.publications?[questionIndex].question = pending
             next.messages.append(response)
+            MailboxMessageAddressing.assignMissing(in: &next)
             try Self.save(next, to: storeURL)
             state = next
             result = response
@@ -174,7 +180,7 @@ public actor AgentMessenger {
             memberIDs: [incoming.senderID, incoming.recipientID], connectionID: connectionID)
         publication.replyToMessageID = replyToMessageID
         try publishValidated(publication, replyingTo: id, lifetime: lifetime)
-        return publication
+        return addressedReceipt(publication)
     }
 
     public func resolveSecretRequest(replyingTo id: UUID, publicationID: UUID, provided: Bool,
@@ -206,6 +212,7 @@ public actor AgentMessenger {
             var next = state
             next.messages[index].delivery?.publications?[item].secretRequest = pending
             next.messages.append(response)
+            MailboxMessageAddressing.assignMissing(in: &next)
             try Self.save(next, to: storeURL)
             state = next
             result = response
@@ -268,20 +275,33 @@ public actor AgentMessenger {
             $0.senderID == inbound.senderID && $0.recipientID == inbound.recipientID
                 && $0.delivery?.originConversationID == scope
         }.flatMap { item -> [RoomMessage] in
-            let input = RoomMessage(id: item.id, groupID: scope, senderID: item.senderID,
+            let input = RoomMessage(id: item.id, groupID: scope, senderID: MailboxMessageAddressing.isHuman(item, in: state) ? nil : item.senderID,
                 text: item.text, createdAt: item.createdAt, images: item.images ?? [])
             let publications = (item.delivery?.publications ?? []).filter {
                 $0.groupID == scope && $0.senderID == inbound.recipientID && $0.memberOutcome == nil
             }
-            return [input] + publications
+            return ([input] + publications).map(addressedReceipt)
         }
         let counts = Dictionary(grouping: candidates, by: \.id).mapValues(\.count)
+        let addressCounts = Dictionary(grouping: candidates.compactMap(\.shortAddress), by: { $0 }).mapValues(\.count)
         return Array(candidates.filter {
             counts[$0.id] == 1 && (!$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !($0.images ?? []).isEmpty)
+        }.map { message in
+            var target = message
+            if let address = target.shortAddress,
+               addressCounts[address] != 1 || !GroupMessageAddressing.isValid(address, for: target) {
+                target.shortAddress = nil
+            }
+            return target
         }.suffix(40))
     }
 
     private func publishValidated(_ publication: RoomMessage, replyingTo id: UUID, lifetime: AgentPublicationLifetime) throws {
+        guard publication.shortAddress == nil || publication.shortAddress == state.mailboxAddresses[publication.id] else {
+            throw AgentPublicationError.invalid
+        }
+        var publication = publication
+        publication.shortAddress = nil
         try lifetime.commit {
             guard let index = state.messages.firstIndex(where: { $0.id == id }),
                   let delivery = state.messages[index].delivery,
@@ -315,6 +335,7 @@ public actor AgentMessenger {
             var next = state
             next.messages[index].delivery?.publications = prior + [publication]
             next.messages[index].delivery?.response = String((prior + [publication]).map(\.text).joined(separator: "\n\n").prefix(8_000))
+            MailboxMessageAddressing.assignMissing(in: &next)
             try Self.save(next, to: storeURL)
             state = next
         }
@@ -340,6 +361,13 @@ public actor AgentMessenger {
             state.messages[index].delivery?.response = String(publications.map(\.text).joined(separator: "\n\n").prefix(8_000))
         } else if let response { state.messages[index].delivery?.response = String(response.prefix(8_000)) }
         do { try persist() } catch { state.messages[index] = previous; throw error }
+    }
+
+    /// The durable address index is metadata, not model-owned publication content.
+    private func addressedReceipt(_ publication: RoomMessage) -> RoomMessage {
+        var receipt = publication
+        receipt.shortAddress = state.mailboxAddresses[publication.id]
+        return receipt
     }
 
     /// Inbound messages and visible publications share the same identity space.

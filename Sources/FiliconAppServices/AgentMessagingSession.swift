@@ -591,6 +591,7 @@ public actor AgentMessagingSession {
                 }, publishQuestion: questionPublisher, publishSecret: secretPublisher,
                 publishQuestionReply: questionReplyPublisher,
                 replyHistory: replyHistory, receiptSenderID: supportsMailboxQuestions ? agent.id : nil,
+                supportsReferenceNavigation: false,
                 publishReceipt: receiptPublisher) { [messenger, onChange, publicationLifetime] text, images in
                 try await output.publish(text, images: images) { publication in
                     try await messenger.publish(publication, replyingTo: inbound.id, lifetime: publicationLifetime)
@@ -776,20 +777,24 @@ private actor AgentInboundOutput {
     }
     @discardableResult
     func publish(_ text: String, images: [AttachmentMetadata], replyTo: UUID? = nil,
-                 persist: @Sendable (RoomMessage) async throws -> Void) async throws -> RoomMessage {
+                 persist: @Sendable (RoomMessage) async throws -> RoomMessage) async throws -> RoomMessage {
         try Task.checkCancellation()
         var publication = RoomMessage(groupID: message.groupID, senderID: message.senderID, text: text, images: images)
         publication.replyToMessageID = replyTo
-        try await persist(publication)
+        let saved = try await persist(publication)
         publishedTexts.append(text)
         // Once the canonical mailbox commits, the tool must not invite a retry
         // of an already-published message. Surface mirror failure on turn finish.
+        // A mirrored group has its own address namespace. Only the mailbox
+        // tool receives this receipt's alias; do not import it into that group.
         do { try await onUpdate(publication) } catch { projectionFailure = error }
-        return publication
+        return saved
     }
     func recordQuestion(_ publication: RoomMessage) async {
         publishedTexts.append(publication.text)
-        do { try await onUpdate(publication) } catch { projectionFailure = error }
+        var projection = publication
+        projection.shortAddress = nil
+        do { try await onUpdate(projection) } catch { projectionFailure = error }
     }
     func consume(_ event: InferenceEvent) async throws {
         try Task.checkCancellation()
