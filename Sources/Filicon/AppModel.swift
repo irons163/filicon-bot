@@ -100,6 +100,8 @@ final class AppModel: ObservableObject {
     @Published var pinnedAgentIDs: Set<UUID> = []
     @Published var agentAsyncTasks: [AgentAsyncTask] = []
     @Published private(set) var agentMessages: [AgentMessage] = []
+    @Published private(set) var mailboxMessageReferences = MailboxMessageReferences()
+    private var revealedMailboxIncomingID: UUID?
     @Published private(set) var agentMessageUnreadCounts: [UUID: Int] = [:]
     @Published private(set) var notificationTrays: [InAppNotificationTray] = []
     @Published var groups: [AgentGroup] = []
@@ -3421,14 +3423,21 @@ final class AppModel: ObservableObject {
     func reloadAgentMessages() async {
         guard let agentMessenger else {
             agentMessages = []
+            mailboxMessageReferences = .init()
+            revealedMailboxIncomingID = nil
             agentMessageUnreadCounts = [:]
             return
         }
-        let stored = await agentMessenger.allMessages().sorted {
+        let snapshot = await agentMessenger.navigationSnapshot()
+        let stored = snapshot.messages.sorted {
             if $0.createdAt != $1.createdAt { return $0.createdAt < $1.createdAt }
             return $0.id.uuidString < $1.id.uuidString
         }
         agentMessages = Array(stored.suffix(Self.maximumVisibleAgentMessages))
+        mailboxMessageReferences = snapshot.references
+        if let id = revealedMailboxIncomingID, let revealed = stored.first(where: { $0.id == id }) {
+            revealMailboxIncoming(revealed)
+        }
         for (id, context) in mailboxSecretContexts {
             let incoming = stored.first(where: { $0.id == context.incomingID })
             let card = incoming?.delivery?.publications?.first(where: { $0.id == id })?.secretRequest
@@ -3438,6 +3447,18 @@ final class AppModel: ObservableObject {
         }
         agentMessageUnreadCounts = Dictionary(grouping: stored.lazy.filter { $0.deliveredAt == nil }, by: \.recipientID)
             .mapValues(\.count)
+    }
+
+    /// Read-only navigation can reveal an older row without loading an unbounded list.
+    func clearRevealedMailboxIncoming() { revealedMailboxIncomingID = nil }
+
+    func revealMailboxIncoming(_ incoming: AgentMessage) {
+        revealedMailboxIncomingID = incoming.id
+        guard !agentMessages.contains(where: { $0.id == incoming.id }) else { return }
+        agentMessages = ([incoming] + Array(agentMessages.suffix(Self.maximumVisibleAgentMessages - 1))).sorted {
+            if $0.createdAt != $1.createdAt { return $0.createdAt < $1.createdAt }
+            return $0.id.uuidString < $1.id.uuidString
+        }
     }
 
     func retryAgent(id: UUID) async {

@@ -91,7 +91,7 @@ struct AgentMessagingSessionTests {
             let resultText = receipt.content.compactMap { if case .text(let text) = $0 { return text }; return nil }.joined()
             #expect(resultText.contains(saved.id.uuidString))
             #expect(resultText.contains("t0s0"))
-            #expect(!resultText.contains("sand-msg"))
+            #expect(resultText.contains("sand-msg"))
             let second = try NormalizedToolCall(id: "second", name: "SendMessage", argumentsJSON:
                 JSONEncoder().encode(["text": "Details", "reply_to": shortAddress ? "t0s0" : saved.id.uuidString]))
             #expect(try await !execute(second).isError)

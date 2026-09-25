@@ -4,6 +4,24 @@ import FiliconDomain
 import FiliconAppServices
 import UniformTypeIdentifiers
 
+enum MailboxTimelineRow: Identifiable {
+    case incoming(AgentMessage)
+    case publication(AgentMessage, RoomMessage)
+    var id: UUID {
+        switch self {
+        case .incoming(let message): message.id
+        case .publication(_, let message): message.id
+        }
+    }
+    static func rows(for messages: [AgentMessage]) -> [Self] {
+        let rows = messages.flatMap { incoming in
+            [Self.incoming(incoming)] + (incoming.delivery?.publications ?? []).map { Self.publication(incoming, $0) }
+        }
+        let counts = Dictionary(grouping: rows, by: \.id).mapValues(\.count)
+        return rows.filter { counts[$0.id] == 1 }
+    }
+}
+
 struct AgentMessagingView: View {
     @Environment(\.locale) private var uiLocale
     @EnvironmentObject private var model: AppModel
@@ -16,6 +34,8 @@ struct AgentMessagingView: View {
     @State private var images: [AttachmentMetadata] = []
     @State private var importing = false
     @State private var sending = false
+    @State private var referenceTargetID: UUID?
+    @State private var referenceRequestID = UUID()
 
     private enum Mailbox: String, CaseIterable, Identifiable {
         case thread = "Thread"
@@ -77,8 +97,20 @@ struct AgentMessagingView: View {
             } else if visibleMessages.isEmpty {
                 ContentUnavailableView(agentMessageString("No messages"), systemImage: "tray", description: Text(emptyDescription))
             } else {
-                List(visibleMessages) { message in
-                    messageRow(message)
+                ScrollViewReader { proxy in
+                    List(MailboxTimelineRow.rows(for: visibleMessages)) { row in
+                        Group {
+                            switch row {
+                            case .incoming(let message): messageRow(message)
+                            case .publication(let incoming, let publication): publishedResponse(publication, incoming: incoming)
+                            }
+                        }
+                        .id(row.id)
+                        .listRowBackground(referenceTargetID == row.id ? FiliconTheme.input : Color.clear)
+                    }
+                    .onChange(of: referenceRequestID) { _, _ in
+                        if let referenceTargetID { withAnimation { proxy.scrollTo(referenceTargetID, anchor: .center) } }
+                    }
                 }
             }
         }
@@ -89,6 +121,10 @@ struct AgentMessagingView: View {
         }
         .onChange(of: model.agents) { _, _ in normalizeSelection() }
         .onChange(of: senderID) { _, _ in normalizeSelection() }
+        .onChange(of: senderID) { _, _ in referenceSelectionChanged() }
+        .onChange(of: recipientID) { _, _ in referenceSelectionChanged() }
+        .onChange(of: mailbox) { _, _ in referenceSelectionChanged() }
+        .onChange(of: model.settings.accountScope) { _, _ in referenceSelectionChanged() }
         .onChange(of: model.settings.accountScope) { _, _ in images.removeAll() }
     }
 
@@ -175,16 +211,7 @@ struct AgentMessagingView: View {
                 if let images = message.images { AgentMessageImagePreviews(images: images) }
                 if let delivery = message.delivery {
                     Text(deliveryTitle(delivery.state)).font(.caption).foregroundStyle(.secondary)
-                    if let publications = delivery.publications, !publications.isEmpty {
-                        AgentPublishedResponses(publications: publications,
-                            replySource: { AgentMessenger.replySource(for: $0, replyingTo: message.id, messages: model.agentMessages) },
-                            replyAuthor: { $0.senderID.map(agentName) ?? "" },
-                            canAnswer: { model.canAnswerMailboxQuestion(message, publication: $0) },
-                            onAnswer: { publication, answer in
-                                Task { await model.answerMailboxQuestion(incomingID: message.id, publicationID: publication.id, answer: answer) }
-                            }, secretModel: { model.mailboxSecretCards[$0.id] },
-                            secretEnabled: { model.canUseMailboxSecret(message, publication: $0) })
-                    } else if let response = delivery.response, !response.isEmpty, response.uppercased() != "PASS" {
+                    if (delivery.publications ?? []).isEmpty, let response = delivery.response, !response.isEmpty, response.uppercased() != "PASS" {
                         Text((delivery.state == .cancelled && response == AgentExecutionSuperseded().localizedDescription)
                              || AgentImageError(rawValue: response) != nil
                              ? FiliconLocalization.string(response) : response).font(.callout).textSelection(.enabled)
@@ -202,6 +229,44 @@ struct AgentMessagingView: View {
                       || !activeAgents.contains(where: { $0.id == message.recipientID }))
         }
         .padding(.vertical, 3)
+    }
+
+    private func publishedResponse(_ publication: RoomMessage, incoming: AgentMessage) -> some View {
+        AgentPublishedResponses(publications: [publication],
+            replySource: { model.mailboxMessageReferences.quotedTarget(from: $0.id, replyingTo: incoming.id)?.message },
+            replyAuthor: { $0.senderID.map(agentName) ?? l10n("You") },
+            references: { message in
+                .init(target: { model.mailboxMessageReferences.target(for: $0, from: message.id, replyingTo: incoming.id)?.message.id },
+                      show: { referenceLinkTapped(target: $0, publication: message, incoming: incoming) })
+            },
+            onShowReply: { quoteButtonTapped(publication: $0, incoming: incoming) },
+            canAnswer: { model.canAnswerMailboxQuestion(incoming, publication: $0) },
+            onAnswer: { message, answer in
+                Task { await model.answerMailboxQuestion(incomingID: incoming.id, publicationID: message.id, answer: answer) }
+            }, secretModel: { model.mailboxSecretCards[$0.id] },
+            secretEnabled: { model.canUseMailboxSecret(incoming, publication: $0) })
+    }
+
+    private func referenceLinkTapped(target: UUID, publication: RoomMessage, incoming: AgentMessage) {
+        // Revalidate against the current snapshot rather than a stale rendered link.
+        guard let destination = model.mailboxMessageReferences.referenceTarget(target, from: publication.id, replyingTo: incoming.id) else { return }
+        showReference(destination)
+    }
+
+    private func showReference(_ destination: MailboxMessageReferences.Destination) {
+        model.revealMailboxIncoming(destination.incoming)
+        referenceTargetID = destination.message.id
+        referenceRequestID = UUID()
+    }
+
+    private func quoteButtonTapped(publication: RoomMessage, incoming: AgentMessage) {
+        guard let destination = model.mailboxMessageReferences.quotedTarget(from: publication.id, replyingTo: incoming.id) else { return }
+        showReference(destination)
+    }
+
+    private func referenceSelectionChanged() {
+        referenceTargetID = nil
+        model.clearRevealedMailboxIncoming()
     }
 
     private var canSend: Bool {
@@ -282,6 +347,8 @@ struct AgentPublishedResponses: View {
     let publications: [RoomMessage]
     var replySource: (RoomMessage) -> RoomMessage? = { _ in nil }
     var replyAuthor: (RoomMessage) -> String = { _ in "" }
+    var references: (RoomMessage) -> RichMarkdownMessageReferences? = { _ in nil }
+    var onShowReply: ((RoomMessage) -> Void)?
     var canAnswer: (RoomMessage) -> Bool = { _ in false }
     var onAnswer: (RoomMessage, AgentQuestionAnswer) -> Void = { _, _ in }
     var secretModel: (RoomMessage) -> AgentSecretRequestCardModel? = { _ in nil }
@@ -292,7 +359,8 @@ struct AgentPublishedResponses: View {
             ForEach(publications) { publication in
                 VStack(alignment: .leading, spacing: 6) {
                     if publication.replyToMessageID != nil {
-                        MailboxReplyPreview(original: replySource(publication), author: replySource(publication).map(replyAuthor) ?? "")
+                        MailboxReplyPreview(original: replySource(publication), author: replySource(publication).map(replyAuthor) ?? "",
+                            onOpen: onShowReply.map { show in { show(publication) } })
                     }
                     if let secret = publication.secretRequest {
                         if let model = secretModel(publication) {
@@ -310,7 +378,7 @@ struct AgentPublishedResponses: View {
                             onAnswer(publication, answer)
                         }
                     } else if !publication.text.isEmpty {
-                        Text(verbatim: publication.text).font(.callout).textSelection(.enabled)
+                        RichMarkdownView(source: publication.text, messageReferences: references(publication))
                     }
                     if let images = publication.images, !images.isEmpty { AgentMessageImagePreviews(images: images) }
                 }
@@ -322,9 +390,15 @@ struct AgentPublishedResponses: View {
 struct MailboxReplyPreview: View {
     let original: RoomMessage?
     let author: String
+    var onOpen: (() -> Void)?
     var body: some View {
         Group {
             if let original {
+                if let onOpen {
+                    Button(l10n("View original message"), systemImage: "arrow.up.backward", action: onOpen)
+                        .buttonStyle(.borderless).font(.caption)
+                        .accessibilityIdentifier("mailbox-show-original")
+                }
                 DisclosureGroup {
                     Text(verbatim: original.text).font(.callout).textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)

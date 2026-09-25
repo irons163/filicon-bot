@@ -97,6 +97,12 @@ public actor AgentMessenger {
 
     public func allMessages() -> [AgentMessage] { state.messages }
 
+    /// Messages and navigation metadata are captured in the same actor turn.
+    public func navigationSnapshot() -> (messages: [AgentMessage], references: MailboxMessageReferences) {
+        (state.messages, .init(history: state.messages, addresses: state.mailboxAddresses,
+                               humanInputs: state.mailboxHumanInputs))
+    }
+
     /// The mailbox is the canonical publication receipt. Its identity, author,
     /// image capability and atomic persistence are checked in the same actor turn.
     @discardableResult

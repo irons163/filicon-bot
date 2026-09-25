@@ -591,7 +591,7 @@ public actor AgentMessagingSession {
                 }, publishQuestion: questionPublisher, publishSecret: secretPublisher,
                 publishQuestionReply: questionReplyPublisher,
                 replyHistory: replyHistory, receiptSenderID: supportsMailboxQuestions ? agent.id : nil,
-                supportsReferenceNavigation: false,
+                supportsReferenceNavigation: true, mailboxPresentation: true,
                 publishReceipt: receiptPublisher) { [messenger, onChange, publicationLifetime] text, images in
                 try await output.publish(text, images: images) { publication in
                     try await messenger.publish(publication, replyingTo: inbound.id, lifetime: publicationLifetime)
