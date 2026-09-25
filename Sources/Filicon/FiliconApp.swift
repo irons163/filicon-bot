@@ -1371,7 +1371,7 @@ private extension TimeInterval {
     }
 }
 
-private struct TranscriptMessageView: View {
+struct TranscriptMessageView: View {
     @Environment(\.locale) private var uiLocale
     @EnvironmentObject private var model: AppModel
     let message: ChatMessage
@@ -1390,6 +1390,19 @@ private struct TranscriptMessageView: View {
         HStack(alignment: .bottom, spacing: 8) {
             if isUser { Spacer(minLength: 50) }
             VStack(alignment: isUser ? .trailing : .leading, spacing: 5) {
+                if let source = message.agentMessageSource {
+                    HStack(spacing: 6) {
+                        if let profile = model.agents.first(where: { $0.id == source.authorAgentID }) {
+                            AgentAvatarIcon(profile: profile, dimension: 22)
+                            Text(verbatim: profile.name)
+                        } else {
+                            Image(systemName: "person.crop.circle")
+                            Text(verbatim: source.authorAgentID.uuidString)
+                        }
+                    }
+                    .font(.caption)
+                    .foregroundStyle(FiliconTheme.textSecondary)
+                }
                 messageBubble
                 if !message.reactions.isEmpty {
                     HStack(spacing: 5) {
@@ -1533,7 +1546,7 @@ private struct TranscriptMessageView: View {
                     .frame(width: 25, height: 25)
             }
             .menuStyle(.borderlessButton)
-            if message.role == .assistant && [.failed, .cancelled].contains(message.deliveryStatus) {
+            if message.role == .assistant && message.agentMessageSource == nil && [.failed, .cancelled].contains(message.deliveryStatus) {
                 FiliconIconButton(label: l10n("Resend"), systemName: "arrow.clockwise", size: 25) { model.resend(messageID: message.id) }
             }
             Spacer(minLength: 3)

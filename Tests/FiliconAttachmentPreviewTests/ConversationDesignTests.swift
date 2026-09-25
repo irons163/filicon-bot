@@ -9,6 +9,38 @@ import FiliconDomain
 @Suite("Conversation design", .serialized)
 @MainActor
 struct ConversationDesignTests {
+    @Test func peerTranscriptShowsActualAuthor() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "peer-author-render-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+        let engineer = AgentProfile(name: "工程師", avatar: .pet(.codex))
+        let designer = AgentProfile(name: "設計師", avatar: .pet(.dewey))
+        model.agents = [engineer, designer]
+        let source = try AgentMessageSource(accountID: "local", originConversationID: UUID(), deliveryID: UUID(),
+            senderAgentID: designer.id, recipientAgentID: engineer.id, kind: .incoming)
+        let message = ChatMessage(role: .assistant, text: "建議提高按鈕對比，並保留足夠的點擊範圍。", agentMessageSource: source)
+        let conversation = Conversation(messages: [message])
+        let output = ProcessInfo.processInfo.environment["FILICON_UI_REVIEW_OUTPUT"].map { URL(fileURLWithPath: $0, isDirectory: true) }
+        if let output { try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true) }
+        try await withUIRenderTurn(language: "zh-Hant") {
+            for dark in [false, true] {
+                let view = TranscriptMessageView(message: message, conversation: conversation, onJumpToMessage: { _ in })
+                    .padding(24).frame(width: 620, height: 200).background(FiliconTheme.canvas)
+                    .environmentObject(model).environment(\.locale, Locale(identifier: "zh-Hant"))
+                    .environment(\.colorScheme, dark ? .dark : .light)
+                let host = NSHostingView(rootView: view)
+                host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+                host.frame = NSRect(x: 0, y: 0, width: 620, height: 200)
+                host.layoutSubtreeIfNeeded()
+                let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                host.cacheDisplay(in: host.bounds, to: bitmap)
+                let png = try #require(bitmap.representation(using: .png, properties: [:]))
+                #expect(!png.isEmpty)
+                if let output { try png.write(to: output.appending(path: dark ? "peer-author-dark.png" : "peer-author-light.png")) }
+            }
+        }
+    }
+
     @Test func groupOutcomeNoticesAreLocalizedAndRender() async throws {
         let agent = AgentProfile(name: "設計師", avatar: .pet(.dewey))
         let groupID = UUID()

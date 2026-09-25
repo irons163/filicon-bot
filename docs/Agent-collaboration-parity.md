@@ -1,5 +1,17 @@
 # 協作能力核對紀錄（更新至 2026-09-26）
 
+## 綁定直接聊天的同儕文字投影（2026-09-26）
+
+AppModel 的直接委派 drain 已接 onPeerMessage。投影核對目前帳號 generation、起始 binding、live session ID、canonical delivery 的 chain／origin／寄收件人及原文；發布對照 canonical publication，純文字 fallback 對照 completed response。沒有從模型名稱猜身份。收件人是原聊天代理人時回到原聊天，其他代理人使用 AgentConversationStore 的 account／origin／agent 穩定 context ID，另建持久綁定的聊天；不挪用任意同名或其他既有聊天、不自動切換 selection。
+
+incoming 和 publication 保存為帶 AgentMessageSource 的 assistant 訊息，使用自己聊天室的地址命名空間。畫面顯示實際發言者頭像／名稱；已移除 profile 時保留 UUID。下一次人類回合把來源和原文編成帶明確非人類指令／非授權標示的 assistant JSON context，不修改畫面原文。這些投影訊息不使用一般重新產生按鈕，以免改寫其他代理人的話。
+
+沿用九類直接委派整合情況，額外核對兩個聊天室的四則訊息、實際作者、來源、selection、SQLite 重開及下一回合模型上下文。停止／帳號切換發生在 peer wake 之後時，只保留已收到的委派，沒有晚到報告。明暗色離屏渲染人工確認設計師頭像、名稱和文字無截斷。使用隔離 AppModel／資料庫／假 provider，未啟動真實 App。
+
+限制：目前只接既有已批准的直接文字委派。其他圖片／問答／憑證／雲端卡片仍走 mailbox，尚未接直接聊天；投影保存失敗不提供恢復 UI。context 仍按來源隔離，尚未合併成原版全域「每位代理人唯一聊天」；背景工作與直接聊天室的忙碌／停止狀態連動仍需補齊。不得把這次接線當作完整 parity。
+
+驗證：peer-projection-ui.log 的整合／渲染共 4 項測試通過（委派含 9 類情況）；最終 peer-projection-full.log 完整非並行回歸 exit 0，包含新增的下一人類回合 context 驗證。peer-projection-native-final.log 原生建置 exit 0；verify-package 與 deep strict codesign 通過。未 push、未重啟使用者 App／Xcode、未改真實聊天或帳號。
+
 ## 同儕訊息投影事件（2026-09-26）
 
 AgentMessagingSession.drain 新增可選 onPeerMessage 回呼，以 AgentMessageSource 和 RoomMessage 傳送 incoming／publication。incoming 在收件人的 lane 真正開始、交付標記 running 後才送出；SendMessage 在 canonical mailbox 發布成功後才送出，沿用發布 UUID 但不帶 mailbox 的 shortAddress。純文字 provider 的最終文字等 completed 保存成功後才送出；工具型 provider 的私有草稿、PASS 和工具活動不混入這個訊息回呼。原有群組 onUpdate 路徑保留。

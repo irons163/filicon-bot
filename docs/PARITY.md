@@ -1,5 +1,7 @@
 # Filicon / Grok Bot 0.18 功能 parity matrix（current implementation）
 
+直接同儕文字投影接線（2026-09-26）：已批准直接委派的 incoming／publication 依 canonical delivery 驗證後保存到收件人的綁定聊天室；回给原代理人則使用原聊天，顯示實際作者，後續模型 context 保留非人類／非授權標記。九類整合情況加驗四則訊息歸屬、SQLite 重開與模型上下文，明暗色發言者渲染已人工檢視。互動／媒體卡、保存失敗恢復、背景狀態連動及原版每代理人唯一聊天仍 partial。
+
 同儕投影事件（2026-09-26）：drain 提供帶來源的 incoming／publication 回呼，canonical 發布後才投影，排除私有草稿、工具活動及人類回條的錯誤歸屬；鏡像失敗不引導重複 SendMessage。AppModel 的聊天室保存與顯示仍未接入，維持 partial。
 
 同儕來源持久化（2026-09-26）：新增 ChatMessage 可選 AgentMessageSource（account／origin／delivery／sender／recipient／incoming 或 publication），schema 13、JSON、分頁、部分歷史更新與 salvage 保留；非法来源與角色不降級成無歸屬文字，舊資料不猜測身份。這是後續每位代理人自己的直接聊天室投影基礎，尚未接顯示或模型上下文，不提升整體 partial 判定。
