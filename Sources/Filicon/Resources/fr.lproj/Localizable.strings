@@ -1708,3 +1708,5 @@
 "Previous page" = "Page précédente";
 "Next page" = "Page suivante";
 "Page %lld of %lld" = "Page %lld sur %lld";
+"Invalid or unsupported agent settings change. Use only the boolean settings advertised by this session." = "Modification des réglages de l’agent non valide ou non prise en charge. Utilisez uniquement les réglages booléens proposés par cette session.";
+"Agent settings changed. Reopen the editor or request approval again." = "Les réglages de l’agent ont changé. Rouvrez l’éditeur ou redemandez l’approbation.";

@@ -805,6 +805,7 @@ public actor AgentService {
                 guard proposed.agentID == change.agentID,
                       !proposed.accountID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                       proposed.accountID.utf8.count <= 512,
+                      visibility.previous.map({ $0.hidden == visibility.previousHidden }) ?? true,
                       proposed.revision != visibility.previous?.revision else {
                     throw AgentSettingsChangeError.invalid
                 }

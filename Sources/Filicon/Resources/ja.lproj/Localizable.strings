@@ -1708,3 +1708,5 @@
 "Previous page" = "前のページ";
 "Next page" = "次のページ";
 "Page %lld of %lld" = "%lld / %lld ページ";
+"Invalid or unsupported agent settings change. Use only the boolean settings advertised by this session." = "エージェント設定の変更が無効または未対応です。このセッションで提供される真偽値の設定のみを使用してください。";
+"Agent settings changed. Reopen the editor or request approval again." = "エージェント設定が変更されました。エディタを開き直すか、承認を再度リクエストしてください。";

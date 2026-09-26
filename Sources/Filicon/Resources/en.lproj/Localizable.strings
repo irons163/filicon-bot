@@ -1708,3 +1708,5 @@
 "Previous page" = "Previous page";
 "Next page" = "Next page";
 "Page %lld of %lld" = "Page %lld of %lld";
+"Invalid or unsupported agent settings change. Use only the boolean settings advertised by this session." = "Invalid or unsupported agent settings change. Use only the boolean settings advertised by this session.";
+"Agent settings changed. Reopen the editor or request approval again." = "Agent settings changed. Reopen the editor or request approval again.";

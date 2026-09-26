@@ -21,9 +21,12 @@ public struct AgentSidebarVisibility: Codable, Sendable, Equatable {
 public struct AgentSidebarVisibilityChange: Sendable, Equatable {
     public let proposed: AgentSidebarVisibility
     public let previous: AgentSidebarVisibility?
-    public init(proposed: AgentSidebarVisibility, previous: AgentSidebarVisibility?) {
+    /// Effective UI value before the proposal; legacy chats may have no override.
+    public let previousHidden: Bool
+    public init(proposed: AgentSidebarVisibility, previous: AgentSidebarVisibility?, previousHidden: Bool? = nil) {
         self.proposed = proposed
         self.previous = previous
+        self.previousHidden = previousHidden ?? previous?.hidden ?? false
     }
 }
 
@@ -46,8 +49,8 @@ public struct AgentSettingsChange: Sendable, Equatable {
 }
 
 public enum AgentSettingsChangeError: String, LocalizedError, Sendable {
-    case invalid = "Settings changes require only target settings, action set and a boolean notify_on_updates. Sidebar visibility and other settings are not supported."
-    case stale = "Agent notification settings changed. Reopen the editor or request approval again."
+    case invalid = "Invalid or unsupported agent settings change. Use only the boolean settings advertised by this session."
+    case stale = "Agent settings changed. Reopen the editor or request approval again."
     public var errorDescription: String? { rawValue }
 }
 

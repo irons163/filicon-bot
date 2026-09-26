@@ -1708,3 +1708,5 @@
 "Previous page" = "上一頁";
 "Next page" = "下一頁";
 "Page %lld of %lld" = "第 %lld 頁，共 %lld 頁";
+"Invalid or unsupported agent settings change. Use only the boolean settings advertised by this session." = "代理人設定變更無效或不受支援。請只使用此工作階段提供的布林設定。";
+"Agent settings changed. Reopen the editor or request approval again." = "代理人設定已變更。請重新開啟編輯器或再次要求核准。";

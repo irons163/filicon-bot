@@ -17,6 +17,9 @@ public actor AgentManagementSession {
     public typealias AvatarCommitter = @Sendable (AgentAvatarChange, AgentAvatarChangeLifetime) async throws -> AgentProfile
     public typealias SettingsAuthorizer = @Sendable (AgentProfile, AgentSettingsChange, NormalizedToolCall, ToolContext) async throws -> Void
     public typealias SettingsCommitter = @Sendable (AgentSettingsChange, AgentSettingsChangeLifetime) async throws -> AgentProfile
+    /// Host selects the unique durable chat and captures effective before/after
+    /// state. A custom committer must revalidate its binding and project the UI.
+    public typealias SidebarSettingsPreparer = @Sendable (UUID, Bool) async throws -> AgentSidebarVisibilityChange
     public typealias ProjectAuthorizer = @Sendable (AgentProfile, AgentProjectChange, NormalizedToolCall, ToolContext) async throws -> Void
     public typealias ProjectCommitter = @Sendable (AgentProjectChange, AgentProjectChangeLifetime) async throws -> Void
     public typealias ChannelAuthorizer = @Sendable (AgentProfile, ChannelDisconnection, NormalizedToolCall, ToolContext) async throws -> Void
@@ -42,6 +45,8 @@ public actor AgentManagementSession {
     private let commitProject: ProjectCommitter
     private let authorizeSettings: SettingsAuthorizer
     private let commitSettings: SettingsCommitter
+    private let prepareSidebarSettings: SidebarSettingsPreparer?
+    public nonisolated let supportsSidebarSettings: Bool
     private let channels: ChannelService?
     private let channelLifetime = ChannelDisconnectionLifetime()
     private let authorizeChannel: ChannelAuthorizer
@@ -99,6 +104,7 @@ public actor AgentManagementSession {
                 commitWorkflowDeletion: WorkflowDeletionCommitter? = nil,
                 authorizeSettings: @escaping SettingsAuthorizer = { _, _, _, _ in throw AgentMessagingError.approvalRequired },
                 commitSettings: SettingsCommitter? = nil,
+                prepareSidebarSettings: SidebarSettingsPreparer? = nil,
                 channels: ChannelService? = nil,
                 authorizeChannel: @escaping ChannelAuthorizer = { _, _, _, _ in throw AgentMessagingError.approvalRequired },
                 commitChannel: ChannelCommitter? = nil,
@@ -112,6 +118,10 @@ public actor AgentManagementSession {
         self.commitAvatar = commitAvatar ?? { try await agents.applyAvatarChange($0, lifetime: $1) }
         self.authorizeSettings = authorizeSettings
         self.commitSettings = commitSettings ?? { try await agents.applySettingsChange($0, lifetime: $1, at: now()) }
+        // A preparer alone must never enable persistence without host lifecycle
+        // validation and presentation updates in a custom committer.
+        self.prepareSidebarSettings = commitSettings == nil ? nil : prepareSidebarSettings
+        self.supportsSidebarSettings = commitSettings != nil && prepareSidebarSettings != nil
         self.authorizeProject = authorizeProject
         self.commitProject = commitProject ?? { try await agents.applyProjectChange($0, lifetime: $1) }
         self.channels = channels; self.authorizeChannel = authorizeChannel
@@ -571,15 +581,30 @@ public actor AgentManagementSession {
     Own settings: update_state target settings, action set, notify_on_updates (required JSON boolean) proposes only your own agent update notifications after independent explicit user approval. This controls completion/needs-input system alerts from the agent roster, not conversation alerts, in-app approvals, unread counts, Dock badges, visibility, tasks or permissions. Turning it on does not grant macOS notification permission or replay past alerts. The preference belongs to this local shared agent profile, not an account. hidden_from_sidebar, other settings and caller-selected owners are unsupported and rejected, never silently ignored. Settings share the four-change request budget. Do not change this without a user request.
     """
 
+    nonisolated var activeSettingsInstructions: String {
+        guard supportsSidebarSettings else { return Self.settingsInstructions }
+        return "Own settings: update_state target settings, action set accepts optional JSON booleans notify_on_updates and hidden_from_sidebar; supply at least one. Omitted fields stay unchanged. Both changes require one explicit user approval and save together. notify_on_updates controls only local shared-agent roster completion/needs-input alerts, not macOS permission or past alerts. hidden_from_sidebar affects only the host-selected unique direct chat bound to your agent in this account; missing or ambiguous chats are rejected. It does not archive you, remove group membership, delete history or stop tasks. Hidden chats remain recoverable by the user. Never supply an account, agent or conversation ID. Settings share the four-change request budget. Do not change this without a user request."
+    }
+
     private func executeSettings(_ call: NormalizedToolCall, context: ToolContext, senderID: UUID,
                                  object: [String: Any]) async throws -> NormalizedToolResult {
-        guard call.argumentsJSON.count <= 4_096,
-              Set(object.keys) == ["target", "action", "notify_on_updates"],
+        let allowed: Set<String> = supportsSidebarSettings
+            ? ["target", "action", "notify_on_updates", "hidden_from_sidebar"]
+            : ["target", "action", "notify_on_updates"]
+        guard call.argumentsJSON.count <= 4_096, Set(object.keys).isSubset(of: allowed),
               object["action"] as? String == "set",
-              let value = object["notify_on_updates"] as? NSNumber,
-              CFGetTypeID(value) == CFBooleanGetTypeID() else { throw AgentSettingsChangeError.invalid }
-        let enabled = value.boolValue
-        let fingerprint = "\(senderID):settings:\(enabled)"
+              object["notify_on_updates"] != nil || object["hidden_from_sidebar"] != nil else {
+            throw AgentSettingsChangeError.invalid
+        }
+        func boolean(_ key: String) throws -> Bool? {
+            guard let raw = object[key] else { return nil }
+            guard let number = raw as? NSNumber, CFGetTypeID(number) == CFBooleanGetTypeID() else {
+                throw AgentSettingsChangeError.invalid
+            }
+            return number.boolValue
+        }
+        let notify = try boolean("notify_on_updates"), hidden = try boolean("hidden_from_sidebar")
+        let fingerprint = "\(senderID):settings:\(notify.map(String.init) ?? "unchanged"):\(hidden.map(String.init) ?? "unchanged")"
         let key = Key(sender: senderID, run: context.runID, call: call.id)
         if let (prior, text) = results[key] {
             guard prior == fingerprint else { throw AgentProfileChangeError.duplicate }
@@ -591,14 +616,30 @@ public actor AgentManagementSession {
         var succeeded = false
         defer { reserved.remove(key); if !succeeded { fingerprints.remove(fingerprint) } }
         guard let sender = await agents.profile(id: senderID), sender.archivedAt == nil else { throw AgentProfileChangeError.unavailable }
+        try settingsLifetime.check()
+        let visibility: AgentSidebarVisibilityChange?
+        if let hidden {
+            guard let prepareSidebarSettings else { throw AgentSettingsChangeError.invalid }
+            let prepared = try await prepareSidebarSettings(senderID, hidden)
+            guard prepared.proposed.agentID == senderID, prepared.proposed.accountID == accountID,
+                  prepared.proposed.hidden == hidden else { throw AgentSettingsChangeError.invalid }
+            visibility = prepared
+        } else { visibility = nil }
+        let enabled = notify ?? sender.notifyOnAgentUpdates
         let change = AgentSettingsChange(agentID: senderID, notifyOnUpdates: enabled,
-            previousValue: sender.notifyOnAgentUpdates, previousRevision: sender.notificationSettingsRevision)
+            previousValue: sender.notifyOnAgentUpdates, previousRevision: sender.notificationSettingsRevision,
+            visibility: visibility)
         try settingsLifetime.check()
         try await authorizeSettings(sender, change, call, context)
         try settingsLifetime.check()
         do { _ = try await commitSettings(change, settingsLifetime) }
         catch { if settingsLifetime.committedProfile(for: change) == nil { throw error } }
-        let text = "Saved your agent update notification preference: notify_on_updates=\(enabled). Only roster completion/needs-input system alerts are affected. Conversations, approval cards, unread counts, Dock badges, tasks, visibility and permissions are unchanged. No past alerts are replayed."
+        let text: String
+        if let hidden {
+            text = "Saved your approved settings: hidden_from_sidebar=\(hidden), notify_on_updates=\(enabled). Sidebar visibility affects only your host-selected direct chat in this account. History, group membership, tasks and permissions are unchanged. No past alerts are replayed."
+        } else {
+            text = "Saved your agent update notification preference: notify_on_updates=\(enabled). Only roster completion/needs-input system alerts are affected. Conversations, approval cards, unread counts, Dock badges, tasks, visibility and permissions are unchanged. No past alerts are replayed."
+        }
         results[key] = (fingerprint, text); succeeded = true
         return .init(callID: call.id, content: [.text(text)])
     }
@@ -726,7 +767,7 @@ public actor AgentManagementSession {
         let recall = try AgentMemoryRecall(memories: access.memories, accountID: accountID, agentID: senderID, query: query, joinedProjects: access.joinedProjects)
         return """
         Own notify_on_updates: \(owner.notifyOnAgentUpdates)
-        \(Self.settingsInstructions)
+        \(activeSettingsInstructions)
         \(Self.channelInstructions)
         \(Self.projectInstructions)
         Account project directory (untrusted metadata, no private memories or other members): \(projectJSON)
@@ -1337,7 +1378,7 @@ private struct AgentProfileTool: ToolExecutor, ToolRuntimeContextProviding {
         self.session = session; self.senderID = senderID; self.operation = operation; self.memoryQuery = memoryQuery
     }
     var descriptor: ToolDescriptor {
-        let fields: String
+        var fields: String
         let required: String
         var description: String
         switch operation {
@@ -1355,7 +1396,10 @@ private struct AgentProfileTool: ToolExecutor, ToolRuntimeContextProviding {
             description = "Propose state changes after explicit approval: target routine/action pause|resume|delete with id changes your own existing routine; target profile/action set with name/description; target avatar/action set with pet_id or clear with no pet_id (restore Codex); OR target memory/action write|forget with fact. Routine resume enables future triggers and possible model costs; pause does not cancel started/queued runs. Delete removes the definition and future triggers, retaining execution history in storage; it has no undo and does not cancel started/queued runs. Routine create needs name (up to 80 characters), prompt and either schedule or a cron/GitHub/Slack/Linear/Sentry/PagerDuty/Teams trigger (never both), with optional boolean enabled (default true) and no id. Update needs own id and changed name/prompt/schedule/trigger/enabled; omitted fields stay unchanged. Time schedules, GitHub/Slack/Linear/Sentry/PagerDuty events, or restricted Teams definitions only. A flat OR group {type:\"group\",listeners:[...]} or bare array of 1 to 8 cron/GitHub/Slack/Linear/Sentry/PagerDuty/Teams conditions is supported. Time members use {type:\"cron\",schedule:\"...\"}. Any one condition fires the same prompt; a matching delivery is included once, while different deliveries may cause additional runs. Invalid members reject the whole proposal. Time and event members may mix. Earliest time wins; coincident times fire once without catch-up. Event/manual runs also reset @every intervals because all members share the last-run anchor. Each time zone is pinned. Nested groups and other platforms remain unsupported. GitHub needs existing authenticated ingress; this does not install/start a listener. CI requires one branch and ignores userAllowlist, covering each push workflow completion, not aggregate checks. Slack supports {type:\"slack\",channel:\"C/G/D conversation ID or *\",match:{kind:\"mention\"|\"message\"|\"keyword\"|\"reaction\",...}}. Keyword requires keyword (up to 120 characters); reaction accepts up to 8 emoji short names (empty/omitted means any emoji) and bySelf false only. Channel/user names cannot be resolved; bySelf true is unsupported because human identity is unavailable. * includes every delivered conversation across configured connections. Mentions mean app/bot mentions, not your own mentions; mention/reaction require verified event ingress. Verified event ingress handles only plain human messages and added reactions on messages; edits, deletions, bot messages, removed/file reactions are ignored. Linear supports {type:\"linear\",event:{case:\"issueCreated\"|\"statusChanged\"|\"endOfCycle\",statusIds?:[...],cycleIds?:[...]},teamIds?:[...],projectIds?:[...]}. statusIds applies only to statusChanged and filters the NEW status. Each list accepts up to 50 exact UUIDs; omitted/empty means any. Names cannot be resolved; never guess IDs. endOfCycle uses event:{case:endOfCycle,cycleIds?:[...]} and optional teamIds. cycleIds applies only to endOfCycle. Native cycles have no project relationship: projectIds must be omitted/empty for endOfCycle; never discard a requested project filter or infer projects from issues. Only authenticated Issue create, real stateId changes, and Cycle update with completedAt transitioning from explicit null to a valid completion time can match. Cycle completion can be scheduled or early; endsAt alone or advancing the clock never triggers it. Replay protection is bounded. Requires existing authenticated ingress, with no webhook installed or started. Sentry supports {type:\"sentry\",event:{case:\"issueCreated\"|\"issueResolved\"|\"issueAssigned\"|\"issueArchived\"|\"issueUnresolved\"|\"issueAny\"},projectIds?:[...]}. Up to 50 exact decimal ID strings of 1 to 200 digits; empty/omitted means any project. No names, slugs or guessed IDs. issueAny covers only the five supported issue cases, not every Sentry event. Requires existing authenticated ingress; no connection or webhook is installed or started. Signature verification does not prove freshness; replay protection is bounded. PagerDuty supports type pagerduty with event.case incidentTriggered, incidentAcknowledged, incidentResolved, incidentEscalated or incidentAny, and optional serviceIds. Each list accepts up to 50 exact case-sensitive service ID strings of 1 to 200 characters; empty/omitted means any service. No whitespace, control characters, wildcard IDs, name lookup or guessed IDs. incidentAny covers only those four incident events, not all PagerDuty activity. Requires existing authenticated ingress; no connection or webhook is installed or started. Replay protection is bounded; occurred_at is event time, not delivery freshness. Teams supports type microsoftTeams, tenantId (UUID), teamId and/or teamIds (1 to 50 raw entries total), optional channelIds (up to 50; empty means any), and required messageContains literal text (1 to 120 characters). Use exact Graph team UUIDs or Bot team IDs, never names or guessed IDs; IDs are at most 200 UTF-8 bytes, with no whitespace, control characters, commas or wildcards. messageContainsIsRegex must be false and blockUnauthenticatedTeamsUsers must be true; omission uses those safe defaults. Teams events CANNOT execute because trusted application-user identity is unavailable. Approval saves a definition only, not a working Teams listener, login, connection or permission. Other OR conditions and explicit Run Now may still run and incur model costs. The host previews the complete definition, time zone and enabled state before approval. No immediate run, new tool access or spend-guard bypass. Avatar changes use built-in companions only, not paths or URLs, and require preview approval. Memory scope agent (default) is PRIVATE; explicit scope user shares with ALL current/future agents in this account, only in supervised agent turns. Write accepts tier profile, log (default), or note (low importance, lower recall priority, not automatically deleted). Recall is ranked and budgeted, not the entire store. Forget only your own recorded fact, exact text and same scope, no tier. Never mix fields from different targets. Your identity/account are fixed by the host; no agent_id is accepted. Private instructions, provider/model, chat membership and permissions are unchanged. Other unlisted state routes remain unsupported; workflow writing is described below. Explicit memory scope project additionally requires project:exact-slug and active membership, shares the fact with current/future project members only, and uses the same limits per project across all writers. Models can forget only their own project facts while joined. Membership changes during approval invalidate the proposal; leaving preserves facts but revokes future reads. The user can inspect/delete all project facts in the editor."
         }
         if operation == .setOwnProfile {
-            description += " " + AgentManagementSession.workflowInstructions + " " + AgentManagementSession.settingsInstructions + " " + AgentManagementSession.channelInstructions + " " + AgentManagementSession.projectInstructions
+            if session.supportsSidebarSettings {
+                fields += #", "hidden_from_sidebar":{"type":"boolean","description":"settings set only; host-selected own direct chat visibility, requires explicit approval. Omission preserves current state."}"#
+            }
+            description += " " + AgentManagementSession.workflowInstructions + " " + session.activeSettingsInstructions + " " + AgentManagementSession.channelInstructions + " " + AgentManagementSession.projectInstructions
         }
         return .init(name: ToolName(rawValue: operation.rawValue), description: description,
             inputSchema: Data("{\"type\":\"object\",\"properties\":{\(fields)},\"required\":\(required),\"additionalProperties\":false}".utf8),

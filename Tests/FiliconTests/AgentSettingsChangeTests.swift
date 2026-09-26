@@ -116,6 +116,69 @@ struct AgentSettingsChangeTests {
         expectNoDifference(unchanged, owner)
     }
 
+    @Test(arguments: [false, true])
+    func sidebarAdapterProposesPartialOrCombinedSettings(combined: Bool) async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let proposed = AgentSidebarVisibility(accountID: "local", agentID: f.owner.id,
+            conversationID: f.context.conversationID, hidden: true)
+        let session = AgentManagementSession(originID: f.context.conversationID, agents: f.agents,
+            authorizeSettings: { owner, change, _, _ in
+                expectNoDifference(owner, f.owner)
+                expectNoDifference(change.visibility, .init(proposed: proposed, previous: nil))
+                expectNoDifference(change.notifyOnUpdates, !combined)
+                let before = await f.agents.profile(id: f.owner.id)
+                expectNoDifference(before, f.owner)
+            }, commitSettings: { change, lifetime in
+                try await f.agents.applySettingsChange(change, lifetime: lifetime)
+            }, prepareSidebarSettings: { sender, hidden in
+                expectNoDifference(sender, f.owner.id); expectNoDifference(hidden, true)
+                return .init(proposed: proposed, previous: nil)
+            })
+        let tool = session.tools(for: f.owner.id)[2]
+        let schema = try #require(JSONSerialization.jsonObject(with: tool.descriptor.inputSchema) as? [String: Any])
+        let properties = try #require(schema["properties"] as? [String: Any])
+        #expect(properties["hidden_from_sidebar"] != nil)
+        let json = combined
+            ? #"{"target":"settings","action":"set","hidden_from_sidebar":true,"notify_on_updates":false}"#
+            : #"{"target":"settings","action":"set","hidden_from_sidebar":true}"#
+        let result = try await tool.execute(call(json), context: f.context)
+        let replay = try await tool.execute(call(json), context: f.context)
+        expectNoDifference(result, replay)
+        let saved = try #require(await f.agents.profile(id: f.owner.id))
+        expectNoDifference(saved.notifyOnAgentUpdates, !combined)
+        let visibility = await f.agents.sidebarVisibility(accountID: "local", agentID: f.owner.id,
+                                                         conversationID: f.context.conversationID)
+        expectNoDifference(visibility, proposed)
+        await #expect(throws: AgentProfileChangeError.duplicate) {
+            _ = try await tool.execute(call(#"{"target":"settings","action":"set","hidden_from_sidebar":false}"#), context: f.context)
+        }
+    }
+
+    @Test(arguments: ["preparer-only", "approval", "foreign", "stop", "bad-boolean"])
+    func sidebarAdapterFailsClosed(mode: String) async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let commit: AgentManagementSession.SettingsCommitter = { change, lifetime in
+            try await f.agents.applySettingsChange(change, lifetime: lifetime)
+        }
+        let session = AgentManagementSession(originID: f.context.conversationID, agents: f.agents,
+            commitSettings: mode == "preparer-only" ? nil : commit, prepareSidebarSettings: { sender, hidden in
+                .init(proposed: .init(accountID: mode == "foreign" ? "other" : "local", agentID: sender,
+                    conversationID: f.context.conversationID, hidden: hidden), previous: nil)
+            })
+        if mode == "stop" { session.close() }
+        let json = mode == "bad-boolean"
+            ? #"{"target":"settings","action":"set","hidden_from_sidebar":1}"#
+            : #"{"target":"settings","action":"set","hidden_from_sidebar":true}"#
+        await #expect(throws: (any Error).self) {
+            _ = try await session.tools(for: f.owner.id)[2].execute(call(json), context: f.context)
+        }
+        let after = await f.agents.profile(id: f.owner.id)
+        let visibility = await f.agents.sidebarVisibility(accountID: "local", agentID: f.owner.id,
+                                                         conversationID: f.context.conversationID)
+        expectNoDifference(after, f.owner); expectNoDifference(visibility, nil)
+        if mode == "preparer-only" { #expect(!session.supportsSidebarSettings) }
+    }
+
     @Test func approvalPersistsOnlyOwnPreferenceAndReplayIsIdempotent() async throws {
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
         let session = f.session(authorize: { sender, change, _, context in
