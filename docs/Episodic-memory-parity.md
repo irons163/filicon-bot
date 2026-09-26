@@ -1,5 +1,7 @@
 # Episodic 記憶：參考行為與待實作驗收
 
+本文保留各批歷史核對，較早段落的「尚未實作」以後續進度段落為準；不代表目前仍全部缺少。整體仍為 partial，尚未完成端到端驗收。
+
 核對日期：2026-09-27。參考 repository `grok-bot-0.18-reconstructed`，HEAD `a9f633e09d49a85829b8236331b9e21f7e612634`。這是原始碼行為核對，並非真實模型執行驗收。Filicon 對照基準為 `2cb08f9`。
 
 ## 兩條互斥的參考流程
@@ -90,3 +92,13 @@ App 原有 origin invalidation（direct Stop／刪除、group Stop／成員更�
 已保存記憶清單現在依 host-owned `origin` 顯示已核准記憶、自動記憶整合或事件摘要，七語皆翻譯；不依 fact 文字或 `[episode]` 前綴推測來源。沿用原有日期、層級、共享作者與忘記操作。
 
 App 聚焦測試 `memory-origin-label.log` 通過（13 tests），包含三個來源映射及七語明暗色 380pt 渲染；另檢視繁中 light 產圖，文字未截斷。原生建置 `memory-origin-label-native.log` 與封裝 deep strict／entitlements 通過。本批未重跑完整測試；未啟動真實 App。仍待執行期間清理失敗的固定診斷提示與實際互動端到端驗收。
+
+## 清理失敗提示（2026-09-27）
+
+origin／account 清理失敗現在透過既有 App 錯誤提示顯示七語固定訊息，不包含路徑、帳號 ID 或聊天文字；提示說明停止收集、保留已存記憶及檢查儲存空間／檔案存取後重試。提示受 account lifetime 保護，已撤銷世代不能顯示遲到錯誤。清理 Task 仍拋出錯誤，沒有把顯示提示當成成功或放行收集。
+
+隔離 App 測試以目錄取代 fixture 的 agents.json 造成儲存失敗，驗證 Stop 與 account 清理錯誤可見、readiness 拒絕、恢復檔案後重試成功；七語翻譯皆檢查。聚焦 `memory-cleanup-diagnostic.log` 通過 14 tests。原生建置 `memory-cleanup-diagnostic-native.log` 與封裝驗證通過。
+
+完整非並行回歸 `memory-cleanup-diagnostic-full.log` exit 0。
+
+後續驗收仍須包含真實 App 入口的六回合整合，以及清理失敗後退出／重開的處理：目前清理 barrier 是程序內 Task，不能據此宣稱跨程序失敗隔離已完成。未操作真實資料或啟動 App。

@@ -1701,3 +1701,4 @@
 "Source: approved memory" = "保存元：承認済みメモリ";
 "Source: automatic synthesis" = "保存元：自動メモリ統合";
 "Source: episode summary" = "保存元：エピソード要約";
+"Pending episode text could not be cleared. Episode collection for the affected conversations is blocked until cleanup succeeds. Saved memories are unchanged. Check available storage and file access, then retry the stop, deletion or account switch." = "未処理のエピソードテキストを削除できませんでした。削除に成功するまで、対象の会話でのエピソード収集を停止します。保存済みメモリは変わりません。空き容量とファイルへのアクセス権を確認し、停止、削除、またはアカウント切り替えを再試行してください。";

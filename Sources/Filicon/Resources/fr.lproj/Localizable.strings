@@ -1701,3 +1701,4 @@
 "Source: approved memory" = "Source : souvenir approuvé";
 "Source: automatic synthesis" = "Source : synthèse automatique";
 "Source: episode summary" = "Source : résumé d’épisode";
+"Pending episode text could not be cleared. Episode collection for the affected conversations is blocked until cleanup succeeds. Saved memories are unchanged. Check available storage and file access, then retry the stop, deletion or account switch." = "Le texte d’épisode en attente n’a pas pu être effacé. La collecte est bloquée pour les conversations concernées jusqu’au nettoyage réussi. Les souvenirs enregistrés restent inchangés. Vérifiez l’espace disponible et l’accès aux fichiers, puis réessayez l’arrêt, la suppression ou le changement de compte.";

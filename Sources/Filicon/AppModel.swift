@@ -4850,12 +4850,25 @@ final class AppModel: ObservableObject {
         let account = settings.accountScope ?? "local"
         let previous = memoryEpisodeCleanups[originID]
         let accountCleanup = memoryEpisodeAccountCleanup
-        memoryEpisodeCleanups[originID] = Task {
+        let diagnosticLifetime = memorySynthesisAccountLifetime
+        memoryEpisodeCleanups[originID] = Task { [weak self] in
             // Serialize repeated Stops. A new cleanup may retry a failed save.
             _ = await previous?.result
             _ = await accountCleanup?.result
-            try await agentService.clearMemoryEpisodeOrigin(accountID: account, originID: originID, lifetime: .init())
+            do {
+                try await agentService.clearMemoryEpisodeOrigin(accountID: account, originID: originID, lifetime: .init())
+            } catch {
+                self?.reportMemoryEpisodeCleanupFailure(lifetime: diagnosticLifetime)
+                throw error
+            }
         }
+    }
+
+    static let memoryEpisodeCleanupFailure = "Pending episode text could not be cleared. Episode collection for the affected conversations is blocked until cleanup succeeds. Saved memories are unchanged. Check available storage and file access, then retry the stop, deletion or account switch."
+
+    private func reportMemoryEpisodeCleanupFailure(lifetime: AgentMemorySuggestionLifetime) {
+        guard (try? lifetime.check()) != nil else { return }
+        errorMessage = FiliconLocalization.string(Self.memoryEpisodeCleanupFailure)
     }
 
     func memoryEpisodeReadiness(originID: UUID) -> @Sendable () async throws -> Void {
@@ -6633,11 +6646,17 @@ final class AppModel: ObservableObject {
         let pendingCleanups = Array(memoryEpisodeCleanups.values)
         let previousCleanup = memoryEpisodeAccountCleanup
         let episodeService = agentService
+        let diagnosticLifetime = memorySynthesisAccountLifetime
         memoryEpisodeCleanups.removeAll()
-        memoryEpisodeAccountCleanup = Task {
+        memoryEpisodeAccountCleanup = Task { [weak self] in
             _ = await previousCleanup?.result
             for task in pendingCleanups { _ = await task.result }
-            try await episodeService?.clearMemoryEpisodeOrigin(accountID: oldAccount, originID: nil, lifetime: .init())
+            do {
+                try await episodeService?.clearMemoryEpisodeOrigin(accountID: oldAccount, originID: nil, lifetime: .init())
+            } catch {
+                self?.reportMemoryEpisodeCleanupFailure(lifetime: diagnosticLifetime)
+                throw error
+            }
         }
         let oldMemoryWorker = memorySynthesisWorker
         memorySynthesisWorker = nil

@@ -1701,3 +1701,4 @@
 "Source: approved memory" = "來源：已核准記憶";
 "Source: automatic synthesis" = "來源：自動記憶整合";
 "Source: episode summary" = "來源：事件摘要";
+"Pending episode text could not be cleared. Episode collection for the affected conversations is blocked until cleanup succeeds. Saved memories are unchanged. Check available storage and file access, then retry the stop, deletion or account switch." = "無法清除待處理的事件文字。清理成功前，受影響對話不會收集事件記憶。已儲存記憶維持不變。請檢查可用儲存空間及檔案存取權限，再重試停止、刪除或切換帳號。";

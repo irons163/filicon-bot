@@ -138,6 +138,29 @@ private actor SynthesisAppTimer {
         #expect(!f.model.rootDiagnostics().contains("memoryTemporalSweep"))
     }
 
+    @Test(arguments: ["stop", "account"])
+    func episodeCleanupFailureIsVisibleAndRetryable(mode: String) async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let file = f.root.appending(path: "agents.json")
+        let backup = f.root.appending(path: "agents-backup.json")
+        try FileManager.default.moveItem(at: file, to: backup)
+        try FileManager.default.createDirectory(at: file, withIntermediateDirectories: false)
+        if mode == "account" { await f.model.cancelAutoReviewApprovals(nextAccountID: "other") }
+        else { await f.model.stopGroup(id: f.group.id) }
+        do {
+            try await f.model.memoryEpisodeReadiness(originID: f.group.id)()
+            Issue.record("Failed cleanup must block episode collection")
+        } catch {}
+        expectNoDifference(f.model.errorMessage, FiliconLocalization.string(AppModel.memoryEpisodeCleanupFailure))
+        try FileManager.default.removeItem(at: file)
+        try FileManager.default.moveItem(at: backup, to: file)
+        f.model.errorMessage = nil
+        if mode == "account" { await f.model.cancelAutoReviewApprovals(nextAccountID: "other") }
+        else { await f.model.stopGroup(id: f.group.id) }
+        try await f.model.memoryEpisodeReadiness(originID: f.group.id)()
+        expectNoDifference(f.model.errorMessage, nil)
+    }
+
     @Test(arguments: ["stop", "account", "delete"])
     func episodeCleanupRemovesOnlyPendingText(mode: String) async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "episode-cleanup-app-\(UUID())")
@@ -583,7 +606,7 @@ private actor SynthesisAppTimer {
                         "Automatic memory synthesis", "Disable automatic synthesis", "Enable automatic synthesis…",
                         "Enable automatic memory synthesis?", AgentMemorySynthesisNotice.disclosure, AgentMemorySynthesisNotice.temporalDisclosure,
                         "Episode summaries", "Disable episode summaries", "Enable episode summaries…", "Enable episode summaries?", AgentMemoryEpisodeNotice.disclosure,
-                        "Source: approved memory", "Source: automatic synthesis", "Source: episode summary"] {
+                        "Source: approved memory", "Source: automatic synthesis", "Source: episode summary", AppModel.memoryEpisodeCleanupFailure] {
                         #expect(FiliconLocalization.string(key) != key)
                     }
                 }
