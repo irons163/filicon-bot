@@ -254,7 +254,7 @@ private struct DelegatingGroupProvider: InteractiveToolProvider {
 
 @Suite("SendToAgent app integration", .timeLimit(.minutes(1)))
 @MainActor struct SendToAgentAppIntegrationTests {
-    @Test(arguments: ["provided", "dismissed", "binding", "stop", "account", "archived", "restart"])
+    @Test(arguments: ["provided", "dismissed", "receipt-failure", "dismissal-failure", "binding", "stop", "account", "archived", "restart"])
     func directPeerSecretCardResumesOnlyItsBoundOrigin(mode: String) async throws {
         let (root, _, _, sender, recipient, probe) = try await fixture()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -305,15 +305,36 @@ private struct DelegatingGroupProvider: InteractiveToolProvider {
             expectNoDifference(writer.count, 0)
             return
         }
+        let failedReceipt = mode == "receipt-failure" || mode == "dismissal-failure"
+        let dismissed = mode == "dismissed" || mode == "dismissal-failure"
+        let mailboxFile = root.appending(path: "agent-messages.json")
+        let backup = root.appending(path: "mailbox-before-receipt.json")
+        if failedReceipt {
+            try FileManager.default.moveItem(at: mailboxFile, to: backup)
+            try FileManager.default.createDirectory(at: mailboxFile, withIntermediateDirectories: false)
+        }
         card.draft = "FAKE-PEER-SECRET"
-        if mode == "dismissed" { await card.dismissButtonTapped() }
+        if dismissed { await card.dismissButtonTapped() }
         else { await card.submitButtonTapped() }
+        if failedReceipt {
+            expectNoDifference(card.status, dismissed ? .dismissalReceiptFailed : .receiptFailed)
+            #expect(!model.isConversationWorking(origin))
+            #expect(!model.isConversationWorking(peer.id))
+            expectNoDifference(model.agentMessages.count, 1)
+            expectNoDifference(writer.count, dismissed ? 0 : 1)
+            expectNoDifference(card.draft, "")
+            let beforeRetry = await probe.wakes
+            expectNoDifference(beforeRetry, [recipient])
+            try FileManager.default.removeItem(at: mailboxFile)
+            try FileManager.default.moveItem(at: backup, to: mailboxFile)
+            await card.retryButtonTapped()
+        }
         deadline = ContinuousClock.now + .seconds(10)
         while model.isConversationWorking(origin), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
         #expect(!model.isConversationWorking(origin))
         #expect(!model.isConversationWorking(peer.id))
-        let resumed = mode == "provided" || mode == "dismissed"
-        expectNoDifference(writer.count, mode == "provided" ? 1 : 0)
+        let resumed = mode == "provided" || dismissed || failedReceipt
+        expectNoDifference(writer.count, mode == "provided" || mode == "receipt-failure" ? 1 : 0)
         let wakes = await probe.wakes
         expectNoDifference(wakes, resumed ? [recipient, recipient] : [recipient])
         expectNoDifference(model.agentMessages.count, resumed ? 2 : 1)
@@ -321,6 +342,7 @@ private struct DelegatingGroupProvider: InteractiveToolProvider {
             let response = try #require(model.agentMessages.last)
             #expect(response.delivery?.state == .completed, "\(String(describing: response.delivery)) / \(model.errorMessage ?? "")")
             expectNoDifference(response.delivery?.directOriginBinding, incoming.delivery?.directOriginBinding)
+            expectNoDifference(response.secretResponse?.provided, !dismissed)
             let chat = try #require(model.conversations.first { $0.id == peer.id })
             #expect(chat.messages.contains { $0.text == "Credential response received; no remote login claimed." }, "\(chat.messages.map(\.text))")
             #expect(!chat.messages.contains { $0.id == response.id })

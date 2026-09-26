@@ -1,5 +1,13 @@
 # 協作能力核對紀錄（更新至 2026-09-26）
 
+## 同儕憑證回條故障與重試補驗（2026-09-26）
+
+在 `144d38a` 的隔離 App fixture 新增 provided／dismissed 回條保存故障：將暫存信箱檔備份後以同名目錄阻擋寫入，驗證卡片進入 receiptFailed／dismissalReceiptFailed、清空輸入、origin 與 peer 執行狀態皆解除、無新 delivery 或模型 wake。修復暫存檔後使用實際 Retry 入口，回答僅續接一次且保留 binding；provided 寫入器計數仍為一，dismissed 為零。恢復聊天與假憑證不進 mailbox 的既有斷言保留。
+
+依 pfw-testing／CustomDump；`direct-peer-secret-receipt-verified.log` 九種 App 情境全部通過，`git diff --check` 通過。初次 fixture 錯用再次 Dismiss 而非 Retry，已改為 UI 的真正重試入口。本批僅測試與紀錄變更，未重跑完整套件／原生打包，未接觸真實 Keychain、未 push 或重啟 App。
+
+另核對記憶建議：session 明確只接受前景人類請求作 evidence，同儕背景與憑證 acknowledgement 不自動作人類事實；本批未擴大該行為，完整 episodic／自動改寫等原版記憶差異仍待核對實作。
+
 ## 直接同儕安全輸入 App 串接（2026-09-26）
 
 前景委派及直接回答 factory 已接既有 `publishMailboxSecret`，沿用唯一 Slack／Discord bot token 的目的地驗證。建立卡片前後重驗直接執行範圍；App 以 canonical publication 動態呈現既有安全輸入卡，值不進訊息或模型。提交／取消保留原 binding、開新 session／chain，登記並清除 origin 與 peer 執行狀態；只投影代理人輸出，不將人類憑證回條冒充同儕訊息。原聊天不存在／綁定變更／聊天執行中等檢查與同儕問答共用，既有帳號／成員／Stop／目的地驗證保留。恢復時同步信箱快照，重開只有 retired 歷史卡，不重建 credential submission。
