@@ -2,6 +2,10 @@
 
 核對日期：2026-09-27。參考 `grok-bot-0.18-reconstructed` commit `a9f633e09d49a85829b8236331b9e21f7e612634`；Filicon 基準 `94937dd`。原始碼核對，不是真實模型或 UI 驗收。
 
+## 快照接線更正（2026-09-27）
+
+後續靜態呼叫鏈確認：reference 有 frozen-memory 設計，但唯一 production prompt assembly 的 memoryStore／memorySnapshots 為 null、epoch 固定 0；runner setter 的欄位也未讀取。下方「下一項已定位差異」應讀為尚未接通的參考設計，不能聲稱原版 production 已實際凍結記憶。完整證據與實作前置條件見 [Memory-snapshot-audit.md](Memory-snapshot-audit.md)。Filicon 維持即時權限篩選，跨 epoch 快照仍未實作。
+
 ## 逐專案 recall（2026-09-27）
 
 - 取代下方歷史「合併專案池」：已加入的專案按有可見事實優先、最近事實時間（最低 0）、slug 排序，最多三個專案。其餘列為 `alsoMemberOf`，不刪除記憶、不撤銷既有搜尋權限。
