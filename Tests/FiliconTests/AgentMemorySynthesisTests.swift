@@ -224,11 +224,17 @@ struct AgentMemorySynthesisTests {
         expectNoDifference(stages, ["empty-proposal", "bad-proposal", "cancel-proposal"].contains(mode) ? [.proposal] : [.proposal, .verification])
     }
 
-    @Test(arguments: ["duplicate", "future", "too-long", "empty-user", "empty-assistant", "unknown-agent", "clock-collision"])
+    @Test(arguments: ["duplicate", "future", "too-long", "encoded-budget", "empty-user", "empty-assistant", "unknown-agent", "clock-collision"])
     func invalidHostEvidenceNeverReachesTransport(mode: String) async throws {
         let (root, service) = try fixture(); defer { try? FileManager.default.removeItem(at: root) }
         var input = evidence
         switch mode {
+        case "encoded-budget":
+            // Every field is individually valid; JSON escaping makes the total
+            // snapshot exceed the transport budget without many UTF-8 bytes.
+            input = (0..<12).map { .init(id: "turn-\($0)", occurredAt: date,
+                user: "a" + String(repeating: "\u{0001}", count: 7_999),
+                assistant: "a" + String(repeating: "\u{0001}", count: 7_999)) }
         case "duplicate": input.append(input[0])
         case "future": input = [.init(id: "turn-1", occurredAt: date.addingTimeInterval(1), user: "human", assistant: "reply")]
         case "too-long": input = [.init(id: "turn-1", occurredAt: date, user: String(repeating: "x", count: 8_001), assistant: "reply")]

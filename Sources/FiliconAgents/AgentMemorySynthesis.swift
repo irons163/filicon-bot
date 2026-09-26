@@ -126,7 +126,11 @@ extension AgentService {
             Fact(id: $0.id, content: $0.fact, kind: $0.tier, origin: $0.origin, createdAt: $0.createdAt)
         }, evidence: evidence)
         let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601; encoder.outputFormatting = [.sortedKeys]
-        let payload = String(decoding: try encoder.encode(input), as: UTF8.self)
+        // Independent of saved-memory capacity. Reject oversized snapshots;
+        // never silently omit evidence or mutable IDs from verification.
+        let encodedInput = try encoder.encode(input)
+        guard encodedInput.count <= 262_144 else { throw AgentMemorySuggestionError.invalid }
+        let payload = String(decoding: encodedInput, as: UTF8.self)
         func proposeAndVerify() async throws -> String? {
             measurements?.proposalCount(0)
             let proposed = try await execute(.proposal, Self.memorySynthesisInstructions, payload)
@@ -140,7 +144,9 @@ extension AgentService {
             // The verifier sees the exact validated proposal and original evidence,
             // in a fresh request, rather than the proposer's reasoning or verdict.
             struct Verification: Encodable { let input: Input; let proposedChangesJSON: String }
-            let verification = String(decoding: try encoder.encode(Verification(input: input, proposedChangesJSON: proposed)), as: UTF8.self)
+            let encodedVerification = try encoder.encode(Verification(input: input, proposedChangesJSON: proposed))
+            guard encodedVerification.count <= 524_288 else { throw AgentMemorySuggestionError.invalid }
+            let verification = String(decoding: encodedVerification, as: UTF8.self)
             let verdict = try await execute(.verification, Self.memoryVerificationInstructions, verification)
             try Task.checkCancellation()
             try lifetime.check()

@@ -32,16 +32,20 @@ public struct AgentMemorySuggestionExtractor: Sendable {
               !user.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               !response.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               !["PASS", "(PASS)"].contains(response.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()) else { return }
-        let userText = String(user.prefix(8_000))
-        let assistantText = String(response.prefix(8_000))
+        // A single extended grapheme can contain arbitrarily many combining
+        // scalars. Bound actual input units, not just visible characters.
+        let userText = String(String.UnicodeScalarView(user.unicodeScalars.prefix(8_000)))
+        let assistantText = String(String.UnicodeScalarView(response.unicodeScalars.prefix(8_000)))
         let saved = await agents.memories(accountID: accountID, agentID: agentID)
         let facts = try AgentMemoryExtractionContext(memories: saved, accountID: accountID,
             agentID: agentID, query: .init(userText + "\n" + assistantText)).facts
         struct Exchange: Encodable { let user: String; let assistant: String; let existingPrivateFacts: [String] }
         let payload = Exchange(user: userText, assistant: assistantText, existingPrivateFacts: facts)
+        let encoded = try JSONEncoder().encode(payload)
+        guard encoded.count <= 128_000 else { throw AgentMemorySuggestionError.invalid }
         let request = InferenceRequest(conversationID: sessionID, modelID: agent.modelID, messages: [
             .init(role: .system, text: Self.instructions),
-            .init(role: .user, text: String(decoding: try JSONEncoder().encode(payload), as: UTF8.self))
+            .init(role: .user, text: String(decoding: encoded, as: UTF8.self))
         ])
         let output = MemorySuggestionOutput()
         try await coordinator.send(request: request, providerID: agent.providerID,

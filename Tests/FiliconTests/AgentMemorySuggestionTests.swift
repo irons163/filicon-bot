@@ -178,6 +178,22 @@ struct AgentMemorySuggestionTests {
         let final = await probe.requests; expectNoDifference(final.count, 1)
     }
 
+    @Test func combiningScalarsCannotBypassExchangeInputBudget() async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let settings = try await f.enable(), probe = SuggestionProbe()
+        await f.registry.register(SuggestionProvider(probe: probe, events: [.textDelta(#"{"suggestions":[]}"#), .completed(.stop)]))
+        let oversized = "a" + String(repeating: "\u{0301}", count: 100_000)
+        expectNoDifference(oversized.count, 1)
+        try await f.extractor().extract(settings: settings, profile: f.owner, exchangeID: f.exchangeID,
+            sessionID: f.sessionID, user: oversized, response: oversized, lifetime: f.lifetime)
+        let requests = await probe.requests
+        let request = try #require(requests.first)
+        #expect(request.messages[1].text.utf8.count <= 128_000)
+        let json = try #require(JSONSerialization.jsonObject(with: Data(request.messages[1].text.utf8)) as? [String: Any])
+        expectNoDifference((json["user"] as? String)?.unicodeScalars.count, 8_000)
+        expectNoDifference((json["assistant"] as? String)?.unicodeScalars.count, 8_000)
+    }
+
     @Test(arguments: ["disable", "aba", "archive", "stop"])
     func changesDuringInferenceRejectLateCandidates(mode: String) async throws {
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
