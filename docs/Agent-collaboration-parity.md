@@ -1,5 +1,15 @@
 # 協作能力核對紀錄（更新至 2026-09-26）
 
+## 原版記憶整合提案契約（2026-09-26）
+
+核對 reference `source/host/extensions/memory/memory-synthesis-service.ts` 的提案與驗證分階段設計，以及 `memory-service.ts` 的 explicit 保護、snapshot fingerprint 與 deleted tombstones。新增 `AgentMemorySynthesisProposal` 作內部純解析邊界，不寫檔、不呼叫模型、不授權工具，也不改既有記憶模型或人工審核行為。
+
+契約只接受完整 JSON changes，最多 64 筆、本文 500 字／2,000 bytes、整份 256 KiB。每筆證據必須屬於 host 提供的當輪 evidence（最多 12 個）或明確 clock；create 不得只有 clock。update／remove 只能使用 host 可修改集合，拒絕重複目標、未知來源、多餘欄位、控制字元及不支援 tier。這只證明結構合法，不證明內容由證據支持；未來 host 必須排除手動記憶，加入獨立語意驗證及原子 stale 檢查後才能保存。
+
+依 pfw-testing／CustomDump，以固定 ID、無時鐘／檔案／網路依賴測試正常批次、空提案、13 類非法變更、clock 邊界及錯誤／超量 JSON。原版自動改寫、episodic、排程與 UI 仍未接上，不能以本次解析器宣稱功能 parity 完成。
+
+驗證：聚焦 `memory-synthesis-proposal.log` 與最終完整非並行 `memory-synthesis-proposal-full.log` exit 0；`git diff --check` 通過。本批無 UI／封裝變更，未重跑原生打包或人工 UI；未 push、未重啟 App／Xcode，也未操作真實記憶或帳號。
+
 ## 同儕憑證回條故障與重試補驗（2026-09-26）
 
 在 `144d38a` 的隔離 App fixture 新增 provided／dismissed 回條保存故障：將暫存信箱檔備份後以同名目錄阻擋寫入，驗證卡片進入 receiptFailed／dismissalReceiptFailed、清空輸入、origin 與 peer 執行狀態皆解除、無新 delivery 或模型 wake。修復暫存檔後使用實際 Retry 入口，回答僅續接一次且保留 binding；provided 寫入器計數仍為一，dismissed 為零。恢復聊天與假憑證不進 mailbox 的既有斷言保留。
