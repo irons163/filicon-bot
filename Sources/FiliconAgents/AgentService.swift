@@ -21,9 +21,31 @@ public actor AgentService {
     private var revision: UInt64 = 0
     private var snapshotListeners: [UUID: AsyncStream<AgentServiceSnapshot>.Continuation] = [:]
     private var episodeRuns: [UUID: AgentMemoryEpisodeProgress] = [:]
+    private struct EpisodeCleanup: Codable, Equatable {
+        let accountID: String
+        let originID: UUID?
+        func matches(_ progress: AgentMemoryEpisodeProgress) -> Bool {
+            progress.accountID == accountID && (originID == nil || progress.originID == originID)
+        }
+    }
+    private var pendingEpisodeCleanups: [EpisodeCleanup] = []
 
     public init(storeURL: URL) throws {
         var loadedState = try Self.loadSynchronously(url: storeURL)
+        let cleanupURL = Self.episodeCleanupURL(storeURL)
+        if FileManager.default.fileExists(atPath: cleanupURL.path) {
+            let data = try Data(contentsOf: cleanupURL)
+            guard data.count <= 131_072 else { throw AgentMemorySuggestionError.invalid }
+            let cleanups = try JSONDecoder().decode([EpisodeCleanup].self, from: data)
+            guard cleanups.count <= 128, cleanups.allSatisfy({ !$0.accountID.isEmpty && $0.accountID.utf8.count <= 512 }) else {
+                throw AgentMemorySuggestionError.invalid
+            }
+            if !cleanups.isEmpty {
+                loadedState.memoryEpisodes.removeAll { progress in cleanups.contains { $0.matches(progress) } }
+                try Self.saveSynchronously(loadedState, url: storeURL)
+                try Self.saveEpisodeCleanups([], storeURL: storeURL)
+            }
+        }
         let now = Date()
         var recoveredInterruptedRun = false
         for index in loadedState.subagents.indices
@@ -297,6 +319,7 @@ public actor AgentService {
 
     public func memoryEpisodeProgress(settings: AgentMemoryEpisodeSettings, originID: UUID) throws -> AgentMemoryEpisodeProgress? {
         try requireEpisodeConsent(settings)
+        try requireEpisodeCleanupComplete(accountID: settings.accountID, originID: originID)
         return state.memoryEpisodes.first { $0.accountID == settings.accountID && $0.agentID == settings.agentID &&
             $0.originID == originID && $0.revision == settings.revision }
     }
@@ -307,6 +330,7 @@ public actor AgentService {
                                     lifetime: AgentMemorySuggestionLifetime) throws {
         try lifetime.commit {
             try requireEpisodeConsent(settings)
+            try requireEpisodeCleanupComplete(accountID: settings.accountID, originID: originID)
             guard let revision = settings.revision else { throw AgentMemorySuggestionError.stale }
             let index = state.memoryEpisodes.firstIndex { $0.accountID == settings.accountID &&
                 $0.agentID == settings.agentID && $0.originID == originID }
@@ -326,10 +350,35 @@ public actor AgentService {
     public func clearMemoryEpisodeOrigin(accountID: String, originID: UUID?,
                                          lifetime: AgentMemorySuggestionLifetime) throws {
         try lifetime.commit {
-            state.memoryEpisodes.removeAll { $0.accountID == accountID && (originID == nil || $0.originID == originID) }
+            guard !accountID.isEmpty, accountID.utf8.count <= 512 else { throw AgentMemorySuggestionError.invalid }
+            let request = EpisodeCleanup(accountID: accountID, originID: originID)
+            if !pendingEpisodeCleanups.contains(request) {
+                guard pendingEpisodeCleanups.count < 128 else { throw AgentMemorySuggestionError.invalid }
+                pendingEpisodeCleanups.append(request)
+            }
+            // Revoke in-flight work even when either disk write fails.
+            episodeRuns = episodeRuns.filter { _, progress in !pendingEpisodeCleanups.contains { $0.matches(progress) } }
+            try Self.saveEpisodeCleanups(pendingEpisodeCleanups, storeURL: storeURL)
+            state.memoryEpisodes.removeAll { progress in pendingEpisodeCleanups.contains { $0.matches(progress) } }
             try persist()
-            episodeRuns = episodeRuns.filter { $0.value.accountID != accountID || (originID != nil && $0.value.originID != originID) }
+            try Self.saveEpisodeCleanups([], storeURL: storeURL)
+            pendingEpisodeCleanups.removeAll()
         }
+    }
+
+    private func requireEpisodeCleanupComplete(accountID: String, originID: UUID) throws {
+        guard !pendingEpisodeCleanups.contains(where: { $0.accountID == accountID && ($0.originID == nil || $0.originID == originID) }) else {
+            throw AgentMemorySuggestionError.stale
+        }
+    }
+
+    private static func episodeCleanupURL(_ storeURL: URL) -> URL {
+        storeURL.appendingPathExtension("episode-cleanup.json")
+    }
+
+    private static func saveEpisodeCleanups(_ requests: [EpisodeCleanup], storeURL: URL) throws {
+        try FileManager.default.createDirectory(at: storeURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try JSONEncoder().encode(requests).write(to: episodeCleanupURL(storeURL), options: [.atomic, .completeFileProtectionUnlessOpen])
     }
 
     /// One attempt per batch: persist consumption before invoking a provider, so

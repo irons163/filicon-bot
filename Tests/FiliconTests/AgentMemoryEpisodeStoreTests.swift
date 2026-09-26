@@ -5,6 +5,51 @@ import CustomDump
 
 @Suite("Episode consent and persistence")
 struct AgentMemoryEpisodeStoreTests {
+    @Test(arguments: [false, true])
+    func failedCleanupIsReplayedBeforeReopen(accountWide: Bool) async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "episode-recovery-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appending(path: "agents.json"), backup = root.appending(path: "backup.json")
+        let service = try AgentService(storeURL: url)
+        let date = Date(timeIntervalSince1970: 1_900_000_000)
+        let owner = try await service.create(name: "Fixture", instructions: "", at: date)
+        let off = try await service.memoryEpisodeSettings(accountID: "local", agentID: owner.id)
+        try await service.setMemoryEpisodesEnabled(true, expected: off, lifetime: .init())
+        let settings = try await service.memoryEpisodeSettings(accountID: "local", agentID: owner.id)
+        let first = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
+        let second = UUID(uuidString: "00000000-0000-0000-0000-000000000002")!
+        for origin in [first, second] {
+            try await service.recordMemoryEpisode(settings: settings, originID: origin, exchangeID: origin,
+                at: date, user: "Sensitive fixture text for accessibility work", assistant: "Review layout", lifetime: .init())
+        }
+        try await service.applyMemoryChange(.init(operation: .write,
+            memory: .init(accountID: "local", agentID: owner.id, fact: "Keep saved memory", createdAt: date)), lifetime: .init())
+        try FileManager.default.moveItem(at: url, to: backup)
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: false)
+        await #expect(throws: (any Error).self) {
+            try await service.clearMemoryEpisodeOrigin(accountID: "local", originID: accountWide ? nil : first, lifetime: .init())
+        }
+        await #expect(throws: (any Error).self) {
+            try await service.memoryEpisodeProgress(settings: settings, originID: first)
+        }
+        let journal = url.appendingPathExtension("episode-cleanup.json")
+        #expect(!String(decoding: try Data(contentsOf: journal), as: UTF8.self).contains("Sensitive"))
+        #expect(throws: (any Error).self) { try AgentService(storeURL: url) }
+        try FileManager.default.removeItem(at: url)
+        try FileManager.default.moveItem(at: backup, to: url)
+        let reopened = try AgentService(storeURL: url)
+        let cleared = try await reopened.memoryEpisodeProgress(settings: settings, originID: first)
+        let untouched = try await reopened.memoryEpisodeProgress(settings: settings, originID: second)
+        expectNoDifference(cleared, nil)
+        expectNoDifference(untouched?.turns.count ?? 0, accountWide ? 0 : 1)
+        let saved = await reopened.memories(accountID: "local", agentID: owner.id)
+        expectNoDifference(saved.map(\.fact), ["Keep saved memory"])
+        expectNoDifference(String(decoding: try Data(contentsOf: journal), as: UTF8.self), "[]")
+        // Corrupt recovery metadata must not silently expose old progress.
+        try Data("not-json".utf8).write(to: journal)
+        #expect(throws: (any Error).self) { try AgentService(storeURL: url) }
+    }
+
     @Test func legacyStateAndFailedPersistenceDoNotGrantConsent() async throws {
         let legacy = try JSONDecoder().decode(AgentPersistentState.self, from: Data("{}".utf8))
         expectNoDifference(legacy.memoryEpisodeSettings, [])

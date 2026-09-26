@@ -108,3 +108,13 @@ origin／account 清理失敗現在透過既有 App 錯誤提示顯示七語固�
 新增直接呼叫 AppModel 前景入口的隔離測試：群組 `sendGroupMessage` 與綁定代理人的 direct `send`，各測 enabled／disabled／第五回合後 Stop 共六情境。逐回合驗證前五回合無記憶，第六回合僅 enabled 保存一筆 host episode；Stop 清空後第六回合僅剩一筆 pending，disabled 不收集。摘要與驗證共兩次無工具請求，proposal 含六筆回合；重開 AgentService 檢查持久化結果與 peer 隔離。
 
 `memory-episode-app-flow.log` 聚焦 App suite 15 tests 通過。此批只修改測試與文件，未重跑原生建置或完整套件。測試使用替身 provider，不等同真实模型內容品質或視窗點擊驗收；未操作使用者 App／資料。退出重開後的失敗清理防護仍待處理。
+
+## 清理復原紀錄（2026-09-27）
+
+`AgentService.clearMemoryEpisodeOrigin` 現在先將 account／origin 清理意圖寫入獨立 `agents.json.episode-cleanup.json`，再清除主檔進度，最後將復原紀錄寫成空陣列。兩個檔案各自使用 atomic／原有檔案保護選項。紀錄最多 128 項，只含識別資訊，不含回合文字。清理開始即撤銷相符在途摘要；寫入失敗仍保留程序內阻擋，無法從 record／progress 重新使用相符資料。
+
+重開 AgentService 先重播尚存清理意圖，主檔及清空復原紀錄皆成功才返回可用 service。格式損壞、超量或讀寫失敗不忽略復原紀錄。未受影響來源、已保存記憶及正常關閉下的 pending 持久化維持原行為。隔離測試覆蓋來源／整帳號清理失敗後重開、其他來源保留、已存記憶保留及損壞紀錄拒絕。
+
+邊界：復原保障始於清理意圖成功落盤；若連獨立紀錄都無法寫入，或 App 尚未呼叫 service 就崩潰，不能宣稱清理意圖可跨重開保留。App 已有錯誤提示及程序內阻擋，但這些邊界仍需後續生命週期驗收。未更動真實儲存資料或啟動 App。
+
+本批完整非並行測試 `memory-episode-recovery-full.log`、原生建置 `memory-episode-recovery-native.log` exit 0；封裝 deep strict 簽章及 entitlements 檢查通過。
