@@ -2,7 +2,7 @@ import Foundation
 import Testing
 import CustomDump
 import FiliconAgents
-import FiliconAppServices
+@testable import FiliconAppServices
 import FiliconDomain
 import FiliconProviderKit
 
@@ -188,6 +188,68 @@ struct AgentMemorySynthesisTransportTests {
         }
         let memories = await agents.memories(accountID: "local", agentID: profile.id)
         expectNoDifference(memories, [])
+    }
+
+    @Test func attemptDeadlineIsSharedAndOnlyResetsForANewProposal() async throws {
+        let start = ContinuousClock.now
+        let budget = MemorySynthesisDeadline(timeout: .seconds(90))
+        await #expect(throws: MemorySynthesisTimeout.self) { try await budget.deadline(for: .verification, now: start) }
+        let proposal = try await budget.deadline(for: .proposal, now: start)
+        let verification = try await budget.deadline(for: .verification, now: start.advanced(by: .seconds(60)))
+        expectNoDifference(proposal, start.advanced(by: .seconds(90)))
+        expectNoDifference(verification, proposal)
+        await #expect(throws: MemorySynthesisTimeout.self) {
+            try await budget.deadline(for: .verification, now: start.advanced(by: .seconds(90)))
+        }
+        let retry = try await budget.deadline(for: .proposal, now: start.advanced(by: .seconds(92)))
+        expectNoDifference(retry, start.advanced(by: .seconds(182)))
+    }
+
+    @Test(arguments: ["queue", "proposal", "verification"])
+    func wholeAttemptTimeoutCancelsQueuedOrStreamingMaintenance(mode: String) async throws {
+        let (root, agents, profile) = try await fixture(); defer { try? FileManager.default.removeItem(at: root) }
+        let registry = ProviderRegistry(), probe = SynthesisTransportProbe(), scheduler = AgentExecutionScheduler()
+        let entered = AsyncStream<Void>.makeStream()
+        let occupying = Task {
+            if mode == "queue" {
+                try await scheduler.withExclusiveAccess(agentID: profile.id, lane: .user) {
+                    entered.continuation.yield(())
+                    try await Task.sleep(for: .seconds(30))
+                }
+            }
+        }
+        defer { occupying.cancel() }
+        if mode == "queue" { for await _ in entered.stream { break } }
+        let initial = try await agents.memorySynthesisSettings(accountID: "local", agentID: profile.id)
+        try await agents.setMemorySynthesisEnabled(true, expected: initial, lifetime: .init())
+        let settings = try await agents.memorySynthesisSettings(accountID: "local", agentID: profile.id)
+        await registry.register(SynthesisTransportProvider(probe: probe, events: [], synthesisStages: true, before: {
+            let count = await probe.requests.count
+            if mode == "proposal" || (mode == "verification" && count.isMultiple(of: 2)) {
+                try await Task.sleep(for: .seconds(30))
+            }
+        }))
+        let transport = AgentMemorySynthesisTransport(agents: agents, registry: registry, scheduler: scheduler,
+            timeout: .seconds(20), attemptTimeout: .milliseconds(100))
+        let date = Date(timeIntervalSince1970: 1_000)
+        await #expect(throws: MemorySynthesisTimeout.self) {
+            try await transport.run(settings: settings,
+                evidence: [.init(id: "turn", occurredAt: date, user: "I prefer short answers", assistant: "Understood")],
+                at: date, profile: profile, sessionID: session, lifetime: .init())
+        }
+        let requests = await probe.requests
+        expectNoDifference(requests.count, mode == "queue" ? 0 : mode == "proposal" ? 3 : 6)
+        let facts = await agents.memories(accountID: "local", agentID: profile.id)
+        expectNoDifference(facts, [])
+        // Timeout must cancel only this submission, not another session's lane.
+        if mode == "queue" {
+            #expect(!occupying.isCancelled)
+            let state = await scheduler.snapshot(agentID: profile.id)
+            expectNoDifference(state.isActive, true)
+            expectNoDifference(state.queuedCount, 0)
+        }
+        occupying.cancel()
+        _ = await occupying.result
     }
 
     @Test func explicitCancellationClosesLifetimeAndStopsTransport() async throws {

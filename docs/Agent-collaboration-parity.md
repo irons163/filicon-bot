@@ -1,5 +1,15 @@
 # 協作能力核對紀錄（更新至 2026-09-26）
 
+## 記憶整合整組期限（2026-09-26）
+
+host transport 的每個 run 新建 deadline state；proposal 啟動預設 90 秒期限，verification 使用同一截止時間，下一次 bounded retry 的 proposal 才重設。外層 timer 與 stage task 競爭，因此等待 TurnCoordinator／agent lane 的時間也計入；逾時取消該 submission，晚到回覆與期限外結果拒絕，不關閉整個共用代理人排程器。既有每 stage 45 秒 executionTimeout 仍保留。期限不跨 session 共用，也不把 2／4 秒重試間隔算入下一組期限。
+
+依 pfw-testing／CustomDump，以明確注入 now 的純 deadline 測試驗證 90 秒、verification 不重設、到期拒絕及 retry 新期限；另以短期限假 provider 驗證排隊、proposal 串流、verification 串流三條取消路徑和零保存，排隊案例確認前景 lane 不被取消且 maintenance queue 清空。既有 16 種 App lifecycle 納入回歸。未呼叫外部模型、未改真實資料或啟動 App。
+
+此項補齊前述整組期限缺口；debounce、有界跨回合 queue、temporal sweep、episodic 與真實服務驗收仍未完成，保持 partial。
+
+驗證：`memory-synthesis-deadline.log` 期限計算、3 種 timeout 及 16 種 App lifecycle 情境通過；補上 scheduler queue 清理斷言後，`memory-synthesis-deadline-full.log` 完整非並行套件 exit 0。`memory-synthesis-deadline-native.log` 原生建置、verify-package／deep strict 簽章與 git diff --check 通過。
+
 ## 記憶整合有界整組重試（2026-09-26）
 
 對照原版 `memory-synthesis-service.ts` 的三次 attempts／2 秒初始 backoff，公開 host run 現在最多重試三組 proposal＋independent verification；兩次等待為 2、4 秒，不只重送 verifier。整批 evidence、開始時間及 memory snapshot 固定，provider 請求仍為 fresh tool-free。格式錯誤、拒絕或 transport failure 可重試；取消、lifetime 撤銷與 stale consent 立即退出，每次重試前亦重驗快照。保存置於重試迴圈之外，因此保存失敗不重送模型或重複套用。內部單次 pipeline fixture 保留預設一次執行。

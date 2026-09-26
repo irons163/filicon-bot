@@ -9,12 +9,14 @@ public struct AgentMemorySynthesisTransport: Sendable {
     private let agents: AgentService
     private let coordinator: TurnCoordinator
     private let timeout: Duration
+    private let attemptTimeout: Duration
 
     public init(agents: AgentService, registry: ProviderRegistry, scheduler: AgentExecutionScheduler,
-                timeout: Duration = .seconds(45)) {
+                timeout: Duration = .seconds(45), attemptTimeout: Duration = .seconds(90)) {
         self.agents = agents
         self.coordinator = TurnCoordinator(registry: registry, agentScheduler: scheduler)
         self.timeout = timeout
+        self.attemptTimeout = attemptTimeout
     }
 
     public func cancel(sessionID: UUID, lifetime: AgentMemorySuggestionLifetime) async {
@@ -26,14 +28,29 @@ public struct AgentMemorySynthesisTransport: Sendable {
                     temporalReview: Bool = false, at: Date, profile: AgentProfile, sessionID: UUID,
                     lifetime: AgentMemorySuggestionLifetime) async throws -> AgentMemorySynthesisOutcome {
         guard settings.agentID == profile.id else { throw AgentMemorySuggestionError.stale }
+        let budget = MemorySynthesisDeadline(timeout: attemptTimeout)
         return try await agents.runMemorySynthesis(settings: settings, evidence: evidence,
             temporalReview: temporalReview, at: at, lifetime: lifetime) { stage, instructions, payload in
-                try await execute(stage: stage, instructions: instructions, payload: payload,
-                    profile: profile, sessionID: sessionID, lifetime: lifetime, authorize: {
-                        guard try await agents.memorySynthesisSettings(accountID: settings.accountID, agentID: settings.agentID) == settings else {
-                            throw AgentMemorySuggestionError.stale
-                        }
-                    })
+                let deadline = try await budget.deadline(for: stage)
+                return try await withThrowingTaskGroup(of: String.self) { tasks in
+                    tasks.addTask {
+                        try await execute(stage: stage, instructions: instructions, payload: payload,
+                            profile: profile, sessionID: sessionID, lifetime: lifetime, authorize: {
+                                guard try await agents.memorySynthesisSettings(accountID: settings.accountID, agentID: settings.agentID) == settings else {
+                                    throw AgentMemorySuggestionError.stale
+                                }
+                            })
+                    }
+                    tasks.addTask {
+                        try await ContinuousClock().sleep(until: deadline)
+                        throw MemorySynthesisTimeout()
+                    }
+                    defer { tasks.cancelAll() }
+                    let result = try await tasks.next()
+                    try Task.checkCancellation()
+                    guard ContinuousClock.now < deadline, let result else { throw MemorySynthesisTimeout() }
+                    return result
+                }
             }
     }
 
@@ -66,6 +83,23 @@ public struct AgentMemorySynthesisTransport: Sendable {
         try await check()
         return try await output.result()
     }
+}
+
+/// A run owns its budget: verification shares its proposal's deadline, while a
+/// new proposal (a bounded retry) starts a new attempt. Never shared by sessions.
+actor MemorySynthesisDeadline {
+    let timeout: Duration
+    var end: ContinuousClock.Instant?
+    init(timeout: Duration) { self.timeout = timeout }
+    func deadline(for stage: AgentMemorySynthesisStage, now: ContinuousClock.Instant = .now) throws -> ContinuousClock.Instant {
+        if stage == .proposal { end = now.advanced(by: timeout) }
+        guard let end, now < end else { throw MemorySynthesisTimeout() }
+        return end
+    }
+}
+
+struct MemorySynthesisTimeout: LocalizedError {
+    var errorDescription: String? { "The delegated agent response timed out." }
 }
 
 private actor MemorySynthesisOutput {
