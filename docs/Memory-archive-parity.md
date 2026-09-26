@@ -9,6 +9,14 @@
 - `source/host/runner/sand-memory.ts`：`MEMORY_EXTRACTION_ARCHIVE_SCAN_LIMIT = 500` 是抽取時掃描筆數；`gatherExtractionMemories` 在已注入記憶之外，從這批歷史候選依 token overlap 選最多 10 筆。不能把 500 當作 archive 容量。
 - `source/host/runner/turn-memory.ts` 的 `runMemoryExtraction` 確實傳入 `recall(30)`、`listMemories(500)` 及當回合文字。
 - `renderMemorySystemPrompt` 告知代理人可用 Read／Shell 查 profile／log 以取得未注入的舊記憶。這是參考環境的工具能力；不代表 Filicon 已有任意檔案讀取授權。
+- 補核對：`memory-service.ts` 的 `prepareSynthesis()` 以完整歷史建立 fingerprint，但給模型的記憶按 explicit、profile、近期排序、ID 去重後取最多 `MEMORY_SYNTHESIS_INPUT_LIMIT = 512` 筆。`applySynthesis()` 檢查完整 fingerprint，且 update/remove ID 必須在選中 snapshot 內。先前把「逐批遍歷所有歷史」列為原版必要功能不準確；原版並不保證每筆歷史都会被 synthesis 檢視。
+
+## Synthesis 候選與完整歷史界線（2026-09-27）
+
+- `AgentMemorySynthesisSnapshot` 保留所有私人事實與 tombstones 供 equality/stale fence，另產生 explicit 優先、profile 次之、日期新到舊的最多 512 個候選；Filicon 額外限制實際事實 JSON 64,000 bytes，不截斷內容，超預算者略過但仍保留在完整歷史。
+- Proposal／verification 使用同一 `inputMemories`；`mutableMemoryIDs` 只包含該投影中 host origin 為 synthesis 的項目。Apply 仍從完整歷史修改，沒有把投影當完整儲存覆寫；未入選資料變动仍造成 stale，未入選目標不得 update/remove。
+- 這取代下方歷史進度中的「大容量 synthesis 分批待補」說法：parity 所需是有界候選與完整資料 fence，不是自行加入遍歷批次。原版同樣可能持續略過較舊事實；不宣稱所有歷史自動整理完成。
+- 602 筆歷史測試驗證 explicit／profile 優先、64,000-byte 事實預算、正常提交後重開保留 603 筆、未入選 ID 不得刪除、未入選資料被人類刪除後舊提案失效。完整測試 exit 0（`.build/validation/memory-synthesis-projection-full.log`）、原生 Debug 建置與封裝簽章通過。未啟動 App 或使用真實模型。
 
 ## Filicon 已有與缺少
 

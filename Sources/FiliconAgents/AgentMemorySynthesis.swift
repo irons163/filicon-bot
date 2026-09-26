@@ -110,21 +110,16 @@ extension AgentService {
         _ = try AgentMemorySynthesisProposal.parse(#"{"changes":[]}"#, evidenceIDs: ids,
             mutableMemoryIDs: [], clockEvidenceID: clock)
         let snapshot = try memorySynthesisSnapshot(accountID: accountID, agentID: agentID)
-        measurements?.snapshotCount(snapshot.memories.count)
+        measurements?.snapshotCount(snapshot.inputMemories.count)
         guard !evidence.isEmpty || (temporalReview && !snapshot.memories.isEmpty) else { return .noWork }
-        struct Fact: Encodable {
-            let id: UUID; let content: String; let kind: AgentMemory.Tier
-            let origin: AgentMemory.Origin; let createdAt: Date
-        }
         struct Input: Encodable {
             let now: Date
             let clockEvidenceID: String?
-            let currentMemories: [Fact]
+            let currentMemories: [AgentMemorySynthesisInputFact]
             let evidence: [AgentMemorySynthesisEvidence]
         }
-        let input = Input(now: at, clockEvidenceID: clock, currentMemories: snapshot.memories.map {
-            Fact(id: $0.id, content: $0.fact, kind: $0.tier, origin: $0.origin, createdAt: $0.createdAt)
-        }, evidence: evidence)
+        let input = Input(now: at, clockEvidenceID: clock,
+            currentMemories: snapshot.inputMemories.map(AgentMemorySynthesisInputFact.init), evidence: evidence)
         let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601; encoder.outputFormatting = [.sortedKeys]
         // Independent of saved-memory capacity. Reject oversized snapshots;
         // never silently omit evidence or mutable IDs from verification.

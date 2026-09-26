@@ -560,7 +560,7 @@ public actor AgentService {
               state.agents.contains(where: { $0.id == agentID && $0.archivedAt == nil }) else {
             throw AgentMemoryError.unavailable
         }
-        return .init(accountID: accountID, agentID: agentID,
+        return try .init(accountID: accountID, agentID: agentID,
             memories: memories(accountID: accountID, agentID: agentID),
             tombstones: Set(state.memoryTombstones.filter {
                 $0.accountID == accountID && $0.agentID == agentID && $0.scope == .agent && $0.project == nil

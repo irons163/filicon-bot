@@ -21,15 +21,67 @@ struct AgentMemorySynthesisTests {
     private var evidence: [AgentMemorySynthesisEvidence] {
         [.init(id: "turn-1", occurredAt: date, user: "I prefer short answers", assistant: "Understood")]
     }
-    private func fixture() throws -> (URL, AgentService) {
+    private func fixture(memories: [AgentMemory] = []) throws -> (URL, AgentService) {
         let root = FileManager.default.temporaryDirectory.appending(path: "synthesis-pipeline-\(UUID())")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let file = root.appending(path: "agents.json")
         var state = AgentPersistentState()
         state.agents = [.init(id: owner, name: "Owner", createdAt: date)]
+        state.memories = memories
         let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .millisecondsSince1970
         try encoder.encode(state).write(to: file)
         return (root, try AgentService(storeURL: file))
+    }
+
+    @Test(arguments: ["commit", "unseen-target", "unseen-stale"])
+    func largeArchiveUsesBoundedInputAndFullCommitFence(mode: String) async throws {
+        let history = (0..<600).map { index in
+            AgentMemory(synthesizedID: UUID(uuidString: String(format: "00000000-0000-0000-0001-%012d", index))!,
+                accountID: "local", agentID: owner,
+                fact: "Archived \(index) " + String(repeating: "x", count: 450), tier: .log,
+                createdAt: date.addingTimeInterval(Double(index)))
+        }
+        let explicit = AgentMemory(accountID: "local", agentID: owner, fact: "Old explicit preference", createdAt: .distantPast)
+        let foundational = AgentMemory(synthesizedID: UUID(uuidString: "00000000-0000-0000-0002-000000000000")!,
+            accountID: "local", agentID: owner, fact: "Old generated foundation", tier: .profile, createdAt: .distantPast)
+        let (root, service) = try fixture(memories: history + [explicit, foundational])
+        defer { try? FileManager.default.removeItem(at: root) }
+        let snapshot = try await service.memorySynthesisSnapshot(accountID: "local", agentID: owner)
+        expectNoDifference(snapshot.memories.count, 602)
+        expectNoDifference(Array(snapshot.inputMemories.prefix(2).map(\.id)), [explicit.id, foundational.id])
+        #expect(snapshot.inputMemories.count <= 512)
+        let unseen = history[0]
+        #expect(!snapshot.mutableMemoryIDs.contains(unseen.id))
+        let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601; encoder.outputFormatting = [.sortedKeys]
+        #expect(try encoder.encode(snapshot.inputMemories.map(AgentMemorySynthesisInputFact.init)).count <= 64_000)
+        let probe = SynthesisStageProbe()
+        let operation = {
+            try await service.synthesizeMemory(accountID: "local", agentID: owner, evidence: evidence,
+                at: date.addingTimeInterval(1_000), lifetime: .init()) { stage, _, payload in
+                await probe.record(stage, payload)
+                if stage == .verification { return #"{"approved":true}"# }
+                let input = try #require(JSONSerialization.jsonObject(with: Data(payload.utf8)) as? [String: Any])
+                let facts = try #require(input["currentMemories"] as? [[String: Any]])
+                expectNoDifference(facts.count, snapshot.inputMemories.count)
+                #expect(!facts.contains { ($0["id"] as? String) == unseen.id.uuidString })
+                #expect(payload.utf8.count <= 262_144)
+                if mode == "unseen-target" {
+                    return "{\"changes\":[{\"action\":\"remove\",\"id\":\"\(unseen.id)\",\"sourceEvidenceIds\":[\"turn-1\"]}]}"
+                }
+                if mode == "unseen-stale" { try await service.forgetMemoryFromEditor(unseen, lifetime: .init()) }
+                return proposal
+            }
+        }
+        if mode == "commit" {
+            let result = try await operation()
+            expectNoDifference(result, .committed)
+        }
+        else { await #expect(throws: (any Error).self) { try await operation() } }
+        let reopened = try AgentService(storeURL: root.appending(path: "agents.json"))
+        let saved = await reopened.memories(accountID: "local", agentID: owner)
+        expectNoDifference(saved.count, mode == "commit" ? 603 : mode == "unseen-stale" ? 601 : 602)
+        expectNoDifference(saved.contains { $0.fact == "Prefers short answers" }, mode == "commit")
+        #expect(saved.contains { $0.id == explicit.id })
     }
 
     @Test func allWritersRetainHistoryPastFormerCapacity() async throws {

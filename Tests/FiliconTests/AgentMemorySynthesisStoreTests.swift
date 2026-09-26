@@ -144,7 +144,7 @@ struct AgentMemorySynthesisStoreTests {
         if mode == "cancelled" { lifetime.close() }
         if mode == "oversize" { rows.append(creation(String(repeating: "x", count: 501))) }
         if mode == "stale" {
-            before = .init(accountID: "other", agentID: owner, memories: before.memories, tombstones: [])
+            before = try .init(accountID: "other", agentID: owner, memories: before.memories, tombstones: [])
         }
         let bytes = try Data(contentsOf: file)
         await #expect(throws: (any Error).self) {
