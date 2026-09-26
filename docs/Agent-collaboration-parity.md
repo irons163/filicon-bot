@@ -1,5 +1,13 @@
 # 協作能力核對紀錄（更新至 2026-09-26）
 
+## 自動記憶獨立同意與 provider→保存接線（2026-09-26）
+
+新增 `AgentMemorySynthesisSettings`，依 account／agent 持久保存，預設關閉，不從現有 human-reviewed memory suggestions 遷移啟用。host setter 比對完整 expected settings、每次產生新 revision；停用不刪已保存記憶。公開 run 只接受已啟用且 revision 完全符合的設定；提案／驗證 await 返回後在 AgentService actor 內重驗，再同步進入 snapshot-fenced 保存。
+
+`AgentMemorySynthesisTransport.run` 已串起 consent、兩階段模型 transport 與保存，profile 必須匹配設定的 agent；每次 transport 執行前、onStart、結束後也比對 settings，避免排程期間停用仍出站。這是 host API，不是 model tool；尚未接 App 開關與前景回合觸發、debounce、背景 temporal 排程。隔離假 provider fixture 驗證 disabled 零請求、enabled 提案＋驗證後保存、兩階段停用、停用再啟用拒絕舊 revision，以及建議開關不擴大授權／跨帳號預設關閉。依 pfw-testing／CustomDump；未動真實設定或呼叫外部模型。
+
+驗證：`memory-synthesis-consent.log` 聚焦 17 項測試通過；另補設定／生成記憶重開與過期 setter 拒絕後，`memory-synthesis-consent-full.log` 完整非並行套件 exit 0。先前鎖定所阻擋的持久化重開測試已通過，解除那項回歸缺口。`memory-synthesis-consent-native.log` 原生建置、verify-package、deep strict 簽章與 `git diff --check` 均通過。未啟動使用者 App／Xcode，未 push。
+
 ## 記憶整合 tool-free provider transport（2026-09-26）
 
 `AgentMemorySynthesisTransport` 經 TurnCoordinator 的 background lane 使用指定代理人的 provider／model，但每次重新建立只有 system instructions＋本次 JSON payload 的 InferenceRequest，不帶人格、聊天歷史、工具、tool exchanges、附件或 reasoning 設定。開始前、排程 onStart 與結束後重驗代理人存在／未封存與 provider／model；取消先關閉 lifetime 再撤銷 coordinator session。每個 stage 預設 45 秒執行上限，指令 16 KiB、payload 2 MiB，proposal 輸出 256 KiB、verdict 1 KiB。

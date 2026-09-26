@@ -1,25 +1,40 @@
 import Foundation
 
 /// Host-collected completed exchanges, never model-supplied conversation IDs.
-struct AgentMemorySynthesisEvidence: Encodable, Equatable, Sendable {
-    let id: String
-    let occurredAt: Date
-    let user: String
-    let assistant: String
+public struct AgentMemorySynthesisEvidence: Encodable, Equatable, Sendable {
+    public let id: String
+    public let occurredAt: Date
+    public let user: String
+    public let assistant: String
+    public init(id: String, occurredAt: Date, user: String, assistant: String) {
+        self.id = id; self.occurredAt = occurredAt; self.user = user; self.assistant = assistant
+    }
 }
 
 public enum AgentMemorySynthesisStage: Equatable, Sendable { case proposal, verification }
-enum AgentMemorySynthesisOutcome: Equatable, Sendable { case noWork, committed, rejected }
+public enum AgentMemorySynthesisOutcome: Equatable, Sendable { case noWork, committed, rejected }
 
 extension AgentService {
+    /// Host-only entry point; never register this as a model tool. A saved,
+    /// still-current explicit setting is required before any request or commit.
+    public func runMemorySynthesis(settings: AgentMemorySynthesisSettings,
+                                  evidence: [AgentMemorySynthesisEvidence], temporalReview: Bool = false,
+                                  at: Date, lifetime: AgentMemorySuggestionLifetime,
+                                  execute: @Sendable (AgentMemorySynthesisStage, String, String) async throws -> String) async throws -> AgentMemorySynthesisOutcome {
+        try requireMemorySynthesisConsent(settings)
+        return try await synthesizeMemory(accountID: settings.accountID, agentID: settings.agentID,
+            evidence: evidence, temporalReview: temporalReview, at: at, lifetime: lifetime, settings: settings, execute: execute)
+    }
     /// Internal maintenance pipeline; not yet exposed through App settings or
     /// model tools. Transport must perform a fresh, tool-free request per stage
     /// and supply its own bounded execution deadline. Never reuse chat context.
     func synthesizeMemory(accountID: String, agentID: UUID,
                           evidence: [AgentMemorySynthesisEvidence], temporalReview: Bool = false,
                           at: Date, lifetime: AgentMemorySuggestionLifetime,
+                          settings: AgentMemorySynthesisSettings? = nil,
                           execute: @Sendable (AgentMemorySynthesisStage, String, String) async throws -> String) async throws -> AgentMemorySynthesisOutcome {
         try lifetime.check()
+        if let settings { try requireMemorySynthesisConsent(settings) }
         guard at.timeIntervalSince1970.isFinite, evidence.count <= 12,
               Set(evidence.map(\.id)).count == evidence.count,
               evidence.allSatisfy({
@@ -53,6 +68,7 @@ extension AgentService {
         let payload = String(decoding: try encoder.encode(input), as: UTF8.self)
         let proposed = try await execute(.proposal, Self.memorySynthesisInstructions, payload)
         try lifetime.check()
+        if let settings { try requireMemorySynthesisConsent(settings) }
         let parsed = try AgentMemorySynthesisProposal.parse(proposed, evidenceIDs: ids,
             mutableMemoryIDs: snapshot.mutableMemoryIDs, clockEvidenceID: clock)
         guard !parsed.changes.isEmpty else { return .noWork }
@@ -62,6 +78,7 @@ extension AgentService {
         let verification = String(decoding: try encoder.encode(Verification(input: input, proposedChangesJSON: proposed)), as: UTF8.self)
         let verdict = try await execute(.verification, Self.memoryVerificationInstructions, verification)
         try lifetime.check()
+        if let settings { try requireMemorySynthesisConsent(settings) }
         guard verdict.utf8.count <= 1_024,
               // Reject duplicate approved keys too; dictionary decoding alone
               // discards duplicates and can disagree with another JSON reader.

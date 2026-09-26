@@ -16,6 +16,7 @@ private struct SynthesisTransportProvider: AIProvider {
     let descriptor = ProviderDescriptor(id: "synthesis-test", displayName: "Fixture", requiresAPIKey: false)
     let probe: SynthesisTransportProbe
     let events: [InferenceEvent]
+    var synthesisStages = false
     var before: @Sendable () async throws -> Void = {}
     func models() async throws -> [AIModel] { [.init(id: "model")] }
     func stream(_ request: InferenceRequest) -> AsyncThrowingStream<InferenceEvent, Error> {
@@ -23,7 +24,14 @@ private struct SynthesisTransportProvider: AIProvider {
             let task = Task {
                 do {
                     await probe.record(request); try await before()
-                    for event in events { continuation.yield(event) }
+                    let selected: [InferenceEvent]
+                    if synthesisStages {
+                        let text = request.messages.first?.text.contains("Maintain compact") == true
+                            ? #"{"changes":[{"action":"create","content":"Prefers short answers","kind":"profile","sourceEvidenceIds":["turn"]}]}"#
+                            : #"{"approved":true}"#
+                        selected = [.textDelta(text), .completed(.stop)]
+                    } else { selected = events }
+                    for event in selected { continuation.yield(event) }
                     continuation.finish()
                 } catch { continuation.finish(throwing: error) }
             }
@@ -41,6 +49,58 @@ struct AgentMemorySynthesisTransportTests {
         let profile = try await agents.create(name: "Owner", instructions: "PRIVATE_PERSONA_DO_NOT_SEND",
             providerID: "synthesis-test", modelID: "model", at: Date(timeIntervalSince1970: 100))
         return (root, agents, profile)
+    }
+
+    @Test(arguments: ["disabled", "enabled", "disable-proposal", "disable-verification", "disable-reenable"])
+    func consentFencesRealTransportAndPersistence(mode: String) async throws {
+        let (root, agents, profile) = try await fixture(); defer { try? FileManager.default.removeItem(at: root) }
+        let registry = ProviderRegistry(), probe = SynthesisTransportProbe()
+        let initial = try await agents.memorySynthesisSettings(accountID: "local", agentID: profile.id)
+        expectNoDifference(initial.enabled, false)
+        // Existing suggestion opt-in must not enable automatic rewriting.
+        let suggestions = try await agents.memorySuggestions(accountID: "local", agentID: profile.id)
+        try await agents.setMemorySuggestionsEnabled(true, expected: suggestions.settings, lifetime: .init())
+        let stillDisabled = try await agents.memorySynthesisSettings(accountID: "local", agentID: profile.id)
+        expectNoDifference(stillDisabled, initial)
+        if mode != "disabled" { try await agents.setMemorySynthesisEnabled(true, expected: initial, lifetime: .init()) }
+        let settings = try await agents.memorySynthesisSettings(accountID: "local", agentID: profile.id)
+        await registry.register(SynthesisTransportProvider(probe: probe, events: [], synthesisStages: true, before: {
+            let count = await probe.requests.count
+            if (mode == "disable-proposal" || mode == "disable-reenable") && count == 1 || mode == "disable-verification" && count == 2 {
+                try await agents.setMemorySynthesisEnabled(false, expected: settings, lifetime: .init())
+                if mode == "disable-reenable" {
+                    let disabled = try await agents.memorySynthesisSettings(accountID: "local", agentID: profile.id)
+                    try await agents.setMemorySynthesisEnabled(true, expected: disabled, lifetime: .init())
+                }
+            }
+        }))
+        let transport = AgentMemorySynthesisTransport(agents: agents, registry: registry, scheduler: .init())
+        let date = Date(timeIntervalSince1970: 1_000)
+        let run = {
+            try await transport.run(settings: settings,
+                evidence: [.init(id: "turn", occurredAt: date, user: "I prefer short answers", assistant: "Understood")],
+                at: date, profile: profile, sessionID: session, lifetime: .init())
+        }
+        if mode == "enabled" {
+            let result = try await run(); expectNoDifference(result, .committed)
+        } else { await #expect(throws: (any Error).self) { try await run() } }
+        let memories = await agents.memories(accountID: "local", agentID: profile.id)
+        expectNoDifference(memories.map(\.fact), mode == "enabled" ? ["Prefers short answers"] : [])
+        expectNoDifference(memories.map(\.origin), mode == "enabled" ? [.synthesis] : [])
+        let requests = await probe.requests
+        expectNoDifference(requests.count, mode == "disabled" ? 0 : ["enabled", "disable-verification"].contains(mode) ? 2 : 1)
+        let other = try await agents.memorySynthesisSettings(accountID: "other", agentID: profile.id)
+        expectNoDifference(other.enabled, false)
+        if mode == "enabled" {
+            let reopened = try AgentService(storeURL: root.appending(path: "agents.json"))
+            let restored = try await reopened.memorySynthesisSettings(accountID: "local", agentID: profile.id)
+            expectNoDifference(restored, settings)
+            let restoredMemories = await reopened.memories(accountID: "local", agentID: profile.id)
+            expectNoDifference(restoredMemories, memories)
+            await #expect(throws: AgentMemorySuggestionError.stale) {
+                try await reopened.setMemorySynthesisEnabled(false, expected: initial, lifetime: .init())
+            }
+        }
     }
 
     @Test func stagesUseOnlyFreshInstructionsAndPayloadWithoutTools() async throws {

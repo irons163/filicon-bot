@@ -225,6 +225,36 @@ public actor AgentService {
             && !state.memorySuggestionReceipts.contains { $0.accountID == settings.accountID && $0.agentID == settings.agentID && $0.exchangeID == exchangeID }
     }
 
+    public func memorySynthesisSettings(accountID: String, agentID: UUID) throws -> AgentMemorySynthesisSettings {
+        guard !accountID.isEmpty, accountID.count <= 512,
+              state.agents.contains(where: { $0.id == agentID && $0.archivedAt == nil }) else {
+            throw AgentMemoryError.unavailable
+        }
+        return state.memorySynthesisSettings.first { $0.accountID == accountID && $0.agentID == agentID }
+            ?? .init(accountID: accountID, agentID: agentID)
+    }
+
+    public func setMemorySynthesisEnabled(_ enabled: Bool, expected: AgentMemorySynthesisSettings,
+                                          lifetime: AgentMemorySuggestionLifetime) throws {
+        try lifetime.commit {
+            guard try memorySynthesisSettings(accountID: expected.accountID, agentID: expected.agentID) == expected else {
+                throw AgentMemorySuggestionError.stale
+            }
+            var next = expected; next.enabled = enabled; next.revision = UUID()
+            state.memorySynthesisSettings.removeAll { $0.accountID == expected.accountID && $0.agentID == expected.agentID }
+            state.memorySynthesisSettings.append(next)
+            // Disabling revokes in-flight snapshots but never deletes memories.
+            try persist()
+        }
+    }
+
+    func requireMemorySynthesisConsent(_ settings: AgentMemorySynthesisSettings) throws {
+        guard settings.enabled, settings.revision != nil,
+              try memorySynthesisSettings(accountID: settings.accountID, agentID: settings.agentID) == settings else {
+            throw AgentMemorySuggestionError.stale
+        }
+    }
+
     public func recordMemorySuggestions(_ suggestions: [AgentMemorySuggestion], settings: AgentMemorySuggestionSettings,
                                         exchangeID: UUID, lifetime: AgentMemorySuggestionLifetime) throws {
         try lifetime.commit {

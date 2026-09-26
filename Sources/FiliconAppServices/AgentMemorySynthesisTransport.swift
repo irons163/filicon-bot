@@ -22,15 +22,32 @@ public struct AgentMemorySynthesisTransport: Sendable {
         await coordinator.cancel(conversationID: sessionID)
     }
 
+    public func run(settings: AgentMemorySynthesisSettings, evidence: [AgentMemorySynthesisEvidence],
+                    temporalReview: Bool = false, at: Date, profile: AgentProfile, sessionID: UUID,
+                    lifetime: AgentMemorySuggestionLifetime) async throws -> AgentMemorySynthesisOutcome {
+        guard settings.agentID == profile.id else { throw AgentMemorySuggestionError.stale }
+        return try await agents.runMemorySynthesis(settings: settings, evidence: evidence,
+            temporalReview: temporalReview, at: at, lifetime: lifetime) { stage, instructions, payload in
+                try await execute(stage: stage, instructions: instructions, payload: payload,
+                    profile: profile, sessionID: sessionID, lifetime: lifetime, authorize: {
+                        guard try await agents.memorySynthesisSettings(accountID: settings.accountID, agentID: settings.agentID) == settings else {
+                            throw AgentMemorySuggestionError.stale
+                        }
+                    })
+            }
+    }
+
     public func execute(stage: AgentMemorySynthesisStage, instructions: String, payload: String,
                         profile: AgentProfile, sessionID: UUID,
-                        lifetime: AgentMemorySuggestionLifetime) async throws -> String {
+                        lifetime: AgentMemorySuggestionLifetime,
+                        authorize: @escaping @Sendable () async throws -> Void = {}) async throws -> String {
         try lifetime.check()
         guard instructions.utf8.count <= 16_384, payload.utf8.count <= 2_097_152 else {
             throw AgentMemorySuggestionError.invalid
         }
         let check: @Sendable () async throws -> Void = {
             try lifetime.check()
+            try await authorize()
             guard let current = await agents.profile(id: profile.id), current.archivedAt == nil,
                   current.providerID == profile.providerID, current.modelID == profile.modelID else {
                 throw CancellationError()

@@ -1,5 +1,7 @@
 # Filicon / Grok Bot 0.18 功能 parity matrix（current implementation）
 
+自動記憶獨立授權與端到端接線（2026-09-26）：新增每帳號／代理人的 synthesis 設定，預設關閉且不繼承建議設定。host run 已串起設定重驗、兩階段 tool-free provider 與原子保存；每次設定變更產生新 revision，停用或停用再啟用均使舊回合失效，排程 onStart 也重驗。App 設定 UI、前景完成後觸發、debounce／temporal 排程與真實模型驗收尚未完成，仍 partial。
+
 記憶整合模型連接層（2026-09-26）：新增 tool-free transport，經現有 provider／background scheduler 執行獨立請求，限制輸入與輸出 bytes、要求 stop、拒絕工具事件與異常終止，設定變更及取消拒絕晚到結果，每段預設 45 秒上限。尚未接 App 啟用／協調器呼叫、排程及真實模型驗收；螢幕鎖定造成的完整回歸缺口仍保留。
 
 兩階段記憶協調（2026-09-26）：新增內部 host pipeline，對 completed exchange 證據做有界檢查，非空提案必須另取嚴格 boolean 驗證回覆才進入 snapshot-fenced 保存。拒絕、格式錯誤、取消、transport 失敗與 stale 都不套用提案。此入口尚未接真正 tool-free provider transport、opt-in 設定、排程或 App；不代表獨立模型驗證已在使用者對話啟用，整體仍 partial。
