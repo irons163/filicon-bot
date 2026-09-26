@@ -1,5 +1,13 @@
 # 協作能力核對紀錄（更新至 2026-09-26）
 
+## 直接同儕憑證的 canonical 恢復契約（2026-09-26）
+
+`directPeerTranscript` 原本完全排除憑證卡與 secret response delivery。本輪加入無秘密值的卡片恢復與回答後代理人報告恢復：核對帳號、原始與回答 delivery 的 binding／origin、原交付完成狀態、成員、唯一 ID、回條雙向連結、stored／dismissed 狀態與固定 acknowledgement；人類回條不投影為代理人來訊。卡片本文需符合 host 產生的 label，不能混入問題、圖片或雲端卡；pending／retired 不得帶 response ID，重開仍沿用既有 pending 退休機制，不恢復可輸入權限。
+
+沿用 pfw-testing／CustomDump 與固定日期、隔離信箱檔案，十二種 provided／dismissed × valid／binding／scope／state／response-link／card-text 案例驗證恢復、重開一致性、無寫入副作用及錯誤來源拒絕。`peer-secret-recovery.log` 聚焦通過。這是 canonical 層契約；App 動態卡片、publisher 與回答續接尚未串接，不宣稱 UI 已完成。未碰真實憑證／帳號，不 push 或重啟 App。
+
+完整非並行 `peer-secret-recovery-full.log` exit 0；之後新增 completed／failed／cancelled 三種未回答卡片重開測試，`peer-secret-recovery-final.log` 全部十一項聚焦測試通過。確認重開只保留 retired 歷史，不增加 delivery 或重新排程。`git diff --check` 通過；未重跑原生打包或人工 UI 驗收。
+
 ## 信箱憑證卡目前紀錄檢查（2026-09-26）
 
 續接直接同儕憑證流程前，發現 `canUseMailboxSecret` 只驗證傳入副本 pending，未比對目前信箱紀錄。本輪補上完整 incoming／publication 相等檢查，以及 submission 的 account、agent、origin、connection、request 一致性，避免過期 UI 快照或替換的請求仍被視為可提交。

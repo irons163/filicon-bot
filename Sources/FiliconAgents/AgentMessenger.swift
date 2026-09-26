@@ -438,13 +438,37 @@ public actor AgentMessenger {
                   (try? response.question.reply(for: response.answer)) == item.text else { return false }
             return true
         }
+        func validSecretResponse(_ item: AgentMessage) -> Bool {
+            guard item.questionResponse == nil,
+                  let response = item.secretResponse, response.accountID == binding.accountID,
+                  item.delivery?.directOriginBinding == binding,
+                  item.delivery?.originConversationID == originID,
+                  counts[item.id] == 1, counts[response.incomingMessageID] == 1,
+                  counts[response.publicationID] == 1,
+                  let original = state.messages.first(where: { $0.id == response.incomingMessageID }),
+                  original.senderID == item.senderID, original.recipientID == item.recipientID,
+                  original.delivery?.directOriginBinding == binding,
+                  original.delivery?.originConversationID == originID,
+                  original.delivery?.state == .completed,
+                  let publication = original.delivery?.publications?.first(where: { $0.id == response.publicationID }),
+                  publication.groupID == originID, publication.senderID == item.recipientID,
+                  let secret = publication.secretRequest, secret.accountID == binding.accountID,
+                  publication.text == "Requested a credential securely: \(secret.request.label)",
+                  publication.question == nil, publication.cursorAgent == nil,
+                  (publication.images ?? []).isEmpty,
+                  secret.memberIDs == [item.senderID, item.recipientID],
+                  secret.responseMessageID == item.id,
+                  secret.state == (response.provided ? .stored : .dismissed),
+                  item.text == response.acknowledgement else { return false }
+            return true
+        }
         var result: [AgentPeerTranscriptEntry] = []
         for item in state.messages {
             guard let delivery = item.delivery, delivery.originConversationID == originID,
                   delivery.directOriginBinding == binding, delivery.startedAt != nil,
                   [.completed, .failed, .cancelled].contains(delivery.state),
-                  item.secretResponse == nil,
-                  (!MailboxMessageAddressing.isHuman(item, in: state) || validQuestionResponse(item)),
+                  (item.secretResponse == nil || validSecretResponse(item)),
+                  (!MailboxMessageAddressing.isHuman(item, in: state) || validQuestionResponse(item) || validSecretResponse(item)),
                   item.senderID != item.recipientID, counts[item.id] == 1 else { continue }
             let incoming = RoomMessage(id: item.id, groupID: originID, senderID: item.senderID,
                 text: item.text, createdAt: item.createdAt, images: item.images ?? [])
@@ -453,8 +477,23 @@ public actor AgentMessenger {
                       message.senderID == (kind == .incoming ? item.senderID : item.recipientID),
                       !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                       message.toolActivities.isEmpty,
-                      message.secretRequest == nil,
                       message.memberOutcome == nil, message.questionReplyTo == nil else { return }
+                if let secret = message.secretRequest {
+                    guard kind == .publication, secret.accountID == binding.accountID,
+                          message.text == "Requested a credential securely: \(secret.request.label)",
+                          secret.memberIDs == [item.senderID, item.recipientID],
+                          message.question == nil, message.cursorAgent == nil,
+                          (message.images ?? []).isEmpty else { return }
+                    switch secret.state {
+                    case .pending, .retired:
+                        guard secret.responseMessageID == nil else { return }
+                    case .stored, .dismissed:
+                        guard let responseID = secret.responseMessageID,
+                              let response = state.messages.first(where: { $0.id == responseID }),
+                              response.secretResponse?.publicationID == message.id,
+                              validSecretResponse(response) else { return }
+                    }
+                }
                 if let reference = message.cursorAgent {
                     guard kind == .publication, message.text == reference.summary,
                           message.question == nil, (message.images ?? []).isEmpty else { return }
@@ -476,7 +515,7 @@ public actor AgentMessenger {
                     originConversationID: originID, deliveryID: item.id, senderAgentID: item.senderID,
                     recipientAgentID: item.recipientID, kind: kind), message: message))
             }
-            if item.questionResponse == nil { try append(incoming, kind: .incoming) }
+            if item.questionResponse == nil && item.secretResponse == nil { try append(incoming, kind: .incoming) }
             for report in delivery.publications ?? [] { try append(report, kind: .publication) }
             if delivery.state == .completed, delivery.publications?.isEmpty != false,
                let report = delivery.finalPublication {

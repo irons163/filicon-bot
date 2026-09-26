@@ -110,6 +110,75 @@ struct MailboxSecretRequestTests {
         }
     }
 
+    @Test(arguments: [AgentMessageDelivery.State.completed, .failed, .cancelled])
+    func unansweredDirectCardRestartsAsInertHistory(state: AgentMessageDelivery.State) async throws {
+        let f = try await fixture(direct: true)
+        defer { try? FileManager.default.removeItem(at: f.root) }
+        _ = try await publish(f)
+        try await f.messenger.updateDelivery(id: f.incoming.id, state: state, at: date)
+        let binding = try #require(f.incoming.delivery?.directOriginBinding)
+        let entries = try await f.messenger.directPeerTranscript(originID: scope, binding: binding)
+        expectNoDifference(entries.map(\.message.id), [f.incoming.id, publicationID])
+        expectNoDifference(entries.last?.message.secretRequest?.state, state == .completed ? .pending : .retired)
+        let restarted = try AgentMessenger(service: f.agents, storeURL: f.file)
+        let restored = try await restarted.directPeerTranscript(originID: scope, binding: binding)
+        expectNoDifference(restored.map(\.message.id), [f.incoming.id, publicationID])
+        expectNoDifference(restored.last?.message.secretRequest?.state, .retired)
+        expectNoDifference(restored.last?.message.secretRequest?.responseMessageID, nil)
+        let messages = await restarted.allMessages()
+        expectNoDifference(messages.count, 1)
+        expectNoDifference(messages[0].delivery?.state, state)
+    }
+
+    @Test(arguments: [true, false], ["valid", "binding", "scope", "state", "response-link", "card-text"])
+    func directRecoveryKeepsCardAndAgentReportWithoutRelabelingHumanReceipt(provided: Bool, mode: String) async throws {
+        let f = try await fixture(direct: true)
+        defer { try? FileManager.default.removeItem(at: f.root) }
+        _ = try await publish(f)
+        try await f.messenger.updateDelivery(id: f.incoming.id, state: .completed, at: date)
+        let binding = try #require(f.incoming.delivery?.directOriginBinding)
+        let response = try await f.messenger.resolveSecretRequest(replyingTo: f.incoming.id,
+            publicationID: publicationID, provided: provided, accountID: "A", originID: scope,
+            connectionID: connectionID, responseID: responseID, directOriginBinding: binding,
+            at: date, lifetime: .init())
+        try await f.messenger.updateDelivery(id: response.id, state: .running, at: date)
+        let report = RoomMessage(id: UUID(uuidString: "00000000-0000-0000-0000-000000000006")!,
+            groupID: scope, senderID: f.incoming.recipientID,
+            text: "Credential response received; authentication not verified.", createdAt: date)
+        try await f.messenger.publish(report, replyingTo: response.id, lifetime: .init())
+        try await f.messenger.updateDelivery(id: response.id, state: .completed, at: date)
+        let before = try Data(contentsOf: f.file)
+        let entries = try await f.messenger.directPeerTranscript(originID: scope, binding: binding)
+        expectNoDifference(entries.map(\.message.id), [f.incoming.id, publicationID, report.id])
+        expectNoDifference(entries.last?.message, report)
+        expectNoDifference(entries[1].message.secretRequest?.state, provided ? .stored : .dismissed)
+        #expect(entries.allSatisfy { $0.message.text != response.text })
+        let restarted = try AgentMessenger(service: f.agents, storeURL: f.file)
+        let restored = try await restarted.directPeerTranscript(originID: scope, binding: binding)
+        expectNoDifference(restored, entries)
+        expectNoDifference(try Data(contentsOf: f.file), before)
+        if mode != "valid" {
+            let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .millisecondsSince1970
+            var altered = try decoder.decode(AgentPersistentState.self, from: before)
+            if mode == "binding" || mode == "scope" {
+                var delivery = AgentMessageDelivery(chainID: responseID,
+                    originConversationID: mode == "scope" ? connectionID : scope,
+                    state: .completed, directOriginBinding: mode == "binding" ? nil : binding)
+                delivery.startedAt = date
+                delivery.publications = [report]
+                altered.messages[1].delivery = delivery
+            }
+            if mode == "state" { altered.messages[0].delivery?.publications?[0].secretRequest?.state = .retired }
+            if mode == "response-link" { altered.messages[0].delivery?.publications?[0].secretRequest?.responseMessageID = connectionID }
+            if mode == "card-text" { altered.messages[0].delivery?.publications?[0].text = "Unrelated request" }
+            let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .millisecondsSince1970
+            try encoder.encode(altered).write(to: f.file, options: .atomic)
+            let corrupted = try AgentMessenger(service: f.agents, storeURL: f.file)
+            let rejected = try await corrupted.directPeerTranscript(originID: scope, binding: binding)
+            expectNoDifference(rejected.map(\.message.id), [f.incoming.id])
+        }
+    }
+
     @Test(arguments: ["account", "scope", "connection", "publication", "running", "cancelled", "failed", "closed", "archived", "retired", "restart", "response-input", "response-publication"])
     func staleResponsesNeverQueueWork(mode: String) async throws {
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
