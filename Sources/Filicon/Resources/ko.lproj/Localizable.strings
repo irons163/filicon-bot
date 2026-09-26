@@ -1705,3 +1705,6 @@
 "Private memory supports at most 8 profile facts. Log and note history has no count limit." = "개인 기억의 기본 사실은 최대 8개입니다. 기록과 메모 이력에는 개수 제한이 없습니다.";
 "Shared user memory supports at most 8 profile facts per account. Log and note history has no count limit." = "공유 사용자 기억의 기본 사실은 계정당 최대 8개입니다. 기록과 메모 이력에는 개수 제한이 없습니다.";
 "Project memory supports at most 8 profile facts per project. Log and note history has no count limit." = "프로젝트 기억의 기본 사실은 프로젝트당 최대 8개입니다. 기록과 메모 이력에는 개수 제한이 없습니다.";
+"Previous page" = "이전 페이지";
+"Next page" = "다음 페이지";
+"Page %lld of %lld" = "%lld / %lld 페이지";

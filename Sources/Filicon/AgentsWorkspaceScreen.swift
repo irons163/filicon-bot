@@ -418,11 +418,32 @@ struct AgentEditorView: View {
     }
 }
 
+struct AgentMemoryPageControls: View {
+    let index: Int
+    let count: Int
+    let previous: () -> Void
+    let next: () -> Void
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(String(format: l10n("Page %lld of %lld"), Int64(index + 1), Int64(count)))
+                .font(.caption).foregroundStyle(.secondary)
+            HStack {
+                Button(l10n("Previous page"), action: previous).disabled(index == 0)
+                Spacer()
+                Button(l10n("Next page"), action: next).disabled(index + 1 >= count)
+            }
+        }
+    }
+}
+
 private struct AgentMemorySection: View {
     @EnvironmentObject private var model: AppModel
     let agentID: UUID
     let scope: AgentMemory.Scope
     @State private var memories: [AgentMemory] = []
+    @State private var pageIndex = 0
+    @State private var pageCount = 1
+    @State private var requestID = UUID()
     @State private var pendingRemoval: AgentMemory?
     @State private var confirmsRemoval = false
     @State private var busy = false
@@ -455,11 +476,16 @@ private struct AgentMemorySection: View {
                     Button(l10n("Forget"), role: .destructive) { forgetButtonTapped(memory) }
                 }
             }
+            if pageCount > 1 {
+                AgentMemoryPageControls(index: pageIndex, count: pageCount,
+                    previous: { Task { await pageButtonTapped(pageIndex - 1) } },
+                    next: { Task { await pageButtonTapped(pageIndex + 1) } })
+            }
             Button(l10n("Refresh")) { Task { await refreshButtonTapped() } }
             if let failure { Text(failure).foregroundStyle(.red) }
         }
         .disabled(busy)
-        .task(id: model.settings.accountScope ?? "local") { await accountChanged() }
+        .task(id: "\(model.settings.accountScope ?? "local"):\(agentID):\(scope.rawValue)") { await accountChanged() }
         .confirmationDialog(l10n(scope == .project ? "Forget this fact for all project members?" : scope == .user ? "Forget this shared fact for all agents?" : "Forget this fact?"), isPresented: $confirmsRemoval, titleVisibility: .visible) {
             Button(l10n("Forget"), role: .destructive) { Task { await confirmForgetButtonTapped() } }
             Button(l10n("Cancel"), role: .cancel) { pendingRemoval = nil }
@@ -469,26 +495,43 @@ private struct AgentMemorySection: View {
     }
     private func accountChanged() async {
         memories = []; pendingRemoval = nil; confirmsRemoval = false; failure = nil
+        pageIndex = 0; pageCount = 1
         await refreshButtonTapped()
     }
     private func refreshButtonTapped() async {
+        await pageButtonTapped(0)
+    }
+    private func pageButtonTapped(_ index: Int) async {
+        let request = UUID(); requestID = request; busy = true
+        defer { if requestID == request { busy = false } }
         let account = model.settings.accountScope ?? "local"
         do {
-            let values = try await model.savedAgentMemories(agentID: agentID, scope: scope)
+            let page = try await model.savedAgentMemoryPage(agentID: agentID, scope: scope, index: index)
             try Task.checkCancellation()
-            guard account == model.settings.accountScope ?? "local" else { return }
-            memories = values; failure = nil
-        } catch is CancellationError {} catch { failure = FiliconLocalization.string(error.localizedDescription) }
+            guard requestID == request, account == model.settings.accountScope ?? "local" else { return }
+            memories = page.memories; pageIndex = page.index; pageCount = page.pageCount; failure = nil
+        } catch is CancellationError {} catch {
+            guard requestID == request, account == model.settings.accountScope ?? "local" else { return }
+            failure = FiliconLocalization.string(error.localizedDescription)
+        }
     }
     private func forgetButtonTapped(_ memory: AgentMemory) {
         pendingRemoval = memory; confirmsRemoval = true
     }
     private func confirmForgetButtonTapped() async {
         guard let memory = pendingRemoval else { return }
+        let request = UUID(); requestID = request
+        let account = model.settings.accountScope ?? "local"
         pendingRemoval = nil; busy = true
-        defer { busy = false }
-        do { try await model.forgetAgentMemory(memory); await refreshButtonTapped() }
-        catch is CancellationError {} catch { failure = FiliconLocalization.string(error.localizedDescription) }
+        defer { if requestID == request { busy = false } }
+        do {
+            try await model.forgetAgentMemory(memory)
+            guard requestID == request, account == model.settings.accountScope ?? "local" else { return }
+            await refreshButtonTapped()
+        } catch is CancellationError {} catch {
+            guard requestID == request, account == model.settings.accountScope ?? "local" else { return }
+            failure = FiliconLocalization.string(error.localizedDescription)
+        }
     }
 }
 

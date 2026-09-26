@@ -235,6 +235,33 @@ struct AgentMemoryTests {
         expectNoDifference(Set(remaining.map(\.id)), Set(after.map(\.id)).subtracting([oldest.id]))
     }
 
+    @Test(arguments: [AgentMemory.Scope.agent, .user])
+    func editorPagesCoverHistoryWithoutLeakingOtherAccounts(scope: AgentMemory.Scope) async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        for index in 0..<41 {
+            try await f.agents.applyMemoryChange(.init(operation: .write, memory: .init(accountID: "local",
+                agentID: f.owner.id, fact: "Fact \(index)", scope: scope, createdAt: Date(timeIntervalSince1970: Double(index)))), lifetime: .init())
+        }
+        try await f.agents.applyMemoryChange(.init(operation: .write, memory: .init(accountID: "other",
+            agentID: f.owner.id, fact: "Foreign account", scope: scope)), lifetime: .init())
+        let first = await f.agents.memoryEditorPage(accountID: "local", agentID: f.owner.id, scope: scope, index: -1)
+        let second = await f.agents.memoryEditorPage(accountID: "local", agentID: f.owner.id, scope: scope, index: 1)
+        let last = await f.agents.memoryEditorPage(accountID: "local", agentID: f.owner.id, scope: scope, index: Int.max)
+        expectNoDifference([first.index, second.index, last.index], [0, 1, 2])
+        expectNoDifference([first.memories.count, second.memories.count, last.memories.count], [20, 20, 1])
+        expectNoDifference(first.totalCount, 41)
+        expectNoDifference((first.memories + second.memories + last.memories).map(\.fact), (0..<41).map { "Fact \($0)" })
+        let deleted = try #require(last.memories.first)
+        try await f.agents.forgetMemoryFromEditor(deleted, lifetime: .init())
+        let reopened = try AgentService(storeURL: f.file)
+        let clamped = await reopened.memoryEditorPage(accountID: "local", agentID: f.owner.id, scope: scope, index: 2)
+        expectNoDifference(clamped.index, 1); expectNoDifference(clamped.pageCount, 2)
+        expectNoDifference(clamped.memories.map(\.fact), second.memories.map(\.fact))
+        let empty = await reopened.memoryEditorPage(accountID: "missing", agentID: f.owner.id, scope: scope, index: Int.max)
+        expectNoDifference(empty.totalCount, 0); expectNoDifference(empty.index, 0)
+        expectNoDifference(empty.memories, [])
+    }
+
     @Test func forgettingSurvivesDateRoundTripAndPersistenceFailureWithoutRemovingReplacement() async throws {
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
         let memory = AgentMemory(accountID: "local", agentID: f.owner.id, fact: "Remembered before reopening",

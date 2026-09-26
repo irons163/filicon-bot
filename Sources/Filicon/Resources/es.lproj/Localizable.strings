@@ -1705,3 +1705,6 @@
 "Private memory supports at most 8 profile facts. Log and note history has no count limit." = "La memoria privada admite hasta 8 hechos fundamentales. El historial de registros y notas no tiene límite de cantidad.";
 "Shared user memory supports at most 8 profile facts per account. Log and note history has no count limit." = "La memoria de usuario compartida admite hasta 8 hechos fundamentales por cuenta. El historial de registros y notas no tiene límite de cantidad.";
 "Project memory supports at most 8 profile facts per project. Log and note history has no count limit." = "La memoria de proyecto admite hasta 8 hechos fundamentales por proyecto. El historial de registros y notas no tiene límite de cantidad.";
+"Previous page" = "Página anterior";
+"Next page" = "Página siguiente";
+"Page %lld of %lld" = "Página %lld de %lld";

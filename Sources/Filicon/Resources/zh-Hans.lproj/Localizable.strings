@@ -1705,3 +1705,6 @@
 "Private memory supports at most 8 profile facts. Log and note history has no count limit." = "私人记忆最多可保存 8 项基础事实。记录与笔记历史不限条数。";
 "Shared user memory supports at most 8 profile facts per account. Log and note history has no count limit." = "共享用户记忆每个账号最多可保存 8 项基础事实。记录与笔记历史不限条数。";
 "Project memory supports at most 8 profile facts per project. Log and note history has no count limit." = "项目记忆每个项目最多可保存 8 项基础事实。记录与笔记历史不限条数。";
+"Previous page" = "上一页";
+"Next page" = "下一页";
+"Page %lld of %lld" = "第 %lld 页，共 %lld 页";

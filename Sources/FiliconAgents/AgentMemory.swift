@@ -63,6 +63,23 @@ public struct AgentMemory: Identifiable, Codable, Hashable, Sendable {
     }
 }
 
+/// Human editor pagination, not a model permission or recall limit. A page is
+/// a fresh view of the store; callers refresh after edits, not append snapshots.
+public struct AgentMemoryEditorPage: Sendable {
+    public static let pageSize = 20
+    public let memories: [AgentMemory]
+    public let index: Int
+    public let pageCount: Int
+    public let totalCount: Int
+    public init(memories: [AgentMemory], index: Int) {
+        totalCount = memories.count
+        pageCount = max(1, memories.count / Self.pageSize + (memories.count % Self.pageSize == 0 ? 0 : 1))
+        self.index = min(max(0, index), pageCount - 1)
+        let start = self.index * Self.pageSize
+        self.memories = Array(memories.dropFirst(start).prefix(Self.pageSize))
+    }
+}
+
 public struct AgentMemoryChange: Equatable, Sendable {
     public enum Operation: String, Sendable { case write, forget }
     public let operation: Operation

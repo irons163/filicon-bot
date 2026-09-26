@@ -183,6 +183,13 @@ struct AgentProjectMemoryTests {
         try await f.agents.forgetMemoryFromEditor(first.memory, lifetime: .init())
         let remaining = await f.agents.projectMemoriesForEditor(accountID: "local")
         #expect(!remaining.contains(first.memory)); expectNoDifference(remaining.count, 49)
+        var paged: [AgentMemory] = []
+        for index in 0..<3 {
+            let page = await f.agents.memoryEditorPage(accountID: "local", agentID: f.reader.id, scope: .project, index: index)
+            #expect(page.memories.count <= 20)
+            paged.append(contentsOf: page.memories)
+        }
+        expectNoDifference(paged, remaining)
     }
 
     @Test func boundedRecallSeparatesProjectDuplicatesAndSearchFencesMembershipABA() async throws {

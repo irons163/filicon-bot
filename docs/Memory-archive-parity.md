@@ -45,6 +45,14 @@
 - 完整 `swift test --no-parallel` exit 0（`.build/validation/memory-extraction-context-full.log`）；原生 `Filicon App` Debug 建置與 `verify-package.sh --xcode-debug` 通過，未啟動 App。
 - fixture 的 520 筆只驗證投影，不代表持久化已支援超過 48 筆。下一步仍須處理整份抽取輸入／synthesis 預算、儲存容量與管理介面。
 
+## 人類管理頁分頁（2026-09-27）
+
+- `memoryEditorPage` 在 actor 內先篩選帳號／scope，再依既有穩定排序切每頁 20 筆；shared／project 保留離開或封存作者的記憶供人類管理，不擴大模型讀取權限。
+- AppModel 包裝沿用帳號 generation fence；SwiftUI 僅持有目前頁面，七語上一頁／下一頁／頁碼，重新整理與刪除回第一頁。非同步結果與錯誤受 request ID 與帳號檢查保護；帳號、代理人或 scope 變更重設頁面。
+- 頁面是新鮮快照而非跨頁凍結游標；外部新增／刪除可能改變邊界，可重新整理。越界頁碼會 clamp，不留空白末頁。Service 仍從整份已載入 JSON 排序，這次不宣稱磁碟分頁或大資料量 I/O 已解決。
+- 私人／共享 41 筆測試驗證 20／20／1、負值／Int.max clamp、跨帳號隔離、末頁刪除後重開；專案頁合併結果等於完整 editor 清單。七語控制項在 340pt 寬度渲染首／中／末頁；檢視繁中、法文圖未見截斷。
+- 完整測試 exit 0（`.build/validation/memory-editor-page-final.log`）、原生 Debug 建置、App／XPC 封裝簽章驗證通過。圖片位於 `/private/tmp/filicon-memory-pages-review/memory-pages-*.png`；這是隔離控制項渲染，不是真實 App 點擊驗收。
+
 ## 輸入總量防線（2026-09-27）
 
 - 抽取的 user／assistant 各取最多 8,000 Unicode scalars（不再僅依 grapheme 數），整份編碼 JSON 上限 128,000 bytes；測試用一個包含 100,000 組合符號的字元驗證不能繞過限制。這只限制背景抽取輸入，不更動原對話。

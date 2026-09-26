@@ -4016,6 +4016,15 @@ final class AppModel: ObservableObject {
         return values
     }
 
+    func savedAgentMemoryPage(agentID: UUID, scope: AgentMemory.Scope, index: Int) async throws -> AgentMemoryEditorPage {
+        let generation = autoReviewAccountGeneration
+        guard let agentService, !agentMessagingAccountTransition else { throw CancellationError() }
+        let page = await agentService.memoryEditorPage(accountID: settings.accountScope ?? "local",
+            agentID: agentID, scope: scope, index: index)
+        guard generation == autoReviewAccountGeneration else { throw CancellationError() }
+        return page
+    }
+
     func memoryEpisodeSettings(agentID: UUID) async throws -> AgentMemoryEpisodeSettings {
         let generation = autoReviewAccountGeneration
         guard let agentService, !agentMessagingAccountTransition else { throw CancellationError() }

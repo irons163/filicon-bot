@@ -608,6 +608,18 @@ public actor AgentService {
         sortedMemories(state.memories.filter { $0.accountID == accountID && $0.scope == .user })
     }
 
+    /// User-facing page, scoped before slicing. Shared scopes include departed
+    /// writers so the human can still inspect and forget their saved facts.
+    public func memoryEditorPage(accountID: String, agentID: UUID, scope: AgentMemory.Scope, index: Int) -> AgentMemoryEditorPage {
+        let values: [AgentMemory]
+        switch scope {
+        case .agent: values = memories(accountID: accountID, agentID: agentID)
+        case .user: values = sharedUserMemories(accountID: accountID)
+        case .project: values = projectMemoriesForEditor(accountID: accountID)
+        }
+        return .init(memories: values, index: index)
+    }
+
     /// User-facing account library, not a model read API. Includes departed writers.
     public func projectMemoriesForEditor(accountID: String) -> [AgentMemory] {
         sortedMemories(state.memories.filter { $0.accountID == accountID && $0.scope == .project })

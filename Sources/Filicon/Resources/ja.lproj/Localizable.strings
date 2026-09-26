@@ -1705,3 +1705,6 @@
 "Private memory supports at most 8 profile facts. Log and note history has no count limit." = "個人記憶の基本情報は8件までです。ログとメモの履歴に件数制限はありません。";
 "Shared user memory supports at most 8 profile facts per account. Log and note history has no count limit." = "共有ユーザー記憶の基本情報はアカウントごとに8件までです。ログとメモの履歴に件数制限はありません。";
 "Project memory supports at most 8 profile facts per project. Log and note history has no count limit." = "プロジェクト記憶の基本情報はプロジェクトごとに8件までです。ログとメモの履歴に件数制限はありません。";
+"Previous page" = "前のページ";
+"Next page" = "次のページ";
+"Page %lld of %lld" = "%lld / %lld ページ";

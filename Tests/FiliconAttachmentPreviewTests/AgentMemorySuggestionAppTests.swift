@@ -655,6 +655,35 @@ private actor SynthesisAppTimer {
     }
 
     @Test(.serialized, arguments: ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"])
+    func memoryPageControlsRenderInNarrowEditor(language: String) async throws {
+        try await withUIRenderTurn(language: language) {
+            if language != "en" {
+                for key in ["Previous page", "Next page", "Page %lld of %lld"] {
+                    #expect(FiliconLocalization.string(key) != key)
+                }
+            }
+            let host = NSHostingView(rootView: VStack(spacing: 20) {
+                AgentMemoryPageControls(index: 0, count: 3, previous: {}, next: {})
+                AgentMemoryPageControls(index: 1, count: 3, previous: {}, next: {})
+                AgentMemoryPageControls(index: 2, count: 3, previous: {}, next: {})
+            }.padding(16).frame(width: 340).background(FiliconTheme.canvas)
+                .environment(\.locale, Locale(identifier: language)).environment(\.colorScheme, .light))
+            host.appearance = NSAppearance(named: .aqua)
+            let size = host.fittingSize
+            expectNoDifference(size.width, 340)
+            #expect(size.height > 100 && size.height < 400)
+            host.frame = .init(origin: .zero, size: size); host.layoutSubtreeIfNeeded()
+            let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            if let output = ProcessInfo.processInfo.environment["FILICON_UI_REVIEW_OUTPUT"] {
+                let directory = URL(fileURLWithPath: output)
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                try #require(bitmap.representation(using: .png, properties: [:])).write(to: directory.appending(path: "memory-pages-\(language).png"))
+            }
+        }
+    }
+
+    @Test(.serialized, arguments: ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"])
     func reviewCardAndDisclosureRenderInSevenLanguages(language: String) async throws {
         expectNoDifference(AgentMemoryOriginLabel.titleKey(for: .explicit), "Source: approved memory")
         expectNoDifference(AgentMemoryOriginLabel.titleKey(for: .synthesis), "Source: automatic synthesis")

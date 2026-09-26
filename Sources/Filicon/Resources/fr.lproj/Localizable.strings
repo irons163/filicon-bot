@@ -1705,3 +1705,6 @@
 "Private memory supports at most 8 profile facts. Log and note history has no count limit." = "La mémoire privée accepte au plus 8 faits fondamentaux. Le nombre de journaux et de notes conservés est illimité.";
 "Shared user memory supports at most 8 profile facts per account. Log and note history has no count limit." = "La mémoire utilisateur partagée accepte au plus 8 faits fondamentaux par compte. Le nombre de journaux et de notes conservés est illimité.";
 "Project memory supports at most 8 profile facts per project. Log and note history has no count limit." = "La mémoire de projet accepte au plus 8 faits fondamentaux par projet. Le nombre de journaux et de notes conservés est illimité.";
+"Previous page" = "Page précédente";
+"Next page" = "Page suivante";
+"Page %lld of %lld" = "Page %lld sur %lld";

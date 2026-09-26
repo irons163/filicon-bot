@@ -1705,3 +1705,6 @@
 "Private memory supports at most 8 profile facts. Log and note history has no count limit." = "私人記憶最多可保存 8 項基礎事實。紀錄與筆記歷史不限制筆數。";
 "Shared user memory supports at most 8 profile facts per account. Log and note history has no count limit." = "共用使用者記憶每個帳號最多可保存 8 項基礎事實。紀錄與筆記歷史不限制筆數。";
 "Project memory supports at most 8 profile facts per project. Log and note history has no count limit." = "專案記憶每個專案最多可保存 8 項基礎事實。紀錄與筆記歷史不限制筆數。";
+"Previous page" = "上一頁";
+"Next page" = "下一頁";
+"Page %lld of %lld" = "第 %lld 頁，共 %lld 頁";
