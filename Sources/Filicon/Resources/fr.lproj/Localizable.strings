@@ -1710,3 +1710,10 @@
 "Page %lld of %lld" = "Page %lld sur %lld";
 "Invalid or unsupported agent settings change. Use only the boolean settings advertised by this session." = "Modification des réglages de l’agent non valide ou non prise en charge. Utilisez uniquement les réglages booléens proposés par cette session.";
 "Agent settings changed. Reopen the editor or request approval again." = "Les réglages de l’agent ont changé. Rouvrez l’éditeur ou redemandez l’approbation.";
+"Agent settings" = "Réglages de l’agent";
+"Sidebar visibility" = "Visibilité dans la barre latérale";
+"Visible in sidebar" = "Visible dans la barre latérale";
+"Hidden from sidebar" = "Masqué dans la barre latérale";
+"Chat ID" = "ID de la conversation";
+"Hiding affects only this direct chat in this account. History, group membership and tasks are preserved. Restore it from Hidden Chats." = "Le masquage concerne uniquement cette conversation directe dans ce compte. L’historique, l’appartenance aux groupes et les tâches sont conservés. Restaurez-la depuis les conversations masquées.";
+"Notification changes affect this local agent's system alerts across groups and accounts. Other conversation alerts and macOS notification permission are unchanged." = "Les modifications concernent les alertes système de cet agent local dans tous les groupes et comptes. Les autres alertes de conversation et l’autorisation de notification macOS restent inchangées.";

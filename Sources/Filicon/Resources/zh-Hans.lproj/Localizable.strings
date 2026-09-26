@@ -1710,3 +1710,10 @@
 "Page %lld of %lld" = "第 %lld 页，共 %lld 页";
 "Invalid or unsupported agent settings change. Use only the boolean settings advertised by this session." = "代理人设置变更无效或不受支持。请只使用此会话提供的布尔设置。";
 "Agent settings changed. Reopen the editor or request approval again." = "代理人设置已变更。请重新打开编辑器或再次请求批准。";
+"Agent settings" = "代理人设置";
+"Sidebar visibility" = "侧栏显示";
+"Visible in sidebar" = "显示于侧栏";
+"Hidden from sidebar" = "从侧栏隐藏";
+"Chat ID" = "聊天 ID";
+"Hiding affects only this direct chat in this account. History, group membership and tasks are preserved. Restore it from Hidden Chats." = "隐藏只影响此账号的这个单独聊天。历史、群组成员资格与任务都会保留。可从“隐藏的聊天”恢复。";
+"Notification changes affect this local agent's system alerts across groups and accounts. Other conversation alerts and macOS notification permission are unchanged." = "通知变更会影响使用此本机代理人的各群组与账号的系统通知。其他对话通知与 macOS 通知权限不变。";

@@ -1710,3 +1710,10 @@
 "Page %lld of %lld" = "Page %lld of %lld";
 "Invalid or unsupported agent settings change. Use only the boolean settings advertised by this session." = "Invalid or unsupported agent settings change. Use only the boolean settings advertised by this session.";
 "Agent settings changed. Reopen the editor or request approval again." = "Agent settings changed. Reopen the editor or request approval again.";
+"Agent settings" = "Agent settings";
+"Sidebar visibility" = "Sidebar visibility";
+"Visible in sidebar" = "Visible in sidebar";
+"Hidden from sidebar" = "Hidden from sidebar";
+"Chat ID" = "Chat ID";
+"Hiding affects only this direct chat in this account. History, group membership and tasks are preserved. Restore it from Hidden Chats." = "Hiding affects only this direct chat in this account. History, group membership and tasks are preserved. Restore it from Hidden Chats.";
+"Notification changes affect this local agent's system alerts across groups and accounts. Other conversation alerts and macOS notification permission are unchanged." = "Notification changes affect this local agent's system alerts across groups and accounts. Other conversation alerts and macOS notification permission are unchanged.";

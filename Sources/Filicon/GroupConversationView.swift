@@ -915,15 +915,50 @@ struct AgentNotificationSettingsNotice: View {
     }
 }
 
+enum AgentSettingsApprovalPresentation {
+    static func metadata(sender: AgentProfile, change: AgentSettingsChange, conversationTitle: String? = nil) -> [String: String] {
+        var values = ["tool": "update_state", "agentStateTarget": "settings", "agentName": sender.name,
+                      "agentNotifyOnUpdates": String(change.notifyOnUpdates), "previousAgentNotifyOnUpdates": String(change.previousValue)]
+        if let visibility = change.visibility {
+            values["agentHiddenFromSidebar"] = String(visibility.proposed.hidden)
+            values["previousAgentHiddenFromSidebar"] = String(visibility.previousHidden)
+            values["agentSidebarConversationID"] = visibility.proposed.conversationID.uuidString
+            values["agentSidebarConversationTitle"] = conversationTitle
+        }
+        return values
+    }
+}
+
 struct AgentSettingsApprovalDetails: View {
     let metadata: [String: String]
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(l10n("Agent update notifications")).font(.callout.weight(.semibold))
+            Text(l10n(metadata["agentHiddenFromSidebar"] == nil ? "Agent update notifications" : "Agent settings"))
+                .font(.callout.weight(.semibold))
             Text(verbatim: metadata["agentName"] ?? "").textSelection(.enabled)
+            if metadata["agentHiddenFromSidebar"] != nil {
+                Text(l10n("Agent update notifications")).font(.caption.weight(.semibold))
+            }
             LabeledContent(l10n("Before"), value: l10n(metadata["previousAgentNotifyOnUpdates"] == "true" ? "Update notifications on" : "Update notifications off"))
             LabeledContent(l10n("After"), value: l10n(metadata["agentNotifyOnUpdates"] == "true" ? "Update notifications on" : "Update notifications off"))
-            AgentNotificationSettingsNotice()
+            if let hidden = metadata["agentHiddenFromSidebar"] {
+                Text(l10n("Notification changes affect this local agent's system alerts across groups and accounts. Other conversation alerts and macOS notification permission are unchanged."))
+                    .font(.caption).foregroundStyle(FiliconTheme.textSecondary)
+                Divider()
+                Text(l10n("Sidebar visibility")).font(.callout.weight(.semibold))
+                if let title = metadata["agentSidebarConversationTitle"] {
+                    Text(verbatim: title).textSelection(.enabled)
+                }
+                Text(l10n("Chat ID")).font(.caption.weight(.semibold))
+                Text(verbatim: metadata["agentSidebarConversationID"] ?? "")
+                    .font(.caption.monospaced()).textSelection(.enabled)
+                LabeledContent(l10n("Before"), value: l10n(metadata["previousAgentHiddenFromSidebar"] == "true" ? "Hidden from sidebar" : "Visible in sidebar"))
+                LabeledContent(l10n("After"), value: l10n(hidden == "true" ? "Hidden from sidebar" : "Visible in sidebar"))
+                Text(l10n("Hiding affects only this direct chat in this account. History, group membership and tasks are preserved. Restore it from Hidden Chats."))
+                    .font(.caption).foregroundStyle(FiliconTheme.textSecondary)
+            } else {
+                AgentNotificationSettingsNotice()
+            }
         }
         .fixedSize(horizontal: false, vertical: true)
     }

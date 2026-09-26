@@ -618,6 +618,48 @@ private actor ManagementWakeProbe {
         }
     }
 
+    @Test(.serialized, arguments: ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"])
+    func sidebarApprovalRendersBothChanges(language: String) async throws {
+        let output = ProcessInfo.processInfo.environment["FILICON_UI_REVIEW_OUTPUT"].map { URL(fileURLWithPath: $0) }
+        let owner = AgentProfile(name: "Designer")
+        let chatID = UUID(uuidString: "00000000-0000-0000-0000-000000000031")!
+        for hidden in [false, true] {
+            let visibility = AgentSidebarVisibility(accountID: "PRIVATE_ACCOUNT", agentID: owner.id,
+                conversationID: chatID, hidden: hidden)
+            let change = AgentSettingsChange(agentID: owner.id, notifyOnUpdates: false, previousValue: true,
+                previousRevision: nil, visibility: .init(proposed: visibility, previous: nil, previousHidden: !hidden))
+            let metadata = AgentSettingsApprovalPresentation.metadata(sender: owner, change: change,
+                conversationTitle: "Design review — accessibility and navigation")
+            expectNoDifference(metadata["previousAgentHiddenFromSidebar"], String(!hidden))
+            expectNoDifference(metadata["agentHiddenFromSidebar"], String(hidden))
+            expectNoDifference(metadata["agentSidebarConversationID"], chatID.uuidString)
+            expectNoDifference(metadata["previousAgentNotifyOnUpdates"], "true")
+            expectNoDifference(metadata["agentNotifyOnUpdates"], "false")
+            #expect(!metadata.values.joined().contains("PRIVATE_ACCOUNT"))
+            for dark in [false, true] {
+                try await withUIRenderTurn(language: language) {
+                    for key in ["Agent settings", "Sidebar visibility", "Visible in sidebar", "Hidden from sidebar", "Chat ID"] {
+                        if language != "en" { #expect(FiliconLocalization.string(key) != key) }
+                    }
+                    let host = NSHostingView(rootView: AgentSettingsApprovalDetails(metadata: metadata)
+                        .padding(20).frame(width: 380).background(FiliconTheme.canvas)
+                        .environment(\.locale, Locale(identifier: language)).environment(\.colorScheme, dark ? .dark : .light))
+                    host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+                    host.frame = .init(x: 0, y: 0, width: 380, height: 760)
+                    host.layoutSubtreeIfNeeded()
+                    #expect(host.fittingSize.height <= 760)
+                    let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                    host.cacheDisplay(in: host.bounds, to: bitmap)
+                    let data = try #require(bitmap.representation(using: .png, properties: [:]))
+                    if let output {
+                        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+                        try data.write(to: output.appending(path: "sidebar-\(hidden)-\(language)-\(dark ? "dark" : "light").png"))
+                    }
+                }
+            }
+        }
+    }
+
     private func persistedRoutine(_ value: Automation?) throws -> Automation? {
         let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .millisecondsSince1970
         let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .millisecondsSince1970

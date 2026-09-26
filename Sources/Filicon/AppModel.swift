@@ -4426,12 +4426,21 @@ final class AppModel: ObservableObject {
                                               call: NormalizedToolCall, context: ToolContext) async throws {
         guard isAgentMessagingScopeActive(context.conversationID) else { throw CancellationError() }
         let generation = autoReviewAccountGeneration
+        var sidebarTitle: String?
+        if let visibility = change.visibility {
+            guard visibility.proposed.accountID == (settings.accountScope ?? "local"),
+                  visibility.proposed.agentID == sender.id,
+                  let chat = try await store.uniqueBoundConversation(accountID: visibility.proposed.accountID, agentID: sender.id),
+                  chat.id == visibility.proposed.conversationID,
+                  generation == autoReviewAccountGeneration,
+                  isAgentMessagingScopeActive(context.conversationID) else { throw CancellationError() }
+            sidebarTitle = chat.title
+        }
         let fence = ApprovalFence(accountID: settings.accountScope ?? "local", agentID: context.conversationID.uuidString.lowercased(),
                                   runID: context.runID, generation: generation)
         await autoReviewBroker.activate(fence)
-        let metadata = ["tool": "update_state", "agentStateTarget": "settings", "agentName": sender.name,
-                        "agentNotifyOnUpdates": String(change.notifyOnUpdates), "previousAgentNotifyOnUpdates": String(change.previousValue)]
-        let action = AutoReviewAction(summary: sender.name + " → " + l10n("Agent update notifications"),
+        let metadata = AgentSettingsApprovalPresentation.metadata(sender: sender, change: change, conversationTitle: sidebarTitle)
+        let action = AutoReviewAction(summary: sender.name + " → " + l10n(change.visibility == nil ? "Agent update notifications" : "Agent settings"),
             target: .resource(kind: "agent", identifier: change.agentID.uuidString), risks: [.sensitive],
             context: .init(fence: fence, conversationID: context.conversationID, toolCallID: call.id.rawValue, metadata: metadata))
         let pending = PendingApproval(action: action, reason: "Approval required", expiresAt: Date().addingTimeInterval(300))
