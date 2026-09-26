@@ -258,12 +258,22 @@ public actor AgentService {
             guard suggestion.isValid else { throw AgentMemorySuggestionError.invalid }
             if accept {
                 let saved = memories(accountID: suggestion.accountID, agentID: suggestion.agentID)
-                let duplicate = saved.contains { AgentMemorySuggestionParser.key($0.fact) == AgentMemorySuggestionParser.key(suggestion.fact) }
-                if !duplicate {
+                let duplicate = saved.first { AgentMemorySuggestionParser.key($0.fact) == AgentMemorySuggestionParser.key(suggestion.fact) }
+                if let duplicate {
+                    // Human approval promotes an existing synthesized fact too.
+                    if let index = state.memories.firstIndex(where: { $0.id == duplicate.id }) {
+                        state.memories[index] = .init(id: duplicate.id, accountID: duplicate.accountID,
+                            agentID: duplicate.agentID, fact: duplicate.fact, tier: duplicate.tier,
+                            scope: duplicate.scope, project: duplicate.project, createdAt: duplicate.createdAt)
+                        state.memoryTombstones.remove(.init(duplicate))
+                    }
+                } else {
                     guard saved.count < 48, saved.reduce(0, { $0 + $1.fact.count }) + suggestion.fact.count <= 12_000,
                           suggestion.tier != .profile || saved.filter({ $0.tier == .profile }).count < 8 else { throw AgentMemoryError.limit }
-                    state.memories.append(.init(accountID: suggestion.accountID, agentID: suggestion.agentID,
-                        fact: suggestion.fact, tier: suggestion.tier))
+                    let memory = AgentMemory(accountID: suggestion.accountID, agentID: suggestion.agentID,
+                        fact: suggestion.fact, tier: suggestion.tier)
+                    state.memories.append(memory)
+                    state.memoryTombstones.remove(.init(memory))
                 }
             }
             state.memorySuggestions.removeAll { $0.id == suggestion.id && $0.accountID == suggestion.accountID && $0.agentID == suggestion.agentID }
@@ -273,6 +283,56 @@ public actor AgentService {
 
     public func memories(accountID: String, agentID: UUID, scope: AgentMemory.Scope = .agent, project: String? = nil) -> [AgentMemory] {
         sortedMemories(state.memories.filter { $0.accountID == accountID && $0.agentID == agentID && $0.scope == scope && $0.project == project })
+    }
+
+    func memorySynthesisSnapshot(accountID: String, agentID: UUID) throws -> AgentMemorySynthesisSnapshot {
+        guard !accountID.isEmpty, accountID.count <= 512,
+              state.agents.contains(where: { $0.id == agentID && $0.archivedAt == nil }) else {
+            throw AgentMemoryError.unavailable
+        }
+        return .init(accountID: accountID, agentID: agentID,
+            memories: memories(accountID: accountID, agentID: agentID),
+            tombstones: Set(state.memoryTombstones.filter {
+                $0.accountID == accountID && $0.agentID == agentID && $0.scope == .agent && $0.project == nil
+            }))
+    }
+
+    /// Storage half of synthesis only: a host coordinator must independently
+    /// verify the proposal against its evidence before invoking this method.
+    /// No model tool or current App flow exposes this internal entry point.
+    func applyVerifiedMemorySynthesis(_ text: String, expected: AgentMemorySynthesisSnapshot,
+                                      evidenceIDs: Set<String>, clockEvidenceID: String? = nil,
+                                      at: Date, makeID: () -> UUID = UUID.init,
+                                      lifetime: AgentMemorySuggestionLifetime) throws {
+        try lifetime.commit {
+            guard at.timeIntervalSince1970.isFinite else { throw AgentMemorySuggestionError.invalid }
+            guard try memorySynthesisSnapshot(accountID: expected.accountID, agentID: expected.agentID) == expected else {
+                throw AgentMemorySuggestionError.stale
+            }
+            let proposal = try AgentMemorySynthesisProposal.parse(text, evidenceIDs: evidenceIDs,
+                mutableMemoryIDs: expected.mutableMemoryIDs, clockEvidenceID: clockEvidenceID)
+            var next = expected.memories
+            for change in proposal.changes {
+                if let id = change.id { next.removeAll { $0.id == id } }
+                guard change.action != .remove, let content = change.content, let tier = change.tier else { continue }
+                let memory = AgentMemory(synthesizedID: change.id ?? makeID(), accountID: expected.accountID,
+                    agentID: expected.agentID, fact: content, tier: tier, createdAt: at)
+                if expected.tombstones.contains(.init(memory)) { continue }
+                if next.contains(where: { AgentMemorySuggestionParser.key($0.fact) == AgentMemorySuggestionParser.key(content) }) { continue }
+                guard !next.contains(where: { $0.id == memory.id }),
+                      !state.memories.contains(where: { $0.id == memory.id && $0.id != change.id }) else {
+                    throw AgentMemorySuggestionError.invalid
+                }
+                next.append(memory)
+            }
+            guard next.count <= 48, next.filter({ $0.tier == .profile }).count <= 8,
+                  next.reduce(0, { $0 + $1.fact.count }) <= 12_000 else { throw AgentMemoryError.limit }
+            guard next != expected.memories else { return }
+            // No intermediate mutation, suspension, or partial write.
+            state.memories.removeAll { $0.accountID == expected.accountID && $0.agentID == expected.agentID && $0.scope == .agent }
+            state.memories.append(contentsOf: next)
+            try persist()
+        }
     }
 
     public func sharedUserMemories(accountID: String) -> [AgentMemory] {
@@ -364,6 +424,7 @@ public actor AgentService {
             } else if memory.project != nil || change.project != nil { throw AgentMemoryError.invalid }
             switch change.operation {
             case .write:
+                guard memory.origin == .explicit else { throw AgentMemoryError.invalid }
                 let current: [AgentMemory]
                 switch memory.scope {
                 case .user: current = sharedUserMemories(accountID: memory.accountID)
@@ -378,13 +439,16 @@ public actor AgentService {
                     throw memory.scope == .project ? AgentMemoryError.projectLimit : memory.scope == .user ? AgentMemoryError.sharedLimit : AgentMemoryError.limit
                 }
                 state.memories.append(memory)
+                state.memoryTombstones.remove(.init(memory))
             case .forget:
                 // Record identity and content fence deletion; Date's sub-millisecond
                 // floating-point round trip is not an edit or a new record.
                 guard let index = state.memories.firstIndex(where: {
                     $0.id == memory.id && $0.accountID == memory.accountID && $0.agentID == memory.agentID
                         && $0.fact == memory.fact && $0.tier == memory.tier && $0.scope == memory.scope && $0.project == memory.project
+                        && $0.origin == memory.origin
                 }) else { throw AgentMemoryError.stale }
+                state.memoryTombstones.insert(.init(state.memories[index]))
                 state.memories.remove(at: index)
             }
             try persist()

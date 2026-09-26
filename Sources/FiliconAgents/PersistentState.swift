@@ -13,6 +13,7 @@ struct AgentPersistentState: Codable, Sendable {
     var roomMessages: [RoomMessage] = []
     var reactions: [MessageReaction] = []
     var memories: [AgentMemory] = []
+    var memoryTombstones: Set<AgentMemoryTombstone> = []
     var projects: [AgentProject] = []
     var memorySuggestionSettings: [AgentMemorySuggestionSettings] = []
     var memorySuggestions: [AgentMemorySuggestion] = []
@@ -22,6 +23,7 @@ struct AgentPersistentState: Codable, Sendable {
         case schemaVersion, agents, subagents, wakes, messages, groups, roomMessages, reactions, memories, projects
         case memorySuggestionSettings, memorySuggestions, memorySuggestionReceipts
         case mailboxAddresses, mailboxHumanInputs
+        case memoryTombstones
     }
 
     init() {}
@@ -39,6 +41,7 @@ struct AgentPersistentState: Codable, Sendable {
         roomMessages = try values.decodeIfPresent([RoomMessage].self, forKey: .roomMessages) ?? []
         reactions = try values.decodeIfPresent([MessageReaction].self, forKey: .reactions) ?? []
         memories = try values.decodeIfPresent([AgentMemory].self, forKey: .memories) ?? []
+        memoryTombstones = try values.decodeIfPresent(Set<AgentMemoryTombstone>.self, forKey: .memoryTombstones) ?? []
         projects = try values.decodeIfPresent([AgentProject].self, forKey: .projects) ?? []
         memorySuggestionSettings = try values.decodeIfPresent([AgentMemorySuggestionSettings].self, forKey: .memorySuggestionSettings) ?? []
         memorySuggestions = try values.decodeIfPresent([AgentMemorySuggestion].self, forKey: .memorySuggestions) ?? []

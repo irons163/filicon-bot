@@ -1,5 +1,7 @@
 # Filicon / Grok Bot 0.18 功能 parity matrix（current implementation）
 
+記憶整合保存基礎（2026-09-26）：新增 explicit／synthesis 來源，舊 Filicon 記憶仍預設 explicit；明確刪除保存限定範圍的正規化 SHA-256 指紋，人工重建解除相同指紋。內部 synthesis 保存入口重驗包含來源與刪除紀錄的快照、只改 generated 私有記憶、整批限制與原子保存／失敗回滾。尚未暴露為模型工具或 App 自動流程；獨立語意驗證、opt-in 設定、排程與 episodic 仍待接線，AGENT-01 保持 partial。
+
 記憶整合提案驗證基礎（2026-09-26）：對照原版 synthesis 的 create／update／remove 與 sourceEvidenceIds，新增內部純解析契約；限制本文／批次大小、已知 evidence、host 可修改 ID、每筆只改一次及 clock 不可單獨建立新事實。這不是自動記憶功能完成：尚未接 provider 提案／獨立語意驗證、來源持久化、原子快照套用、tombstone／排程與 UI。既有人工核准記憶不變，AGENT-01 仍 partial。
 
 直接同儕安全輸入（2026-09-26）：已接直接委派的 secret publisher、動態安全卡、提交／取消後保留 binding 的新回合、同儕回覆及 retired 歷史恢復。七種隔離 App 情境驗證，只有 host 已配置的唯一 Slack／Discord bot token 可作目的地，憑證不進模型／聊天；其他 connector、任意網站帳密與真實登入驗收仍 partial。此項取代下方「直接同儕憑證卡尚未接上」歷史狀態，詳細限制與證據見協作核對紀錄。

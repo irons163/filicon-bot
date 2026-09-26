@@ -1,7 +1,9 @@
 import Foundation
 
-/// Explicitly approved facts, not transcripts, instructions or permission grants.
+/// Facts, not transcripts, instructions or permission grants. Existing and
+/// human-approved records always retain explicit provenance.
 public struct AgentMemory: Identifiable, Codable, Hashable, Sendable {
+    public enum Origin: String, Codable, Sendable { case explicit, synthesis }
     public enum Tier: String, Codable, Sendable { case profile, log, note }
     public enum Scope: String, Codable, Sendable { case agent, user, project }
     public let id: UUID
@@ -12,12 +14,22 @@ public struct AgentMemory: Identifiable, Codable, Hashable, Sendable {
     public let scope: Scope
     public let project: String?
     public let createdAt: Date
+    public let origin: Origin
     public init(id: UUID = UUID(), accountID: String, agentID: UUID, fact: String, tier: Tier = .log,
                 scope: Scope = .agent, project: String? = nil, createdAt: Date = Date()) {
         self.id = id; self.accountID = accountID; self.agentID = agentID
         self.fact = fact; self.tier = tier; self.scope = scope; self.project = project; self.createdAt = createdAt
+        self.origin = .explicit
     }
-    private enum CodingKeys: String, CodingKey { case id, accountID, agentID, fact, tier, scope, project, createdAt }
+    // Only host synthesis code can construct generated provenance. The public
+    // write/approval API cannot ask to make an explicit fact auto-editable.
+    init(synthesizedID id: UUID, accountID: String, agentID: UUID, fact: String,
+         tier: Tier, createdAt: Date) {
+        self.id = id; self.accountID = accountID; self.agentID = agentID
+        self.fact = fact; self.tier = tier; self.scope = .agent; self.project = nil
+        self.createdAt = createdAt; self.origin = .synthesis
+    }
+    private enum CodingKeys: String, CodingKey { case id, accountID, agentID, fact, tier, scope, project, createdAt, origin }
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         id = try values.decode(UUID.self, forKey: .id)
@@ -32,6 +44,8 @@ public struct AgentMemory: Identifiable, Codable, Hashable, Sendable {
             throw DecodingError.dataCorruptedError(forKey: .project, in: values, debugDescription: "Invalid memory project scope")
         }
         createdAt = try values.decode(Date.self, forKey: .createdAt)
+        // Every previously saved Filicon fact required human approval.
+        origin = try values.decodeIfPresent(Origin.self, forKey: .origin) ?? .explicit
     }
 
     public func isVisible(accountID: String, agentID: UUID, joinedProjects: Set<String> = []) -> Bool {

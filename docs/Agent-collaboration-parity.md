@@ -1,5 +1,15 @@
 # 協作能力核對紀錄（更新至 2026-09-26）
 
+## 記憶來源、刪除指紋與整批保存（2026-09-26）
+
+`AgentMemory.origin` 區分 explicit／synthesis；所有缺欄位的舊記憶仍是 explicit，未知來源解碼失敗。公開建構及核准 write 固定 explicit，拒絕以解碼的 synthesis 資料走人工新增路徑。人工建議核准若遇同內容 generated 記憶，提升為 explicit。forget 連同 scoped 正規化 SHA-256 tombstone 一起保存，不另外保存刪除本文；人工重建可清除相同 tombstone。
+
+內部 snapshot 僅涵蓋目前帳號／代理人私有記憶，含 provenance 與 tombstones；內部 `applyVerifiedMemorySynthesis` 供未來 host 驗證協調器使用，尚未接到 App／模型工具。它在同一 actor turn 和 lifetime 鎖內重驗快照、重新解析提案、排除 explicit 目標、略過 tombstone／重複內容，完成 48 筆／8 profile／12,000 字配額驗證後才單次保存。保存失敗沿用 persistedState 回滾，不留下半批修改。snapshot 並非語意驗證或使用者啟用授權；尚待實作獨立模型驗證、opt-in、排程與 episodic。
+
+測試依 pfw-testing／CustomDump，使用固定語意 ID／時間與隔離暫存資料；核對舊資料來源、重新載入、create／update／remove、explicit 保護、取消、碰撞、過期與超限、刪除不復活、人工重建，以及檔案寫入失敗／修復後重試。未改真實記憶、帳號或群組資料，未 push 或重啟 App／Xcode。
+
+驗證：初次測試編譯因 CustomDump 同步 autoclosure 不接受 await，已改為先取得 actor 快照再斷言。`memory-synthesis-store-verified.log` 聚焦 48 項邏輯與 6 項 App 測試通過；最終完整非並行 `memory-synthesis-store-full.log` exit 0、原生 `memory-synthesis-store-native.log` exit 0，verify-package 與 deep strict 簽章通過，`git diff --check` 通過。未做真實帳號／人工 UI 操作。
+
 ## 原版記憶整合提案契約（2026-09-26）
 
 核對 reference `source/host/extensions/memory/memory-synthesis-service.ts` 的提案與驗證分階段設計，以及 `memory-service.ts` 的 explicit 保護、snapshot fingerprint 與 deleted tombstones。新增 `AgentMemorySynthesisProposal` 作內部純解析邊界，不寫檔、不呼叫模型、不授權工具，也不改既有記憶模型或人工審核行為。
