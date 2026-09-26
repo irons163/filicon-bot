@@ -4,6 +4,63 @@ import FiliconDomain
 import FiliconPersistence
 import Foundation
 import Testing
+import CustomDump
+
+@Test func boundVisibilityFiltersBeforeCapsAcrossAllSearchPaths() async throws {
+    let directory = try globalSearchDirectory(); defer { try? FileManager.default.removeItem(at: directory) }
+    let store = ConversationStore(fileURL: directory.appending(path: "conversations.json"))
+    let repository = try ConversationRepository(databaseURL: directory.appending(path: "conversations.sqlite3"))
+    let agentID = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
+    let binding = DirectConversationAgentBinding(accountID: "local", agentID: agentID)
+    var conversations: [Conversation] = []
+    var overrides: [ConversationVisibilityOverride] = []
+    for index in 1...56 {
+        let id = UUID(uuidString: String(format: "10000000-0000-0000-0000-%012d", index))!
+        let messageID = UUID(uuidString: String(format: "20000000-0000-0000-0000-%012d", index))!
+        let date = Date(timeIntervalSince1970: Double(index))
+        let attachment = AttachmentMetadata(id: "asset-\(index)", filename: "needle.png", mimeType: "image/png",
+            byteCount: 1, kind: .image, createdAt: date)
+        var conversation = Conversation(id: id, title: "needle", messages: [
+            .init(id: messageID, role: .user, text: "needle", createdAt: date, attachments: [attachment])
+        ], updatedAt: date, hiddenAt: index == 1 ? date : nil)
+        conversation.agentBinding = binding
+        conversations.append(conversation)
+        overrides.append(.init(conversationID: id, binding: binding, hidden: index != 1))
+    }
+    try await store.save(conversations)
+    let expected = [conversations[0].id]
+    let titles = try await store.search("needle", limit: 1, includeHidden: false, visibility: overrides)
+    let messages = try await store.searchGlobalMessages("needle", visibility: overrides)
+    let media = try await store.searchGlobalMedia("needle", visibility: overrides)
+    let fallback = try await repository.linearMessageSearch("needle", visibility: overrides)
+    expectNoDifference(titles.map(\.id), expected)
+    expectNoDifference(messages.map(\.conversationID), expected)
+    expectNoDifference(media.map(\.conversationID), expected)
+    expectNoDifference(fallback.map(\.conversationID), expected)
+    let live = try await store.searchGlobalMessages("needle", latestLiveInputs: conversations.map {
+        .init(conversationID: $0.id, messageID: $0.messages[0].id, role: .user,
+              timestamp: $0.updatedAt, body: "needle live", isHidden: $0.hiddenAt != nil)
+    }, visibility: overrides)
+    expectNoDifference(live.map(\.conversationID), expected)
+    #expect(live.first?.snippet.contains("live") == true)
+    expectNoDifference(ConversationVisibilityOverride.isHidden(conversations[0], overrides: overrides), false)
+    expectNoDifference(ConversationVisibilityOverride.isHidden(conversations[1], overrides: overrides), true)
+    // Projection must not rewrite canonical history or the legacy hidden marker.
+    let canonical = try await store.conversation(id: expected[0])
+    expectNoDifference(canonical?.hiddenAt, conversations[0].hiddenAt)
+    expectNoDifference(canonical?.messages, conversations[0].messages)
+    let all = try await store.search("needle", limit: 100, includeHidden: true, visibility: overrides)
+    expectNoDifference(all.count, conversations.count)
+    var rebound = conversations[0]
+    rebound.agentBinding = .init(accountID: "other", agentID: agentID)
+    try await store.upsert(rebound, replacingLoadedMessageIDs: [], historyComplete: true)
+    let afterRebind = try await store.searchGlobalMessages("needle", visibility: overrides)
+    expectNoDifference(afterRebind, [])
+    expectNoDifference(ConversationVisibilityOverride.isHidden(rebound, overrides: overrides), true)
+    let reopened = ConversationStore(fileURL: directory.appending(path: "conversations.json"))
+    let staleRestore = try await reopened.search("needle", includeHidden: false, visibility: overrides)
+    expectNoDifference(staleRestore, [])
+}
 
 private func globalSearchDirectory() throws -> URL {
     let url = FileManager.default.temporaryDirectory.appending(path: "global-search-\(UUID().uuidString)", directoryHint: .isDirectory)

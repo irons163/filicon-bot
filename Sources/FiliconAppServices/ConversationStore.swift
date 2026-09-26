@@ -155,10 +155,11 @@ public actor ConversationStore {
         try await transcriptService.reconcileAll(conversations)
     }
 
-    public func search(_ query: String, limit: Int = 50) async throws -> [Conversation] {
+    public func search(_ query: String, limit: Int = 50, includeHidden: Bool = true,
+                       visibility: [ConversationVisibilityOverride] = []) async throws -> [Conversation] {
         let repository = try resolveRepository()
         try await importLegacyIfNeeded(into: repository)
-        let values = try await repository.search(query, limit: limit)
+        let values = try await repository.search(query, limit: limit, includeHidden: includeHidden, visibility: visibility)
         for value in values { try await transcriptService.reconcile(value) }
         return values
     }

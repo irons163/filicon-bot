@@ -55,6 +55,14 @@ App 的設定核准 metadata 現由共用 presentation builder 產生。可見�
 
 驗證：通知核准生命週期及兩組七語渲染定向測試通過，完整 nonparallel Swift tests／原生 Debug build 均 exit 0，verify-package deep/strict 通過。日誌 `.build/validation/sidebar-approval-{focused,full,native}.log`，渲染 `.build/validation/sidebar-approval-renders/` 不提交。未啟動使用者 App。
 
+### 可見性搜尋投影（2026-09-27）
+
+新增 Domain `ConversationVisibilityOverride`，只對相符的 conversation＋account／agent binding 生效，否則保留 legacy hiddenAt。repository 在訊息 FTS、媒體、備援掃描與聊天搜尋排名／上限前套用 override；備援的聊天掃描上限也在可見性過濾之後。串流 live input 與 persisted hit 使用相同、經資料庫 binding 驗證的可見性，避免已恢復的舊 hiddenAt 聊天仍不可搜尋。includeHidden 保留既有含隱藏搜尋用途；不改寫歷史或 legacy 欄位。測試以 56 個命中驗證排除／恢復、limit=1、三種搜尋、備援、串流，以及重新綁定後舊 override 不再生效。
+
+此 API 尚待 App 將已保存的 agent visibility snapshot 傳入，並與側欄列表、人工隱藏／恢復及 lifecycle fence 一起接線；不視為使用者端功能已完成。
+
+驗證：定向搜尋測試通過；包含最終串流與備援規則的完整 nonparallel Swift tests exit 0，原生 Debug build exit 0，verify-package deep/strict 通過。日誌 `.build/validation/sidebar-search-{focused,full,native}.log` 不提交。
+
 ## 必須保留的其他分類
 
 - 記憶：最新保存／搜尋／synthesis／episode／project recall 證據見 `Memory-archive-parity.md`；跨 epoch snapshot 是未接線參考設計，見 `Memory-snapshot-audit.md`，不能自行換成永久 cache。

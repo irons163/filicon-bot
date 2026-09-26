@@ -36,20 +36,22 @@ extension ConversationStore {
     public func searchGlobalMessages(
         _ query: String,
         includeHidden: Bool = false,
-        latestLiveInputs: [LiveMessageSearchInput] = []
+        latestLiveInputs: [LiveMessageSearchInput] = [],
+        visibility: [ConversationVisibilityOverride] = []
     ) async throws -> [GlobalMessageSearchHit] {
         let repository = try resolveRepositoryForGlobalSearch()
         try await ensureLegacyImportForGlobalSearch(into: repository)
         let persisted: [GlobalMessageSearchHit]
         do {
-            persisted = try await repository.searchMessages(query, includeHidden: includeHidden)
+            persisted = try await repository.searchMessages(query, includeHidden: includeHidden, visibility: visibility)
         } catch {
-            persisted = try await repository.linearMessageSearch(query, includeHidden: includeHidden)
+            persisted = try await repository.linearMessageSearch(query, includeHidden: includeHidden, visibility: visibility)
         }
 
         let terms = query.split(whereSeparator: { $0.isWhitespace }).prefix(GlobalSearchLimits.maximumTerms).map { String($0).lowercased() }
+        let effectiveVisibility = try await repository.resolvedConversationVisibility(visibility)
         let live = latestLiveInputs
-            .filter { includeHidden || !$0.isHidden }
+            .filter { includeHidden || !(effectiveVisibility[$0.conversationID] ?? $0.isHidden) }
             .filter { input in
                 let body = String(input.body.prefix(GlobalSearchLimits.maximumIndexedBodyCharacters)).lowercased()
                 return !terms.isEmpty && terms.allSatisfy { body.contains($0) }
@@ -81,10 +83,11 @@ extension ConversationStore {
 
     /// Recovered media-search semantics deliberately return no results if the
     /// derived media index is unavailable; media never scans attachment JSON.
-    public func searchGlobalMedia(_ query: String = "", includeHidden: Bool = false) async throws -> [GlobalMediaSearchHit] {
+    public func searchGlobalMedia(_ query: String = "", includeHidden: Bool = false,
+                                  visibility: [ConversationVisibilityOverride] = []) async throws -> [GlobalMediaSearchHit] {
         let repository = try resolveRepositoryForGlobalSearch()
         try await ensureLegacyImportForGlobalSearch(into: repository)
-        do { return try await repository.searchMedia(query, includeHidden: includeHidden) }
+        do { return try await repository.searchMedia(query, includeHidden: includeHidden, visibility: visibility) }
         catch { return [] }
     }
 

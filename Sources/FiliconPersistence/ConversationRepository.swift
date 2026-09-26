@@ -227,11 +227,11 @@ public actor ConversationRepository {
         return statement.int(0) == 1 ? .ready : .notReady
     }
 
-    public func searchMessages(_ query: String, includeHidden: Bool = false) throws -> [GlobalMessageSearchHit] {
+    public func searchMessages(_ query: String, includeHidden: Bool = false, visibility: [ConversationVisibilityOverride] = []) throws -> [GlobalMessageSearchHit] {
         guard try globalSearchReadiness() == .ready else { throw PersistenceError.recoveryRequired("global message index is not ready") }
         let match = GlobalSearchQuery.fts(query)
         guard !match.isEmpty else { return [] }
-        let hiddenClause = includeHidden ? "" : "AND c.hidden_at = 0"
+        let hiddenClause = includeHidden ? "" : try visibilityClause(visibility)
         let sql = """
         WITH matched AS (
           SELECT ms.conversation_id, ms.message_id, ms.role, ms.timestamp, ms.body,
@@ -265,11 +265,11 @@ public actor ConversationRepository {
 
     /// Bounded scan of authoritative rows used only when the derived FTS index
     /// is missing, not ready, corrupt, or rejects a query.
-    public func linearMessageSearch(_ query: String, includeHidden: Bool = false) throws -> [GlobalMessageSearchHit] {
+    public func linearMessageSearch(_ query: String, includeHidden: Bool = false, visibility: [ConversationVisibilityOverride] = []) throws -> [GlobalMessageSearchHit] {
         let terms = GlobalSearchQuery.terms(query).map { $0.lowercased() }
         guard !terms.isEmpty else { return [] }
-        let hiddenClause = includeHidden ? "" : "AND c.hidden_at = 0"
-        let statement = try database.prepare("SELECT m.conversation_id,m.id,m.role,m.created_at,m.text FROM messages m JOIN conversations c ON c.id=m.conversation_id WHERE m.conversation_id IN (SELECT id FROM conversations ORDER BY updated_at DESC,id DESC LIMIT ?) \(hiddenClause) ORDER BY m.created_at DESC,m.id DESC LIMIT ?", operation: "bounded linear message search")
+        let hiddenClause = includeHidden ? "" : try visibilityClause(visibility)
+        let statement = try database.prepare("SELECT m.conversation_id,m.id,m.role,m.created_at,m.text FROM messages m JOIN conversations c ON c.id=m.conversation_id WHERE m.conversation_id IN (SELECT c.id FROM conversations c WHERE 1=1 \(hiddenClause) ORDER BY c.updated_at DESC,c.id DESC LIMIT ?) \(hiddenClause) ORDER BY m.created_at DESC,m.id DESC LIMIT ?", operation: "bounded linear message search")
         try statement.bind(GlobalSearchLimits.maximumFallbackConversations, at: 1)
         try statement.bind(GlobalSearchLimits.maximumFallbackMessages, at: 2)
         var perConversation: [UUID: Int] = [:]
@@ -286,10 +286,10 @@ public actor ConversationRepository {
         return result
     }
 
-    public func searchMedia(_ query: String, includeHidden: Bool = false) throws -> [GlobalMediaSearchHit] {
+    public func searchMedia(_ query: String, includeHidden: Bool = false, visibility: [ConversationVisibilityOverride] = []) throws -> [GlobalMediaSearchHit] {
         guard try globalSearchReadiness() == .ready else { throw PersistenceError.recoveryRequired("global media index is not ready") }
         let terms = GlobalSearchQuery.terms(query)
-        let hiddenClause = includeHidden ? "" : "AND c.hidden_at = 0"
+        let hiddenClause = includeHidden ? "" : try visibilityClause(visibility)
         let from: String
         let predicate: String
         if terms.isEmpty {
@@ -323,10 +323,42 @@ public actor ConversationRepository {
         return result
     }
 
-    public func search(_ query: String, limit: Int = 50) throws -> [Conversation] {
+    /// Validate host-projected overrides against the current durable bindings.
+    /// Callers select the active account's overrides before invoking this API.
+    public func resolvedConversationVisibility(_ overrides: [ConversationVisibilityOverride]) throws -> [UUID: Bool] {
+        var values: [UUID: Bool] = [:]
+        let row = try database.prepare("SELECT agent_binding_json FROM conversations WHERE id = ?", operation: "validate search visibility binding")
+        for value in overrides {
+            try row.bind(value.conversationID.uuidString, at: 1)
+            if try row.step() == SQLITE_ROW {
+                let binding: DirectConversationAgentBinding? = try Self.decodeJSON(row.text(0), table: "conversations", row: value.conversationID.uuidString, field: "agent_binding_json")
+                if binding == value.binding, values[value.conversationID] == nil { values[value.conversationID] = value.hidden }
+            }
+            row.reset()
+        }
+        return values
+    }
+
+    private func visibilityClause(_ overrides: [ConversationVisibilityOverride]) throws -> String {
+        // Filtering occurs before ranking/limits. Only typed UUID literals enter
+        // this SQL fragment, never account identifiers or model-supplied text.
+        let values = try resolvedConversationVisibility(overrides)
+        let hidden = values.filter { $0.value }.keys.sorted { $0.uuidString < $1.uuidString }
+        let shown = values.filter { !$0.value }.keys.sorted { $0.uuidString < $1.uuidString }
+        func literals(_ ids: [UUID]) -> String { ids.map { "'\($0.uuidString)'" }.joined(separator: ",") }
+        let exclude = hidden.isEmpty ? "" : " AND c.id NOT IN (\(literals(hidden)))"
+        let include = shown.isEmpty ? "" : " OR c.id IN (\(literals(shown)))"
+        return "AND ((c.hidden_at = 0\(exclude))\(include))"
+    }
+
+    public func search(_ query: String, limit: Int = 50, includeHidden: Bool = true,
+                       visibility: [ConversationVisibilityOverride] = []) throws -> [Conversation] {
         let terms = query.split(whereSeparator: { $0.isWhitespace }).map { "\"\($0.replacingOccurrences(of: "\"", with: "\"\""))\"*" }.joined(separator: " AND ")
-        guard !terms.isEmpty else { return try load() }
-        let statement = try database.prepare("SELECT conversation_id FROM conversation_search WHERE conversation_search MATCH ? ORDER BY rank LIMIT ?", operation: "search conversations")
+        guard !terms.isEmpty else {
+            return try load().filter { includeHidden || !ConversationVisibilityOverride.isHidden($0, overrides: visibility) }
+        }
+        let hiddenClause = includeHidden ? "" : try visibilityClause(visibility)
+        let statement = try database.prepare("SELECT conversation_id FROM conversation_search JOIN conversations c ON c.id = conversation_id WHERE conversation_search MATCH ? \(hiddenClause) ORDER BY rank LIMIT ?", operation: "search conversations")
         try statement.bind(terms, at: 1); try statement.bind(max(1, limit), at: 2)
         var ids: [String] = []
         while try statement.step() == SQLITE_ROW { ids.append(statement.text(0)) }

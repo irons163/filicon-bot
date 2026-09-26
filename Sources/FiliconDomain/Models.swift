@@ -230,6 +230,20 @@ public struct DirectConversationAgentBinding: Codable, Hashable, Sendable {
     }
 }
 
+/// Host-projected visibility. Only applies while the exact durable binding matches.
+public struct ConversationVisibilityOverride: Sendable, Equatable {
+    public let conversationID: UUID
+    public let binding: DirectConversationAgentBinding
+    public let hidden: Bool
+    public init(conversationID: UUID, binding: DirectConversationAgentBinding, hidden: Bool) {
+        self.conversationID = conversationID; self.binding = binding; self.hidden = hidden
+    }
+    public static func isHidden(_ conversation: Conversation, overrides: [Self]) -> Bool {
+        overrides.first { $0.conversationID == conversation.id && $0.binding == conversation.agentBinding }?.hidden
+            ?? (conversation.hiddenAt != nil)
+    }
+}
+
 public struct Conversation: Identifiable, Codable, Hashable, Sendable {
     public let id: UUID
     public var title: String
