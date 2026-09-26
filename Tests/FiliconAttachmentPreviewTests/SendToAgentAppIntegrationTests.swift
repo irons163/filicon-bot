@@ -147,9 +147,10 @@ private struct DelegatingGroupProvider: InteractiveToolProvider {
 
 @Suite("SendToAgent app integration", .timeLimit(.minutes(1)))
 @MainActor struct SendToAgentAppIntegrationTests {
-    @Test(arguments: ["approve", "deny", "stop", "account", "recover"])
+    @Test(arguments: ["approve", "deny", "stop", "account", "recover", "restart", "write-failure"])
     func directPeerImagesAreApprovedPersistedAndRecoverable(mode: String) async throws {
-        let (root, model, _, sender, recipient, probe) = try await fixture()
+        let (root, initialModel, _, sender, recipient, probe) = try await fixture()
+        var model = initialModel
         defer { try? FileManager.default.removeItem(at: root) }
         await model.bootstrap()
         let bitmap = try #require(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 2, pixelsHigh: 2,
@@ -169,7 +170,7 @@ private struct DelegatingGroupProvider: InteractiveToolProvider {
         if mode == "stop" { model.cancel() }
         if mode == "account" { await model.cancelAutoReviewApprovals(nextAccountID: "other") }
         model.handleTranscriptCardIntent(mode == "deny" ? .rejectReview(reviewID: approval.id) : .approveReview(reviewID: approval.id))
-        let succeeds = ["approve", "recover"].contains(mode)
+        let succeeds = ["approve", "recover", "restart", "write-failure"].contains(mode)
         if succeeds {
             var next: PendingApproval?
             let limit = ContinuousClock.now + .seconds(10)
@@ -194,11 +195,45 @@ private struct DelegatingGroupProvider: InteractiveToolProvider {
             expectNoDifference(saved.messages.map(\.attachments), [[image], [image]])
             let restoredBytes = try await storage.data(for: image)
             expectNoDifference(restoredBytes, bytes)
-            if mode == "recover" {
+            if ["recover", "restart", "write-failure"].contains(mode) {
+                let canonical = model.agentMessages
+                let encoder = JSONEncoder()
+                encoder.outputFormatting = [.sortedKeys]
+                encoder.dateEncodingStrategy = .millisecondsSince1970
+                let canonicalData = try encoder.encode(canonical)
                 try await removeQuestionProjections(model: model, root: root, peerID: peer.id)
+                if mode == "restart" {
+                    // Recreate only the isolated fixture host, not the running application.
+                    model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+                    await model.bootstrap()
+                    expectNoDifference(try encoder.encode(model.agentMessages), canonicalData)
+                }
+                var database: OpaquePointer?
+                defer { if let database { sqlite3_close(database) } }
+                if mode == "write-failure" {
+                    #expect(sqlite3_open(root.appending(path: "conversations.sqlite3").path, &database) == SQLITE_OK)
+                    #expect(sqlite3_exec(database, "CREATE TRIGGER reject_image_recovery BEFORE INSERT ON messages BEGIN SELECT RAISE(ABORT, 'fixture image recovery failure'); END", nil, nil, nil) == SQLITE_OK)
+                    #expect(!(await model.recoverDirectPeerMessages(conversationID: origin)))
+                    #expect(model.recoveringPeerConversations.isEmpty)
+                    let failedProjection = try #require(try await ConversationStore(fileURL: root.appending(path: "conversations.json")).conversation(id: peer.id))
+                    #expect(failedProjection.messages.isEmpty)
+                    #expect(model.conversations.first { $0.id == peer.id }?.messages.isEmpty == true)
+                    expectNoDifference(model.agentMessages, canonical)
+                    #expect(sqlite3_exec(database, "DROP TRIGGER reject_image_recovery", nil, nil, nil) == SQLITE_OK)
+                }
                 #expect(await model.recoverDirectPeerMessages(conversationID: origin))
                 let restored = try #require(model.conversations.first { $0.id == peer.id })
-                expectNoDifference(restored.messages.map(\.attachments), [[image], [image]])
+                expectNoDifference(try encoder.encode(restored.messages.map(\.attachments)), try encoder.encode([[image], [image]]))
+                expectNoDifference(restored.messages.map(\.agentMessageSource), peer.messages.map(\.agentMessageSource))
+                let persisted = try #require(try await ConversationStore(fileURL: root.appending(path: "conversations.json")).conversation(id: peer.id))
+                // Storage rounds dates; compare the persisted precision, not Date's binary fraction.
+                expectNoDifference(try encoder.encode(persisted.messages), try encoder.encode(restored.messages))
+                let recoveredBytes = try await storage.data(for: image)
+                expectNoDifference(recoveredBytes, bytes)
+                let snapshot = model.conversations
+                #expect(await model.recoverDirectPeerMessages(conversationID: origin))
+                expectNoDifference(model.conversations, snapshot)
+                expectNoDifference(try encoder.encode(model.agentMessages), canonicalData)
                 let after = await probe.wakes
                 expectNoDifference(after, wakes)
             }

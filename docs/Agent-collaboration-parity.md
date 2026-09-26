@@ -1,5 +1,13 @@
 # 協作能力核對紀錄（更新至 2026-09-26）
 
+## 直接同儕圖片重新載入與保存故障驗證（2026-09-26）
+
+上一批已提交 `5588bdc`。本輪只擴充隔離 App 整合測試：移除圖片投影後重建 AppModel／bootstrap，再由 canonical mailbox 恢復；另以 SQLite trigger 拒絕訊息 INSERT，確認恢復回報失敗、記憶體與資料庫不留下半筆同儕訊息，解除故障後可重試。核對附件 metadata、實際 bytes、來源、重複恢復冪等、mailbox 不變及模型 wake 不增加；後續人類回合仍不自動重送歷史圖片。
+
+使用 pfw-testing／CustomDump。初次新增斷言受 Date 二進位小數與儲存往返精度影響，調整為 millisecondsSince1970 儲存格式比對，不省略附件欄位。最終 `direct-peer-images-recovery-pass.log` 的 SendToAgent app integration 六項測試（圖片七種情境及既有委派／問答／文字恢復）全部通過、exit 0；`git diff --check` 通過。本輪未重跑完整套件或原生建置，正式程式碼未變更。
+
+仍未涵蓋圖片 blob 遺失／損壞及 metadata 衝突等全部故障，亦非真實 App／外部模型驗收。整體 parity 維持 partial。未 push、未重啟使用者 App／Xcode、未改真實帳號／群組資料。
+
 ## 直接同儕圖片 App 接線（2026-09-26）
 
 前景直接聊天把當輪真實、非引用的人類 PNG／JPEG 經 owner／account／generation 驗證後匯入獨立 agent image store，提供 session 的動態目錄。委派與 SendMessage 發布各自使用圖片預覽核准；peer／問答 session 可處理 incoming 圖片，但不繼承新的前景圖片目錄。
