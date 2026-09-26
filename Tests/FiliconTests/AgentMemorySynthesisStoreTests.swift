@@ -28,6 +28,58 @@ struct AgentMemorySynthesisStoreTests {
     private func text(_ rows: [[String: Any]]) throws -> String {
         String(decoding: try JSONSerialization.data(withJSONObject: ["changes": rows]), as: UTF8.self)
     }
+
+    @Test(arguments: [false, true]) func temporalReviewReceiptPersistsAndRequiresCurrentConsent(reopen: Bool) async throws {
+        let (root, file, agents) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let disabled = try await agents.memorySynthesisSettings(accountID: "local", agentID: owner)
+        let initial = try await agents.dueMemoryTemporalReviews(accountID: "local", at: date)
+        expectNoDifference(initial, [])
+        try await agents.setMemorySynthesisEnabled(true, expected: disabled, lifetime: .init())
+        let settings = try await agents.memorySynthesisSettings(accountID: "local", agentID: owner)
+        let due = try await agents.dueMemoryTemporalReviews(accountID: "local", at: date)
+        expectNoDifference(due, [settings])
+        try await agents.markMemoryTemporalReview(settings: settings, at: date, lifetime: .init())
+        try await agents.markMemoryTemporalReview(settings: settings, at: date.addingTimeInterval(-100), lifetime: .init())
+        let reopened = try reopen ? AgentService(storeURL: file) : agents
+        let before = try await reopened.dueMemoryTemporalReviews(accountID: "local", at: date.addingTimeInterval(86_399))
+        let boundary = try await reopened.dueMemoryTemporalReviews(accountID: "local", at: date.addingTimeInterval(86_400))
+        expectNoDifference(before, [])
+        expectNoDifference(boundary, [settings])
+        let foreign = try await reopened.dueMemoryTemporalReviews(accountID: "other", at: date.addingTimeInterval(86_400))
+        expectNoDifference(foreign, [])
+        let closed = AgentMemorySuggestionLifetime(); closed.close()
+        await #expect(throws: CancellationError.self) {
+            try await reopened.markMemoryTemporalReview(settings: settings, at: date, lifetime: closed)
+        }
+        try await reopened.setMemorySynthesisEnabled(false, expected: settings, lifetime: .init())
+        await #expect(throws: AgentMemorySuggestionError.stale) {
+            try await reopened.markMemoryTemporalReview(settings: settings, at: date, lifetime: .init())
+        }
+        await #expect(throws: AgentMemorySuggestionError.invalid) {
+            try await reopened.dueMemoryTemporalReviews(accountID: "local", at: .init(timeIntervalSince1970: .infinity))
+        }
+    }
+
+    @Test func temporalSweepCapsAtFourAndSkipsEmptyAgents() async throws {
+        let (root, _, agents) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        var expected: [AgentMemorySynthesisSettings] = []
+        for n in 1...6 {
+            let agent = try await agents.create(name: "Agent \(n)", instructions: "", at: date.addingTimeInterval(Double(n)))
+            let disabled = try await agents.memorySynthesisSettings(accountID: "local", agentID: agent.id)
+            try await agents.setMemorySynthesisEnabled(true, expected: disabled, lifetime: .init())
+            if n == 1 { continue }
+            try await agents.applyMemoryChange(.init(operation: .write, memory: .init(accountID: "local", agentID: agent.id,
+                fact: "Private fact \(n)", createdAt: date)), lifetime: .init())
+            expected.append(try await agents.memorySynthesisSettings(accountID: "local", agentID: agent.id))
+        }
+        let first = try await agents.dueMemoryTemporalReviews(accountID: "local", at: date)
+        expectNoDifference(first, Array(expected.prefix(4)))
+        for settings in first { try await agents.markMemoryTemporalReview(settings: settings, at: date, lifetime: .init()) }
+        let remaining = try await agents.dueMemoryTemporalReviews(accountID: "local", at: date)
+        expectNoDifference(remaining, Array(expected.suffix(1)))
+    }
     private func creation(_ fact: String = "New project") -> [String: Any] {
         ["action": "create", "content": fact, "kind": "log", "sourceEvidenceIds": ["turn"]]
     }

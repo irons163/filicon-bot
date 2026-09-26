@@ -243,7 +243,41 @@ public actor AgentService {
             var next = expected; next.enabled = enabled; next.revision = UUID()
             state.memorySynthesisSettings.removeAll { $0.accountID == expected.accountID && $0.agentID == expected.agentID }
             state.memorySynthesisSettings.append(next)
+            state.memoryTemporalReviews.removeAll { $0.settings.accountID == expected.accountID && $0.settings.agentID == expected.agentID }
             // Disabling revokes in-flight snapshots but never deletes memories.
+            try persist()
+        }
+    }
+
+    public func dueMemoryTemporalReviews(accountID: String, at: Date) throws -> [AgentMemorySynthesisSettings] {
+        guard at.timeIntervalSince1970.isFinite, !accountID.isEmpty, accountID.count <= 512 else {
+            throw AgentMemorySuggestionError.invalid
+        }
+        var result: [AgentMemorySynthesisSettings] = []
+        for agent in list() {
+            let settings = try memorySynthesisSettings(accountID: accountID, agentID: agent.id)
+            guard settings.enabled, settings.revision != nil,
+                  !memories(accountID: accountID, agentID: agent.id).isEmpty else { continue }
+            let receipt = state.memoryTemporalReviews.first { $0.settings == settings }
+            if let next = receipt?.nextReviewAt, next.timeIntervalSince1970.isFinite, next > at { continue }
+            result.append(settings)
+            if result.count == 4 { break }
+        }
+        return result
+    }
+
+    public func markMemoryTemporalReview(settings: AgentMemorySynthesisSettings, at: Date,
+                                         lifetime: AgentMemorySuggestionLifetime) throws {
+        try lifetime.commit {
+            try requireMemorySynthesisConsent(settings)
+            let next = at.addingTimeInterval(86_400)
+            guard at.timeIntervalSince1970.isFinite, next.timeIntervalSince1970.isFinite else {
+                throw AgentMemorySuggestionError.invalid
+            }
+            let previous = state.memoryTemporalReviews.first { $0.settings == settings }?.nextReviewAt
+            let deadline = previous.map { max($0, next) } ?? next
+            state.memoryTemporalReviews.removeAll { $0.settings.accountID == settings.accountID && $0.settings.agentID == settings.agentID }
+            state.memoryTemporalReviews.append(.init(settings: settings, nextReviewAt: deadline))
             try persist()
         }
     }

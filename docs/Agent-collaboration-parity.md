@@ -1,5 +1,13 @@
 # 協作能力核對紀錄（更新至 2026-09-26）
 
+## 定期記憶檢視到期紀錄（2026-09-26）
+
+新增獨立 temporal receipt 持久化欄位，legacy 缺欄位解碼為空，不把 review 時間混入 consent revision。host 查詢僅選當前 account、已啟用且有 private memories 的 active agent，每次最多 4 位；無 receipt 即到期，完成標記使用開始時間加 86,400 秒，晚到的舊標記不倒退截止時間。標記須當前 consent 與有效 lifetime；停用／重新設定清掉該 account-agent receipt，不刪記憶。
+
+pfw-testing／CustomDump 隔離測試覆蓋重開、24 小時前一秒／到期、較舊標記、foreign account、取消／stale consent／無限時間拒絕、空記憶跳過及 4 位 sweep 上限。尚未連接 hourly timer、temporal queue 與完成回報；不宣稱 App 已自動定期檢視。
+
+驗證：初次 store 聚焦因螢幕鎖定而有 3 個重開失敗，後續審批用量限制使測試未啟動。恢復後 `memory-temporal-receipt-focused.log` 重開／不重開與 sweep 全通過；`memory-temporal-receipt-full.log` 完整非並行套件 exit 0，解除前述驗收缺口。原生建置、verify-package／deep strict 簽章及 git diff --check 通過，未降低檔案保護。
+
 ## 記憶快照變動重排（2026-09-26）
 
 對照原版 applySynthesis 的 stale／needsAnotherPass：以 `AgentMemorySynthesisSnapshotChanged` 區分記憶／tombstone 快照改變與 consent stale。worker 只對前者恢復 evidence，丟棄舊 proposal／verdict，重設 15 秒 debounce；下一次 run 重新讀取 snapshot 並重驗 consent。取消、來源撤銷、shutdown 或授權 stale 不恢復；若其間已有新版 consent pending，不覆蓋新版。

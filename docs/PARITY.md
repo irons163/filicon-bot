@@ -1,5 +1,7 @@
 # Filicon / Grok Bot 0.18 功能 parity matrix（current implementation）
 
+定期記憶檢視 receipt（2026-09-26）：已加入獨立持久化 24 小時到期紀錄與最多 4 位 account／consent 篩選，尚未接 hourly timer／temporal queue／完成回報，定期檢視仍 partial。
+
 記憶 stale 重排（2026-09-26）：記憶快照變動使用專用錯誤，worker 保留 evidence 並 debounce 後重做提案／驗證；授權 stale、Stop 與來源撤銷不重排。恢復保留較新 evidence 與 consent，不重用過期 verdict。此項取代下方 stale 尚缺記述；temporal、失敗觀測、episodic 與外部驗收仍 partial。
 
 背景記憶 App 接管（2026-09-26）：bound direct／group 完成回覆後入列共用 worker，15 秒 debounce 跨來源合併；正常 session close 不取消已交出的工作。account／origin／session composite lifetime 保护最終保存，Stop／刪除 direct／群組成員更新／切帳號撤銷；取代下方尚未 App 接線的記述。temporal sweep、stale 重排、失敗觀測、episodic 與外部驗收仍 partial。
