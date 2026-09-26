@@ -85,7 +85,9 @@ public final class AgentSecretSubmission: @unchecked Sendable {
     }
 
     public func recordMailboxReceipt(incomingMessageID: UUID, messenger: AgentMessenger,
-                                      responseID: UUID = UUID(), at: Date = Date(),
+                                      responseID: UUID = UUID(), chainID: UUID? = nil,
+                                      directOriginBinding: DirectConversationAgentBinding? = nil,
+                                      at: Date = Date(),
                                       lifetime: AgentPublicationLifetime) async throws -> AgentMessage {
         guard case .stored(let receipt) = state, receipt.requestID == id else {
             throw AgentSecretSubmissionError.unavailable
@@ -101,7 +103,8 @@ public final class AgentSecretSubmission: @unchecked Sendable {
         }
         return try await messenger.resolveSecretRequest(replyingTo: incomingMessageID, publicationID: id,
             provided: true, accountID: destination.accountID, originID: destination.conversationID,
-            connectionID: destination.connectionID, responseID: responseID, at: at, lifetime: lifetime)
+            connectionID: destination.connectionID, responseID: responseID, chainID: chainID,
+            directOriginBinding: directOriginBinding, at: at, lifetime: lifetime)
     }
 
     /// Produces value-free direct-chat metadata only from this submission's

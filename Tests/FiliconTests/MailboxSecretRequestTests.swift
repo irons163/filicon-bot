@@ -3,6 +3,7 @@ import Foundation
 import Testing
 import FiliconAppServices
 import FiliconChannels
+import FiliconDomain
 @testable import FiliconAgents
 
 @Suite("Durable mailbox credential requests", .timeLimit(.minutes(1)))
@@ -19,14 +20,15 @@ struct MailboxSecretRequestTests {
         let incoming: AgentMessage
         var file: URL { root.appending(path: "mail.json") }
     }
-    private func fixture() async throws -> Fixture {
+    private func fixture(direct: Bool = false) async throws -> Fixture {
         let root = FileManager.default.temporaryDirectory.appending(path: "mailbox-secret-\(UUID())")
         let agents = try AgentService(storeURL: root.appending(path: "agents.json"))
         let sender = try await agents.create(name: "Sender", instructions: "fixture", at: date)
         let owner = try await agents.create(name: "Owner", instructions: "fixture", at: date)
         let messenger = try AgentMessenger(service: agents, storeURL: root.appending(path: "mail.json"))
         let incoming = AgentMessage(senderID: sender.id, recipientID: owner.id, text: "Connect", priority: .priority,
-            createdAt: date, delivery: .init(chainID: scope, originConversationID: scope))
+            createdAt: date, delivery: .init(chainID: scope, originConversationID: scope,
+                directOriginBinding: direct ? .init(accountID: "A", agentID: sender.id) : nil))
         try await messenger.send(incoming)
         try await messenger.updateDelivery(id: incoming.id, state: .running, at: date)
         return .init(root: root, agents: agents, messenger: messenger, incoming: incoming)
@@ -69,6 +71,43 @@ struct MailboxSecretRequestTests {
         let restored = await restarted.allMessages()
         expectNoDifference(restored.last?.delivery?.state, .cancelled)
         expectNoDifference(restored[0].delivery?.publications?[0].secretRequest?.state, provided ? .stored : .dismissed)
+    }
+
+    @Test(arguments: ["exact", "omitted", "owner", "account", "unexpected"], [true, false])
+    func directResponseRetainsExactHostBinding(mode: String, provided: Bool) async throws {
+        let f = try await fixture(direct: mode != "unexpected")
+        defer { try? FileManager.default.removeItem(at: f.root) }
+        _ = try await publish(f)
+        try await f.messenger.updateDelivery(id: f.incoming.id, state: .completed)
+        let before = await f.messenger.allMessages()
+        let bytes = try Data(contentsOf: f.file)
+        let binding: DirectConversationAgentBinding? = mode == "omitted" ? nil : .init(
+            accountID: mode == "account" ? "B" : "A",
+            agentID: mode == "owner" ? f.incoming.recipientID : f.incoming.senderID)
+        let chain = UUID(uuidString: "00000000-0000-0000-0000-000000000005")!
+        if mode == "exact" {
+            let response = try await f.messenger.resolveSecretRequest(replyingTo: f.incoming.id,
+                publicationID: publicationID, provided: provided, accountID: "A", originID: scope,
+                connectionID: connectionID, responseID: responseID, chainID: chain,
+                directOriginBinding: binding, at: date, lifetime: .init())
+            expectNoDifference(response.delivery?.directOriginBinding, binding)
+            expectNoDifference(response.delivery?.chainID, chain)
+            expectNoDifference(response.secretResponse?.provided, provided)
+            let restarted = try AgentMessenger(service: f.agents, storeURL: f.file)
+            let restored = await restarted.allMessages()
+            expectNoDifference(restored.last?.delivery?.directOriginBinding, binding)
+            expectNoDifference(restored.last?.delivery?.state, .cancelled)
+        } else {
+            await #expect(throws: AgentSecretRequestError.unavailable) {
+                _ = try await f.messenger.resolveSecretRequest(replyingTo: f.incoming.id,
+                    publicationID: publicationID, provided: provided, accountID: "A", originID: scope,
+                    connectionID: connectionID, responseID: responseID, chainID: chain,
+                    directOriginBinding: binding, at: date, lifetime: .init())
+            }
+            let after = await f.messenger.allMessages()
+            expectNoDifference(after, before)
+            expectNoDifference(try Data(contentsOf: f.file), bytes)
+        }
     }
 
     @Test(arguments: ["account", "scope", "connection", "publication", "running", "cancelled", "failed", "closed", "archived", "retired", "restart", "response-input", "response-publication"])

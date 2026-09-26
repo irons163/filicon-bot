@@ -203,7 +203,9 @@ public actor AgentMessenger {
 
     public func resolveSecretRequest(replyingTo id: UUID, publicationID: UUID, provided: Bool,
                                      accountID: String, originID: UUID, connectionID: UUID,
-                                     responseID: UUID = UUID(), at: Date = Date(),
+                                     responseID: UUID = UUID(), chainID: UUID? = nil,
+                                     directOriginBinding: DirectConversationAgentBinding? = nil,
+                                     at: Date = Date(),
                                      lifetime: AgentPublicationLifetime) async throws -> AgentMessage {
         guard let before = state.messages.first(where: { $0.id == id }) else { throw AgentSecretRequestError.unavailable }
         let active = await service.list()
@@ -213,6 +215,8 @@ public actor AgentMessenger {
         try lifetime.commit {
             guard let index = state.messages.firstIndex(where: { $0.id == id }), state.messages[index] == before,
                   let delivery = before.delivery, delivery.state == .completed, delivery.originConversationID == originID,
+                  delivery.directOriginBinding == directOriginBinding,
+                  directOriginBinding == nil || directOriginBinding?.accountID == accountID,
                   let item = delivery.publications?.firstIndex(where: { $0.id == publicationID }),
                   let publication = delivery.publications?[item],
                   publication.groupID == originID, publication.senderID == before.recipientID,
@@ -223,7 +227,8 @@ public actor AgentMessenger {
                 accountID: accountID, provided: provided)
             var response = AgentMessage(id: responseID, senderID: before.senderID, recipientID: before.recipientID,
                 text: provenance.acknowledgement, createdAt: at,
-                delivery: .init(chainID: responseID, originConversationID: originID))
+                delivery: .init(chainID: chainID ?? responseID, originConversationID: originID,
+                    directOriginBinding: directOriginBinding))
             response.secretResponse = provenance
             pending.state = provided ? .stored : .dismissed
             pending.responseMessageID = responseID

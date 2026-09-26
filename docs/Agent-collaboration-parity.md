@@ -1,5 +1,15 @@
 # 協作能力核對紀錄（更新至 2026-09-26）
 
+## 直接同儕憑證回答來源契約（2026-09-26）
+
+核對憑證流程發現 `resolveSecretRequest` 原本建立不含 directOriginBinding 的新 delivery，submission／session 亦沒有傳遞它；不能直接開放直接同儕安全輸入，否則回答會失去原執行來源。本輪比照問題回答契約，新增可選 binding 與 chain ID：原交付綁定必須與 host 傳入完全相等且同帳號，提交與取消都保留來源，session 傳自己的新 chain ID；既有非直接信箱仍使用 nil binding。
+
+使用 pfw-testing／CustomDump 與固定時間／ID、隔離 mailbox 儲存，十個案例驗證 exact／omitted／wrong owner／wrong account／unexpected binding × provided／dismissed。錯誤來源時記憶體及磁碟完全不變；有效回條保存 binding，重開仍保留來源且佇列取消、不自動執行。`peer-secret-binding.log` 聚焦回歸通過，包含既有安全輸入 App fixture；未讀寫真實 Keychain。
+
+此為底層前置條件，直接同儕 secret publisher、動態卡片投影、有效期檢查、回答後 App 執行範圍與恢復尚未接上；現有 UI 不提前開放。後續須沿用目前僅支援唯一 Slack／Discord bot token 的目的地驗證，不可將通用 connector 字串當作寫入憑證授權。整體 parity 保持 partial。
+
+最終完整非並行 `peer-secret-binding-full.log` exit 0；原生 `peer-secret-binding-native.log`、verify-package、deep strict 簽章及 `git diff --check` 通過。未 push、未啟動／重啟使用者 App 或 Xcode，未修改真實憑證／帳號／群組。
+
 ## 直接同儕雲端代理人參照卡（2026-09-26）
 
 依 reconstructed `source/host/runner/tools/send-message-tool.ts`／`send-message-schema.ts`，`type:cursor-agent` 是以 bcId 顯示可開啟的雲端代理人卡，不等同啟動或控制工作。本輪移除直接 mailbox session 對既有參照 publisher 的額外排除，沿用 canonical publish 驗證、opaque ID 與固定 Cursor URL 編碼；沒有外部網路請求或新的雲端權限。

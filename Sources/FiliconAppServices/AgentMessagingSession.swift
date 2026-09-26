@@ -353,12 +353,13 @@ public actor AgentMessagingSession {
         let response: AgentMessage
         if provided {
             response = try await submission.recordMailboxReceipt(incomingMessageID: incomingID,
-                messenger: messenger, lifetime: publicationLifetime)
+                messenger: messenger, chainID: id, directOriginBinding: directOriginBinding, lifetime: publicationLifetime)
         } else {
             if case .stored = submission.state { throw AgentSecretRequestError.unavailable }
             response = try await messenger.resolveSecretRequest(replyingTo: incomingID, publicationID: submission.id,
                 provided: false, accountID: accountID, originID: originConversationID,
-                connectionID: submission.destination.connectionID, lifetime: publicationLifetime)
+                connectionID: submission.destination.connectionID, chainID: id,
+                directOriginBinding: directOriginBinding, lifetime: publicationLifetime)
         }
         if closed || Task.isCancelled {
             try await messenger.updateDelivery(id: response.id, state: .cancelled)
