@@ -1,5 +1,15 @@
 # 協作能力核對紀錄（更新至 2026-09-26）
 
+## 兩階段記憶整合協調（2026-09-26）
+
+對照原版 `memory-synthesis-service.ts` runAgent 的 propose／verify／apply，新增內部 `AgentService.synthesizeMemory`。host 證據限 12 筆且 ID 唯一，每側 8,000 字／32,000 bytes，時間有限且不晚於本次 now；clock ID 僅在 temporal review 由 host 開啟。只擷取帳號／代理人私有記憶；payload 含 provenance，不含 tombstone 摘要或其他帳號內容。
+
+非空提案先經結構檢查，再以獨立 stage 將原 evidence 與原 proposal 交給 verifier；驗證輸出必須只含 approved boolean，數字 1、額外欄位、超限、非 JSON 都拒絕。每段 await 後重驗 lifetime，最後保存層再次檢查完整 snapshot。空提案不呼叫 verifier；明確 false 回傳 rejected。不重用 proposer 的自稱批准或 reasoning。
+
+仍是 internal injected transport，尚未接真實 provider：未宣稱 tool-free request／deadline 已由 transport 強制，也未接 opt-in、debounce、重試或每日 temporal 排程。測試使用固定證據與隔離檔案，涵蓋批准／拒絕、各類錯誤 verdict、空／非法提案、兩阶段取消、驗證中人工修改造成 stale、transport failure，以及非法 host evidence 不出站。依 pfw-testing／CustomDump；未操作真實 App 或資料。
+
+驗證：`memory-synthesis-pipeline-final.log` 兩個參數化測試共 20 種情境通過（另含重複 approved key 拒絕）；`memory-synthesis-pipeline-native-final.log` 原生建置 exit 0。較廣的 `memory-synthesis-pipeline.log` 有兩個既有 storage 重開檔案測試遭 NSCocoaErrorDomain 257／EPERM，`ioreg` 確认螢幕鎖定 Yes；不是通過，不以聚焦測試代稱完整回歸。待解鎖後補跑完整套件，保留檔案保護設定。未 push／重啟 App。
+
 ## 記憶來源、刪除指紋與整批保存（2026-09-26）
 
 `AgentMemory.origin` 區分 explicit／synthesis；所有缺欄位的舊記憶仍是 explicit，未知來源解碼失敗。公開建構及核准 write 固定 explicit，拒絕以解碼的 synthesis 資料走人工新增路徑。人工建議核准若遇同內容 generated 記憶，提升為 explicit。forget 連同 scoped 正規化 SHA-256 tombstone 一起保存，不另外保存刪除本文；人工重建可清除相同 tombstone。

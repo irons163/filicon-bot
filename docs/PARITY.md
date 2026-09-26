@@ -1,5 +1,7 @@
 # Filicon / Grok Bot 0.18 功能 parity matrix（current implementation）
 
+兩階段記憶協調（2026-09-26）：新增內部 host pipeline，對 completed exchange 證據做有界檢查，非空提案必須另取嚴格 boolean 驗證回覆才進入 snapshot-fenced 保存。拒絕、格式錯誤、取消、transport 失敗與 stale 都不套用提案。此入口尚未接真正 tool-free provider transport、opt-in 設定、排程或 App；不代表獨立模型驗證已在使用者對話啟用，整體仍 partial。
+
 記憶整合保存基礎（2026-09-26）：新增 explicit／synthesis 來源，舊 Filicon 記憶仍預設 explicit；明確刪除保存限定範圍的正規化 SHA-256 指紋，人工重建解除相同指紋。內部 synthesis 保存入口重驗包含來源與刪除紀錄的快照、只改 generated 私有記憶、整批限制與原子保存／失敗回滾。尚未暴露為模型工具或 App 自動流程；獨立語意驗證、opt-in 設定、排程與 episodic 仍待接線，AGENT-01 保持 partial。
 
 記憶整合提案驗證基礎（2026-09-26）：對照原版 synthesis 的 create／update／remove 與 sourceEvidenceIds，新增內部純解析契約；限制本文／批次大小、已知 evidence、host 可修改 ID、每筆只改一次及 clock 不可單獨建立新事實。這不是自動記憶功能完成：尚未接 provider 提案／獨立語意驗證、來源持久化、原子快照套用、tombstone／排程與 UI。既有人工核准記憶不變，AGENT-01 仍 partial。
