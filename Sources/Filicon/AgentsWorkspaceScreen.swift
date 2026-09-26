@@ -442,6 +442,7 @@ private struct AgentMemorySection: View {
                 HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(l10n(memory.tier.memoryTitleKey)).font(.caption).foregroundStyle(.secondary)
+                        AgentMemoryOriginLabel(origin: memory.origin)
                         if let project = memory.project { Text(verbatim: project).font(.caption.monospaced()) }
                         if scope != .agent {
                             Text(String(format: l10n("Recorded by %@"), model.agents.first { $0.id == memory.agentID }?.name ?? memory.agentID.uuidString))

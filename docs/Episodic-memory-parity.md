@@ -84,3 +84,9 @@ App 原有 origin invalidation（direct Stop／刪除、group Stop／成員更�
 完整非並行測試 `memory-episode-ui.log` exit 0；最後新增的 App 授權測試另以 `memory-episode-ui-app.log` 通過（13 tests），覆蓋重開持久化、舊授權、跨帳號拒絕與 synthesis 撤銷。七語明暗色 380pt 渲染檢查通過；原生建置 `memory-episode-ui-native.log` 與封裝 deep strict／entitlements 通過。未啟動真實 App。
 
 仍待事件來源 UI 標示、執行期間清理失敗的固定診斷提示，以及實際互動端到端驗收；保持 partial，不宣稱原版功能全部完成。
+
+## 記憶來源顯示（2026-09-27）
+
+已保存記憶清單現在依 host-owned `origin` 顯示已核准記憶、自動記憶整合或事件摘要，七語皆翻譯；不依 fact 文字或 `[episode]` 前綴推測來源。沿用原有日期、層級、共享作者與忘記操作。
+
+App 聚焦測試 `memory-origin-label.log` 通過（13 tests），包含三個來源映射及七語明暗色 380pt 渲染；另檢視繁中 light 產圖，文字未截斷。原生建置 `memory-origin-label-native.log` 與封裝 deep strict／entitlements 通過。本批未重跑完整測試；未啟動真實 App。仍待執行期間清理失敗的固定診斷提示與實際互動端到端驗收。

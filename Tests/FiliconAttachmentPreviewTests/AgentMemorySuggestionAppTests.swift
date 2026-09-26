@@ -570,6 +570,9 @@ private actor SynthesisAppTimer {
 
     @Test(.serialized, arguments: ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"])
     func reviewCardAndDisclosureRenderInSevenLanguages(language: String) async throws {
+        expectNoDifference(AgentMemoryOriginLabel.titleKey(for: .explicit), "Source: approved memory")
+        expectNoDifference(AgentMemoryOriginLabel.titleKey(for: .synthesis), "Source: automatic synthesis")
+        expectNoDifference(AgentMemoryOriginLabel.titleKey(for: .episode), "Source: episode summary")
         let candidate = AgentMemorySuggestion(accountID: "local", agentID: UUID(), exchangeID: UUID(),
             fact: "Prefers accessible layouts with clear focus indicators and consistent spacing.",
             evidence: "accessible layouts with clear focus indicators and consistent spacing", tier: .profile)
@@ -579,7 +582,8 @@ private actor SynthesisAppTimer {
                     for key in ["Memory suggestions", "Save as private memory…", "Dismiss suggestion", "Reviewing memory suggestions…", AgentMemorySuggestionsNotice.disclosure,
                         "Automatic memory synthesis", "Disable automatic synthesis", "Enable automatic synthesis…",
                         "Enable automatic memory synthesis?", AgentMemorySynthesisNotice.disclosure, AgentMemorySynthesisNotice.temporalDisclosure,
-                        "Episode summaries", "Disable episode summaries", "Enable episode summaries…", "Enable episode summaries?", AgentMemoryEpisodeNotice.disclosure] {
+                        "Episode summaries", "Disable episode summaries", "Enable episode summaries…", "Enable episode summaries?", AgentMemoryEpisodeNotice.disclosure,
+                        "Source: approved memory", "Source: automatic synthesis", "Source: episode summary"] {
                         #expect(FiliconLocalization.string(key) != key)
                     }
                 }
@@ -590,6 +594,9 @@ private actor SynthesisAppTimer {
                     AgentMemorySynthesisNotice()
                     Text(l10n("Episode summaries")).font(.headline)
                     AgentMemoryEpisodeNotice()
+                    AgentMemoryOriginLabel(origin: .explicit)
+                    AgentMemoryOriginLabel(origin: .synthesis)
+                    AgentMemoryOriginLabel(origin: .episode)
                     Button(l10n("Enable automatic synthesis…")) {}
                     AgentMemorySuggestionCard(suggestion: candidate, onSave: {}, onDismiss: {})
                     AgentMemoryReviewProgress()

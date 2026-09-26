@@ -1698,3 +1698,6 @@
 "Enable episode summaries…" = "启用事件摘要…";
 "Enable episode summaries?" = "启用事件摘要？";
 "Separate opt-in: retain bounded text from completed replies across turns. Every six eligible turns may incur extra model costs to summarize and independently verify private memories, saved without individual approval. Stopping, deleting the conversation, switching accounts or disabling clears pending text, not saved memories. Automatic synthesis disables this feature and clears pending text. No tool permissions are granted." = "需另行同意：跨轮次保存已完成回复的有限文本。每六个符合条件的轮次可能产生额外模型费用，用于摘要并独立验证私人记忆，无需逐条批准即可保存。停止、删除对话、切换账号或停用会清除待处理文本，但保留已保存记忆。启用自动记忆整合会停用此功能并清除待处理文本。不会授予工具权限。";
+"Source: approved memory" = "来源：已批准记忆";
+"Source: automatic synthesis" = "来源：自动记忆整合";
+"Source: episode summary" = "来源：事件摘要";

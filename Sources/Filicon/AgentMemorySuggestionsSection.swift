@@ -152,6 +152,21 @@ struct AgentMemorySuggestionsSection: View {
     }
 }
 
+struct AgentMemoryOriginLabel: View {
+    let origin: AgentMemory.Origin
+    static func titleKey(for origin: AgentMemory.Origin) -> String {
+        switch origin {
+        case .explicit: "Source: approved memory"
+        case .synthesis: "Source: automatic synthesis"
+        case .episode: "Source: episode summary"
+        }
+    }
+    var body: some View {
+        Text(FiliconLocalization.string(Self.titleKey(for: origin))).font(.caption).foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
 struct AgentMemoryEpisodeNotice: View {
     static let disclosure = "Separate opt-in: retain bounded text from completed replies across turns. Every six eligible turns may incur extra model costs to summarize and independently verify private memories, saved without individual approval. Stopping, deleting the conversation, switching accounts or disabling clears pending text, not saved memories. Automatic synthesis disables this feature and clears pending text. No tool permissions are granted."
     var body: some View {

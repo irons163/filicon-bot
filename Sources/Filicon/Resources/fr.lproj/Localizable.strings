@@ -1698,3 +1698,6 @@
 "Enable episode summaries…" = "Activer les résumés d’épisodes…";
 "Enable episode summaries?" = "Activer les résumés d’épisodes ?";
 "Separate opt-in: retain bounded text from completed replies across turns. Every six eligible turns may incur extra model costs to summarize and independently verify private memories, saved without individual approval. Stopping, deleting the conversation, switching accounts or disabling clears pending text, not saved memories. Automatic synthesis disables this feature and clears pending text. No tool permissions are granted." = "Consentement distinct : conserver une quantité limitée de texte des réponses terminées entre les tours. Tous les six tours admissibles, des requêtes de modèle supplémentaires peuvent être facturées pour résumer et vérifier indépendamment des souvenirs privés, enregistrés sans approbation individuelle. Arrêter, supprimer la conversation, changer de compte ou désactiver efface le texte en attente, pas les souvenirs enregistrés. La synthèse automatique désactive cette fonction et efface le texte en attente. Aucune autorisation d’outil n’est accordée.";
+"Source: approved memory" = "Source : souvenir approuvé";
+"Source: automatic synthesis" = "Source : synthèse automatique";
+"Source: episode summary" = "Source : résumé d’épisode";

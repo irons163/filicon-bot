@@ -1698,3 +1698,6 @@
 "Enable episode summaries…" = "エピソード要約を有効にする…";
 "Enable episode summaries?" = "エピソード要約を有効にしますか？";
 "Separate opt-in: retain bounded text from completed replies across turns. Every six eligible turns may incur extra model costs to summarize and independently verify private memories, saved without individual approval. Stopping, deleting the conversation, switching accounts or disabling clears pending text, not saved memories. Automatic synthesis disables this feature and clears pending text. No tool permissions are granted." = "別途同意が必要です。完了した応答のテキストを上限付きでターンをまたいで保存します。対象の6ターンごとに追加のモデル料金が発生する場合があり、要約と独立した検証を経て、個別承認なしで非公開メモリを保存します。停止、会話の削除、アカウント切り替え、無効化で未処理テキストを削除しますが、保存済みメモリは保持します。自動メモリ統合を有効にするとこの機能は無効になり、未処理テキストを削除します。ツール権限は付与されません。";
+"Source: approved memory" = "保存元：承認済みメモリ";
+"Source: automatic synthesis" = "保存元：自動メモリ統合";
+"Source: episode summary" = "保存元：エピソード要約";
