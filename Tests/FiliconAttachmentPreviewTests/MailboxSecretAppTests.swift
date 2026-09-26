@@ -85,6 +85,19 @@ struct MailboxSecretAppTests {
         expectNoDifference(publication.replyToMessageID, incoming.id)
         let card = try #require(model.mailboxSecretCards[publication.id])
         #expect(model.canUseMailboxSecret(incoming, publication: publication))
+        // A live submission is not authority to accept a stale or altered UI snapshot.
+        var alteredPublication = publication
+        alteredPublication.text = "Replaced request"
+        #expect(!model.canUseMailboxSecret(incoming, publication: alteredPublication))
+        var alteredIncoming = incoming
+        alteredIncoming.delivery?.response = "Replaced delivery"
+        #expect(!model.canUseMailboxSecret(alteredIncoming, publication: publication))
+        var alteredScope = incoming
+        alteredScope.delivery = .init(chainID: try #require(incoming.delivery?.chainID),
+            originConversationID: UUID(uuidString: "00000000-0000-0000-0000-000000000099")!, state: .completed)
+        alteredScope.delivery?.publications = [publication]
+        #expect(!model.canUseMailboxSecret(alteredScope, publication: publication))
+        expectNoDifference(writer.count, 0)
         let beforePermissions = await model.localToolPermissionPolicy.effectivePermission(for: .writeFile)
         let file = root.appending(path: "agent-messages.json")
         let backup = root.appending(path: "mail-backup.json")
@@ -123,6 +136,7 @@ struct MailboxSecretAppTests {
         }
         #expect(!String(decoding: try Data(contentsOf: file), as: UTF8.self).contains("FAKE-APP-SECRET"))
         if shouldResume {
+            #expect(!model.canUseMailboxSecret(incoming, publication: publication))
             expectNoDifference(model.agentMessages.last?.recipientID, owner.id)
             expectNoDifference(model.agentMessages.last?.delivery?.state, .completed)
             expectNoDifference(model.agentMessages.last?.secretResponse?.provided, mode != "dismissed")

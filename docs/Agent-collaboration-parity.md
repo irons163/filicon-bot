@@ -1,5 +1,13 @@
 # 協作能力核對紀錄（更新至 2026-09-26）
 
+## 信箱憑證卡目前紀錄檢查（2026-09-26）
+
+續接直接同儕憑證流程前，發現 `canUseMailboxSecret` 只驗證傳入副本 pending，未比對目前信箱紀錄。本輪補上完整 incoming／publication 相等檢查，以及 submission 的 account、agent、origin、connection、request 一致性，避免過期 UI 快照或替換的請求仍被視為可提交。
+
+使用 pfw-testing／CustomDump 與既有隔離憑證寫入器，七種 App 整合情境均額外驗證修改 publication 本文、delivery response、origin scope 時拒絕使用，且尚未寫入任何憑證；完成回答後舊 pending 副本不可再用。聚焦 `mailbox-secret-current-snapshot.log` 通過。沒有接觸真實 Keychain 或重啟 App；直接同儕 publisher、卡片投影、回答續接與恢復仍待完成，整體 parity 仍 partial。
+
+完整非並行 `mailbox-secret-current-snapshot-full.log` exit 0，含目的地一致性防護的最終程式碼；`git diff --check` 通過。本批沒有 UI 變更，未重跑原生打包或人工 UI 驗收。
+
 ## 直接同儕憑證回答來源契約（2026-09-26）
 
 核對憑證流程發現 `resolveSecretRequest` 原本建立不含 directOriginBinding 的新 delivery，submission／session 亦沒有傳遞它；不能直接開放直接同儕安全輸入，否則回答會失去原執行來源。本輪比照問題回答契約，新增可選 binding 與 chain ID：原交付綁定必須與 host 傳入完全相等且同帳號，提交與取消都保留來源，session 傳自己的新 chain ID；既有非直接信箱仍使用 nil binding。

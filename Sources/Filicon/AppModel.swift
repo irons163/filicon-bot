@@ -3438,10 +3438,17 @@ final class AppModel: ObservableObject {
     func canUseMailboxSecret(_ incoming: AgentMessage, publication: RoomMessage) -> Bool {
         guard let context = mailboxSecretContexts[publication.id], context.incomingID == incoming.id,
               context.generation == autoReviewAccountGeneration, !agentMessagingAccountTransition,
+              let current = agentMessages.first(where: { $0.id == incoming.id }), current == incoming,
+              current.delivery?.publications?.first(where: { $0.id == publication.id }) == publication,
               context.submission.destination.accountID == (settings.accountScope ?? "local"),
+              incoming.recipientID == context.submission.destination.agentID,
+              incoming.delivery?.originConversationID == context.submission.destination.conversationID,
               incoming.delivery?.state == .completed,
               !runningAgentMessageScopes.contains(context.submission.destination.conversationID),
-              publication.secretRequest?.isPending == true,
+              let secret = publication.secretRequest, secret.isPending,
+              secret.accountID == context.submission.destination.accountID,
+              secret.connectionID == context.submission.destination.connectionID,
+              secret.request == context.submission.destination.request,
               agents.contains(where: { $0.id == incoming.senderID && $0.archivedAt == nil }),
               agents.contains(where: { $0.id == incoming.recipientID && $0.archivedAt == nil }) else { return false }
         return true
