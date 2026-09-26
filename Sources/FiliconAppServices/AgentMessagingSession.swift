@@ -633,7 +633,7 @@ public actor AgentMessagingSession {
                 }
             } else { receiptPublisher = nil }
             let cloudPublisher: AgentUserMessageTool.CursorAgentPublisher?
-            if supportsMailboxQuestions, directOriginBinding == nil {
+            if supportsMailboxQuestions {
                 cloudPublisher = { [messenger, onChange, publicationLifetime] reference, target in
                     let saved = try await output.publish(reference.summary, images: [], replyTo: target, cursorAgent: reference) { publication in
                         try await messenger.publish(publication, replyingTo: inbound.id, lifetime: publicationLifetime)

@@ -1,5 +1,15 @@
 # 協作能力核對紀錄（更新至 2026-09-26）
 
+## 直接同儕雲端代理人參照卡（2026-09-26）
+
+依 reconstructed `source/host/runner/tools/send-message-tool.ts`／`send-message-schema.ts`，`type:cursor-agent` 是以 bcId 顯示可開啟的雲端代理人卡，不等同啟動或控制工作。本輪移除直接 mailbox session 對既有參照 publisher 的額外排除，沿用 canonical publish 驗證、opaque ID 與固定 Cursor URL 編碼；沒有外部網路請求或新的雲端權限。
+
+直接同儕投影只接受 canonical publication 的卡，不接受 incoming 捏造卡；恢復亦核對 summary、來源與互斥內容（不能夾帶圖片／問題／secret）。保存為既有 cloudAgent transcript card，穩定 card ID 使用 publication ID，日期來自 publication。重複投影核對 payload／ID／成功狀態與空 actions，衝突拒絕覆寫。卡片 UI 與手動開啟既有外部參照路徑重用，不增加自動查詢或操作。
+
+使用 pfw-testing／CustomDump 的隔離 App 整合測試，驗證 recipient SendMessage 真正保存卡片、SQLite 重讀、移除投影後恢復、隔離 host 重新載入、衝突卡保持不變及冪等恢復不喚醒模型。`direct-peer-cloud.log` 聚焦回歸通過。此批不涵蓋直接同儕憑證卡、雲端真實帳號操作或更完整雲端 metadata，整體 parity 仍 partial。
+
+最終 `direct-peer-cloud-full.log` 完整非並行回歸 exit 0；原生 `direct-peer-cloud-native.log`、verify-package、deep strict 簽章與 `git diff --check` 通過。未另做人工 UI／外部帳號驗收，未 push、未重啟使用者 App／Xcode、未改真實資料。
+
 ## 綁定直接聊天向所屬群組傳訊（2026-09-26）
 
 核對 reconstructed `source/host/agents/agent-messaging.ts` 的 agent/group directory 與非同步群組傳訊契約後，將直接前景及直接回答續接 session 接上既有 GroupService、完整群組名單／本文核准、持久發布與有界背景群組回覆。前景入口核准前後重驗原代理人 binding／account／generation／模型；保存與執行沿用 origin scope，群組成員變更時由 audience 檢查拒絕。群組回覆保留在群組，不當成新的直接同儕訊息。

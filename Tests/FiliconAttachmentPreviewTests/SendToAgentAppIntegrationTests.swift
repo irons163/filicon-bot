@@ -19,6 +19,37 @@ private actor AgentWakeProbe {
     func inspect(_ messages: [ChatMessage]) { inspectedMessages = messages }
 }
 
+private struct PeerCloudAppProvider: InteractiveToolProvider {
+    let descriptor = ProviderDescriptor(id: "delegate-fixture", displayName: "Cloud reference fixture", requiresAPIKey: false)
+    let recipient: UUID
+    let probe: AgentWakeProbe
+    func models() async throws -> [AIModel] { [.init(id: "test")] }
+    func stream(_ request: InferenceRequest) -> AsyncThrowingStream<InferenceEvent, Error> {
+        AsyncThrowingStream { $0.finish(throwing: ProviderError.invalidResponse) }
+    }
+    func stream(_ request: InferenceRequest, executeTool: @escaping @Sendable (NormalizedToolCall) async throws -> NormalizedToolResult) -> AsyncThrowingStream<InferenceEvent, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    let inbound = request.messages.last?.text.hasPrefix("Incoming peer message") == true
+                    let result: NormalizedToolResult
+                    if inbound {
+                        await probe.record(recipient)
+                        result = try await executeTool(.init(id: "cloud", name: "SendMessage",
+                            argumentsJSON: Data(#"{"type":"cursor-agent","bcId":"bc-fixture"}"#.utf8)))
+                    } else {
+                        result = try await executeTool(.init(id: "delegate", name: "SendToAgent",
+                            argumentsJSON: JSONEncoder().encode(["recipientID": recipient.uuidString, "message": "Share the existing cloud reference"])))
+                    }
+                    #expect(!result.isError)
+                    continuation.yield(.completed(.stop)); continuation.finish()
+                } catch { continuation.finish(throwing: error) }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+}
+
 private struct DirectGroupAppProvider: InteractiveToolProvider {
     let descriptor = ProviderDescriptor(id: "delegate-fixture", displayName: "Group fixture", requiresAPIKey: false)
     let groupID: UUID
@@ -179,6 +210,60 @@ private struct DelegatingGroupProvider: InteractiveToolProvider {
 
 @Suite("SendToAgent app integration", .timeLimit(.minutes(1)))
 @MainActor struct SendToAgentAppIntegrationTests {
+    @Test(arguments: ["recover", "restart", "conflict"])
+    func directPeerCloudReferencePersistsWithoutExecutingCloudWork(mode: String) async throws {
+        let (root, initialModel, _, sender, recipient, probe) = try await fixture()
+        var model = initialModel
+        defer { try? FileManager.default.removeItem(at: root) }
+        await model.bootstrap()
+        await model.registry.register(PeerCloudAppProvider(recipient: recipient, probe: probe))
+        let origin = try #require(await model.addConversation(agentID: sender))
+        await model.refreshModels()
+        model.draft = "Ask the designer for the existing cloud reference"
+        model.send()
+        let approval = try await pending(model)
+        model.handleTranscriptCardIntent(.approveReview(reviewID: approval.id))
+        let deadline = ContinuousClock.now + .seconds(10)
+        while model.isConversationWorking(origin), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(!model.isConversationWorking(origin))
+        let peer = try #require(model.conversations.first { $0.agentBinding?.agentID == recipient })
+        let publication = try #require(peer.messages.first { !$0.transcriptCards.isEmpty })
+        let card = try #require(publication.transcriptCards.first)
+        expectNoDifference(card.id, publication.id)
+        #expect(card.actions.isEmpty)
+        expectNoDifference(card.externalCursorReference?.bcID, "bc-fixture")
+        expectNoDifference(publication.agentMessageSource?.authorAgentID, recipient)
+        let canonicalIDs = model.agentMessages.map(\.id)
+        let store = ConversationStore(fileURL: root.appending(path: "conversations.json"))
+        let saved = try #require(try await store.conversation(id: peer.id))
+        expectNoDifference(saved.messages.flatMap(\.transcriptCards).map(\.payload), [card.payload])
+        if mode == "conflict" {
+            let index = try #require(model.conversations.firstIndex { $0.id == peer.id })
+            let messageIndex = try #require(model.conversations[index].messages.firstIndex { $0.id == publication.id })
+            model.conversations[index].messages[messageIndex].transcriptCards[0].payload = .cloudAgent(.init(agentID: "", title: "Cursor cloud agent", externalReferenceID: "different-id"))
+            try await store.upsert(model.conversations[index], replacingLoadedMessageIDs: [], historyComplete: true)
+            let before = try #require(try await store.conversation(id: peer.id))
+            #expect(!(await model.recoverDirectPeerMessages(conversationID: origin)))
+            let after = try #require(try await store.conversation(id: peer.id))
+            expectNoDifference(after, before)
+        }
+        try await removeQuestionProjections(model: model, root: root, peerID: peer.id)
+        if mode == "restart" {
+            model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+            await model.bootstrap()
+        }
+        #expect(await model.recoverDirectPeerMessages(conversationID: origin))
+        let restored = try #require(try await store.conversation(id: peer.id))
+        expectNoDifference(restored.messages.flatMap(\.transcriptCards).map(\.payload), [card.payload])
+        expectNoDifference(restored.messages.flatMap(\.transcriptCards).map(\.id), [publication.id])
+        let snapshot = model.conversations
+        #expect(await model.recoverDirectPeerMessages(conversationID: origin))
+        expectNoDifference(model.conversations, snapshot)
+        expectNoDifference(model.agentMessages.map(\.id), canonicalIDs)
+        let wakes = await probe.wakes
+        expectNoDifference(wakes, [recipient])
+    }
+
     @Test(arguments: ["approve", "deny", "stop", "account", "binding", "membership"])
     func directChatPostsOnlyToApprovedGroup(mode: String) async throws {
         let (root, model, groupID, sender, recipient, probe) = try await fixture()

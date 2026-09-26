@@ -4436,10 +4436,10 @@ final class AppModel: ObservableObject {
               canonical.senderID == source.senderAgentID, canonical.recipientID == source.recipientAgentID,
               canonical.secretResponse == nil,
               message.groupID == origin, message.senderID == source.authorAgentID,
-              message.secretRequest == nil, message.cursorAgent == nil else { throw AgentMessagingError.scopeMismatch }
+              message.secretRequest == nil else { throw AgentMessagingError.scopeMismatch }
         switch source.kind {
         case .incoming:
-            guard canonical.questionResponse == nil, message.question == nil,
+            guard canonical.questionResponse == nil, message.question == nil, message.cursorAgent == nil,
                   delivery.state == .running, message.id == canonical.id,
                   message.text == canonical.text,
                   message.images ?? [] == canonical.images ?? [] else { throw AgentMessagingError.scopeMismatch }
@@ -4550,9 +4550,22 @@ final class AppModel: ObservableObject {
             throw CancellationError()
         }
         let images = message.images ?? []
+        var cards: [TranscriptCard] = []
+        if let reference = message.cursorAgent {
+            guard source.kind == .publication, message.text == reference.summary,
+                  message.question == nil, images.isEmpty else { throw AgentMessagingError.scopeMismatch }
+            cards = [TranscriptCard(id: message.id, lifecycle: .succeeded,
+                createdAt: message.createdAt, updatedAt: message.createdAt,
+                payload: .cloudAgent(.init(agentID: "", title: "Cursor cloud agent", externalReferenceID: reference.bcID)))]
+        }
         if let saved = stored?.messages.first(where: { $0.id == message.id }) {
             guard saved.agentMessageSource == source, saved.text == message.text,
-                  saved.attachments == images else { throw AgentMessagingError.scopeMismatch }
+                  saved.attachments == images,
+                  saved.transcriptCards.map(\.payload) == cards.map(\.payload),
+                  saved.transcriptCards.map(\.id) == cards.map(\.id),
+                  saved.transcriptCards.allSatisfy({ $0.lifecycle == .succeeded && $0.actions.isEmpty }) else {
+                throw AgentMessagingError.scopeMismatch
+            }
         }
         if !images.isEmpty {
             guard let attachmentLifecycle else { throw AgentImageError.unavailable }
@@ -4598,6 +4611,7 @@ final class AppModel: ObservableObject {
         var projected = ChatMessage(id: message.id, role: .assistant, text: message.text,
             createdAt: message.createdAt, agentMessageSource: source)
         projected.attachments = images
+        projected.transcriptCards = cards
         let position = conversations[index].messages.firstIndex { $0.createdAt > projected.createdAt }
             ?? conversations[index].messages.endIndex
         conversations[index].messages.insert(projected, at: position)

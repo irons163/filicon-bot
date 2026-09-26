@@ -448,8 +448,12 @@ public actor AgentMessenger {
                       message.senderID == (kind == .incoming ? item.senderID : item.recipientID),
                       !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                       message.toolActivities.isEmpty,
-                      message.secretRequest == nil, message.cursorAgent == nil,
+                      message.secretRequest == nil,
                       message.memberOutcome == nil, message.questionReplyTo == nil else { return }
+                if let reference = message.cursorAgent {
+                    guard kind == .publication, message.text == reference.summary,
+                          message.question == nil, (message.images ?? []).isEmpty else { return }
+                }
                 if let question = message.question {
                     guard kind == .publication, question.accountID == binding.accountID,
                           question.memberIDs == [item.senderID, item.recipientID],

@@ -1,5 +1,7 @@
 # Filicon / Grok Bot 0.18 功能 parity matrix（current implementation）
 
+直接同儕雲端參照卡（2026-09-26）：SendMessage cursor-agent 已接直接 mailbox、canonical 驗證、自己聊天室的持久卡片與恢復；衝突不覆寫，恢復不重跑模型。它是手動開啟既有 Cursor 代理人的連結，不是雲端啟動／查詢／控制權限；憑證卡及其他外部服務缺口仍維持 partial。詳見協作核對紀錄。
+
 綁定直接聊天→所屬群組文字轉交（2026-09-26）：前景及回答續接 factory 接上完整 audience／本文核准、持久發文及有界群組回覆；核准期間身份或成員變更拒絕，背景群組不繼承直接聊天私人圖片。六種隔離 App 情境及既有圖片／委派回歸驗證；詳細證據見協作核對紀錄。圖片群發、任意 file／HTTPS 來源、跨群組統一歷史與其他互動卡仍 partial。
 
 圖片故障補驗（2026-09-26）：`d7dba12`、`1656d39` 補齊隔離 host 重建、SQLite 寫入拒絕／重試、canonical blob 遺失／損壞及附件 metadata 衝突測試；完整非並行回歸通過，取代下方相應待補驗記述，仍非真實 UI／外部模型驗收。
