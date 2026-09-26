@@ -3,7 +3,7 @@ import Foundation
 /// Facts, not transcripts, instructions or permission grants. Existing and
 /// human-approved records always retain explicit provenance.
 public struct AgentMemory: Identifiable, Codable, Hashable, Sendable {
-    public enum Origin: String, Codable, Sendable { case explicit, synthesis }
+    public enum Origin: String, Codable, Sendable { case explicit, synthesis, episode }
     public enum Tier: String, Codable, Sendable { case profile, log, note }
     public enum Scope: String, Codable, Sendable { case agent, user, project }
     public let id: UUID
@@ -28,6 +28,11 @@ public struct AgentMemory: Identifiable, Codable, Hashable, Sendable {
         self.id = id; self.accountID = accountID; self.agentID = agentID
         self.fact = fact; self.tier = tier; self.scope = .agent; self.project = nil
         self.createdAt = createdAt; self.origin = .synthesis
+    }
+    init(episodeID id: UUID, accountID: String, agentID: UUID, fact: String, createdAt: Date) {
+        self.id = id; self.accountID = accountID; self.agentID = agentID
+        self.fact = fact; self.tier = .log; self.scope = .agent; self.project = nil
+        self.createdAt = createdAt; self.origin = .episode
     }
     private enum CodingKeys: String, CodingKey { case id, accountID, agentID, fact, tier, scope, project, createdAt, origin }
     public init(from decoder: Decoder) throws {
@@ -184,9 +189,12 @@ public struct AgentMemoryRecall: Sendable {
                 let (leftMemory, rightMemory) = (left.memory, right.memory)
                 if !profile {
                     // Equivalent relative ordering to log2(importance) + date / 30 days:
-                    // a note has importance 0.5, a log 1. No wall-clock expiry or erasure.
-                    let left = leftMemory.createdAt.timeIntervalSince1970 / (30 * 86_400) - (leftMemory.tier == .note ? 1 : 0)
-                    let right = rightMemory.createdAt.timeIntervalSince1970 / (30 * 86_400) - (rightMemory.tier == .note ? 1 : 0)
+                    // Host episode provenance has importance 1.5; text prefixes
+                    // cannot elevate a model's public write above ordinary logs.
+                    let left = leftMemory.createdAt.timeIntervalSince1970 / (30 * 86_400)
+                        + (leftMemory.origin == .episode ? log2(1.5) : leftMemory.tier == .note ? -1 : 0)
+                    let right = rightMemory.createdAt.timeIntervalSince1970 / (30 * 86_400)
+                        + (rightMemory.origin == .episode ? log2(1.5) : rightMemory.tier == .note ? -1 : 0)
                     if left != right { return left > right }
                 }
                 return newestFirst(leftMemory, rightMemory)

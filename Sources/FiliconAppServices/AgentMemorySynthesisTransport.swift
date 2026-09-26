@@ -84,6 +84,36 @@ public struct AgentMemorySynthesisTransport: Sendable {
         try await check()
         return try await output.result()
     }
+
+    /// Shares the tool-free background lane and one deadline across summary and
+    /// verification. Unlike synthesis, failed episodes are not retried.
+    public func runEpisode(settings: AgentMemoryEpisodeSettings, originID: UUID,
+                           profile: AgentProfile, sessionID: UUID,
+                           lifetime: AgentMemorySuggestionLifetime) async throws -> AgentMemorySynthesisOutcome {
+        guard settings.agentID == profile.id else { throw AgentMemorySuggestionError.stale }
+        let deadline = ContinuousClock.now.advanced(by: attemptTimeout)
+        return try await agents.runMemoryEpisode(settings: settings, originID: originID, lifetime: lifetime) { stage, instructions, payload in
+            try await withThrowingTaskGroup(of: String.self) { tasks in
+                tasks.addTask {
+                    try await execute(stage: stage, instructions: instructions, payload: payload,
+                                      profile: profile, sessionID: sessionID, lifetime: lifetime, authorize: {
+                        guard try await agents.memoryEpisodeSettings(accountID: settings.accountID, agentID: settings.agentID) == settings else {
+                            throw AgentMemorySuggestionError.stale
+                        }
+                    })
+                }
+                tasks.addTask {
+                    try await ContinuousClock().sleep(until: deadline)
+                    throw MemorySynthesisTimeout()
+                }
+                defer { tasks.cancelAll() }
+                let result = try await tasks.next()
+                try Task.checkCancellation()
+                guard ContinuousClock.now < deadline, let result else { throw MemorySynthesisTimeout() }
+                return result
+            }
+        }
+    }
 }
 
 /// A run owns its budget: verification shares its proposal's deadline, while a

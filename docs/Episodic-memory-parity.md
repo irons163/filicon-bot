@@ -50,3 +50,13 @@
 **尚待 App 七語同意介面、前景完成事件及停止／刪除／切帳號接線、摘要 runner、保存與 host episode 來源權重。** 現在沒有使用者入口會啟用此功能，也沒有自動保存真實跨回合文字；不能以儲存層測試宣稱端到端完成。
 
 本批驗證：完整非並行 Swift 測試 exit 0（`memory-episode-store-full.log`）、原生 `Filicon App` Debug 建置 exit 0（`memory-episode-store-native.log`）、封裝 deep/strict 簽章及 app／XPC entitlements 檢查通過；未啟動 App。
+
+## 摘要執行基礎（2026-09-27）
+
+`runMemoryEpisode` 已接六回合門檻、每來源單一在途執行、無工具摘要與獨立驗證、NONE／拒絕不保存。transport 使用背景 lane，兩段共用 90 秒上限（每請求另有限時）；不攜帶 persona 或對話工具。尚未由 App 自動呼叫。
+
+為避免崩潰後重送跨回合文字，批次在呼叫模型前先原子消耗並保存；若消耗保存失敗不呼叫模型。這比原版 finally 清 pending 更保守：模型失敗、取消或崩潰皆不重試此批，執行中新增回合保留。最終保存重新檢查 consent revision／lifetime／來源撤銷；tombstone、重複與配額沿用既有規則，不刪其他記憶騰空間。
+
+新增 host-owned `.episode` 來源，私有 log、時間取最後回合，recall importance 1.5；公共 write 不能偽造來源，`[episode]` 字樣不提升權重。仍待來源 UI 呈現、七語 consent／費用說明、App 前景與生命週期接線；端到端保持 partial。
+
+此批完整非並行測試（`memory-episode-runner-full.log`）與原生建置（`memory-episode-runner-native.log`）exit 0；runner 包含 9 種結果／撤銷／新增回合情境，transport 成功與逾時皆經測試。使用隔離測試 provider，沒有真實模型或使用者聊天驗收。

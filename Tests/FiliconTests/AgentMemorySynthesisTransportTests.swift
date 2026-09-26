@@ -17,6 +17,7 @@ private struct SynthesisTransportProvider: AIProvider {
     let probe: SynthesisTransportProbe
     let events: [InferenceEvent]
     var synthesisStages = false
+    var episodeStages = false
     var before: @Sendable () async throws -> Void = {}
     func models() async throws -> [AIModel] { [.init(id: "model")] }
     func stream(_ request: InferenceRequest) -> AsyncThrowingStream<InferenceEvent, Error> {
@@ -31,6 +32,10 @@ private struct SynthesisTransportProvider: AIProvider {
                         let text = request.messages.first?.text.contains("Maintain compact") == true
                             ? #"{"changes":[{"action":"create","content":"Prefers short answers","kind":"profile","sourceEvidenceIds":["\#(evidenceID)"]}]}"#
                             : #"{"approved":true}"#
+                        selected = [.textDelta(text), .completed(.stop)]
+                    } else if episodeStages {
+                        let text = request.messages.first?.text.hasPrefix("Summarize") == true
+                            ? "Agreed to build keyboard navigation." : #"{"approved":true}"#
                         selected = [.textDelta(text), .completed(.stop)]
                     } else { selected = events }
                     for event in selected { continuation.yield(event) }
@@ -51,6 +56,42 @@ struct AgentMemorySynthesisTransportTests {
         let profile = try await agents.create(name: "Owner", instructions: "PRIVATE_PERSONA_DO_NOT_SEND",
             providerID: "synthesis-test", modelID: "model", at: Date(timeIntervalSince1970: 100))
         return (root, agents, profile)
+    }
+
+    @Test(arguments: [false, true])
+    func episodeTransportIsToolFreeAndTimeoutConsumesBatch(timeout: Bool) async throws {
+        let (root, agents, profile) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let initial = try await agents.memoryEpisodeSettings(accountID: "local", agentID: profile.id)
+        try await agents.setMemoryEpisodesEnabled(true, expected: initial, lifetime: .init())
+        let settings = try await agents.memoryEpisodeSettings(accountID: "local", agentID: profile.id)
+        for n in 1...6 {
+            try await agents.recordMemoryEpisode(settings: settings, originID: session,
+                exchangeID: UUID(uuidString: String(format: "00000000-0000-0000-0000-%012d", n))!,
+                at: .init(timeIntervalSince1970: 1_900_000_000), user: "Build keyboard navigation", assistant: "Agreed", lifetime: .init())
+        }
+        let registry = ProviderRegistry(), probe = SynthesisTransportProbe()
+        await registry.register(SynthesisTransportProvider(probe: probe, events: [], episodeStages: true, before: {
+            if timeout { try await Task.sleep(for: .seconds(10)) }
+        }))
+        let transport = AgentMemorySynthesisTransport(agents: agents, registry: registry, scheduler: .init(),
+                                                      attemptTimeout: timeout ? .milliseconds(20) : .seconds(10))
+        var failed = false
+        do {
+            let result = try await transport.runEpisode(settings: settings, originID: session, profile: profile,
+                                                        sessionID: session, lifetime: .init())
+            expectNoDifference(result, .committed)
+        } catch { failed = true }
+        expectNoDifference(failed, timeout)
+        let requests = await probe.requests
+        if !timeout { expectNoDifference(requests.count, 2) }
+        for request in requests {
+            #expect(request.tools.isEmpty)
+            expectNoDifference(request.messages.count, 2)
+            #expect(!request.messages.contains { $0.text.contains("PRIVATE_PERSONA_DO_NOT_SEND") })
+        }
+        let progress = try await agents.memoryEpisodeProgress(settings: settings, originID: session)
+        expectNoDifference(progress?.turns.count, 0)
     }
 
     @Test(arguments: ["enabled", "disabled", "unprepared", "pass", "revoked", "disabled-after-prepare"])
