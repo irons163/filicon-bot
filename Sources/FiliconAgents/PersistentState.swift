@@ -18,6 +18,8 @@ struct AgentPersistentState: Codable, Sendable {
     var memorySuggestionSettings: [AgentMemorySuggestionSettings] = []
     var memorySynthesisSettings: [AgentMemorySynthesisSettings] = []
     var memoryTemporalReviews: [AgentMemoryTemporalReview] = []
+    var memoryEpisodeSettings: [AgentMemoryEpisodeSettings] = []
+    var memoryEpisodes: [AgentMemoryEpisodeProgress] = []
     var memorySuggestions: [AgentMemorySuggestion] = []
     var memorySuggestionReceipts: [AgentMemorySuggestionReceipt] = []
 
@@ -28,6 +30,7 @@ struct AgentPersistentState: Codable, Sendable {
         case memoryTombstones
         case memorySynthesisSettings
         case memoryTemporalReviews
+        case memoryEpisodeSettings, memoryEpisodes
     }
 
     init() {}
@@ -50,6 +53,9 @@ struct AgentPersistentState: Codable, Sendable {
         memorySuggestionSettings = try values.decodeIfPresent([AgentMemorySuggestionSettings].self, forKey: .memorySuggestionSettings) ?? []
         memorySynthesisSettings = try values.decodeIfPresent([AgentMemorySynthesisSettings].self, forKey: .memorySynthesisSettings) ?? []
         memoryTemporalReviews = try values.decodeIfPresent([AgentMemoryTemporalReview].self, forKey: .memoryTemporalReviews) ?? []
+        memoryEpisodeSettings = try values.decodeIfPresent([AgentMemoryEpisodeSettings].self, forKey: .memoryEpisodeSettings) ?? []
+        memoryEpisodes = try values.decodeIfPresent([AgentMemoryEpisodeProgress].self, forKey: .memoryEpisodes) ?? []
+        guard memoryEpisodes.count <= 64 else { throw AgentMemorySuggestionError.invalid }
         memorySuggestions = try values.decodeIfPresent([AgentMemorySuggestion].self, forKey: .memorySuggestions) ?? []
         memorySuggestionReceipts = try values.decodeIfPresent([AgentMemorySuggestionReceipt].self, forKey: .memorySuggestionReceipts) ?? []
         schemaVersion = 2

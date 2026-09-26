@@ -104,6 +104,11 @@ public actor AgentService {
         state.agents[index].archivedAt = at
         state.agents[index].status = .offline
         state.agents[index].updatedAt = at
+        state.memoryEpisodes.removeAll { $0.agentID == id }
+        for settingIndex in state.memoryEpisodeSettings.indices where state.memoryEpisodeSettings[settingIndex].agentID == id {
+            state.memoryEpisodeSettings[settingIndex].enabled = false
+            state.memoryEpisodeSettings[settingIndex].revision = UUID()
+        }
         try persist()
     }
 
@@ -243,8 +248,84 @@ public actor AgentService {
             var next = expected; next.enabled = enabled; next.revision = UUID()
             state.memorySynthesisSettings.removeAll { $0.accountID == expected.accountID && $0.agentID == expected.agentID }
             state.memorySynthesisSettings.append(next)
+            if enabled {
+                state.memoryEpisodes.removeAll { $0.accountID == expected.accountID && $0.agentID == expected.agentID }
+                // Revoke the legacy branch, rather than silently resume saved
+                // cross-turn collection if synthesis is later disabled.
+                for index in state.memoryEpisodeSettings.indices where
+                    state.memoryEpisodeSettings[index].accountID == expected.accountID &&
+                    state.memoryEpisodeSettings[index].agentID == expected.agentID {
+                    state.memoryEpisodeSettings[index].enabled = false
+                    state.memoryEpisodeSettings[index].revision = UUID()
+                }
+            }
             state.memoryTemporalReviews.removeAll { $0.settings.accountID == expected.accountID && $0.settings.agentID == expected.agentID }
             // Disabling revokes in-flight snapshots but never deletes memories.
+            try persist()
+        }
+    }
+
+    public func memoryEpisodeSettings(accountID: String, agentID: UUID) throws -> AgentMemoryEpisodeSettings {
+        _ = try memorySynthesisSettings(accountID: accountID, agentID: agentID)
+        return state.memoryEpisodeSettings.first { $0.accountID == accountID && $0.agentID == agentID }
+            ?? .init(accountID: accountID, agentID: agentID)
+    }
+
+    public func setMemoryEpisodesEnabled(_ enabled: Bool, expected: AgentMemoryEpisodeSettings,
+                                         lifetime: AgentMemorySuggestionLifetime) throws {
+        try lifetime.commit {
+            guard try memoryEpisodeSettings(accountID: expected.accountID, agentID: expected.agentID) == expected,
+                  try !enabled || !memorySynthesisSettings(accountID: expected.accountID, agentID: expected.agentID).enabled else {
+                throw AgentMemorySuggestionError.stale
+            }
+            var next = expected; next.enabled = enabled; next.revision = UUID()
+            state.memoryEpisodeSettings.removeAll { $0.accountID == expected.accountID && $0.agentID == expected.agentID }
+            state.memoryEpisodeSettings.append(next)
+            state.memoryEpisodes.removeAll { $0.accountID == expected.accountID && $0.agentID == expected.agentID }
+            try persist()
+        }
+    }
+
+    private func requireEpisodeConsent(_ settings: AgentMemoryEpisodeSettings) throws {
+        guard settings.enabled, settings.revision != nil,
+              try memoryEpisodeSettings(accountID: settings.accountID, agentID: settings.agentID) == settings,
+              try !memorySynthesisSettings(accountID: settings.accountID, agentID: settings.agentID).enabled else {
+            throw AgentMemorySuggestionError.stale
+        }
+    }
+
+    public func memoryEpisodeProgress(settings: AgentMemoryEpisodeSettings, originID: UUID) throws -> AgentMemoryEpisodeProgress? {
+        try requireEpisodeConsent(settings)
+        return state.memoryEpisodes.first { $0.accountID == settings.accountID && $0.agentID == settings.agentID &&
+            $0.originID == originID && $0.revision == settings.revision }
+    }
+
+    /// Host-only completed foreground exchanges, never a model tool.
+    public func recordMemoryEpisode(settings: AgentMemoryEpisodeSettings, originID: UUID, exchangeID: UUID,
+                                    at: Date, user: String, assistant: String,
+                                    lifetime: AgentMemorySuggestionLifetime) throws {
+        try lifetime.commit {
+            try requireEpisodeConsent(settings)
+            guard let revision = settings.revision else { throw AgentMemorySuggestionError.stale }
+            let index = state.memoryEpisodes.firstIndex { $0.accountID == settings.accountID &&
+                $0.agentID == settings.agentID && $0.originID == originID }
+            var progress = try index.map { state.memoryEpisodes[$0] } ?? AgentMemoryEpisodeProgress(
+                accountID: settings.accountID, agentID: settings.agentID, originID: originID, revision: revision)
+            guard progress.revision == settings.revision else { throw AgentMemorySuggestionError.stale }
+            guard try progress.record(id: exchangeID, at: at, user: user, assistant: assistant) else { return }
+            if let index { state.memoryEpisodes[index] = progress }
+            else {
+                guard state.memoryEpisodes.count < 64 else { throw AgentMemorySuggestionError.invalid }
+                state.memoryEpisodes.append(progress)
+            }
+            try persist()
+        }
+    }
+
+    public func clearMemoryEpisodeOrigin(accountID: String, originID: UUID,
+                                         lifetime: AgentMemorySuggestionLifetime) throws {
+        try lifetime.commit {
+            state.memoryEpisodes.removeAll { $0.accountID == accountID && $0.originID == originID }
             try persist()
         }
     }

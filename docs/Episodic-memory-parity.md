@@ -40,3 +40,13 @@
 `AgentMemoryEpisodeProgress` 已實作可編解碼的 account／agent／origin／revision 身分、預設六回合門檻、原版英文 trivial-exchange 篩選、每側 2,000 UTF-16 單位及最近 64 回合上限。避免切斷 surrogate pair；最近 128 個回合 ID 用於有界去重，不是永久去重。摘要結果 whitespace 正規化、500 UTF-16 上限與 NONE 處理也有測試。
 
 摘要嘗試收尾只移除該批回合，保留執行中新增的回合；失敗批次不應自動重跑。編解碼會拒絕超量、重複或缺少去重 ID 的進度。這只是純值元件，**尚未接入持久化 store、App consent、synthesis 互斥分支或模型 runner**；持有 progress 本身不是授權，也未寫入任何真實聊天。完整 episodic 功能仍 partial。
+
+## 儲存與授權基礎（2026-09-27）
+
+後續已將 progress 接入 `AgentPersistentState`／`AgentService`，取代上一段 store 尚缺的記述。舊資料欄位缺省為空；新增獨立 `AgentMemoryEpisodeSettings`，預設停用。record 同時檢查 saved revision、active agent、lifetime 和 synthesis 未啟用；全 store 最多 64 個來源進度，滿額拒絕新增，不淘汰其他來源。
+
+設定更新會清除該 account／agent 的進度；啟用 synthesis 額外撤銷 episode consent，之後停用 synthesis 不會自動重啟跨回合收集。封存代理人清除其進度與授權，restore 不復活；來源清除 API 按 account／origin 隔離。所有改動沿用原子儲存與失敗回滾。隔離測試覆蓋重開去重、舊資料、取消、寫入失敗、synthesis 互斥與 account／origin 清除。
+
+**尚待 App 七語同意介面、前景完成事件及停止／刪除／切帳號接線、摘要 runner、保存與 host episode 來源權重。** 現在沒有使用者入口會啟用此功能，也沒有自動保存真實跨回合文字；不能以儲存層測試宣稱端到端完成。
+
+本批驗證：完整非並行 Swift 測試 exit 0（`memory-episode-store-full.log`）、原生 `Filicon App` Debug 建置 exit 0（`memory-episode-store-native.log`）、封裝 deep/strict 簽章及 app／XPC entitlements 檢查通過；未啟動 App。
