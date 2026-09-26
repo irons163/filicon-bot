@@ -68,3 +68,11 @@
 此接線仍不提供啟用 UI，也**尚未完成 Stop／刪除／成員變更時清理既存 pending 文字**（目前 lifetime 阻止新寫入，不能替代清理）；後續需把 source 清理與 UI 授權一起驗收。session 測試包含 7 種啟用／撤銷／synthesis 分支，跨六個 session 只生成一筆事件記憶。
 
 本批完整非並行測試 `memory-episode-session-full.log` 及原生建置 `memory-episode-session-native.log` exit 0，封裝簽章／entitlements 通過；未使用真實模型、聊天或帳號。
+
+## Pending 清理接線（2026-09-27）
+
+App 原有 origin invalidation（direct Stop／刪除、group Stop／成員更新）現在排入序列清理；切帳號排入舊帳號整體清理。新 session prepare episode 前等待已捕捉的 account／origin 清理成功，舊 session 由既有 lifetime 即時撤銷，避免遲到清理刪除新回合。清理失敗則不再收集 episode；再次 invalidation 可重試清理。已保存記憶不受清理影響。
+
+針對清理的 App 測試直接呼叫 Stop／delete／account 入口並重開 store 驗證 pending 消失、既存記憶保留；session 測試驗證 cleanup failure 不發出模型請求。尚待七語啟用 UI、來源顯示及使用者可見的清理失敗診斷；不能稱端到端已完成。
+
+本批完整非並行測試 `memory-episode-cleanup-full.log`、原生建置 `memory-episode-cleanup-native.log` exit 0；封裝 deep strict 簽章與 entitlements 通過。

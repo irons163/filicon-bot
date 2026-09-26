@@ -138,6 +138,34 @@ private actor SynthesisAppTimer {
         #expect(!f.model.rootDiagnostics().contains("memoryTemporalSweep"))
     }
 
+    @Test(arguments: ["stop", "account", "delete"])
+    func episodeCleanupRemovesOnlyPendingText(mode: String) async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "episode-cleanup-app-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appending(path: "agents.json")
+        let service = try AgentService(storeURL: url)
+        let date = Date(timeIntervalSince1970: 1_900_000_000)
+        let agent = try await service.create(name: "Owner", instructions: "", providerID: "fixture", modelID: "fixture", at: date)
+        let initial = try await service.memoryEpisodeSettings(accountID: "local", agentID: agent.id)
+        try await service.setMemoryEpisodesEnabled(true, expected: initial, lifetime: .init())
+        let consent = try await service.memoryEpisodeSettings(accountID: "local", agentID: agent.id)
+        let origin = UUID(uuidString: "00000000-0000-0000-0000-000000000111")!
+        try await service.recordMemoryEpisode(settings: consent, originID: origin, exchangeID: origin,
+            at: date, user: "Build an accessible app", assistant: "Agreed", lifetime: .init())
+        try await service.applyMemoryChange(.init(operation: .write, memory: .init(accountID: "local", agentID: agent.id,
+            fact: "Keep this saved fact", createdAt: date)), lifetime: .init())
+        let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+        if mode == "account" { await model.cancelAutoReviewApprovals(nextAccountID: "other") }
+        else if mode == "delete" { model.deleteConversation(id: origin) }
+        else { await model.stopGroup(id: origin) }
+        try await model.memoryEpisodeReadiness(originID: origin)()
+        let reopened = try AgentService(storeURL: url)
+        let pending = try await reopened.memoryEpisodeProgress(settings: consent, originID: origin)
+        expectNoDifference(pending, nil)
+        let saved = await reopened.memories(accountID: "local", agentID: agent.id)
+        expectNoDifference(saved.map(\.fact), ["Keep this saved fact"])
+    }
+
     @Test(arguments: ["scheduled", "account", "disabled"])
     func startupAndHourlyTemporalReviewRemainAccountFenced(mode: String) async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "temporal-app-\(UUID())")

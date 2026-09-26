@@ -95,6 +95,7 @@ public actor AgentMessagingSession {
     private let memorySynthesis: AgentMemorySynthesisTransport?
     private let memorySynthesisWorker: AgentMemorySynthesisWorker?
     private let memorySynthesisLifetime: AgentMemorySuggestionLifetime
+    private let memoryEpisodeReady: @Sendable () async throws -> Void
     private let memorySuggestionLifetime = AgentMemorySuggestionLifetime()
     private struct MemoryExchange {
         let settings: AgentMemorySuggestionSettings?
@@ -117,6 +118,7 @@ public actor AgentMessagingSession {
                 memorySynthesis: AgentMemorySynthesisTransport? = nil,
                 memorySynthesisWorker: AgentMemorySynthesisWorker? = nil,
                 memorySynthesisLifetime: AgentMemorySuggestionLifetime = .init(),
+                memoryEpisodeReady: @escaping @Sendable () async throws -> Void = {},
                 supportsMailboxQuestions: Bool = false,
                 publishSecret: SecretPublisher? = nil,
                 groups: GroupService? = nil,
@@ -140,6 +142,7 @@ public actor AgentMessagingSession {
         self.memorySynthesis = memorySynthesis
         self.memorySynthesisWorker = memorySynthesisWorker
         self.memorySynthesisLifetime = memorySynthesisLifetime
+        self.memoryEpisodeReady = memoryEpisodeReady
         self.groups = groups; self.authorizeGroup = authorizeGroup; self.postGroup = postGroup
         self.runGroup = runGroup; self.finishGroup = finishGroup
         self.authorize = authorize; self.onChange = onChange; self.turnTimeout = turnTimeout
@@ -283,7 +286,14 @@ public actor AgentMessagingSession {
         guard !closed, memoryExtractor != nil || memorySynthesis != nil || memorySynthesisWorker != nil, memoryExchanges[profile.id] == nil else { return }
         let settings = memoryExtractor == nil ? nil : try? await agents.memorySuggestions(accountID: accountID, agentID: profile.id).settings
         let synthesis = memorySynthesis == nil && memorySynthesisWorker == nil ? nil : try? await agents.memorySynthesisSettings(accountID: accountID, agentID: profile.id)
-        let episode = memorySynthesis == nil || synthesis?.enabled == true ? nil : try? await agents.memoryEpisodeSettings(accountID: accountID, agentID: profile.id)
+        var episode: AgentMemoryEpisodeSettings?
+        if memorySynthesis != nil, synthesis?.enabled != true {
+            do {
+                try await memoryEpisodeReady()
+                try memorySynthesisLifetime.check()
+                episode = try await agents.memoryEpisodeSettings(accountID: accountID, agentID: profile.id)
+            } catch { /* Cleanup must finish successfully before collecting more text. */ }
+        }
         guard settings?.enabled == true || synthesis?.enabled == true || episode?.enabled == true, !closed, !Task.isCancelled else { return }
         memoryExchanges[profile.id] = .init(settings: settings?.enabled == true ? settings : nil,
                                            synthesisSettings: synthesis?.enabled == true ? synthesis : nil,

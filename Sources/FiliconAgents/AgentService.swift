@@ -323,12 +323,12 @@ public actor AgentService {
         }
     }
 
-    public func clearMemoryEpisodeOrigin(accountID: String, originID: UUID,
+    public func clearMemoryEpisodeOrigin(accountID: String, originID: UUID?,
                                          lifetime: AgentMemorySuggestionLifetime) throws {
         try lifetime.commit {
-            state.memoryEpisodes.removeAll { $0.accountID == accountID && $0.originID == originID }
+            state.memoryEpisodes.removeAll { $0.accountID == accountID && (originID == nil || $0.originID == originID) }
             try persist()
-            episodeRuns = episodeRuns.filter { $0.value.accountID != accountID || $0.value.originID != originID }
+            episodeRuns = episodeRuns.filter { $0.value.accountID != accountID || (originID != nil && $0.value.originID != originID) }
         }
     }
 

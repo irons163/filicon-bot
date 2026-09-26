@@ -314,6 +314,8 @@ final class AppModel: ObservableObject {
     private var memorySynthesisWorker: AgentMemorySynthesisWorker?
     private var memorySynthesisAccountLifetime = AgentMemorySuggestionLifetime()
     private var memorySynthesisJournal = AgentMemorySynthesisJournal()
+    private var memoryEpisodeCleanups: [UUID: Task<Void, Error>] = [:]
+    private var memoryEpisodeAccountCleanup: Task<Void, Error>?
     private var memoryTemporalTask: Task<Void, Never>?
     var memoryTemporalNow: @Sendable () -> Date = { .now }
     var memoryTemporalSleep: @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
@@ -2086,6 +2088,7 @@ final class AppModel: ObservableObject {
                             scheduler: agentExecutionScheduler),
                         memorySynthesisWorker: backgroundMemorySynthesisWorker(),
                         memorySynthesisLifetime: backgroundMemorySynthesisLifetime(originID: id),
+                        memoryEpisodeReady: memoryEpisodeReadiness(originID: id),
                         supportsMailboxQuestions: true,
                         publishSecret: { [weak self] request, incoming, target, lifetime in
                             guard let self else { throw CancellationError() }
@@ -3870,6 +3873,7 @@ final class AppModel: ObservableObject {
                 scheduler: agentExecutionScheduler),
             memorySynthesisWorker: backgroundMemorySynthesisWorker(),
             memorySynthesisLifetime: backgroundMemorySynthesisLifetime(originID: originID),
+            memoryEpisodeReady: memoryEpisodeReadiness(originID: originID),
             supportsMailboxQuestions: supportsMailboxQuestions,
             publishSecret: secretPublisher,
             groups: groupService,
@@ -4820,6 +4824,24 @@ final class AppModel: ObservableObject {
 
     private func invalidateBackgroundMemorySynthesis(originID: UUID) {
         memorySynthesisOrigins.removeValue(forKey: originID)?.value?.close()
+        guard let agentService else { return }
+        let account = settings.accountScope ?? "local"
+        let previous = memoryEpisodeCleanups[originID]
+        let accountCleanup = memoryEpisodeAccountCleanup
+        memoryEpisodeCleanups[originID] = Task {
+            // Serialize repeated Stops. A new cleanup may retry a failed save.
+            _ = await previous?.result
+            _ = await accountCleanup?.result
+            try await agentService.clearMemoryEpisodeOrigin(accountID: account, originID: originID, lifetime: .init())
+        }
+    }
+
+    func memoryEpisodeReadiness(originID: UUID) -> @Sendable () async throws -> Void {
+        let origin = memoryEpisodeCleanups[originID], account = memoryEpisodeAccountCleanup
+        return {
+            try await account?.value
+            try await origin?.value
+        }
     }
 
     func isBackgroundMemorySynthesisIdle() async -> Bool { await memorySynthesisWorker?.isIdle ?? true }
@@ -6585,6 +6607,16 @@ final class AppModel: ObservableObject {
         memorySynthesisAccountLifetime = .init()
         memorySynthesisJournal = .init()
         memorySynthesisOrigins.removeAll()
+        let oldAccount = settings.accountScope ?? "local"
+        let pendingCleanups = Array(memoryEpisodeCleanups.values)
+        let previousCleanup = memoryEpisodeAccountCleanup
+        let episodeService = agentService
+        memoryEpisodeCleanups.removeAll()
+        memoryEpisodeAccountCleanup = Task {
+            _ = await previousCleanup?.result
+            for task in pendingCleanups { _ = await task.result }
+            try await episodeService?.clearMemoryEpisodeOrigin(accountID: oldAccount, originID: nil, lifetime: .init())
+        }
         let oldMemoryWorker = memorySynthesisWorker
         memorySynthesisWorker = nil
         for key in Array(directSecretContexts.keys) { invalidateDirectSecret(key) }

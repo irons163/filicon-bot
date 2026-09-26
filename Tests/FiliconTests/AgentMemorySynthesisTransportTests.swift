@@ -94,7 +94,7 @@ struct AgentMemorySynthesisTransportTests {
         expectNoDifference(progress?.turns.count, 0)
     }
 
-    @Test(arguments: ["enabled", "disabled", "stop", "parent", "unprepared", "pass", "synthesis"])
+    @Test(arguments: ["enabled", "disabled", "stop", "parent", "unprepared", "pass", "synthesis", "cleanup-failed"])
     func foregroundEpisodesAccumulateAcrossSessionsOnlyWithConsent(mode: String) async throws {
         let (root, agents, profile) = try await fixture()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -113,7 +113,9 @@ struct AgentMemorySynthesisTransportTests {
             let parent = AgentMemorySuggestionLifetime()
             let messaging = AgentMessagingSession(originConversationID: session, agents: agents, messenger: messenger,
                 registry: registry, coordinator: TurnCoordinator(registry: registry), memorySynthesis: transport,
-                memorySynthesisLifetime: parent)
+                memorySynthesisLifetime: parent, memoryEpisodeReady: {
+                    if mode == "cleanup-failed" { throw AgentMemorySuggestionError.stale }
+                })
             if mode != "unprepared" {
                 await messaging.prepareMemorySuggestion(profile: profile,
                     exchangeID: UUID(uuidString: String(format: "00000000-0000-0000-0000-%012d", n))!,
