@@ -178,6 +178,8 @@ public struct AgentMemoryRecall: Sendable {
     public let memories: [AgentMemory]
     public let omittedCount: Int
     public let factsJSON: String
+    public let injectedProjects: [String]
+    public let alsoMemberOf: [String]
 
     public init(memories source: [AgentMemory], accountID: String, agentID: UUID, query: AgentMemoryQuery = .init(""), joinedProjects: Set<String> = []) throws {
         let visible = source.filter { $0.isVisible(accountID: accountID, agentID: agentID, joinedProjects: joinedProjects) }
@@ -188,15 +190,32 @@ public struct AgentMemoryRecall: Sendable {
             if left.createdAt != right.createdAt { return left.createdAt > right.createdAt }
             return left.id.uuidString < right.id.uuidString
         }
+        let projectFacts = Dictionary(grouping: visible.filter { $0.scope == .project }, by: { $0.project! })
+        // Only joined projects are considered. Empty projects sort after those with facts;
+        // ties use the slug, independent of source order or the process locale.
+        let projects = joinedProjects.sorted { left, right in
+            let lhs = projectFacts[left] ?? [], rhs = projectFacts[right] ?? []
+            if lhs.isEmpty != rhs.isEmpty { return !lhs.isEmpty }
+            let lhsDate = max(0, lhs.map { $0.createdAt.timeIntervalSince1970 }.max() ?? 0)
+            let rhsDate = max(0, rhs.map { $0.createdAt.timeIntervalSince1970 }.max() ?? 0)
+            if lhsDate != rhsDate { return lhsDate > rhsDate }
+            return left < right
+        }
+        injectedProjects = Array(projects.prefix(3))
+        alsoMemberOf = Array(projects.dropFirst(3))
         var selected: [AgentMemory] = []
         // Separate pools preserve private-vs-shared precedence and foundational facts.
-        for (scope, profile, limit, bytes) in [
-            (AgentMemory.Scope.agent, true, 100, 8_000), (.agent, false, 30, 4_000),
-            (.user, true, 50, 4_000), (.user, false, 15, 2_000),
-            (.project, true, 8, 4_000), (.project, false, 15, 2_000),
-        ] {
+        var pools: [(AgentMemory.Scope, String?, Bool, Int, Int)] = [
+            (.agent, nil, true, 100, 8_000), (.agent, nil, false, 30, 4_000),
+            (.user, nil, true, 50, 4_000), (.user, nil, false, 15, 2_000),
+        ]
+        for project in injectedProjects {
+            pools.append((.project, project, true, 25, 2_500))
+            pools.append((.project, project, false, 10, 1_500))
+        }
+        for (scope, project, profile, limit, bytes) in pools {
             var seen: Set<String> = []
-            let distinct = visible.filter { $0.scope == scope && ($0.tier == .profile) == profile }
+            let distinct = visible.filter { $0.scope == scope && $0.project == project && ($0.tier == .profile) == profile }
                 .sorted(by: newestFirst).filter {
                     let key = ($0.project ?? "") + "\u{1f}" + $0.fact.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ").lowercased()
                     return seen.insert(key).inserted

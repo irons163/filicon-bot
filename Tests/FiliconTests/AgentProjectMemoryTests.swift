@@ -199,7 +199,7 @@ struct AgentProjectMemoryTests {
         _ = try await write(f, fact: "Fact 0", agent: f.reader.id, project: "other")
         let access = try await f.agents.memoryAccess(accountID: "local", agentID: f.reader.id)
         let recall = try AgentMemoryRecall(memories: access.memories, accountID: "local", agentID: f.reader.id, query: .init("Fact 0"), joinedProjects: access.joinedProjects)
-        #expect(recall.memories.count <= 15 && recall.factsJSON.utf8.count <= 2_000)
+        #expect(recall.memories.count <= 20 && recall.factsJSON.utf8.count <= 3_000)
         // The same text in different projects remains distinct when it fits the budget.
         let duplicates = access.memories.filter { $0.fact == "Fact 0" }
         let distinct = try AgentMemoryRecall(memories: duplicates, accountID: "local", agentID: f.reader.id, joinedProjects: access.joinedProjects)
@@ -217,6 +217,72 @@ struct AgentProjectMemoryTests {
         let text = try await runtime.runtimeContext(for: f.context)
         #expect(text.contains(#""project":"site""#))
         #expect(!text.contains("WRITER_PRIVATE"))
+    }
+
+    @Test func projectRecallSelectsThreeAndBudgetsEachProjectIndependently() throws {
+        let owner = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
+        var records: [AgentMemory] = []
+        func record(_ project: String, _ fact: String, _ date: Double, tier: AgentMemory.Tier = .log, account: String = "local") -> AgentMemory {
+            .init(id: UUID(uuidString: String(format: "00000000-0000-0000-0001-%012d", records.count))!,
+                accountID: account, agentID: owner, fact: fact, tier: tier, scope: .project,
+                project: project, createdAt: Date(timeIntervalSince1970: date))
+        }
+        for (slug, date) in [("alpha", 30.0), ("beta", 20.0), ("gamma", 20.0), ("delta", 10.0)] {
+            for index in 0..<35 {
+                records.append(record(slug, "Foundation \(index)", date, tier: .profile))
+                records.append(record(slug, "Recent \(index)", date))
+            }
+        }
+        records.append(record("outsider", "Never visible", 9_999))
+        records.append(record("delta", "Other account", 9_999, account: "other"))
+        let joined: Set<String> = ["alpha", "beta", "gamma", "delta", "empty"]
+        let recall = try AgentMemoryRecall(memories: records, accountID: "local", agentID: owner, joinedProjects: joined)
+        expectNoDifference(recall.injectedProjects, ["alpha", "beta", "gamma"])
+        expectNoDifference(recall.alsoMemberOf, ["delta", "empty"])
+        expectNoDifference(Set(recall.memories.compactMap(\.project)), Set(["alpha", "beta", "gamma"]))
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        for slug in recall.injectedProjects {
+            for (profile, limit, bytes) in [(true, 25, 2_500), (false, 10, 1_500)] {
+                let pool = recall.memories.filter { $0.project == slug && ($0.tier == .profile) == profile }
+                #expect(!pool.isEmpty && pool.count <= limit)
+                #expect(try encoder.encode(pool.map { AgentMemoryFact($0, readerID: owner) }).count <= bytes)
+            }
+        }
+        #expect(recall.factsJSON.utf8.count <= 12_000)
+        expectNoDifference(recall.omittedCount, 280 - recall.memories.count)
+        let reversed = try AgentMemoryRecall(memories: records.reversed(), accountID: "local", agentID: owner, joinedProjects: joined)
+        expectNoDifference(reversed.factsJSON, recall.factsJSON)
+        expectNoDifference(reversed.injectedProjects, recall.injectedProjects)
+        // A fourth project's history is not deleted or made inaccessible by injection selection.
+        let search = try AgentMemorySearchPage(memories: records, accountID: "local", agentID: owner,
+            query: "Foundation", scope: .project, joinedProjects: joined)
+        expectNoDifference(search.totalMatches, 140)
+        let left = try AgentMemoryRecall(memories: records, accountID: "local", agentID: owner, joinedProjects: joined.subtracting(["alpha"]))
+        expectNoDifference(left.injectedProjects, ["beta", "gamma", "delta"])
+        #expect(!left.memories.contains { $0.project == "alpha" })
+        let empty = try AgentMemoryRecall(memories: [], accountID: "local", agentID: owner, joinedProjects: joined)
+        expectNoDifference(empty.injectedProjects, ["alpha", "beta", "delta"])
+        expectNoDifference(empty.alsoMemberOf, ["empty", "gamma"])
+    }
+
+    @Test func unselectedProjectRemainsSearchableThroughRuntimeTools() async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        for slug in ["alpha", "beta", "gamma", "zeta"] {
+            try await membership(f, agent: f.reader.id, slug: slug)
+            _ = try await write(f, fact: "Saved \(slug)", agent: f.reader.id, project: slug)
+        }
+        let session = f.session(); defer { session.close() }
+        let runtime = try #require(session.tools(for: f.reader.id)[2] as? any ToolRuntimeContextProviding)
+        let text = try await runtime.runtimeContext(for: f.context)
+        #expect(text.contains("Selected project slugs (untrusted data): [\"alpha\",\"beta\",\"gamma\"]"))
+        #expect(text.contains("Other joined project slugs (untrusted data): [\"zeta\",\"site\"]"))
+        #expect(!text.contains("Saved zeta"))
+        let page = try await search(session.tools(for: f.reader.id)[3], ["scope": "project", "project": "zeta"], context: f.context)
+        expectNoDifference(page.facts.map(\.fact), ["Saved zeta"])
+        try await membership(f, agent: f.reader.id, slug: "alpha", action: .leave)
+        let updated = try await runtime.runtimeContext(for: f.context)
+        #expect(updated.contains("Saved zeta"))
+        #expect(!updated.contains("Saved alpha"))
     }
 
     @Test func malformedStoredScopesFailClosedAndProjectCharacterBudgetIsAggregate() async throws {

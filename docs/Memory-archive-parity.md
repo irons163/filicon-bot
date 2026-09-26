@@ -2,6 +2,15 @@
 
 核對日期：2026-09-27。參考 `grok-bot-0.18-reconstructed` commit `a9f633e09d49a85829b8236331b9e21f7e612634`；Filicon 基準 `94937dd`。原始碼核對，不是真實模型或 UI 驗收。
 
+## 逐專案 recall（2026-09-27）
+
+- 取代下方歷史「合併專案池」：已加入的專案按有可見事實優先、最近事實時間（最低 0）、slug 排序，最多三個專案。其餘列為 `alsoMemberOf`，不刪除記憶、不撤銷既有搜尋權限。
+- 每個入選專案各有 profile 25 筆／2,500 JSON bytes，recent 10 筆／1,500 JSON bytes；保留來源、獨立去重與現有相關性排序，整筆略過超預算內容而不截斷。這對齊參考 block 設計，bytes 與原版文字字元預算仍有明確差異。
+- 先做 account／membership 可見性檢查才選專案；其他帳號／未加入專案的日期不能影響排序。Runtime 說明實際入選與未入選 slug、每專案預算，以及仍可用 SearchMemory 讀取未注入歷史。
+- 固定 280 筆／四專案 fixture 驗證 cap、同日期 slug tie、空專案、各池 bytes、輸入順序無關與隔離；runtime 工具測試驗證第四個專案不在注入正文但搜尋可讀，離開原入選專案後重新選取。
+- 完整非並行測試 exit 0（`.build/validation/memory-project-recall-full.log`）、原生 Debug 建置及 App／XPC 封裝簽章通過，沒有啟動使用者 App。
+- 下一項已定位差異：參考 `sand-memory.ts/resolveFrozenMemoryPrompt` 及 `system-prompt-assembly.ts/getMemorySection` 在同一 compaction epoch 重用有事實的 snapshot，空記憶不凍結。Filicon 的 `AgentManagementSession` 目前即時產生 recall；尚須核對上下文生命週期與刪除／membership 撤銷邊界，不能直接缓存越權內容。
+
 ## Profile recall 更新（2026-09-27）
 
 後續 recall 更新：私人／共享 profile 選取筆數改為 100／50，保留原有 8,000／4,000 JSON bytes 預算、可見性篩選、去重與相關性排序。因此實際筆數可低於原版文字 renderer；不再固定卡在 8 筆，也不宣稱能塞入所有 100／50 筆。
