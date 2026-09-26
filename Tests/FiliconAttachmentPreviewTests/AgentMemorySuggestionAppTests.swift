@@ -26,11 +26,25 @@ private struct MemorySuggestionAppProvider: AIProvider {
     let probe: MemorySuggestionAppProbe
     var gated = false
     var malformed = false
+    var synthesis = false
+    var gatedSynthesisStage: String?
     func models() async throws -> [AIModel] { [.init(id: "test")] }
     func stream(_ request: InferenceRequest) -> AsyncThrowingStream<InferenceEvent, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 await probe.record(request)
+                let proposal = request.messages.first?.text.contains("Maintain compact durable") == true
+                let verification = request.messages.first?.text.contains("Independently verify") == true
+                if synthesis && (proposal || verification) {
+                    if gatedSynthesisStage == (proposal ? "proposal" : "verification") { await probe.hold() }
+                    let object = try? JSONSerialization.jsonObject(with: Data((request.messages.last?.text ?? "").utf8)) as? [String: Any]
+                    let evidenceID = (object?["evidence"] as? [[String: Any]])?.first?["id"] as? String ?? "missing"
+                    let text = proposal
+                        ? #"{"changes":[{"action":"create","content":"Prefers accessible layouts","kind":"profile","sourceEvidenceIds":["\#(evidenceID)"]}]}"#
+                        : #"{"approved":true}"#
+                    continuation.yield(.textDelta(text)); continuation.yield(.completed(.stop)); continuation.finish()
+                    return
+                }
                 let extraction = request.messages.first?.text == AgentMemorySuggestionExtractor.instructions
                 if !extraction {
                     if request.toolExchanges.isEmpty {
@@ -76,6 +90,69 @@ private struct MemorySuggestionAppProvider: AIProvider {
         let peer = try #require(await model.createAgent(name: "Peer", summary: "", instructions: "", providerID: "memory-app-fixture", modelID: "test"))
         #expect(await model.createGroup(name: "Team", summary: "", memberIDs: [owner.id, peer.id]))
         return .init(root: root, model: model, owner: owner, peer: peer, group: try #require(model.groups.first))
+    }
+
+    @Test(arguments: ["direct", "group"], ["enabled", "disabled", "stop-proposal", "stop-verification", "account", "disable", "reenable", "delete-or-members"])
+    func synthesisAppLifecycleRejectsLateCommits(route: String, mode: String) async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        if route == "direct" { await f.model.bootstrap() }
+        let initial = try await f.model.memorySynthesisSettings(agentID: f.owner.id)
+        if mode != "disabled" { try await f.model.setMemorySynthesisEnabled(true, expected: initial) }
+        let gated = !["enabled", "disabled"].contains(mode)
+        await f.model.registry.register(MemorySuggestionAppProvider(probe: f.probe, synthesis: true,
+            gatedSynthesisStage: gated ? (mode == "stop-proposal" ? "proposal" : "verification") : nil))
+        let directID: UUID?
+        let groupTask: Task<Void, Never>?
+        if route == "direct" {
+            directID = try #require(await f.model.addConversation(agentID: f.owner.id))
+            groupTask = nil
+            f.model.draft = "I prefer accessible layouts"
+            f.model.send()
+        } else {
+            directID = nil
+            groupTask = Task { await f.model.sendGroupMessage(groupID: f.group.id, text: "@Owner I prefer accessible layouts") }
+        }
+        defer { groupTask?.cancel() }
+        if gated {
+            await f.probe.wait()
+            switch mode {
+            case "account": await f.model.cancelAutoReviewApprovals(nextAccountID: "other")
+            case "disable", "reenable":
+                let current = try await f.model.memorySynthesisSettings(agentID: f.owner.id)
+                try await f.model.setMemorySynthesisEnabled(false, expected: current)
+                if mode == "reenable" {
+                    let disabled = try await f.model.memorySynthesisSettings(agentID: f.owner.id)
+                    try await f.model.setMemorySynthesisEnabled(true, expected: disabled)
+                }
+            case "delete-or-members":
+                if let directID { f.model.deleteConversation(id: directID) }
+                else { await f.model.updateGroupMembers(groupID: f.group.id, memberIDs: []) }
+            default:
+                if directID != nil { f.model.cancel() }
+                else { await f.model.stopGroup(id: f.group.id) }
+            }
+            await f.probe.resume()
+        }
+        await groupTask?.value
+        if let directID {
+            let deadline = ContinuousClock.now + .seconds(10)
+            while f.model.isConversationWorking(directID), ContinuousClock.now < deadline {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            #expect(!f.model.isConversationWorking(directID))
+        }
+        let facts = try await f.model.savedAgentMemories(agentID: f.owner.id)
+        expectNoDifference(facts.map(\.fact), mode == "enabled" ? ["Prefers accessible layouts"] : [])
+        expectNoDifference(facts.map(\.origin), mode == "enabled" ? [.synthesis] : [])
+        let peer = try await f.model.savedAgentMemories(agentID: f.peer.id)
+        expectNoDifference(peer, [])
+        let requests = await f.probe.requests.filter {
+            $0.messages.first?.text.contains("Maintain compact durable") == true ||
+            $0.messages.first?.text.contains("Independently verify") == true
+        }
+        expectNoDifference(requests.count, mode == "disabled" ? 0 : mode == "stop-proposal" ? 1 : 2)
+        #expect(requests.allSatisfy { $0.tools.isEmpty && $0.toolExchanges.isEmpty && $0.attachmentsByMessageID.isEmpty })
+        #expect(f.model.runningGroups.isEmpty && f.model.reviewingMemoryGroups.isEmpty)
     }
 
     @Test func synthesisPreferenceIsIndependentScopedAndPersisted() async throws {

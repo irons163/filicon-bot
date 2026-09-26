@@ -1,5 +1,7 @@
 # Filicon / Grok Bot 0.18 功能 parity matrix（current implementation）
 
+自動記憶 App 生命週期補驗（2026-09-26）：16 種直接／群組假 provider 整合情境通過，覆蓋實際啟用保存與停止、切帳號、停用再啟用、刪除／移除成員拒絕晚到提交；取代下方 synthesis 專用 App 生命週期待驗記述。這些是現存隔離 instance 驗證，完整回歸及磁碟重開仍被螢幕鎖定阻擋；排程／重試／temporal／episodic 及真實模型缺口不變。
+
 自動記憶 UI 獨立授權（2026-09-26）：代理人記憶設定加入獨立啟用確認／停用與七語系費用、證據及自動修改範圍揭露，AppModel 延用帳號 generation／UI lifetime／quota 寫入保護。隔離設定保存、過期與跨帳號拒絕、七語系離屏檢查通過。此項補齊下方 UI 缺口，但不代表 synthesis 專用完整 App 生命週期、排程、episodic 或真實模型驗收已完成，仍 partial。
 
 前景回合記憶整合接線（2026-09-26）：App 的綁定直接聊天與群組 session 已注入 synthesis transport；沿用 host 準備的人類訊息與該代理人完成回覆，僅在獨立設定啟用時處理，PASS／空回覆不處理，重複收尾不再執行。停止及關閉沿用同一撤銷 lifetime。六種隔離 session 情境通過；尚缺使用者設定 UI、App 層 synthesis 專用生命週期整合驗收、debounce／temporal 排程及真實模型驗收，整體仍 partial。此項取代下方前景接線尚缺的歷史描述。

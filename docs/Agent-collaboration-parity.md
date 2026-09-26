@@ -1,5 +1,15 @@
 # 協作能力核對紀錄（更新至 2026-09-26）
 
+## 自動記憶 App 生命週期驗收（2026-09-26）
+
+沿用隔離 AppModel fixture 與可控制的假 provider，新增直接／群組兩條實際前景入口的 16 種情境：啟用、未啟用、提案中停止、驗證中停止、帳號切換撤銷、停用、停用再啟用、刪除直接聊天／移除群組成員。只有正常啟用回合保存 synthesis 私有記憶，peer 不受影響；晚到結果不保存。另驗證維護请求沒有 tools／tool exchanges／附件、停止提案後不進入 verifier，及群組忙碌狀態清理。
+
+依 pfw-testing／CustomDump；不重開受保護 store 的這批測試在鎖定狀態仍可驗證現存 App instance 的保存結果，但不冒充持久化重開驗收。`memory-synthesis-app-lifecycle.log` 全部 16 情境通過。既有 background restoration 測試在使用陣列索引前新增 require，讓上游復原失敗報告為測試失敗而非 secondary crash；未放寬 assertion、未降低檔案保護。
+
+此項補齊前景 synthesis 專用 App 取消／切帳號測試缺口；完整回歸及重開持久化仍須解鎖補驗。原版 debounce、最多 64 pending agents／每代理人 12 evidence、temporal sweep、重試及 episodic 等仍待實作，整體仍 partial。未 push／重啟 App 或修改真實資料。
+
+驗證補充：`memory-synthesis-lifecycle-native.log` 原生建置 exit 0，verify-package／deep strict 簽章通過。`memory-synthesis-lock-diagnostic.log` 指定既有重開案例 exit 1，保留三項失敗診斷但不再 signal 5；這是失敗路徑診斷改善，不是解除回歸缺口。
+
 ## 自動記憶整合的獨立 UI 授權（2026-09-26）
 
 代理人記憶設定新增獨立的自動整合狀態、啟用確認與停用按鈕，不與逐筆核准的建議開關共用。說明揭露完成直接／群組回覆後額外模型請求與費用、傳送的本次證據與私有記憶、獨立驗證後自動增刪更新 generated 記憶、手動記憶保護，以及停用不刪保存內容／不授予工具權限。七種語言均新增翻譯。

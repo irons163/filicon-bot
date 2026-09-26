@@ -358,6 +358,7 @@ private struct PlainScheduledAgentProvider: AIProvider {
         try await waitUntil { reopened.runningAgentMessageScopes.isEmpty }
         let requests = await probe.requests
         expectNoDifference(requests.count, 2)
+        try #require(requests.count == 2)
         expectNoDifference(requests[0].conversationID, requests[1].conversationID)
         #expect(requests[1].messages.dropLast().contains { $0.text.contains("PERSISTED_REVIEW_RESULT") })
         #expect(requests[1].messages.last?.text.contains("Continue that review") == true)

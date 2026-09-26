@@ -25,8 +25,8 @@ extension AgentService {
         return try await synthesizeMemory(accountID: settings.accountID, agentID: settings.agentID,
             evidence: evidence, temporalReview: temporalReview, at: at, lifetime: lifetime, settings: settings, execute: execute)
     }
-    /// Internal maintenance pipeline; not yet exposed through App settings or
-    /// model tools. Transport must perform a fresh, tool-free request per stage
+    /// Internal maintenance pipeline; never exposed as a model tool.
+    /// Transport must perform a fresh, tool-free request per stage
     /// and supply its own bounded execution deadline. Never reuse chat context.
     func synthesizeMemory(accountID: String, agentID: UUID,
                           evidence: [AgentMemorySynthesisEvidence], temporalReview: Bool = false,
