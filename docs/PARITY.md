@@ -1,5 +1,7 @@
 # Filicon / Grok Bot 0.18 功能 parity matrix（current implementation）
 
+Episodic 分支核對（2026-09-27）：原版 `runTurnMemory` 在 synthesis evidence 接口存在時清除 episode pending 並 return；每六回合摘要是舊流程分支，不與 synthesis 同批執行。Filicon 尚缺該分支的明確 consent／跨回合進度／host episode 來源與權重；不得把停用 synthesis 當成自動保存 episode 的授權。具體來源及驗收見 [Episodic-memory-parity.md](Episodic-memory-parity.md)，狀態仍 partial。
+
 記憶診斷（2026-09-27）：pipeline 回報一次有界結果分類／evidence／input memory／proposal change 數／monotonic 耗時；App 最近 64 筆僅記憶體 journal，切帳號替換並在 root diagnostics 匯出不含正文的摘要。queue admission 淘汰另有 64 筆上限；尚未 run 的 sweep 錯誤提示仍缺，episodic／外部服務驗收維持 partial。最終驗證見協作核對紀錄。
 
 App temporal 排程（2026-09-26）：啟動與每小時 sweep 接入 worker，每次最多新增 4 位到期且 opt-in 的代理人；排除已排隊相同 consent，跨帳號 await／保存由 generation 與 lifetime 保護。七語提示說明無新聊天仍可能產生模型費用。取代下方 startup／hourly 尚缺的歷史記述；失敗觀測、episodic、外部服務驗收仍 partial。最終驗證見協作核對紀錄。
