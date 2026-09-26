@@ -37,6 +37,56 @@ private struct SuggestionProvider: AIProvider {
 
 @Suite("Reviewed automatic memory suggestions", .timeLimit(.minutes(1)))
 struct AgentMemorySuggestionTests {
+    @Test func extractionFindsBoundedRelevantHistoryWithoutChangingStorage() throws {
+        let owner = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
+        let memories = (0..<520).map { index in
+            AgentMemory(id: UUID(uuidString: String(format: "00000000-0000-0000-0001-%012d", index))!,
+                accountID: "local", agentID: owner,
+                fact: index >= 40 ? "orchid preference \(index)" : "recent fact \(index)",
+                createdAt: Date(timeIntervalSince1970: Double(1_000 - index)))
+        }
+        let selected = try AgentMemoryExtractionContext(memories: memories, accountID: "local",
+            agentID: owner, query: .init("orchid")).facts
+        let recent = try AgentMemoryRecall(memories: memories, accountID: "local", agentID: owner).memories.map(\.fact)
+        expectNoDifference(selected, recent + (40..<50).map { "orchid preference \($0)" })
+        let outside = try AgentMemoryExtractionContext(memories: memories, accountID: "local",
+            agentID: owner, query: .init("519")).facts
+        expectNoDifference(outside, recent)
+        expectNoDifference(memories.count, 520)
+        let reversed = try AgentMemoryExtractionContext(memories: memories.reversed(), accountID: "local",
+            agentID: owner, query: .init("orchid")).facts
+        expectNoDifference(reversed, selected)
+    }
+
+    @Test func extractionFiltersScopeBeforeDeduplicatingAndRanking() throws {
+        let owner = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
+        let peer = UUID(uuidString: "00000000-0000-0000-0000-000000000002")!
+        let facts: [AgentMemory] = [
+            .init(accountID: "local", agentID: owner, fact: "Orchid garden", tier: .profile, createdAt: .distantPast),
+            .init(accountID: "local", agentID: owner, fact: " ORCHID  garden ", createdAt: .distantPast),
+            .init(accountID: "other", agentID: owner, fact: "Other account orchid", createdAt: .distantFuture),
+            .init(accountID: "local", agentID: peer, fact: "Peer orchid", createdAt: .distantFuture),
+            .init(accountID: "local", agentID: owner, fact: "Shared orchid", scope: .user, createdAt: .distantFuture),
+            .init(accountID: "local", agentID: owner, fact: "Project orchid", scope: .project, project: "garden", createdAt: .distantFuture),
+        ]
+        let result = try AgentMemoryExtractionContext(memories: facts, accountID: "local", agentID: owner, query: .init("orchid"))
+        expectNoDifference(result.facts, ["Orchid garden"])
+    }
+
+    @Test func extractionCountsEncodedBytesWithoutTruncatingFacts() throws {
+        let owner = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
+        let memories = (0..<60).map { index in
+            AgentMemory(accountID: "local", agentID: owner,
+                fact: "orchid \(index) " + String(repeating: "人\"\\\n", count: 200),
+                tier: index < 8 ? .profile : .log, createdAt: Date(timeIntervalSince1970: Double(index)))
+        }
+        let selected = try AgentMemoryExtractionContext(memories: memories, accountID: "local", agentID: owner, query: .init("orchid")).facts
+        #expect(!selected.isEmpty)
+        #expect(try JSONEncoder().encode(selected).count <= AgentMemoryExtractionContext.maximumJSONBytes)
+        #expect(selected.count < 18)
+        #expect(selected.allSatisfy { fact in memories.contains { $0.fact == fact } })
+    }
+
     private struct Fixture {
         let root: URL
         let agents: AgentService

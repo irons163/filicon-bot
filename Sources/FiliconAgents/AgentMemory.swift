@@ -213,6 +213,53 @@ public struct AgentMemoryRecall: Sendable {
     }
 }
 
+/// Bounded duplicate-detection context for private memory extraction. This is a
+/// read-only projection, never a retention limit or permission to share history.
+public struct AgentMemoryExtractionContext: Sendable {
+    public static let archiveScanLimit = 500
+    public static let historyLimit = 10
+    public static let maximumJSONBytes = 16_000
+    public let facts: [String]
+
+    public init(memories: [AgentMemory], accountID: String, agentID: UUID, query: AgentMemoryQuery) throws {
+        let privateFacts = memories.filter {
+            $0.accountID == accountID && $0.agentID == agentID && $0.scope == .agent && $0.project == nil
+        }
+        func newest(_ lhs: AgentMemory, _ rhs: AgentMemory) -> Bool {
+            if lhs.createdAt != rhs.createdAt { return lhs.createdAt > rhs.createdAt }
+            return lhs.id.uuidString < rhs.id.uuidString
+        }
+        func key(_ fact: String) -> String {
+            fact.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ").lowercased()
+        }
+        // Use normal recent recall, then add relevant older facts rather than
+        // letting relevance consume both the recall and history allocations.
+        let recall = try AgentMemoryRecall(memories: privateFacts, accountID: accountID, agentID: agentID)
+        let archive = privateFacts.sorted {
+            if ($0.tier == .profile) != ($1.tier == .profile) { return $0.tier == .profile }
+            return newest($0, $1)
+        }.prefix(Self.archiveScanLimit)
+        var seen = Set(recall.memories.map { key($0.fact) })
+        let history = archive.filter { seen.insert(key($0.fact)).inserted }
+            .map { (memory: $0, score: query.relevance(of: $0.fact)) }
+            .filter { $0.score > 0 }
+            .sorted {
+                if $0.score != $1.score { return $0.score > $1.score }
+                return newest($0.memory, $1.memory)
+            }.prefix(Self.historyLimit).map(\.memory)
+        let encoder = JSONEncoder()
+        var selected: [String] = [], bytes = 2
+        seen.removeAll()
+        for memory in recall.memories + history {
+            guard seen.insert(key(memory.fact)).inserted else { continue }
+            let cost = try encoder.encode(memory.fact).count + (selected.isEmpty ? 0 : 1)
+            guard bytes + cost <= Self.maximumJSONBytes else { continue }
+            selected.append(memory.fact); bytes += cost
+        }
+        facts = selected
+    }
+}
+
 /// Stop and account changes revoke queued commits before any actor suspension.
 public final class AgentMemoryChangeLifetime: @unchecked Sendable {
     private let lock = NSLock()
