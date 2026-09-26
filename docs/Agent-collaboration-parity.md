@@ -1,5 +1,20 @@
 # 協作能力核對紀錄（更新至 2026-09-26）
 
+## 直接同儕圖片缺口的實際接線核對（2026-09-26）
+
+本次為唯讀核對，不宣稱圖片能力已完成。原始 `source/host/agents/agent-messaging.ts` 明確描述 SendToAgent 的圖片送達、收件者推論可見，以及圖片可再經 SendMessage／SendToAgent 轉交。它接受 file／HTTPS 來源；Filicon 目前的 host 圖片 ID 契約不能代表完整原版來源能力。
+
+已確認的阻斷點：
+
+- `AppModel` 前景綁定直接聊天及 `makeAgentMessagingSession(directBinding:)` 兩處均未傳入 imageStore、authorizeImages、authorizePublication；一般群組／信箱 factory 有這些接線。
+- `AgentMessagingSession.availableImages` 只取得目前群組人類請求或精確匹配的 incoming peer 圖片；直接聊天缺少 host 綁定的當輪人類圖片目錄。不能讓模型用任意舊附件 ID 代替。
+- `projectDirectPeerMessage` 明確拒絕圖片；incoming 比對目前只有 ID／文字，開放圖片前需比對 canonical 圖片 metadata。
+- `saveDirectPeerMessage` 只建立文字 ChatMessage，冪等分支也只比來源與文字。需保存並核對附件，而非只移除前段 guard。
+- `AgentImageStore` 與直接聊天 `AttachmentStore` 使用不同 blob root。兩者使用內容 SHA-256 ID，可透過 host 讀取已驗證 bytes 再 ingest 保持 ID，但仍需處理 owner／生命週期、停止與寫入失敗，不能只拷貝 metadata。
+- `directPeerTranscript` 仍排除圖片，故即時顯示成功也不代表恢復與重新載入已支援。
+
+下一批驗收必須覆蓋完整路徑：當輪人類圖片 → 完整收件人／圖片預覽核准 → 收件人實際推論 bytes → 自己聊天室的圖片投影 → 另一次核准發布或轉交 → 保存／重新載入／恢復。另驗證舊圖片與任意 ID 拒絕、不支援影像模型的明確失敗、帳號／Stop／刪除 fence、blob 缺失或損壞、部分保存失敗重試、圖片 metadata 衝突、歷史不自動重播。憑證／雲端卡與任意 file／HTTPS 圖片來源不因這些測試而自動完成。
+
 ## 回答交付自身來源核對（2026-09-26）
 
 恢復原問題卡時也必須核對回答交付的 origin 與 direct binding，不能只信任回答回條及原交付。新增 missing-binding／foreign-origin／foreign-binding 三個隔離 JSON 異常案例；修正前 `peer-question-binding-before.log` exit 1、三項失敗，修正後 `peer-question-binding-focused.log` 通過。沿用 pfw-testing 與 CustomDump 比對，驗證拒絕異常卡與回覆且信箱位元組不變。未修改使用者資料或擴大授權。
