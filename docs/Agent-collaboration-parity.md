@@ -1,5 +1,15 @@
 # 協作能力核對紀錄（更新至 2026-09-26）
 
+## 自動記憶整合的獨立 UI 授權（2026-09-26）
+
+代理人記憶設定新增獨立的自動整合狀態、啟用確認與停用按鈕，不與逐筆核准的建議開關共用。說明揭露完成直接／群組回覆後額外模型請求與費用、傳送的本次證據與私有記憶、獨立驗證後自動增刪更新 generated 記憶、手動記憶保護，以及停用不刪保存內容／不授予工具權限。七種語言均新增翻譯。
+
+AppModel 讀取重驗帳號 generation，setter 檢查 account／transition，沿用 UI lifetime 與 quotaWrite；持久層仍比對完整 settings revision。隔離 App 測試驗證預設關閉、建議開關不連帶啟用、同帳號另一代理人隔離、過期及跨帳號設定拒絕、重開保存與獨立停用。依 SwiftUI 技能將操作分離為 action methods，依 Swift 測試技能使用隔離狀態。七語系明暗離屏說明／按鈕渲染通過，人工檢視繁中淺色及法文深色無裁切；這不是完整原生視窗互動驗收。
+
+尚缺 synthesis 專用 App 回合取消／切帳號整合驗證、debounce／重試／temporal 排程、episodic 及真實模型驗收；仍 partial。未修改真實帳號設定、未重啟 App／Xcode，未 push。
+
+驗證：`memory-synthesis-ui.log` 聚焦 19 項測試通過，`memory-synthesis-ui-native.log` 原生建置與 verify-package／deep strict 簽章通過。最終 `memory-synthesis-ui-full.log` 完整套件 exit 1：多模組 protected JSON 重開遇 NSCocoaErrorDomain 257／EPERM，`ioreg` 確認 CGSSessionScreenIsLocked=Yes；App 測試在重開失敗後另觸發 index-out-of-range 崩潰。未降低檔案保護，也不把聚焦成功代稱完整回歸成功；待解鎖重跑，保留驗收缺口。
+
 ## 前景完成回合觸發記憶整合（2026-09-26）
 
 App 綁定直接聊天及群組 factory 注入 `AgentMemorySynthesisTransport`，共用既有 foreground evidence 準備／完成入口。session 擷取獨立 synthesis consent revision；只有已準備的人類訊息與非空／非 PASS 的完成回覆進入兩階段流程，不從 peer wake 或工具回條建立人類證據。先整合再執行原有待人工核准建議；exchange 在 await 前移出，重複收尾不再送出。維護失敗不撤銷已完成回覆；Stop／account lifecycle 沿用同步撤銷 lifetime，close 另取消 synthesis coordinator。

@@ -1660,6 +1660,11 @@
 "Enable suggestions…" = "啟用建議⋯";
 "No memory suggestions to review." = "沒有待審核的記憶建議。";
 "Enable memory suggestions?" = "啟用記憶建議？";
+"Automatic memory synthesis" = "自動記憶整合";
+"Disable automatic synthesis" = "停用自動整合";
+"Enable automatic synthesis…" = "啟用自動整合⋯";
+"Enable automatic memory synthesis?" = "啟用自動記憶整合？";
+"Separate opt-in: completed direct and group replies may trigger extra paid model requests using this agent's current human message, reply and private memories. After independent model verification, generated memories can be added, updated or removed without individual approval. Manually saved memories are protected. Disabling keeps saved memories and grants no tool permissions." = "獨立選擇啟用：單獨及群組回覆完成後，可能使用此代理人當前的人類訊息、回覆與私有記憶，發出額外付費模型請求。經獨立模型驗證後，生成的記憶可無須逐筆核准而新增、更新或移除。手動保存的記憶受保護。停用會保留已保存記憶，也不會授予工具權限。";
 "Save as private memory?" = "儲存為私人記憶？";
 "Only this agent in this account will recall the saved fact. No tool permission is granted." = "只有此帳號中的這位代理人會召回儲存的事實，不會授予工具權限。";
 "Optional extra model requests after completed group turns may incur costs. Only this agent's current human request, reply and private facts are sent to its selected model. Suggestions are not recalled until you approve each fact. No peer wakes, old images or shared memories are scanned. Disabling clears unapproved suggestions, not saved facts." = "可選的額外模型請求會在群組回合完成後執行，可能產生費用。只將這位代理人當次收到的人類請求、回覆及私人事實送至所選模型。逐筆核准前，候選記憶不會被召回。不掃描同儕喚醒、舊圖片或共享記憶。關閉時會清除未核准建議，不會刪除已儲存事實。";

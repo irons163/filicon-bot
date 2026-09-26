@@ -78,6 +78,40 @@ private struct MemorySuggestionAppProvider: AIProvider {
         return .init(root: root, model: model, owner: owner, peer: peer, group: try #require(model.groups.first))
     }
 
+    @Test func synthesisPreferenceIsIndependentScopedAndPersisted() async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let initial = try await f.model.memorySynthesisSettings(agentID: f.owner.id)
+        expectNoDifference(initial.enabled, false)
+        try await f.enable()
+        let afterSuggestions = try await f.model.memorySynthesisSettings(agentID: f.owner.id)
+        expectNoDifference(afterSuggestions, initial)
+        try await f.model.setMemorySynthesisEnabled(true, expected: initial)
+        let enabled = try await f.model.memorySynthesisSettings(agentID: f.owner.id)
+        expectNoDifference(enabled.enabled, true)
+        #expect(enabled.revision != nil)
+        let peer = try await f.model.memorySynthesisSettings(agentID: f.peer.id)
+        expectNoDifference(peer.enabled, false)
+        do {
+            try await f.model.setMemorySynthesisEnabled(false, expected: initial)
+            Issue.record("Stale preference must be rejected")
+        } catch {}
+        let foreign = AgentMemorySynthesisSettings(accountID: "other", agentID: f.owner.id)
+        do {
+            try await f.model.setMemorySynthesisEnabled(true, expected: foreign)
+            Issue.record("Another account must be rejected")
+        } catch {}
+        let restored = AppModel(applicationSupportRoot: f.root, bootstrapImmediately: false)
+        await restored.reloadWorkspaceData()
+        let reopened = try await restored.memorySynthesisSettings(agentID: f.owner.id)
+        expectNoDifference(reopened, enabled)
+        try await f.model.setMemorySynthesisEnabled(false, expected: enabled)
+        let disabled = try await f.model.memorySynthesisSettings(agentID: f.owner.id)
+        expectNoDifference(disabled.enabled, false)
+        #expect(disabled.revision != enabled.revision)
+        let suggestions = try await f.model.memorySuggestionSnapshot(agentID: f.owner.id)
+        expectNoDifference(suggestions.settings.enabled, true)
+    }
+
     @Test(arguments: [false, true])
     func directCompletionProducesOnlyOptedInReviewCandidates(enabled: Bool) async throws {
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
@@ -225,13 +259,18 @@ private struct MemorySuggestionAppProvider: AIProvider {
         for dark in [false, true] {
             try await withUIRenderTurn(language: language) {
                 if language != "en" {
-                    for key in ["Memory suggestions", "Save as private memory…", "Dismiss suggestion", "Reviewing memory suggestions…", AgentMemorySuggestionsNotice.disclosure] {
+                    for key in ["Memory suggestions", "Save as private memory…", "Dismiss suggestion", "Reviewing memory suggestions…", AgentMemorySuggestionsNotice.disclosure,
+                        "Automatic memory synthesis", "Disable automatic synthesis", "Enable automatic synthesis…",
+                        "Enable automatic memory synthesis?", AgentMemorySynthesisNotice.disclosure] {
                         #expect(FiliconLocalization.string(key) != key)
                     }
                 }
                 let host = NSHostingView(rootView: VStack(alignment: .leading, spacing: 20) {
                     Text(l10n("Memory suggestions")).font(.headline)
                     AgentMemorySuggestionsNotice()
+                    Text(l10n("Automatic memory synthesis")).font(.headline)
+                    AgentMemorySynthesisNotice()
+                    Button(l10n("Enable automatic synthesis…")) {}
                     AgentMemorySuggestionCard(suggestion: candidate, onSave: {}, onDismiss: {})
                     AgentMemoryReviewProgress()
                 }.padding(16).frame(width: 380).background(FiliconTheme.canvas)
@@ -239,7 +278,7 @@ private struct MemorySuggestionAppProvider: AIProvider {
                 host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
                 let size = host.fittingSize
                 expectNoDifference(size.width, 380)
-                #expect(size.height > 250 && size.height < 700)
+                #expect(size.height > 250 && size.height < 1100)
                 host.frame = .init(origin: .zero, size: size); host.layoutSubtreeIfNeeded()
                 let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
                 host.cacheDisplay(in: host.bounds, to: bitmap)

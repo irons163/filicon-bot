@@ -1660,6 +1660,11 @@
 "Enable suggestions…" = "候補を有効にする…";
 "No memory suggestions to review." = "確認するメモリの候補はありません。";
 "Enable memory suggestions?" = "メモリの候補を有効にしますか？";
+"Automatic memory synthesis" = "記憶の自動統合";
+"Disable automatic synthesis" = "自動統合を無効にする";
+"Enable automatic synthesis…" = "自動統合を有効にする…";
+"Enable automatic memory synthesis?" = "記憶の自動統合を有効にしますか？";
+"Separate opt-in: completed direct and group replies may trigger extra paid model requests using this agent's current human message, reply and private memories. After independent model verification, generated memories can be added, updated or removed without individual approval. Manually saved memories are protected. Disabling keeps saved memories and grants no tool permissions." = "個別の同意が必要です。個別・グループの返信完了後、このエージェントへの現在のユーザーメッセージ、返信、非公開の記憶を使い、追加の有料モデルリクエストを行う場合があります。独立したモデル検証後、生成された記憶は個別の承認なしで追加・更新・削除されます。手動で保存した記憶は保護されます。無効化しても保存済みの記憶は残り、ツール権限は付与されません。";
 "Save as private memory?" = "非公開メモリとして保存しますか？";
 "Only this agent in this account will recall the saved fact. No tool permission is granted." = "このアカウントのこのエージェントだけが保存した事実を参照します。ツールの権限は付与されません。";
 "Optional extra model requests after completed group turns may incur costs. Only this agent's current human request, reply and private facts are sent to its selected model. Suggestions are not recalled until you approve each fact. No peer wakes, old images or shared memories are scanned. Disabling clears unapproved suggestions, not saved facts." = "グループのターン完了後に任意の追加モデルリクエストを行うため、費用が発生する場合があります。このエージェントが今回受け取ったユーザーの依頼、回答、非公開の事実のみを選択したモデルに送信します。個別に承認するまで候補は参照されません。他のエージェントからの呼び出し、過去の画像、共有メモリは対象外です。無効にすると未承認の候補が消去されますが、保存済みの事実は残ります。";

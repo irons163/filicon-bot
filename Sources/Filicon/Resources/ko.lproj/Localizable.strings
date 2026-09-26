@@ -1660,6 +1660,11 @@
 "Enable suggestions…" = "제안 켜기…";
 "No memory suggestions to review." = "검토할 기억 제안이 없습니다.";
 "Enable memory suggestions?" = "기억 제안을 켤까요?";
+"Automatic memory synthesis" = "자동 기억 통합";
+"Disable automatic synthesis" = "자동 통합 끄기";
+"Enable automatic synthesis…" = "자동 통합 켜기…";
+"Enable automatic memory synthesis?" = "자동 기억 통합을 켤까요?";
+"Separate opt-in: completed direct and group replies may trigger extra paid model requests using this agent's current human message, reply and private memories. After independent model verification, generated memories can be added, updated or removed without individual approval. Manually saved memories are protected. Disabling keeps saved memories and grants no tool permissions." = "별도 동의가 필요합니다. 개인 및 그룹 답변이 완료되면 이 에이전트의 현재 사용자 메시지, 답변 및 비공개 기억을 사용해 추가 유료 모델 요청을 보낼 수 있습니다. 독립적인 모델 검증 후 생성된 기억은 개별 승인 없이 추가, 수정 또는 삭제될 수 있습니다. 수동으로 저장한 기억은 보호됩니다. 끄더라도 저장된 기억은 유지되며 도구 권한은 부여되지 않습니다.";
 "Save as private memory?" = "비공개 기억으로 저장할까요?";
 "Only this agent in this account will recall the saved fact. No tool permission is granted." = "이 계정의 해당 에이전트만 저장된 사실을 기억합니다. 도구 권한은 부여되지 않습니다.";
 "Optional extra model requests after completed group turns may incur costs. Only this agent's current human request, reply and private facts are sent to its selected model. Suggestions are not recalled until you approve each fact. No peer wakes, old images or shared memories are scanned. Disabling clears unapproved suggestions, not saved facts." = "완료된 그룹 대화 후 선택적으로 추가 모델 요청을 수행하므로 비용이 발생할 수 있습니다. 이 에이전트의 현재 사용자 요청, 답변, 비공개 사실만 선택한 모델에 전송됩니다. 각 사실을 승인하기 전에는 제안을 기억에 사용하지 않습니다. 다른 에이전트의 호출, 과거 이미지, 공유 기억은 분석하지 않습니다. 끄면 미승인 제안만 삭제되고 저장된 사실은 유지됩니다.";

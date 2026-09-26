@@ -3993,6 +3993,23 @@ final class AppModel: ObservableObject {
         return values
     }
 
+    func memorySynthesisSettings(agentID: UUID) async throws -> AgentMemorySynthesisSettings {
+        let generation = autoReviewAccountGeneration
+        guard let agentService, !agentMessagingAccountTransition else { throw CancellationError() }
+        let value = try await agentService.memorySynthesisSettings(accountID: settings.accountScope ?? "local", agentID: agentID)
+        guard generation == autoReviewAccountGeneration else { throw CancellationError() }
+        return value
+    }
+
+    func setMemorySynthesisEnabled(_ enabled: Bool, expected: AgentMemorySynthesisSettings) async throws {
+        guard let agentService, !agentMessagingAccountTransition,
+              expected.accountID == (settings.accountScope ?? "local") else { throw CancellationError() }
+        let lifetime = agentMemorySuggestionUILifetime
+        try await quotaWrite(scope: "workflow", key: "memory-synthesis-\(expected.agentID)", data: try JSONEncoder().encode(expected)) {
+            try await agentService.setMemorySynthesisEnabled(enabled, expected: expected, lifetime: lifetime)
+        }
+    }
+
     func memorySuggestionSnapshot(agentID: UUID) async throws -> AgentMemorySuggestionSnapshot {
         let generation = autoReviewAccountGeneration
         guard let agentService, !agentMessagingAccountTransition else { throw CancellationError() }

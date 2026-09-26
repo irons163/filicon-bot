@@ -10,9 +10,22 @@ struct AgentMemorySuggestionsSection: View {
     @State private var confirmsEnable = false
     @State private var selected: AgentMemorySuggestion?
     @State private var confirmsSave = false
+    @State private var synthesis: AgentMemorySynthesisSettings?
+    @State private var confirmsSynthesis = false
 
     var body: some View {
         Section(l10n("Memory suggestions")) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(l10n("Automatic memory synthesis")).font(.headline)
+                AgentMemorySynthesisNotice()
+                if let synthesis {
+                    Text(l10n(synthesis.enabled ? "Enabled" : "Disabled"))
+                    Button(l10n(synthesis.enabled ? "Disable automatic synthesis" : "Enable automatic synthesis…"),
+                        action: synthesisButtonTapped)
+                }
+            }
+            Divider()
+            Text(l10n("Memory suggestions")).font(.headline)
             AgentMemorySuggestionsNotice()
             if let snapshot {
                 HStack {
@@ -32,6 +45,10 @@ struct AgentMemorySuggestionsSection: View {
         }
         .disabled(busy)
         .task(id: model.settings.accountScope ?? "local") { await accountChanged() }
+        .confirmationDialog(l10n("Enable automatic memory synthesis?"), isPresented: $confirmsSynthesis, titleVisibility: .visible) {
+            Button(l10n("Enable")) { Task { await setSynthesisEnabled(true) } }
+            Button(l10n("Cancel"), role: .cancel) {}
+        } message: { Text(FiliconLocalization.string(AgentMemorySynthesisNotice.disclosure)) }
         .confirmationDialog(l10n("Enable memory suggestions?"), isPresented: $confirmsEnable, titleVisibility: .visible) {
             Button(l10n("Enable")) { Task { await setEnabled(true) } }
             Button(l10n("Cancel"), role: .cancel) {}
@@ -55,16 +72,32 @@ struct AgentMemorySuggestionsSection: View {
         await review(selected, accept: true)
     }
     private func accountChanged() async {
+        synthesis = nil; confirmsSynthesis = false
         snapshot = nil; selected = nil; confirmsEnable = false; confirmsSave = false; failure = nil
         await refresh()
     }
     private func refresh() async {
         do {
             let value = try await model.memorySuggestionSnapshot(agentID: agentID)
+            let synthesisValue = try await model.memorySynthesisSettings(agentID: agentID)
             try Task.checkCancellation()
-            guard value.settings.accountID == (model.settings.accountScope ?? "local") else { return }
+            guard value.settings.accountID == (model.settings.accountScope ?? "local"),
+                  synthesisValue.accountID == value.settings.accountID else { return }
             snapshot = value
+            synthesis = synthesisValue
         } catch is CancellationError {} catch { failure = FiliconLocalization.string(error.localizedDescription) }
+    }
+    private func synthesisButtonTapped() {
+        if synthesis?.enabled == true { Task { await setSynthesisEnabled(false) } }
+        else { confirmsSynthesis = true }
+    }
+    private func setSynthesisEnabled(_ enabled: Bool) async {
+        guard let expected = synthesis else { return }
+        busy = true; failure = nil
+        defer { busy = false }
+        do { try await model.setMemorySynthesisEnabled(enabled, expected: expected) }
+        catch is CancellationError {} catch { failure = FiliconLocalization.string(error.localizedDescription) }
+        await refresh()
     }
     private func setEnabled(_ enabled: Bool) async {
         guard let expected = snapshot?.settings else { return }
@@ -80,6 +113,13 @@ struct AgentMemorySuggestionsSection: View {
         do { try await model.reviewMemorySuggestion(suggestion, accept: accept) }
         catch is CancellationError {} catch { failure = FiliconLocalization.string(error.localizedDescription) }
         await refresh()
+    }
+}
+
+struct AgentMemorySynthesisNotice: View {
+    static let disclosure = "Separate opt-in: completed direct and group replies may trigger extra paid model requests using this agent's current human message, reply and private memories. After independent model verification, generated memories can be added, updated or removed without individual approval. Manually saved memories are protected. Disabling keeps saved memories and grants no tool permissions."
+    var body: some View {
+        Text(FiliconLocalization.string(Self.disclosure)).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
     }
 }
 
