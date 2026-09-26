@@ -2070,6 +2070,8 @@ final class AppModel: ObservableObject {
                                     exchangeID: exchangeID, lifetime: lifetime, originID: id,
                                     generation: publicationGeneration)
                             }),
+                        memorySynthesis: AgentMemorySynthesisTransport(agents: agentService, registry: registry,
+                            scheduler: agentExecutionScheduler),
                         supportsMailboxQuestions: true,
                         publishSecret: { [weak self] request, incoming, target, lifetime in
                             guard let self else { throw CancellationError() }
@@ -3847,6 +3849,8 @@ final class AppModel: ObservableObject {
                     try await self.recordMemorySuggestions(suggestions, settings: settings, exchangeID: exchangeID,
                         lifetime: lifetime, originID: originID, generation: generation)
                 }),
+            memorySynthesis: AgentMemorySynthesisTransport(agents: agentService, registry: registry,
+                scheduler: agentExecutionScheduler),
             supportsMailboxQuestions: supportsMailboxQuestions,
             publishSecret: secretPublisher,
             groups: groupService,

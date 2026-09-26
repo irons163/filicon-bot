@@ -92,9 +92,12 @@ public actor AgentMessagingSession {
     private var hostEnqueueReserved = false
     private var userMessageID: UUID?
     private let memoryExtractor: AgentMemorySuggestionExtractor?
+    private let memorySynthesis: AgentMemorySynthesisTransport?
     private let memorySuggestionLifetime = AgentMemorySuggestionLifetime()
     private struct MemoryExchange {
-        let settings: AgentMemorySuggestionSettings
+        let settings: AgentMemorySuggestionSettings?
+        let synthesisSettings: AgentMemorySynthesisSettings?
+        let occurredAt: Date
         let profile: AgentProfile
         let exchangeID: UUID
         let user: String
@@ -108,6 +111,7 @@ public actor AgentMessagingSession {
                 directOriginBinding: DirectConversationAgentBinding? = nil,
                 directRequestImages: (@Sendable () async throws -> [AttachmentMetadata])? = nil,
                 memoryExtractor: AgentMemorySuggestionExtractor? = nil,
+                memorySynthesis: AgentMemorySynthesisTransport? = nil,
                 supportsMailboxQuestions: Bool = false,
                 publishSecret: SecretPublisher? = nil,
                 groups: GroupService? = nil,
@@ -128,6 +132,7 @@ public actor AgentMessagingSession {
         self.publishSecret = publishSecret
         self.management = management
         self.memoryExtractor = memoryExtractor
+        self.memorySynthesis = memorySynthesis
         self.groups = groups; self.authorizeGroup = authorizeGroup; self.postGroup = postGroup
         self.runGroup = runGroup; self.finishGroup = finishGroup
         self.authorize = authorize; self.onChange = onChange; self.turnTimeout = turnTimeout
@@ -267,10 +272,13 @@ public actor AgentMessagingSession {
     /// Only a foreground group or bound direct responder supplies a current human
     /// request. Peer wakes/background tasks do not invent human memory evidence.
     public func prepareMemorySuggestion(profile: AgentProfile, exchangeID: UUID, user: String) async {
-        guard !closed, memoryExtractor != nil, memoryExchanges[profile.id] == nil else { return }
-        guard let settings = try? await agents.memorySuggestions(accountID: accountID, agentID: profile.id).settings,
-              settings.enabled, !closed, !Task.isCancelled else { return }
-        memoryExchanges[profile.id] = .init(settings: settings, profile: profile, exchangeID: exchangeID,
+        guard !closed, memoryExtractor != nil || memorySynthesis != nil, memoryExchanges[profile.id] == nil else { return }
+        let settings = memoryExtractor == nil ? nil : try? await agents.memorySuggestions(accountID: accountID, agentID: profile.id).settings
+        let synthesis = memorySynthesis == nil ? nil : try? await agents.memorySynthesisSettings(accountID: accountID, agentID: profile.id)
+        guard settings?.enabled == true || synthesis?.enabled == true, !closed, !Task.isCancelled else { return }
+        memoryExchanges[profile.id] = .init(settings: settings?.enabled == true ? settings : nil,
+                                           synthesisSettings: synthesis?.enabled == true ? synthesis : nil,
+                                           occurredAt: .now, profile: profile, exchangeID: exchangeID,
                                            user: String(user.prefix(8_000)))
     }
 
@@ -279,13 +287,23 @@ public actor AgentMessagingSession {
     public var hasMemorySuggestionsToProcess: Bool { memoryExchanges.values.contains { !$0.response.isEmpty } }
 
     public func suggestMemories() async {
-        guard let memoryExtractor else { return }
         let exchanges = memoryExchanges.values.sorted { $0.profile.id.uuidString < $1.profile.id.uuidString }
         memoryExchanges.removeAll()
         for exchange in exchanges {
             guard !closed, !Task.isCancelled else { return }
+            let response = exchange.response.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !response.isEmpty, !["PASS", "(PASS)"].contains(response.uppercased()) else { continue }
+            if let memorySynthesis, let settings = exchange.synthesisSettings {
+                do {
+                    _ = try await memorySynthesis.run(settings: settings,
+                        evidence: [.init(id: exchange.exchangeID.uuidString, occurredAt: exchange.occurredAt,
+                            user: exchange.user, assistant: exchange.response)],
+                        at: .now, profile: exchange.profile, sessionID: id, lifetime: memorySuggestionLifetime)
+                } catch { /* Maintenance failure must not undo the completed reply. */ }
+            }
+            guard let memoryExtractor, let settings = exchange.settings else { continue }
             do {
-                try await memoryExtractor.extract(settings: exchange.settings, profile: exchange.profile,
+                try await memoryExtractor.extract(settings: settings, profile: exchange.profile,
                     exchangeID: exchange.exchangeID, sessionID: id, user: exchange.user, response: exchange.response,
                     lifetime: memorySuggestionLifetime)
             } catch { /* No automatic retry or change to the settled answer. */ }
@@ -780,6 +798,7 @@ public actor AgentMessagingSession {
         revokeProfileChanges()
         memoryExchanges.removeAll()
         await memoryExtractor?.cancel(sessionID: id)
+        await memorySynthesis?.cancel(sessionID: id, lifetime: memorySuggestionLifetime)
         queue.removeAll()
         let pendingGroups = groupQueue
         groupQueue.removeAll()

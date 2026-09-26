@@ -26,8 +26,10 @@ private struct SynthesisTransportProvider: AIProvider {
                     await probe.record(request); try await before()
                     let selected: [InferenceEvent]
                     if synthesisStages {
+                        let object = try? JSONSerialization.jsonObject(with: Data((request.messages.last?.text ?? "").utf8)) as? [String: Any]
+                        let evidenceID = (object?["evidence"] as? [[String: Any]])?.first?["id"] as? String ?? "turn"
                         let text = request.messages.first?.text.contains("Maintain compact") == true
-                            ? #"{"changes":[{"action":"create","content":"Prefers short answers","kind":"profile","sourceEvidenceIds":["turn"]}]}"#
+                            ? #"{"changes":[{"action":"create","content":"Prefers short answers","kind":"profile","sourceEvidenceIds":["\#(evidenceID)"]}]}"#
                             : #"{"approved":true}"#
                         selected = [.textDelta(text), .completed(.stop)]
                     } else { selected = events }
@@ -49,6 +51,37 @@ struct AgentMemorySynthesisTransportTests {
         let profile = try await agents.create(name: "Owner", instructions: "PRIVATE_PERSONA_DO_NOT_SEND",
             providerID: "synthesis-test", modelID: "model", at: Date(timeIntervalSince1970: 100))
         return (root, agents, profile)
+    }
+
+    @Test(arguments: ["enabled", "disabled", "unprepared", "pass", "revoked", "disabled-after-prepare"])
+    func foregroundSessionSynthesizesOnlyPreparedCompletedOptedInExchanges(mode: String) async throws {
+        let (root, agents, profile) = try await fixture(); defer { try? FileManager.default.removeItem(at: root) }
+        let registry = ProviderRegistry(), probe = SynthesisTransportProbe()
+        let initial = try await agents.memorySynthesisSettings(accountID: "local", agentID: profile.id)
+        if mode != "disabled" { try await agents.setMemorySynthesisEnabled(true, expected: initial, lifetime: .init()) }
+        await registry.register(SynthesisTransportProvider(probe: probe, events: [], synthesisStages: true))
+        let transport = AgentMemorySynthesisTransport(agents: agents, registry: registry, scheduler: .init())
+        let messaging = AgentMessagingSession(id: session, originConversationID: session, agents: agents,
+            messenger: try AgentMessenger(service: agents, storeURL: root.appending(path: "messages.json")), registry: registry,
+            coordinator: TurnCoordinator(registry: registry), memorySynthesis: transport)
+        if mode != "unprepared" {
+            await messaging.prepareMemorySuggestion(profile: profile, exchangeID: session, user: "I prefer short answers")
+        }
+        await messaging.remember(agentID: profile.id, messages: [], response: mode == "pass" ? "PASS" : "Understood")
+        if mode == "revoked" { messaging.revokeProfileChanges() }
+        if mode == "disabled-after-prepare" {
+            let current = try await agents.memorySynthesisSettings(accountID: "local", agentID: profile.id)
+            try await agents.setMemorySynthesisEnabled(false, expected: current, lifetime: .init())
+        }
+        await messaging.suggestMemories()
+        await messaging.suggestMemories() // Settled exchanges are consumed once.
+        let memories = await agents.memories(accountID: "local", agentID: profile.id)
+        expectNoDifference(memories.map(\.fact), mode == "enabled" ? ["Prefers short answers"] : [])
+        let requests = await probe.requests
+        expectNoDifference(requests.count, mode == "enabled" ? 2 : 0)
+        let pending = await messaging.hasMemorySuggestionsToProcess
+        expectNoDifference(pending, false)
+        try await messaging.close()
     }
 
     @Test(arguments: ["disabled", "enabled", "disable-proposal", "disable-verification", "disable-reenable"])

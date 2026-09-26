@@ -1,5 +1,7 @@
 # Filicon / Grok Bot 0.18 功能 parity matrix（current implementation）
 
+前景回合記憶整合接線（2026-09-26）：App 的綁定直接聊天與群組 session 已注入 synthesis transport；沿用 host 準備的人類訊息與該代理人完成回覆，僅在獨立設定啟用時處理，PASS／空回覆不處理，重複收尾不再執行。停止及關閉沿用同一撤銷 lifetime。六種隔離 session 情境通過；尚缺使用者設定 UI、App 層 synthesis 專用生命週期整合驗收、debounce／temporal 排程及真實模型驗收，整體仍 partial。此項取代下方前景接線尚缺的歷史描述。
+
 自動記憶獨立授權與端到端接線（2026-09-26）：新增每帳號／代理人的 synthesis 設定，預設關閉且不繼承建議設定。host run 已串起設定重驗、兩階段 tool-free provider 與原子保存；每次設定變更產生新 revision，停用或停用再啟用均使舊回合失效，排程 onStart 也重驗。App 設定 UI、前景完成後觸發、debounce／temporal 排程與真實模型驗收尚未完成，仍 partial。
 
 記憶整合模型連接層（2026-09-26）：新增 tool-free transport，經現有 provider／background scheduler 執行獨立請求，限制輸入與輸出 bytes、要求 stop、拒絕工具事件與異常終止，設定變更及取消拒絕晚到結果，每段預設 45 秒上限。尚未接 App 啟用／協調器呼叫、排程及真實模型驗收；螢幕鎖定造成的完整回歸缺口仍保留。

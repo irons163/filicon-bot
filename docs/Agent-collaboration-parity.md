@@ -1,5 +1,13 @@
 # 協作能力核對紀錄（更新至 2026-09-26）
 
+## 前景完成回合觸發記憶整合（2026-09-26）
+
+App 綁定直接聊天及群組 factory 注入 `AgentMemorySynthesisTransport`，共用既有 foreground evidence 準備／完成入口。session 擷取獨立 synthesis consent revision；只有已準備的人類訊息與非空／非 PASS 的完成回覆進入兩階段流程，不從 peer wake 或工具回條建立人類證據。先整合再執行原有待人工核准建議；exchange 在 await 前移出，重複收尾不再送出。維護失敗不撤銷已完成回覆；Stop／account lifecycle 沿用同步撤銷 lifetime，close 另取消 synthesis coordinator。
+
+依 pfw-testing／CustomDump，以隔離 session 與假 provider 驗證 enabled、disabled、unprepared、PASS、revoked、prepare 後停用六種情境；只有 enabled 有兩次請求與保存，並檢查重複收尾。尚未新增 App 層 synthesis 專用停止／切帳號整合驗收，也沒有新增使用者啟用 UI、debounce、重試或 temporal 排程；不宣稱完整記憶 parity。未改真實設定或啟動使用者 App／Xcode。
+
+驗證：`memory-synthesis-session.log` 聚焦 17 項測試通過；`memory-synthesis-session-full.log` 完整非並行回歸 exit 0。`memory-synthesis-session-native.log` 原生建置、verify-package、deep strict 簽章及 `git diff --check` 通過。未 push。
+
 ## 自動記憶獨立同意與 provider→保存接線（2026-09-26）
 
 新增 `AgentMemorySynthesisSettings`，依 account／agent 持久保存，預設關閉，不從現有 human-reviewed memory suggestions 遷移啟用。host setter 比對完整 expected settings、每次產生新 revision；停用不刪已保存記憶。公開 run 只接受已啟用且 revision 完全符合的設定；提案／驗證 await 返回後在 AgentService actor 內重驗，再同步進入 snapshot-fenced 保存。
