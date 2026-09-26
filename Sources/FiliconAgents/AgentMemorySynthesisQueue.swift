@@ -14,6 +14,7 @@ public struct AgentMemorySynthesisQueue: Sendable {
     public struct Batch: Equatable, Sendable {
         public let settings: AgentMemorySynthesisSettings
         public fileprivate(set) var entries: [Entry]
+        public fileprivate(set) var temporalReview = false
     }
     public struct Admission: Equatable, Sendable {
         public let inserted: Bool
@@ -29,6 +30,36 @@ public struct AgentMemorySynthesisQueue: Sendable {
     public private(set) var nextRun: ContinuousClock.Instant?
     public var count: Int { pending.count }
     public init() {}
+
+    /// A date-only review is not fabricated conversational evidence.
+    @discardableResult
+    public mutating func enqueueTemporal(settings: AgentMemorySynthesisSettings,
+                                         now: ContinuousClock.Instant) throws -> Admission {
+        guard settings.enabled, settings.revision != nil,
+              !settings.accountID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              settings.accountID.utf8.count <= 256 else { throw AgentMemorySuggestionError.invalid }
+        let key = Key(accountID: settings.accountID, agentID: settings.agentID)
+        if pending[key]?.settings == settings, pending[key]?.temporalReview == true {
+            return .init(inserted: false, droppedAgents: 0, droppedEvidence: 0)
+        }
+        var dropped = 0, agents = 0
+        if let previous = pending[key], previous.settings != settings {
+            dropped = previous.entries.count
+            removeAgent(accountID: settings.accountID, agentID: settings.agentID)
+        }
+        if pending[key] == nil {
+            if order.count == 64 {
+                let oldest = order.removeFirst()
+                dropped += pending.removeValue(forKey: oldest)?.entries.count ?? 0
+                agents = 1
+            }
+            order.append(key)
+            pending[key] = .init(settings: settings, entries: [])
+        }
+        pending[key]?.temporalReview = true
+        nextRun = now.advanced(by: .seconds(15))
+        return .init(inserted: true, droppedAgents: agents, droppedEvidence: dropped)
+    }
 
     /// Used by the host to release per-evidence cancellation context after eviction.
     public func contains(settings: AgentMemorySynthesisSettings, evidenceID: String) -> Bool {
@@ -100,10 +131,12 @@ public struct AgentMemorySynthesisQueue: Sendable {
         }
         // Stage the whole operation so an invalid entry cannot partially restore.
         var candidate = self
+        let temporal = batch.temporalReview || pending[key]?.temporalReview == true
         candidate.removeAgent(accountID: batch.settings.accountID, agentID: batch.settings.agentID)
         for entry in merged.suffix(12) {
             try candidate.enqueue(settings: batch.settings, entry: entry, now: now)
         }
+        if temporal { try candidate.enqueueTemporal(settings: batch.settings, now: now) }
         self = candidate
     }
 
@@ -125,7 +158,7 @@ public struct AgentMemorySynthesisQueue: Sendable {
     public mutating func removeOrigin(_ originID: UUID) {
         for key in order {
             pending[key]?.entries.removeAll { $0.originID == originID }
-            if pending[key]?.entries.isEmpty == true { pending[key] = nil }
+            if pending[key]?.entries.isEmpty == true, pending[key]?.temporalReview != true { pending[key] = nil }
         }
         order.removeAll { pending[$0] == nil }
         if pending.isEmpty { nextRun = nil }
@@ -135,7 +168,9 @@ public struct AgentMemorySynthesisQueue: Sendable {
         let key = Key(accountID: settings.accountID, agentID: settings.agentID)
         guard pending[key]?.settings == settings else { return }
         pending[key]?.entries.removeAll { $0.evidence.id == evidenceID }
-        if pending[key]?.entries.isEmpty == true { pending[key] = nil; order.removeAll { $0 == key } }
+        if pending[key]?.entries.isEmpty == true, pending[key]?.temporalReview != true {
+            pending[key] = nil; order.removeAll { $0 == key }
+        }
         if pending.isEmpty { nextRun = nil }
     }
 

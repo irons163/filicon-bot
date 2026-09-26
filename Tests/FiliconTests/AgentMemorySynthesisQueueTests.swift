@@ -35,6 +35,44 @@ struct AgentMemorySynthesisQueueTests {
         expectNoDifference(queue.nextRun, nil)
     }
 
+    @Test func temporalBatchesMergeDeduplicateAndSurviveStaleRestore() throws {
+        var queue = AgentMemorySynthesisQueue()
+        let now = ContinuousClock.now
+        try queue.enqueueTemporal(settings: settings(), now: now)
+        let duplicate = try queue.enqueueTemporal(settings: settings(), now: now.advanced(by: .seconds(5)))
+        expectNoDifference(duplicate.inserted, false)
+        expectNoDifference(queue.nextRun, now.advanced(by: .seconds(15)))
+        try queue.enqueue(settings: settings(), entry: entry(1), now: now)
+        queue.removeOrigin(id(200))
+        let batch = try #require(queue.takeReady(now: now.advanced(by: .seconds(15))).first)
+        expectNoDifference(batch.temporalReview, true)
+        expectNoDifference(batch.entries, [])
+        try queue.requeue(batch, now: now)
+        try queue.enqueue(settings: settings(), entry: entry(2), now: now)
+        let merged = try #require(queue.takeReady(now: now.advanced(by: .seconds(15))).first)
+        expectNoDifference(merged.temporalReview, true)
+        expectNoDifference(merged.entries, [entry(2)])
+        try queue.enqueue(settings: settings(revision: 101), entry: entry(3), now: now)
+        try queue.requeue(merged, now: now)
+        let changed = try #require(queue.takeReady(now: now.advanced(by: .seconds(15))).first)
+        expectNoDifference(changed.temporalReview, false)
+        expectNoDifference(changed.entries, [entry(3)])
+    }
+
+    @Test func temporalAdmissionIsBoundedAndRequiresConsent() throws {
+        var queue = AgentMemorySynthesisQueue()
+        let now = ContinuousClock.now
+        #expect(throws: AgentMemorySuggestionError.invalid) {
+            try queue.enqueueTemporal(settings: .init(accountID: "local", agentID: id(1)), now: now)
+        }
+        for n in 1...64 { try queue.enqueueTemporal(settings: settings(n), now: now) }
+        let admission = try queue.enqueueTemporal(settings: settings(65), now: now)
+        expectNoDifference(admission.droppedAgents, 1)
+        let batches = queue.takeReady(now: now.advanced(by: .seconds(15)))
+        expectNoDifference(batches.map(\.settings.agentID), (2...65).map(id))
+        #expect(batches.allSatisfy { $0.temporalReview && $0.entries.isEmpty })
+    }
+
     @Test func staleRestoreKeepsNewerEvidenceAndConsent() throws {
         var queue = AgentMemorySynthesisQueue()
         let now = ContinuousClock.now

@@ -1,5 +1,13 @@
 # 協作能力核對紀錄（更新至 2026-09-26）
 
+## 無新證據的日期檢視批次（2026-09-26）
+
+Queue 增加 temporalReview 標記與 host-only enqueueTemporal。可建立空 evidence 的檢視批次，不偽造 human turn；可與同 consent 的新證據合併。重複日期排隊不延長 debounce，stale restore 合併保留標記，新 consent 不被舊 batch 覆蓋；移除聊天 evidence 不會誤刪獨立日期檢視。沿用 64 組容量、enabled revision 驗證與 15 秒等待。
+
+pfw-testing／CustomDump 覆蓋純日期／混合／來源移除／stale restore／新版 consent／去重／容量與 disabled 拒絕。此項僅為 temporal queue 接口，worker timer、App sweep 與 receipt 完成回報仍待接線，不宣稱已提供完整定期檢視。
+
+驗證：`memory-temporal-queue.log` 8 項 queue 測試通過；`memory-temporal-queue-full.log` 完整非並行套件 exit 0。原生建置、verify-package／deep strict 簽章及 git diff --check 通過，未啟動 App 或操作真實資料。
+
 ## 定期記憶檢視到期紀錄（2026-09-26）
 
 新增獨立 temporal receipt 持久化欄位，legacy 缺欄位解碼為空，不把 review 時間混入 consent revision。host 查詢僅選當前 account、已啟用且有 private memories 的 active agent，每次最多 4 位；無 receipt 即到期，完成標記使用開始時間加 86,400 秒，晚到的舊標記不倒退截止時間。標記須當前 consent 與有效 lifetime；停用／重新設定清掉該 account-agent receipt，不刪記憶。
