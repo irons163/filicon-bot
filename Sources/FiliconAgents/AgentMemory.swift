@@ -191,8 +191,8 @@ public struct AgentMemoryRecall: Sendable {
         var selected: [AgentMemory] = []
         // Separate pools preserve private-vs-shared precedence and foundational facts.
         for (scope, profile, limit, bytes) in [
-            (AgentMemory.Scope.agent, true, 8, 8_000), (.agent, false, 30, 4_000),
-            (.user, true, 8, 4_000), (.user, false, 15, 2_000),
+            (AgentMemory.Scope.agent, true, 100, 8_000), (.agent, false, 30, 4_000),
+            (.user, true, 50, 4_000), (.user, false, 15, 2_000),
             (.project, true, 8, 4_000), (.project, false, 15, 2_000),
         ] {
             var seen: Set<String> = []

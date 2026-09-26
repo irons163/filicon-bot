@@ -2,12 +2,20 @@
 
 核對日期：2026-09-27。參考 `grok-bot-0.18-reconstructed` commit `a9f633e09d49a85829b8236331b9e21f7e612634`；Filicon 基準 `94937dd`。原始碼核對，不是真實模型或 UI 驗收。
 
-## Profile 保存修正（2026-09-27）
+## Profile recall 更新（2026-09-27）
+
+後續 recall 更新：私人／共享 profile 選取筆數改為 100／50，保留原有 8,000／4,000 JSON bytes 預算、可見性篩選、去重與相關性排序。因此實際筆數可低於原版文字 renderer；不再固定卡在 8 筆，也不宣稱能塞入所有 100／50 筆。
+
+120 筆固定 fixture 驗證超過 8 筆、JSON bytes 上限、最新優先、輸入順序無關、跨帳號隔離及相關舊事實入選。完整非並行測試 exit 0（`.build/validation/memory-profile-recall-final.log`）、原生 Debug 建置及封裝簽章檢查通過；沒有啟動使用者 App 或使用真實資料。
+
+專案核對補充：`system-prompt-assembly.ts` 要求 `recall({profileLimit:25,recentLimit:10},3)` 回傳 injected blocks；`sand-memory.ts/selectProjectMemoryBlocks` 實作有事實優先、最近更新／slug 排序、最多三個專案及 alsoMemberOf。但 reconstructed 的 `ProjectMemoryStore.recall` 仍回傳另一種扁平陣列並使用不同 limits 欄位。兩者契約不一致，不能宣稱此 reference 路徑已跑通；後續應以具體 block 選取／prompt 設計補齊，不照抄不相容接口。Filicon 現在仍為合併專案池。
+
+## Profile 保存修正（2026-09-27，ad5cfff）
 
 - Explicit（私人／使用者共享／專案）、suggestion approval、verified synthesis 不再拒絕第 9 筆 profile；單筆驗證、來源、審批、tombstone、完整 snapshot fence 與 recall 預算保持不變。模型工具說明同步移除舊保存上限。
 - 私人／共享測試涵蓋第 9 筆保存、搜尋、重開與刪除；專案測試涵蓋跨作者第 9 筆。多來源測試以 8 筆 profile 起始，suggestion 與 synthesis 各追加一筆，重開確認 10 筆 profile／63 筆總歷史。
 - 下方「仍保留 8 筆 profile 限制」屬先前進度，已由本節取代。Recall 仍有界；不宣稱注入數量與原版完全相同，也不因內部 JSON／月份檔案格式不同就要求重寫儲存層。
-- 後續已定位的注入差異：原版 `sand-memory.ts` 的私人／使用者／專案 profile 筆數為 100／50／25；Filicon 目前各 8 筆並另有 JSON bytes 預算，專案池也是合併而非逐專案選取。這是下一項行為核對，不可把提高筆數等同取消 payload 預算或擴大 project 可見性。
+- 當時定位的注入差異為私人／使用者／專案 profile 各 8 筆；私人／使用者已由上節更新，專案池仍待補齊。提高筆數不等同取消 payload 預算或擴大 project 可見性。
 - 驗證：完整非並行 Swift 測試 exit 0（`.build/validation/memory-profile-retention-full.log`）、原生 Debug build exit 0 與 `verify-package.sh --xcode-debug` 通過。未啟動 App、使用真實模型或修改實際帳號資料。
 
 ## 參考實際行為

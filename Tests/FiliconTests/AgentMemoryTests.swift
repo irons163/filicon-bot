@@ -221,7 +221,7 @@ struct AgentMemoryTests {
         expectNoDifference(Set(after.map(\.id)), Set((before + [extra]).map(\.id)))
         if mode == "profile" {
             let recall = try AgentMemoryRecall(memories: after, accountID: "local", agentID: f.owner.id)
-            #expect(recall.memories.count <= 8)
+            expectNoDifference(recall.memories.count, 9)
         }
         let reopened = try AgentService(storeURL: f.file)
         let durable = await reopened.memoryContext(accountID: "local", agentID: f.owner.id)
@@ -503,6 +503,23 @@ struct AgentMemoryRecallTests {
         let bounded = try AgentMemoryRecall(memories: [huge, small], accountID: "local", agentID: owner)
         expectNoDifference(bounded.memories, [small])
         expectNoDifference(bounded.omittedCount, 1)
+    }
+
+    @Test(arguments: [AgentMemory.Scope.agent, .user])
+    func profileRecallOutgrowsEightWhileRetainingEncodedBudget(scope: AgentMemory.Scope) throws {
+        let values = (1...120).map { memory($0, text: $0 == 1 ? "Aurora contrast" : "Foundation \($0)", day: Double($0), tier: .profile, scope: scope) }
+        let hidden = memory(121, text: "Foreign foundation", day: 999, tier: .profile, scope: scope, account: "other")
+        let recall = try AgentMemoryRecall(memories: values + [hidden], accountID: "local", agentID: owner)
+        #expect(recall.memories.count > 8)
+        #expect(recall.memories.count <= (scope == .agent ? 100 : 50))
+        #expect(recall.factsJSON.utf8.count <= (scope == .agent ? 8_000 : 4_000))
+        expectNoDifference(recall.memories, Array(values.reversed().prefix(recall.memories.count)))
+        expectNoDifference(recall.omittedCount, values.count - recall.memories.count)
+        let reversed = try AgentMemoryRecall(memories: ([hidden] + values).reversed(), accountID: "local", agentID: owner)
+        expectNoDifference(reversed.factsJSON, recall.factsJSON)
+        let relevant = try AgentMemoryRecall(memories: values, accountID: "local", agentID: owner,
+            query: .init("Aurora contrast"))
+        #expect(relevant.memories.contains(values[0]))
     }
 
     @Test(arguments: [AgentMemory.Scope.agent, .user])
