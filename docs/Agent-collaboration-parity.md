@@ -1,5 +1,11 @@
 # 協作能力核對紀錄（更新至 2026-09-26）
 
+## 回答交付自身來源核對（2026-09-26）
+
+恢復原問題卡時也必須核對回答交付的 origin 與 direct binding，不能只信任回答回條及原交付。新增 missing-binding／foreign-origin／foreign-binding 三個隔離 JSON 異常案例；修正前 `peer-question-binding-before.log` exit 1、三項失敗，修正後 `peer-question-binding-focused.log` 通過。沿用 pfw-testing 與 CustomDump 比對，驗證拒絕異常卡與回覆且信箱位元組不變。未修改使用者資料或擴大授權。
+
+最終 `peer-question-binding-full.log` 完整非並行回歸 exit 0；`peer-question-binding-native.log` 原生 Debug 建置與封裝／deep strict 簽章檢查通過。未 push 或重啟 App／Xcode。
+
 ## 同儕問題卡與回答後文字恢復（2026-09-26）
 
 `directPeerTranscript` 納入已保存問題卡，並核對回答回條與原交付的完整關聯，允許恢復回答新回合中的代理人發布文字。人類回答本身不作 incoming 投影；動態問題 UI 繼續以 canonical 信箱決定是否已回答。缺少原交付、錯誤答案／來源、跨帳號及重複 UUID 不猜測修復。

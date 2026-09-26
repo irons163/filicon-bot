@@ -102,7 +102,7 @@ struct MailboxQuestionTests {
         }
     }
 
-    @Test(arguments: ["pending", "answered", "dismissed", "missing-parent", "wrong-parent", "wrong-answer", "foreign-response", "duplicate-response"])
+    @Test(arguments: ["pending", "answered", "dismissed", "missing-parent", "wrong-parent", "wrong-answer", "foreign-response", "duplicate-response", "missing-binding", "foreign-origin", "foreign-binding"])
     func recoveryIncludesOnlyLinkedQuestionsAndAgentReports(mode: String) async throws {
         let f = try await fixture(direct: true)
         defer { try? FileManager.default.removeItem(at: f.root) }
@@ -126,6 +126,18 @@ struct MailboxQuestionTests {
             case "missing-parent": messages.removeFirst()
             case "duplicate-response": messages.append(messages[1])
             case "wrong-answer": messages[1]["text"] = "Unrelated human input"
+            case "missing-binding", "foreign-origin", "foreign-binding":
+                var delivery = try #require(messages[1]["delivery"] as? [String: Any])
+                if mode == "missing-binding" {
+                    delivery.removeValue(forKey: "directOriginBinding")
+                } else if mode == "foreign-origin" {
+                    delivery["originConversationID"] = responseID.uuidString
+                } else {
+                    var binding = try #require(delivery["directOriginBinding"] as? [String: Any])
+                    binding["accountID"] = "other"
+                    delivery["directOriginBinding"] = binding
+                }
+                messages[1]["delivery"] = delivery
             default:
                 var receipt = try #require(messages[1]["questionResponse"] as? [String: Any])
                 receipt[mode == "wrong-parent" ? "incomingMessageID" : "accountID"] = mode == "wrong-parent" ? scope.uuidString : "other"

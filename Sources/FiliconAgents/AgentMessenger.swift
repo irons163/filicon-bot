@@ -415,6 +415,8 @@ public actor AgentMessenger {
         let counts = Dictionary(grouping: allIDs, by: { $0 }).mapValues(\.count)
         func validQuestionResponse(_ item: AgentMessage) -> Bool {
             guard let response = item.questionResponse, response.accountID == binding.accountID,
+                  item.delivery?.directOriginBinding == binding,
+                  item.delivery?.originConversationID == originID,
                   counts[item.id] == 1, counts[response.incomingMessageID] == 1,
                   counts[response.publicationID] == 1,
                   let original = state.messages.first(where: { $0.id == response.incomingMessageID }),
