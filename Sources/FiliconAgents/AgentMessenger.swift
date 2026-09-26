@@ -413,13 +413,31 @@ public actor AgentMessenger {
             [item.id] + (item.delivery?.publications ?? []).map(\.id) + [item.delivery?.finalPublication?.id].compactMap { $0 }
         }
         let counts = Dictionary(grouping: allIDs, by: { $0 }).mapValues(\.count)
+        func validQuestionResponse(_ item: AgentMessage) -> Bool {
+            guard let response = item.questionResponse, response.accountID == binding.accountID,
+                  counts[item.id] == 1, counts[response.incomingMessageID] == 1,
+                  counts[response.publicationID] == 1,
+                  let original = state.messages.first(where: { $0.id == response.incomingMessageID }),
+                  original.senderID == item.senderID, original.recipientID == item.recipientID,
+                  original.delivery?.directOriginBinding == binding,
+                  original.delivery?.originConversationID == originID,
+                  original.delivery?.state == .completed,
+                  let publication = original.delivery?.publications?.first(where: { $0.id == response.publicationID }),
+                  publication.groupID == originID, publication.senderID == item.recipientID,
+                  let question = publication.question, question.accountID == binding.accountID,
+                  question.memberIDs == [item.senderID, item.recipientID],
+                  question.responseMessageID == item.id, question.answer == response.answer,
+                  question.question == response.question,
+                  (try? response.question.reply(for: response.answer)) == item.text else { return false }
+            return true
+        }
         var result: [AgentPeerTranscriptEntry] = []
         for item in state.messages {
             guard let delivery = item.delivery, delivery.originConversationID == originID,
                   delivery.directOriginBinding == binding, delivery.startedAt != nil,
                   [.completed, .failed, .cancelled].contains(delivery.state),
-                  !MailboxMessageAddressing.isHuman(item, in: state),
-                  item.questionResponse == nil, item.secretResponse == nil,
+                  item.secretResponse == nil,
+                  (!MailboxMessageAddressing.isHuman(item, in: state) || validQuestionResponse(item)),
                   item.senderID != item.recipientID, counts[item.id] == 1,
                   item.images?.isEmpty != false else { continue }
             let incoming = RoomMessage(id: item.id, groupID: originID, senderID: item.senderID,
@@ -429,15 +447,26 @@ public actor AgentMessenger {
                       message.senderID == (kind == .incoming ? item.senderID : item.recipientID),
                       !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                       message.images?.isEmpty != false, message.toolActivities.isEmpty,
-                      message.question == nil, message.secretRequest == nil, message.cursorAgent == nil,
+                      message.secretRequest == nil, message.cursorAgent == nil,
                       message.memberOutcome == nil, message.questionReplyTo == nil else { return }
+                if let question = message.question {
+                    guard kind == .publication, question.accountID == binding.accountID,
+                          question.memberIDs == [item.senderID, item.recipientID],
+                          question.question.prompt == message.text else { return }
+                    if question.answer != nil {
+                        guard let responseID = question.responseMessageID,
+                              let response = state.messages.first(where: { $0.id == responseID }),
+                              response.questionResponse?.publicationID == message.id,
+                              validQuestionResponse(response) else { return }
+                    } else if question.responseMessageID != nil { return }
+                }
                 var message = message
                 message.shortAddress = nil
                 result.append(.init(source: try AgentMessageSource(accountID: binding.accountID,
                     originConversationID: originID, deliveryID: item.id, senderAgentID: item.senderID,
                     recipientAgentID: item.recipientID, kind: kind), message: message))
             }
-            try append(incoming, kind: .incoming)
+            if item.questionResponse == nil { try append(incoming, kind: .incoming) }
             for report in delivery.publications ?? [] { try append(report, kind: .publication) }
             if delivery.state == .completed, delivery.publications?.isEmpty != false,
                let report = delivery.finalPublication {

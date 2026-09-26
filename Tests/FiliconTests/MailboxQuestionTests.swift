@@ -102,6 +102,47 @@ struct MailboxQuestionTests {
         }
     }
 
+    @Test(arguments: ["pending", "answered", "dismissed", "missing-parent", "wrong-parent", "wrong-answer", "foreign-response", "duplicate-response"])
+    func recoveryIncludesOnlyLinkedQuestionsAndAgentReports(mode: String) async throws {
+        let f = try await fixture(direct: true)
+        defer { try? FileManager.default.removeItem(at: f.root) }
+        let binding = try #require(f.incoming.delivery?.directOriginBinding)
+        let published = try await publish(f)
+        try await f.messenger.updateDelivery(id: f.incoming.id, state: .completed, at: date)
+        if mode != "pending" {
+            let response = try await f.messenger.answerQuestion(replyingTo: f.incoming.id, publicationID: publicationID,
+                answer: mode == "dismissed" ? .dismissed : .option(0), accountID: "account-A", originID: scope,
+                responseID: responseID, directOriginBinding: binding, at: date, lifetime: .init())
+            try await f.messenger.updateDelivery(id: response.id, state: .running, at: date)
+            _ = try await f.messenger.publish(.init(groupID: scope, senderID: f.incoming.recipientID,
+                text: "Agent follow-up", createdAt: date), replyingTo: response.id, lifetime: .init())
+            try await f.messenger.updateDelivery(id: response.id, state: .completed, at: date)
+        }
+        let valid = ["pending", "answered", "dismissed"].contains(mode)
+        if !valid {
+            var json = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: f.file)) as? [String: Any])
+            var messages = try #require(json["messages"] as? [[String: Any]])
+            switch mode {
+            case "missing-parent": messages.removeFirst()
+            case "duplicate-response": messages.append(messages[1])
+            case "wrong-answer": messages[1]["text"] = "Unrelated human input"
+            default:
+                var receipt = try #require(messages[1]["questionResponse"] as? [String: Any])
+                receipt[mode == "wrong-parent" ? "incomingMessageID" : "accountID"] = mode == "wrong-parent" ? scope.uuidString : "other"
+                messages[1]["questionResponse"] = receipt
+            }
+            json["messages"] = messages
+            try JSONSerialization.data(withJSONObject: json).write(to: f.file, options: .atomic)
+        }
+        let restored = try AgentMessenger(service: f.agents, storeURL: f.file)
+        let before = try Data(contentsOf: f.file)
+        let entries = try await restored.directPeerTranscript(originID: scope, binding: binding)
+        let expected = mode == "missing-parent" ? [] : valid ? ["Review", published.text] + (mode == "pending" ? [] : ["Agent follow-up"]) : ["Review"]
+        expectNoDifference(entries.map(\.message.text), expected)
+        #expect(!entries.contains { $0.message.id == responseID })
+        expectNoDifference(try Data(contentsOf: f.file), before)
+    }
+
     @Test(arguments: [AgentQuestionAnswer.option(0), .custom("  More contrast  "), .dismissed])
     func answerPersistsExactlyOnceAndRestartNeverRunsIt(answer: AgentQuestionAnswer) async throws {
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }

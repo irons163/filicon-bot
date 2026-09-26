@@ -111,7 +111,7 @@ private struct DelegatingGroupProvider: InteractiveToolProvider {
 
 @Suite("SendToAgent app integration", .timeLimit(.minutes(1)))
 @MainActor struct SendToAgentAppIntegrationTests {
-    @Test(arguments: ["option", "custom", "dismissed", "foreign", "delete", "stop", "restart"])
+    @Test(arguments: ["option", "custom", "dismissed", "foreign", "delete", "stop", "restart", "recover-pending", "recover-answered"])
     func directPeerQuestionReturnsAnswerToOwnChat(mode: String) async throws {
         let (root, initialModel, _, sender, recipient, probe) = try await fixture()
         var model = initialModel
@@ -137,6 +137,12 @@ private struct DelegatingGroupProvider: InteractiveToolProvider {
         let incoming = try #require(model.agentMessages.first)
         let publication = try #require(incoming.delivery?.publications?.first(where: { $0.question != nil }))
         let peer = try #require(model.conversations.first(where: { $0.agentBinding?.agentID == recipient }))
+        if mode == "recover-pending" {
+            try await removeQuestionProjections(model: model, root: root, peerID: peer.id)
+            #expect(await model.recoverDirectPeerMessages(conversationID: origin))
+            let wakes = await probe.wakes
+            expectNoDifference(wakes, [])
+        }
         if mode == "restart" {
             let projected = try #require(peer.messages.first(where: { $0.id == publication.id }))
             expectNoDifference(projected.text, publication.text)
@@ -170,7 +176,31 @@ private struct DelegatingGroupProvider: InteractiveToolProvider {
             let count = model.agentMessages.count
             await model.answerMailboxQuestion(incomingID: incoming.id, publicationID: publication.id, answer: answer)
             expectNoDifference(model.agentMessages.count, count)
+            if mode == "recover-answered" {
+                let canonical = model.agentMessages
+                let wakes = await probe.wakes
+                try await removeQuestionProjections(model: model, root: root, peerID: peer.id)
+                #expect(await model.recoverDirectPeerMessages(conversationID: origin))
+                let recovered = try #require(model.conversations.first(where: { $0.id == peer.id }))
+                expectNoDifference(recovered.messages.count, 3)
+                let question = try #require(model.directPeerQuestion(conversationID: peer.id, messageID: publication.id))
+                expectNoDifference(question.publication.question?.answer, answer)
+                #expect(!model.canAnswerMailboxQuestion(question.incoming, publication: question.publication))
+                let snapshot = model.conversations
+                #expect(await model.recoverDirectPeerMessages(conversationID: origin))
+                expectNoDifference(model.conversations, snapshot)
+                expectNoDifference(model.agentMessages, canonical)
+                let after = await probe.wakes
+                expectNoDifference(after, wakes)
+            }
         }
+    }
+
+    private func removeQuestionProjections(model: AppModel, root: URL, peerID: UUID) async throws {
+        let index = try #require(model.conversations.firstIndex(where: { $0.id == peerID }))
+        model.conversations[index].messages.removeAll { $0.agentMessageSource != nil }
+        let store = ConversationStore(fileURL: root.appending(path: "conversations.json"))
+        try await store.upsert(model.conversations[index], replacingLoadedMessageIDs: [], historyComplete: true)
     }
 
     @Test(arguments: ["missing-chat", "missing-message", "deleted", "foreign", "write-failure", "conflict", "restart", "restart-deleted"])

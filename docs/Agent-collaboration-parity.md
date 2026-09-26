@@ -1,5 +1,13 @@
 # 協作能力核對紀錄（更新至 2026-09-26）
 
+## 同儕問題卡與回答後文字恢復（2026-09-26）
+
+`directPeerTranscript` 納入已保存問題卡，並核對回答回條與原交付的完整關聯，允許恢復回答新回合中的代理人發布文字。人類回答本身不作 incoming 投影；動態問題 UI 繼續以 canonical 信箱決定是否已回答。缺少原交付、錯誤答案／來源、跨帳號及重複 UUID 不猜測修復。
+
+`MailboxQuestionTests` 八類案例驗證唯讀恢復與不一致紀錄拒絕；`SendToAgentAppIntegrationTests` 增加待回答及已回答投影刪失後補回，不重跑模型、不改信箱、重複恢復冪等且已回答卡不能再提交。此輪使用 pfw-testing 的隔離 fixture，未改使用者資料。直接同儕憑證／雲端／圖片等缺口仍未納入。
+
+驗證：`peer-question-recovery-focused.log` 與 `peer-question-recovery-full.log` 通過；`peer-question-recovery-native.log` 原生 Debug 建置、verify-package 與 deep strict codesign 通過。未 push、未啟動或重啟使用者 App／Xcode。
+
 ## 同儕投影刪除保護（2026-09-26）
 
 接恢復入口前發現：既有 deletedConversationIDs 僅在記憶體，重開後無法區分使用者刪除與初次投影保存失敗。AgentConversationStore 新增可選的持久 retiredProjectionIDs。AppModel 刪除已綁定聊天先保存標記再刪 canonical conversation；保存失敗則不執行資料庫刪除並顯示錯誤。同儕即時投影核對 origin／destination 標記，阻止晚到或後續鏈重建該聊天。保留原始 mailbox 與獨立 context，標記不是抹除代理人記憶。
