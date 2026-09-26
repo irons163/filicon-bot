@@ -1,5 +1,17 @@
 # 協作能力核對紀錄（更新至 2026-09-26）
 
+## 記憶整合背景 worker 基礎（2026-09-26）
+
+新增 `AgentMemorySynthesisWorker` actor，使用前述 queue 的 monotonic 15 秒 deadline、自動可取消 timer 與 generation fence，序列處理 ready batches。執行中的新 evidence 留在 pending，完成舊批次不會清掉新證據；pending 與 detached 各自有 64 組上限，不宣稱合計只有 64 組。去重涵蓋 pending、ready 與 active；同 ID 衝突拒絕。變更 consent revision 會移除 detached 舊版本並撤銷 active lifetime。
+
+提供來源／account-agent 取消及不可再 enqueue 的 shutdown。mixed batch 含已取消來源時整批丟棄，不把取消前的提案套用到刪減後證據；active 取消同時關閉 lifetime 並 cancel Task，保留序列 slot 直到 runner 實際退出。runner 是明確注入的 host callback，必須重驗 consent／profile 並將該 lifetime 用於最後保存，不提供默認可繞過授權的 inference。timer／runner 失敗不改前景回覆，尚無 stale 重排或失敗觀測介面。
+
+使用可控制的 monotonic 時間、timer gate 與 runner gate 測試 debounce、obsolete timer、執行中新增證據與去重、最多一個 runner、origin／agent／revision／shutdown 取消。取消測試另外從未取消的 Task 檢查 lifetime，驗證晚到 callback 的撤銷保護。
+
+尚未接入 AppModel／MessagingSession：正常收尾仍會 close session，必須先區分背景工作接管與 Stop 撤銷，再接 account／刪除對話／群組移除成員等生命週期。現行 App 仍逐回合執行，不宣稱背景合併已上線。temporal sweep、stale 重排、episodic 及真實服務驗收仍 partial。
+
+驗證：`memory-synthesis-worker.log` 初始聚焦通過；補上 active 去重與獨立 task lifetime 檢查後，`memory-synthesis-worker-full.log` 完整非並行套件 exit 0。`memory-synthesis-worker-native.log` 原生建置、verify-package／deep strict 簽章及 git diff --check 通過。未啟動 App、未呼叫外部模型、未改真實資料。
+
 ## 記憶整合待處理證據佇列（2026-09-26）
 
 新增 host-owned `AgentMemorySynthesisQueue` 純資料結構，依 account／agent 分組，64 組 pending 上限淘汰最早加入者，每組僅保留最近 12 筆。新證據重設全域 monotonic 15 秒 nextRun；相同 ID／內容／來源不重複加入也不延長等待，衝突內容拒絕。不同 consent revision 不混合，舊 pending 證據丟棄。入列先驗證有界 ID、有限時間、雙側非空／8,000 字／32,000 bytes、非 PASS 及 enabled revision；非法入列不改既有資料。

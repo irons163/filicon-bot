@@ -19,6 +19,9 @@ public struct AgentMemorySynthesisQueue: Sendable {
         public let inserted: Bool
         public let droppedAgents: Int
         public let droppedEvidence: Int
+        public init(inserted: Bool, droppedAgents: Int, droppedEvidence: Int) {
+            self.inserted = inserted; self.droppedAgents = droppedAgents; self.droppedEvidence = droppedEvidence
+        }
     }
     private struct Key: Hashable, Sendable { let accountID: String; let agentID: UUID }
     private var order: [Key] = []
