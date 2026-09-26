@@ -1,5 +1,15 @@
 # 協作能力核對紀錄（更新至 2026-09-26）
 
+## 記憶整合待處理證據佇列（2026-09-26）
+
+新增 host-owned `AgentMemorySynthesisQueue` 純資料結構，依 account／agent 分組，64 組 pending 上限淘汰最早加入者，每組僅保留最近 12 筆。新證據重設全域 monotonic 15 秒 nextRun；相同 ID／內容／來源不重複加入也不延長等待，衝突內容拒絕。不同 consent revision 不混合，舊 pending 證據丟棄。入列先驗證有界 ID、有限時間、雙側非空／8,000 字／32,000 bytes、非 PASS 及 enabled revision；非法入列不改既有資料。
+
+每筆保留 host originID，支援取消特定來源、account／agent 或全部 pending；takeReady 原子移出 immutable batches，所以執行期間的新回合形成後續批次，不被舊批次完成時清除。回傳入列／淘汰計數供後續 host 觀測，不把被淘汰全文送往 log。取出 batch 不是授權，consumer 仍須重驗設定、profile 與 lifetime。
+
+依 pfw-testing／CustomDump 使用固定 UUID、Date 與顯式 monotonic now，無真實等待、模型或使用者資料。此輪只補可測試的 queue 規則；尚未接 App background owner／timer／in-flight cancellation、temporal sweep、stale 重排、episodic，因此不宣稱目前使用者聊天已跨回合合併。App 仍沿用先前逐回合整合入口。
+
+驗證：完整回歸先抓出非法 evidence ID 洩漏 parser 私有錯誤型別，已統一為 admission 的 invalid，保留拒絕且不改 queue 的行為。修正後 `memory-synthesis-queue-full.log` 完整非並行套件 exit 0；原生建置、verify-package／deep strict 簽章與 git diff --check 通過。未啟動 App 或變更真實資料。
+
 ## 記憶整合整組期限（2026-09-26）
 
 host transport 的每個 run 新建 deadline state；proposal 啟動預設 90 秒期限，verification 使用同一截止時間，下一次 bounded retry 的 proposal 才重設。外層 timer 與 stage task 競爭，因此等待 TurnCoordinator／agent lane 的時間也計入；逾時取消該 submission，晚到回覆與期限外結果拒絕，不關閉整個共用代理人排程器。既有每 stage 45 秒 executionTimeout 仍保留。期限不跨 session 共用，也不把 2／4 秒重試間隔算入下一組期限。

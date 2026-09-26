@@ -1,5 +1,7 @@
 # Filicon / Grok Bot 0.18 功能 parity matrix（current implementation）
 
+記憶 evidence queue 基礎（2026-09-26）：新增 account／agent 隔離的 host queue，64 pending／每組 12 筆、15 秒 nextRun、revision 隔離、去重與來源取消，以及 ready batch 原子取出。尚未接 App background owner／timer／in-flight lifetime，現行 App 仍逐回合執行；temporal、stale 重排、episodic 與外部驗收仍 partial。
+
 記憶整合整組期限（2026-09-26）：proposal／verification 共用預設 90 秒 deadline，含 coordinator／agent lane 排隊；每次 retry 重新起算，逾時只取消該 submission 並拒絕晚到結果。既有 stage 45 秒上限仍保留。此項更新下方整組期限尚缺的歷史記述；debounce／queue／temporal／episodic 與真實模型驗收仍 partial。
 
 解鎖後完整回歸補驗（2026-09-26）：`memory-synthesis-retry-full.log` 完整非並行套件 exit 0，原生建置／封裝簽章亦通過；下方兩輪因鎖定而保留的持久化重開驗收缺口已解除，不代表其餘功能 parity 已完成。
