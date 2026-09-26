@@ -34,3 +34,9 @@
 - 結果、模型失敗、取消、持久化失敗的原子收尾及重開驗收；記憶容量／archive 與原版差異另列，不以狹窄 queue 測試宣稱整體等價。
 
 目前沒有把以上缺口標為完成。本核對修正的是後續實作的分支條件，沒有修改 runtime、真實聊天或帳號資料。
+
+## 進度元件（2026-09-27）
+
+`AgentMemoryEpisodeProgress` 已實作可編解碼的 account／agent／origin／revision 身分、預設六回合門檻、原版英文 trivial-exchange 篩選、每側 2,000 UTF-16 單位及最近 64 回合上限。避免切斷 surrogate pair；最近 128 個回合 ID 用於有界去重，不是永久去重。摘要結果 whitespace 正規化、500 UTF-16 上限與 NONE 處理也有測試。
+
+摘要嘗試收尾只移除該批回合，保留執行中新增的回合；失敗批次不應自動重跑。編解碼會拒絕超量、重複或缺少去重 ID 的進度。這只是純值元件，**尚未接入持久化 store、App consent、synthesis 互斥分支或模型 runner**；持有 progress 本身不是授權，也未寫入任何真實聊天。完整 episodic 功能仍 partial。
