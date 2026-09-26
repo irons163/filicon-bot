@@ -1,5 +1,13 @@
 # 協作能力核對紀錄（更新至 2026-09-26）
 
+## 直接同儕圖片完整性故障驗證（2026-09-26）
+
+上一批為 `d7dba12`。沿用 pfw-testing 的隔離 App fixture，新增 canonical image blob 遺失、非圖片 bytes 損壞及投影附件 altText 衝突三種情境。前兩者即使普通對話附件 store 仍有正確 bytes，也必須拒絕恢復、不留下投影；後者拒絕覆寫既有衝突訊息。核對恢復旗標清除、canonical mailbox 不變、未重新喚醒模型，修復 fixture 資料後可正常重試並保持冪等。
+
+`direct-peer-images-integrity.log` 聚焦整合測試 exit 0，圖片共十種情境通過；本輪沒有正式程式碼變更。任意 file／HTTPS 圖片來源、群組圖片轉交及其他媒體／憑證／雲端等 parity 缺口仍存在，不因故障測試通過而宣稱完整還原原版。未 push、未重啟使用者 App／Xcode、未改真實資料。
+
+完整非並行回歸 `direct-peer-images-integrity-full.log` exit 0，`git diff --check` 通過。沒有新增 UI 或重跑原生建置，也不宣稱真實外部服務已驗收。
+
 ## 直接同儕圖片重新載入與保存故障驗證（2026-09-26）
 
 上一批已提交 `5588bdc`。本輪只擴充隔離 App 整合測試：移除圖片投影後重建 AppModel／bootstrap，再由 canonical mailbox 恢復；另以 SQLite trigger 拒絕訊息 INSERT，確認恢復回報失敗、記憶體與資料庫不留下半筆同儕訊息，解除故障後可重試。核對附件 metadata、實際 bytes、來源、重複恢復冪等、mailbox 不變及模型 wake 不增加；後續人類回合仍不自動重送歷史圖片。

@@ -147,7 +147,7 @@ private struct DelegatingGroupProvider: InteractiveToolProvider {
 
 @Suite("SendToAgent app integration", .timeLimit(.minutes(1)))
 @MainActor struct SendToAgentAppIntegrationTests {
-    @Test(arguments: ["approve", "deny", "stop", "account", "recover", "restart", "write-failure"])
+    @Test(arguments: ["approve", "deny", "stop", "account", "recover", "restart", "write-failure", "missing-blob", "corrupt-blob", "metadata-conflict"])
     func directPeerImagesAreApprovedPersistedAndRecoverable(mode: String) async throws {
         let (root, initialModel, _, sender, recipient, probe) = try await fixture()
         var model = initialModel
@@ -170,7 +170,7 @@ private struct DelegatingGroupProvider: InteractiveToolProvider {
         if mode == "stop" { model.cancel() }
         if mode == "account" { await model.cancelAutoReviewApprovals(nextAccountID: "other") }
         model.handleTranscriptCardIntent(mode == "deny" ? .rejectReview(reviewID: approval.id) : .approveReview(reviewID: approval.id))
-        let succeeds = ["approve", "recover", "restart", "write-failure"].contains(mode)
+        let succeeds = !["deny", "stop", "account"].contains(mode)
         if succeeds {
             var next: PendingApproval?
             let limit = ContinuousClock.now + .seconds(10)
@@ -195,13 +195,45 @@ private struct DelegatingGroupProvider: InteractiveToolProvider {
             expectNoDifference(saved.messages.map(\.attachments), [[image], [image]])
             let restoredBytes = try await storage.data(for: image)
             expectNoDifference(restoredBytes, bytes)
-            if ["recover", "restart", "write-failure"].contains(mode) {
+            if mode != "approve" {
                 let canonical = model.agentMessages
                 let encoder = JSONEncoder()
                 encoder.outputFormatting = [.sortedKeys]
                 encoder.dateEncodingStrategy = .millisecondsSince1970
                 let canonicalData = try encoder.encode(canonical)
                 try await removeQuestionProjections(model: model, root: root, peerID: peer.id)
+                if ["missing-blob", "corrupt-blob"].contains(mode) {
+                    let blob = root.appending(path: "agent-message-images")
+                        .appending(path: String(image.id.prefix(2))).appending(path: image.id)
+                    let original = try Data(contentsOf: blob)
+                    expectNoDifference(original, bytes)
+                    // Mutate only this test's isolated canonical image blob.
+                    if mode == "missing-blob" { try FileManager.default.removeItem(at: blob) }
+                    else { try Data("not an image".utf8).write(to: blob) }
+                    #expect(!(await model.recoverDirectPeerMessages(conversationID: origin)))
+                    #expect(model.recoveringPeerConversations.isEmpty)
+                    let failed = try #require(try await ConversationStore(fileURL: root.appending(path: "conversations.json")).conversation(id: peer.id))
+                    #expect(failed.messages.isEmpty)
+                    #expect(model.conversations.first { $0.id == peer.id }?.messages.isEmpty == true)
+                    expectNoDifference(model.agentMessages, canonical)
+                    try original.write(to: blob, options: .atomic)
+                }
+                if mode == "metadata-conflict" {
+                    let index = try #require(model.conversations.firstIndex { $0.id == peer.id })
+                    var conflicting = try #require(peer.messages.first)
+                    conflicting.attachments[0].altText = "Conflicting image annotation"
+                    model.conversations[index].messages = [conflicting]
+                    let store = ConversationStore(fileURL: root.appending(path: "conversations.json"))
+                    try await store.upsert(model.conversations[index], replacingLoadedMessageIDs: [], historyComplete: true)
+                    let before = try #require(try await store.conversation(id: peer.id))
+                    #expect(!(await model.recoverDirectPeerMessages(conversationID: origin)))
+                    #expect(model.recoveringPeerConversations.isEmpty)
+                    let after = try #require(try await store.conversation(id: peer.id))
+                    expectNoDifference(after, before)
+                    expectNoDifference(model.conversations[index].messages, [conflicting])
+                    expectNoDifference(model.agentMessages, canonical)
+                    try await removeQuestionProjections(model: model, root: root, peerID: peer.id)
+                }
                 if mode == "restart" {
                     // Recreate only the isolated fixture host, not the running application.
                     model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
