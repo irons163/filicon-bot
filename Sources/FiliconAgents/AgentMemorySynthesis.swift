@@ -8,7 +8,7 @@ struct AgentMemorySynthesisEvidence: Encodable, Equatable, Sendable {
     let assistant: String
 }
 
-enum AgentMemorySynthesisStage: Equatable, Sendable { case proposal, verification }
+public enum AgentMemorySynthesisStage: Equatable, Sendable { case proposal, verification }
 enum AgentMemorySynthesisOutcome: Equatable, Sendable { case noWork, committed, rejected }
 
 extension AgentService {

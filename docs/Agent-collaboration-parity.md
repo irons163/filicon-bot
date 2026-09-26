@@ -1,5 +1,15 @@
 # 協作能力核對紀錄（更新至 2026-09-26）
 
+## 記憶整合 tool-free provider transport（2026-09-26）
+
+`AgentMemorySynthesisTransport` 經 TurnCoordinator 的 background lane 使用指定代理人的 provider／model，但每次重新建立只有 system instructions＋本次 JSON payload 的 InferenceRequest，不帶人格、聊天歷史、工具、tool exchanges、附件或 reasoning 設定。開始前、排程 onStart 與結束後重驗代理人存在／未封存與 provider／model；取消先關閉 lifetime 再撤銷 coordinator session。每個 stage 預設 45 秒執行上限，指令 16 KiB、payload 2 MiB，proposal 輸出 256 KiB、verdict 1 KiB。
+
+輸出只接受 text delta、可忽略 reasoning／usage 及正常 stop；工具事件、缺 stop、length、stop 後文字、UTF-8 超限等拒絕。連接層不保存記憶，也不自行啟用 synthesis；尚待 opt-in 與 host pipeline／App 接線，沒有宣稱使用者對話現在已自動整合。
+
+依 pfw-testing／CustomDump，以隔離 AgentService 與假 provider 檢查兩個 fresh request、8 種異常／取消／設定變更／逾時，以及明確 cancel。未呼叫外部模型、未修改真實資料，也未 push／啟動 App／Xcode。上一輪的螢幕鎖定與完整回歸缺口仍未解除。
+
+驗證：`memory-synthesis-transport.log` 三個測試共 10 種情境通過，`memory-synthesis-transport-native.log` 原生建置 exit 0，`git diff --check` 通過。未重跑已知受鎖定影響的完整套件，保留該驗收缺口。
+
 ## 兩階段記憶整合協調（2026-09-26）
 
 對照原版 `memory-synthesis-service.ts` runAgent 的 propose／verify／apply，新增內部 `AgentService.synthesizeMemory`。host 證據限 12 筆且 ID 唯一，每側 8,000 字／32,000 bytes，時間有限且不晚於本次 now；clock ID 僅在 temporal review 由 host 開啟。只擷取帳號／代理人私有記憶；payload 含 provenance，不含 tombstone 摘要或其他帳號內容。
