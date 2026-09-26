@@ -102,3 +102,9 @@ origin／account 清理失敗現在透過既有 App 錯誤提示顯示七語固�
 完整非並行回歸 `memory-cleanup-diagnostic-full.log` exit 0。
 
 後續驗收仍須包含真實 App 入口的六回合整合，以及清理失敗後退出／重開的處理：目前清理 barrier 是程序內 Task，不能據此宣稱跨程序失敗隔離已完成。未操作真實資料或啟動 App。
+
+## App 六回合整合測試（2026-09-27）
+
+新增直接呼叫 AppModel 前景入口的隔離測試：群組 `sendGroupMessage` 與綁定代理人的 direct `send`，各測 enabled／disabled／第五回合後 Stop 共六情境。逐回合驗證前五回合無記憶，第六回合僅 enabled 保存一筆 host episode；Stop 清空後第六回合僅剩一筆 pending，disabled 不收集。摘要與驗證共兩次無工具請求，proposal 含六筆回合；重開 AgentService 檢查持久化結果與 peer 隔離。
+
+`memory-episode-app-flow.log` 聚焦 App suite 15 tests 通過。此批只修改測試與文件，未重跑原生建置或完整套件。測試使用替身 provider，不等同真实模型內容品質或視窗點擊驗收；未操作使用者 App／資料。退出重開後的失敗清理防護仍待處理。

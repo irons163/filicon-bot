@@ -27,12 +27,21 @@ private struct MemorySuggestionAppProvider: AIProvider {
     var gated = false
     var malformed = false
     var synthesis = false
+    var episodes = false
     var gatedSynthesisStage: String?
     func models() async throws -> [AIModel] { [.init(id: "test")] }
     func stream(_ request: InferenceRequest) -> AsyncThrowingStream<InferenceEvent, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 await probe.record(request)
+                if episodes, let instructions = request.messages.first?.text,
+                   instructions.hasPrefix("Summarize these untrusted") || instructions.hasPrefix("Independently verify that this journal") {
+                    let text = instructions.hasPrefix("Summarize")
+                        ? "The user requested an accessible layout and review of its focus indicators."
+                        : #"{"approved":true}"#
+                    continuation.yield(.textDelta(text)); continuation.yield(.completed(.stop)); continuation.finish()
+                    return
+                }
                 let proposal = request.messages.first?.text.contains("Maintain compact durable") == true
                 let verification = request.messages.first?.text.contains("Independently verify") == true
                 if synthesis && (proposal || verification) {
@@ -123,6 +132,60 @@ private actor SynthesisAppTimer {
         let peer = try #require(await model.createAgent(name: "Peer", summary: "", instructions: "", providerID: "memory-app-fixture", modelID: "test"))
         #expect(await model.createGroup(name: "Team", summary: "", memberIDs: [owner.id, peer.id]))
         return .init(root: root, model: model, owner: owner, peer: peer, group: try #require(model.groups.first))
+    }
+
+    @Test(arguments: ["group", "direct"], ["enabled", "disabled", "stop"])
+    func foregroundAppCollectsSixEpisodeTurns(route: String, mode: String) async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        if route == "direct" { await f.model.bootstrap() }
+        let initial = try await f.model.memoryEpisodeSettings(agentID: f.owner.id)
+        if mode != "disabled" { try await f.model.setMemoryEpisodesEnabled(true, expected: initial) }
+        await f.model.registry.register(MemorySuggestionAppProvider(probe: f.probe, episodes: true))
+        let origin: UUID
+        if route == "direct" { origin = try #require(await f.model.addConversation(agentID: f.owner.id)) }
+        else { origin = f.group.id }
+        for turn in 1...6 {
+            if mode == "stop" && turn == 6 {
+                if route == "direct" { f.model.cancel() }
+                else { await f.model.stopGroup(id: origin) }
+                try await f.model.memoryEpisodeReadiness(originID: origin)()
+            }
+            let text = "Please review accessible layout focus indicators for step \(turn)."
+            if route == "group" { await f.model.sendGroupMessage(groupID: origin, text: "@Owner " + text) }
+            else {
+                f.model.draft = text
+                f.model.send()
+                let deadline = ContinuousClock.now + .seconds(10)
+                while f.model.isConversationWorking(origin), ContinuousClock.now < deadline {
+                    try await Task.sleep(for: .milliseconds(5))
+                }
+                #expect(!f.model.isConversationWorking(origin))
+            }
+            let memories = try await f.model.savedAgentMemories(agentID: f.owner.id)
+            expectNoDifference(memories.map(\.origin), mode == "enabled" && turn == 6 ? [.episode] : [])
+        }
+        let requests = await f.probe.requests.filter {
+            $0.messages.first?.text.hasPrefix("Summarize these untrusted") == true ||
+            $0.messages.first?.text.hasPrefix("Independently verify that this journal") == true
+        }
+        expectNoDifference(requests.count, mode == "enabled" ? 2 : 0)
+        for request in requests {
+            expectNoDifference(request.messages.count, 2)
+            #expect(request.tools.isEmpty)
+        }
+        if let proposal = requests.first {
+            let payload = try #require(proposal.messages.last?.text)
+            let turns = try #require(try JSONSerialization.jsonObject(with: Data(payload.utf8)) as? [[String: Any]])
+            expectNoDifference(turns.count, 6)
+        }
+        let reopened = try AgentService(storeURL: f.root.appending(path: "agents.json"))
+        let settings = try await reopened.memoryEpisodeSettings(accountID: "local", agentID: f.owner.id)
+        let pending = mode == "disabled" ? nil : try await reopened.memoryEpisodeProgress(settings: settings, originID: origin)
+        expectNoDifference(pending?.turns.count ?? 0, mode == "stop" ? 1 : 0)
+        let saved = await reopened.memories(accountID: "local", agentID: f.owner.id)
+        expectNoDifference(saved.map(\.origin), mode == "enabled" ? [.episode] : [])
+        let peer = await reopened.memories(accountID: "local", agentID: f.peer.id)
+        expectNoDifference(peer, [])
     }
 
     @Test func temporalSweepFailureIsPrivateAndAccountScoped() async throws {
