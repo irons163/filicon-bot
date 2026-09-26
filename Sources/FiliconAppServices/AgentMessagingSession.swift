@@ -236,6 +236,12 @@ public actor AgentMessagingSession {
 
     fileprivate func availableImages(senderID: UUID, replyTo: AgentMessage?, groupUserMessageID: UUID?) async throws -> [AttachmentMetadata] {
         try checkOpen()
+        // A delegated group wake is not the direct origin's human request.
+        // It may use text tools, but never inherit that private image directory.
+        if replyTo == nil, groupUserMessageID == nil, let activeGroupID,
+           groupPosts.values.contains(where: { $0.audience.id == activeGroupID && $0.audience.members.contains(where: { $0.id == senderID }) }) {
+            return []
+        }
         if replyTo == nil, groupUserMessageID == nil, let binding = directOriginBinding {
             guard binding.accountID == accountID, binding.agentID == senderID else { throw AgentImageError.unavailable }
             let images = try await directRequestImages?() ?? []

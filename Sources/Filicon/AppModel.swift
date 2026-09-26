@@ -2071,6 +2071,28 @@ final class AppModel: ObservableObject {
                                     generation: publicationGeneration)
                             }),
                         supportsMailboxQuestions: true,
+                        groups: groupService,
+                        authorizeGroup: { [weak self] sender, audience, text, call, context in
+                            guard let self else { throw CancellationError() }
+                            try await self.validateDirectDelegation(conversationID: id, binding: agentBinding,
+                                account: accountScope, generation: publicationGeneration,
+                                providerID: providerID, modelID: requestModelID, identity: agentIdentity)
+                            try await self.authorizeGroupDelegation(sender: sender, audience: audience,
+                                text: text, call: call, context: context)
+                            try await self.validateDirectDelegation(conversationID: id, binding: agentBinding,
+                                account: accountScope, generation: publicationGeneration,
+                                providerID: providerID, modelID: requestModelID, identity: agentIdentity)
+                        }, postGroup: { [weak self] dispatch, lifetime in
+                            guard let self else { throw CancellationError() }
+                            try await self.postGroupDelegation(dispatch, lifetime: lifetime,
+                                originID: id, generation: publicationGeneration)
+                        }, runGroup: { [weak self] dispatch, session in
+                            guard let self else { throw CancellationError() }
+                            try await self.runGroupDelegation(dispatch, session: session,
+                                originID: id, generation: publicationGeneration)
+                        }, finishGroup: { [weak self] groupID, failed in
+                            await self?.finishGroupDelegation(groupID: groupID, originID: id, failed: failed)
+                        },
                         imageStore: agentImageStore,
                         authorizeImages: { [weak self] sender, recipient, text, images, call, context in
                             guard let self else { throw CancellationError() }
@@ -3718,6 +3740,22 @@ final class AppModel: ObservableObject {
                 registry: registry, coordinator: coordinator, conversations: agentConversations,
                 accountID: settings.accountScope ?? "local", management: management,
                 directOriginBinding: directBinding, supportsMailboxQuestions: supportsMailboxQuestions,
+                groups: groupService,
+                authorizeGroup: { [weak self] sender, audience, text, call, context in
+                    guard let self else { throw CancellationError() }
+                    try await self.authorizeGroupDelegation(sender: sender, audience: audience,
+                        text: text, call: call, context: context)
+                }, postGroup: { [weak self] dispatch, lifetime in
+                    guard let self else { throw CancellationError() }
+                    try await self.postGroupDelegation(dispatch, lifetime: lifetime,
+                        originID: originID, generation: generation)
+                }, runGroup: { [weak self] dispatch, session in
+                    guard let self else { throw CancellationError() }
+                    try await self.runGroupDelegation(dispatch, session: session,
+                        originID: originID, generation: generation)
+                }, finishGroup: { [weak self] groupID, failed in
+                    await self?.finishGroupDelegation(groupID: groupID, originID: originID, failed: failed)
+                },
                 imageStore: agentImageStore,
                 authorizeImages: { [weak self] sender, recipient, text, images, call, context in
                     guard let self else { throw CancellationError() }

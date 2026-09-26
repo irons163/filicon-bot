@@ -19,6 +19,38 @@ private actor AgentWakeProbe {
     func inspect(_ messages: [ChatMessage]) { inspectedMessages = messages }
 }
 
+private struct DirectGroupAppProvider: InteractiveToolProvider {
+    let descriptor = ProviderDescriptor(id: "delegate-fixture", displayName: "Group fixture", requiresAPIKey: false)
+    let groupID: UUID
+    let recipient: UUID
+    let probe: AgentWakeProbe
+    func models() async throws -> [AIModel] { [.init(id: "test", capabilities: .init(inputModalities: [.text, .image]))] }
+    func stream(_ request: InferenceRequest) -> AsyncThrowingStream<InferenceEvent, Error> {
+        AsyncThrowingStream { $0.finish(throwing: ProviderError.invalidResponse) }
+    }
+    func stream(_ request: InferenceRequest, executeTool: @escaping @Sendable (NormalizedToolCall) async throws -> NormalizedToolResult) -> AsyncThrowingStream<InferenceEvent, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    if request.messages.first?.text.contains("Your name is Designer,") == true {
+                        #expect(request.attachmentsByMessageID.isEmpty)
+                        #expect(request.messages.allSatisfy { $0.attachments.isEmpty })
+                        await probe.record(recipient)
+                        _ = try await executeTool(.init(id: "report", name: "SendMessage", argumentsJSON: JSONEncoder().encode(["text": "Group review complete"])))
+                    } else {
+                        #expect(request.messages.contains { $0.text.contains(groupID.uuidString) })
+                        _ = try await executeTool(.init(id: "delegate", name: "SendToAgent", argumentsJSON: JSONEncoder().encode([
+                            "recipientID": groupID.uuidString, "message": "Review the public layout"
+                        ])))
+                    }
+                    continuation.yield(.completed(.stop)); continuation.finish()
+                } catch { continuation.finish(throwing: error) }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+}
+
 private struct PeerImageAppProvider: InteractiveToolProvider {
     let descriptor = ProviderDescriptor(id: "delegate-fixture", displayName: "Image fixture", requiresAPIKey: false)
     let recipient: UUID
@@ -147,6 +179,52 @@ private struct DelegatingGroupProvider: InteractiveToolProvider {
 
 @Suite("SendToAgent app integration", .timeLimit(.minutes(1)))
 @MainActor struct SendToAgentAppIntegrationTests {
+    @Test(arguments: ["approve", "deny", "stop", "account", "binding", "membership"])
+    func directChatPostsOnlyToApprovedGroup(mode: String) async throws {
+        let (root, model, groupID, sender, recipient, probe) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        await model.bootstrap()
+        await model.updateGroupMembers(groupID: groupID, memberIDs: [sender, recipient])
+        await model.registry.register(DirectGroupAppProvider(groupID: groupID, recipient: recipient, probe: probe))
+        let origin = try #require(await model.addConversation(agentID: sender))
+        await model.refreshModels()
+        let bitmap = try #require(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 2, pixelsHigh: 2,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
+            bytesPerRow: 0, bitsPerPixel: 0))
+        let bytes = try #require(bitmap.representation(using: .png, properties: [:]))
+        let image = try await AttachmentStore(rootURL: root.appending(path: "attachments"))
+            .ingest(data: bytes, filename: "private-direct-image.png", declaredMIMEType: "image/png")
+        model.pendingAttachments = [image]
+        model.draft = "Ask my group to review the layout"
+        model.send()
+        let approval = try await pending(model)
+        expectNoDifference(approval.action.context.metadata["agentMessage"], "Review the public layout")
+        #expect(approval.action.context.metadata["agentGroupMembers"]?.contains(recipient.uuidString) == true)
+        #expect(model.groupMessages[groupID, default: []].isEmpty)
+        if mode == "stop" { model.cancel() }
+        if mode == "account" { await model.cancelAutoReviewApprovals(nextAccountID: "other") }
+        if mode == "binding", let index = model.conversations.firstIndex(where: { $0.id == origin }) {
+            model.conversations[index].agentBinding = .init(accountID: "local", agentID: recipient)
+        }
+        if mode == "membership" { await model.updateGroupMembers(groupID: groupID, memberIDs: [recipient]) }
+        model.handleTranscriptCardIntent(mode == "deny" ? .rejectReview(reviewID: approval.id) : .approveReview(reviewID: approval.id))
+        let deadline = ContinuousClock.now + .seconds(10)
+        while model.isConversationWorking(origin) || model.runningGroups.contains(groupID), ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(!model.isConversationWorking(origin))
+        #expect(!model.runningGroups.contains(groupID))
+        #expect(model.pendingAutoReviewApprovals.isEmpty)
+        let messages = model.groupMessages[groupID, default: []]
+        expectNoDifference(messages.filter { $0.senderID == sender && $0.text == "Review the public layout" }.count, mode == "approve" ? 1 : 0)
+        let wakes = await probe.wakes
+        if mode == "approve" {
+            #expect(!wakes.isEmpty)
+            #expect(wakes.allSatisfy { $0 == recipient })
+            #expect(messages.contains { $0.senderID == recipient && $0.text == "Group review complete" })
+        } else { expectNoDifference(wakes, []) }
+    }
+
     @Test(arguments: ["approve", "deny", "stop", "account", "recover", "restart", "write-failure", "missing-blob", "corrupt-blob", "metadata-conflict"])
     func directPeerImagesAreApprovedPersistedAndRecoverable(mode: String) async throws {
         let (root, initialModel, _, sender, recipient, probe) = try await fixture()

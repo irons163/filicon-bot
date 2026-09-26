@@ -1,5 +1,9 @@
 # Filicon / Grok Bot 0.18 功能 parity matrix（current implementation）
 
+綁定直接聊天→所屬群組文字轉交（2026-09-26）：前景及回答續接 factory 接上完整 audience／本文核准、持久發文及有界群組回覆；核准期間身份或成員變更拒絕，背景群組不繼承直接聊天私人圖片。六種隔離 App 情境及既有圖片／委派回歸驗證；詳細證據見協作核對紀錄。圖片群發、任意 file／HTTPS 來源、跨群組統一歷史與其他互動卡仍 partial。
+
+圖片故障補驗（2026-09-26）：`d7dba12`、`1656d39` 補齊隔離 host 重建、SQLite 寫入拒絕／重試、canonical blob 遺失／損壞及附件 metadata 衝突測試；完整非並行回歸通過，取代下方相應待補驗記述，仍非真實 UI／外部模型驗收。
+
 直接同儕圖片接線（2026-09-26）：已接前景當輪 PNG／JPEG 的 owner 驗證與匯入、獨立轉交／發布核准、收件人推論、附件投影／SQLite 保存及缺漏恢復；後續人類回合不自動重送歷史同儕圖片。五類 App fixture 通過，取代下方「App 尚未接上」歷史狀態。真實 UI／外部模型、任意圖片來源及圖片專用故障／重啟補驗仍待完成，未上調整體 partial。
 
 直接圖片目錄契約（2026-09-26）：session 新增 host 的當輪圖片 callback，限綁定 owner／account，核准後重驗，peer wake 維持精確 incoming 圖片。八類 fixture 檢查實際圖片推論與來源／停止／核准拒絕。App 尚未接上，直接圖片功能仍 partial；詳見協作核對紀錄。

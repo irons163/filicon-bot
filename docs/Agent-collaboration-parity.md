@@ -1,5 +1,15 @@
 # 協作能力核對紀錄（更新至 2026-09-26）
 
+## 綁定直接聊天向所屬群組傳訊（2026-09-26）
+
+核對 reconstructed `source/host/agents/agent-messaging.ts` 的 agent/group directory 與非同步群組傳訊契約後，將直接前景及直接回答續接 session 接上既有 GroupService、完整群組名單／本文核准、持久發布與有界背景群組回覆。前景入口核准前後重驗原代理人 binding／account／generation／模型；保存與執行沿用 origin scope，群組成員變更時由 audience 檢查拒絕。群組回覆保留在群組，不當成新的直接同儕訊息。
+
+初次 App 整合測試發現群組已持久發布、成員卻被直接圖片目錄的 sender 檢查擋住（`direct-group-app.log`）。修正為只有目前 active、已發布群組 audience 中的背景成員可取得空圖片目錄，不繼承私有直接人類圖片，其他 sender／account 圖片檢查不放寬。原生群組 target 仍只接受文字，沒有把 file／HTTPS 圖片或群組圖片 fan-out 宣稱完成。
+
+依 pfw-testing 使用隔離 AppModel、受控 provider、CustomDump 與真實暫存持久層。六種情境涵蓋核准、拒絕、Stop、帳號切換、binding 替換及核准期間成員改變；檢查群組完整名單／本文核准、唯一發文、成員實際執行與群組回覆、清除執行狀態，以及原直接聊天私人圖片不進入群組推論。`direct-group-app-fixed.log` 聚焦回歸通過；後續私人圖片隔離斷言納入完整回歸。這不是實際帳號或人工 App 驗收，整體 parity 仍 partial。
+
+最終完整非並行 `direct-group-full.log` exit 0，包含私人圖片隔離斷言；原生 `direct-group-native.log` 建置、verify-package、deep strict 簽章與 `git diff --check` 通過。未 push、未啟動／重啟使用者 App 或 Xcode、未修改真實群組／帳號。
+
 ## 直接同儕圖片完整性故障驗證（2026-09-26）
 
 上一批為 `d7dba12`。沿用 pfw-testing 的隔離 App fixture，新增 canonical image blob 遺失、非圖片 bytes 損壞及投影附件 altText 衝突三種情境。前兩者即使普通對話附件 store 仍有正確 bytes，也必須拒絕恢復、不留下投影；後者拒絕覆寫既有衝突訊息。核對恢復旗標清除、canonical mailbox 不變、未重新喚醒模型，修復 fixture 資料後可正常重試並保持冪等。
