@@ -1476,7 +1476,11 @@ struct TranscriptMessageView: View {
                 }
                 .font(.callout)
             }
-            if let peer = model.directPeerQuestion(conversationID: conversation.id, messageID: message.id),
+            if let peer = model.directPeerSecret(conversationID: conversation.id, messageID: message.id) {
+                AgentPublishedResponses(publications: [peer.publication],
+                    secretModel: { model.mailboxSecretCards[$0.id] },
+                    secretEnabled: { model.canUseMailboxSecret(peer.incoming, publication: $0) })
+            } else if let peer = model.directPeerQuestion(conversationID: conversation.id, messageID: message.id),
                let question = peer.publication.question {
                 GroupQuestionCard(card: question,
                     enabled: model.canAnswerMailboxQuestion(peer.incoming, publication: peer.publication)) { answer in

@@ -2071,6 +2071,11 @@ final class AppModel: ObservableObject {
                                     generation: publicationGeneration)
                             }),
                         supportsMailboxQuestions: true,
+                        publishSecret: { [weak self] request, incoming, target, lifetime in
+                            guard let self else { throw CancellationError() }
+                            return try await self.publishMailboxSecret(request, incoming: incoming,
+                                replyToMessageID: target, lifetime: lifetime, generation: publicationGeneration)
+                        },
                         groups: groupService,
                         authorizeGroup: { [weak self] sender, audience, text, call, context in
                             guard let self else { throw CancellationError() }
@@ -3436,6 +3441,7 @@ final class AppModel: ObservableObject {
     }
 
     func canUseMailboxSecret(_ incoming: AgentMessage, publication: RoomMessage) -> Bool {
+        guard canUseDirectPeerPublication(incoming, publication: publication) else { return false }
         guard let context = mailboxSecretContexts[publication.id], context.incomingID == incoming.id,
               context.generation == autoReviewAccountGeneration, !agentMessagingAccountTransition,
               let current = agentMessages.first(where: { $0.id == incoming.id }), current == incoming,
@@ -3459,10 +3465,18 @@ final class AppModel: ObservableObject {
                                       lifetime: AgentPublicationLifetime, generation: UInt64) async throws -> RoomMessage {
         guard let channelService, let agentMessenger, let scopeID = incoming.delivery?.originConversationID,
               generation == autoReviewAccountGeneration, !agentMessagingAccountTransition else { throw CancellationError() }
+        func checkDirectScope() throws {
+            if let binding = incoming.delivery?.directOriginBinding {
+                guard directMessagingBindings[scopeID] == binding,
+                      isAgentMessagingScopeActive(scopeID) else { throw CancellationError() }
+            }
+        }
+        try checkDirectScope()
         let accountID = settings.accountScope ?? "local"
         let destination = try AgentSecretRequestDestination.resolve(request, accountID: accountID,
             agentID: incoming.recipientID, conversationID: scopeID, connections: await channelService.connections())
         guard generation == autoReviewAccountGeneration, !Task.isCancelled else { throw CancellationError() }
+        try checkDirectScope()
         let submission = AgentSecretSubmission(destination: destination)
         let publication = try await agentMessenger.publishSecretRequest(request, replyingTo: incoming.id,
             accountID: accountID, originID: scopeID, connectionID: destination.connectionID,
@@ -3471,6 +3485,8 @@ final class AppModel: ObservableObject {
             submission.close()
             throw CancellationError()
         }
+        do { try checkDirectScope() }
+        catch { submission.close(); throw error }
         mailboxSecretContexts[submission.id] = .init(incomingID: incoming.id, submission: submission, generation: generation)
         mailboxSecretCards[submission.id] = AgentSecretRequestCardModel(label: request.label,
             helpText: request.description, destinationName: "\(request.connector) · \(destination.displayName)",
@@ -3504,10 +3520,19 @@ final class AppModel: ObservableObject {
               let publication = incoming.delivery?.publications?.first(where: { $0.id == id }),
               canUseMailboxSecret(incoming, publication: publication),
               let session = makeAgentMessagingSession(originID: context.submission.destination.conversationID,
-                supportsMailboxQuestions: true) else { throw AgentSecretSubmissionError.unavailable }
+                supportsMailboxQuestions: true, directBinding: incoming.delivery?.directOriginBinding) else { throw AgentSecretSubmissionError.unavailable }
         let scopeID = context.submission.destination.conversationID
         runningAgentMessageScopes.insert(scopeID)
         agentMessagingSessions[scopeID] = session
+        if let binding = incoming.delivery?.directOriginBinding {
+            directMessagingScopes.insert(scopeID)
+            directMessagingBindings[scopeID] = binding
+            for chat in conversations where chat.id != scopeID && chat.messages.contains(where: {
+                $0.id == id && $0.agentMessageSource?.deliveryID == incoming.id
+            }) {
+                directPeerExecutions[chat.id] = .init(originID: scopeID, sessionID: session.id)
+            }
+        }
         workspaceFolders.beginTurn(conversationID: scopeID)
         do {
             try await session.enqueueSecretResponse(incomingID: incoming.id, submission: context.submission, provided: provided)
@@ -3521,12 +3546,27 @@ final class AppModel: ObservableObject {
             await cancelAgentMessageTools(scopeID: scopeID)
             agentMessagingSessions[scopeID] = nil
             runningAgentMessageScopes.remove(scopeID)
+            clearDirectPeerExecutions(originID: scopeID, sessionID: session.id)
+            directMessagingScopes.remove(scopeID)
+            directMessagingBindings[scopeID] = nil
             await reloadAgentMessages()
             throw error
         }
     }
 
     func directPeerQuestion(conversationID: UUID, messageID: UUID) -> (incoming: AgentMessage, publication: RoomMessage)? {
+        guard let peer = directPeerPublication(conversationID: conversationID, messageID: messageID),
+              peer.publication.question?.accountID == (settings.accountScope ?? "local") else { return nil }
+        return peer
+    }
+
+    func directPeerSecret(conversationID: UUID, messageID: UUID) -> (incoming: AgentMessage, publication: RoomMessage)? {
+        guard let peer = directPeerPublication(conversationID: conversationID, messageID: messageID),
+              peer.publication.secretRequest?.accountID == (settings.accountScope ?? "local") else { return nil }
+        return peer
+    }
+
+    private func directPeerPublication(conversationID: UUID, messageID: UUID) -> (incoming: AgentMessage, publication: RoomMessage)? {
         guard !agentMessagingAccountTransition,
               let chat = conversations.first(where: { $0.id == conversationID }),
               let message = chat.messages.first(where: { $0.id == messageID }),
@@ -3538,12 +3578,11 @@ final class AppModel: ObservableObject {
               incoming.delivery?.originConversationID == source.originConversationID,
               incoming.delivery?.directOriginBinding?.accountID == source.accountID,
               let publication = incoming.delivery?.publications?.first(where: { $0.id == messageID }),
-              publication.senderID == source.authorAgentID, publication.text == message.text,
-              publication.question?.accountID == source.accountID else { return nil }
+              publication.senderID == source.authorAgentID, publication.text == message.text else { return nil }
         return (incoming, publication)
     }
 
-    func canAnswerMailboxQuestion(_ incoming: AgentMessage, publication: RoomMessage) -> Bool {
+    private func canUseDirectPeerPublication(_ incoming: AgentMessage, publication: RoomMessage) -> Bool {
         if let binding = incoming.delivery?.directOriginBinding {
             guard binding.accountID == (settings.accountScope ?? "local"),
                   let origin = incoming.delivery?.originConversationID,
@@ -3555,6 +3594,11 @@ final class AppModel: ObservableObject {
                           && chat.messages.contains(where: { $0.id == publication.id && $0.agentMessageSource?.deliveryID == incoming.id })
                   }), !isConversationWorking(chat.id) else { return false }
         }
+        return true
+    }
+
+    func canAnswerMailboxQuestion(_ incoming: AgentMessage, publication: RoomMessage) -> Bool {
+        guard canUseDirectPeerPublication(incoming, publication: publication) else { return false }
         guard !agentMessagingAccountTransition,
               let current = agentMessages.first(where: { $0.id == incoming.id }),
               current.delivery?.publications?.first(where: { $0.id == publication.id }) == publication,
@@ -3742,11 +3786,20 @@ final class AppModel: ObservableObject {
         guard let agentService, let agentMessenger, let agentConversations else { return nil }
         let generation = autoReviewAccountGeneration
         let management = makeAgentManagementSession(originID: originID)
+        let secretPublisher: AgentMessagingSession.SecretPublisher?
+        if supportsMailboxQuestions, channelService != nil {
+            secretPublisher = { [weak self] request, incoming, target, lifetime in
+                guard let self else { throw CancellationError() }
+                return try await self.publishMailboxSecret(request, incoming: incoming,
+                    replyToMessageID: target, lifetime: lifetime, generation: generation)
+            }
+        } else { secretPublisher = nil }
         if let directBinding {
             return AgentMessagingSession(originConversationID: originID, agents: agentService, messenger: agentMessenger,
                 registry: registry, coordinator: coordinator, conversations: agentConversations,
                 accountID: settings.accountScope ?? "local", management: management,
                 directOriginBinding: directBinding, supportsMailboxQuestions: supportsMailboxQuestions,
+                publishSecret: secretPublisher,
                 groups: groupService,
                 authorizeGroup: { [weak self] sender, audience, text, call, context in
                     guard let self else { throw CancellationError() }
@@ -3784,15 +3837,6 @@ final class AppModel: ObservableObject {
                         text: text, call: call, context: context)
                 }, onChange: { [weak self] in await self?.reloadAgentMessages() })
         }
-        let secretPublisher: AgentMessagingSession.SecretPublisher?
-        if supportsMailboxQuestions, channelService != nil {
-            secretPublisher = { [weak self] request, incoming, target, lifetime in
-                guard let self else { throw CancellationError() }
-                return try await self.publishMailboxSecret(request, incoming: incoming,
-                    replyToMessageID: target,
-                    lifetime: lifetime, generation: generation)
-            }
-        } else { secretPublisher = nil }
         return AgentMessagingSession(
             originConversationID: originID, agents: agentService, messenger: agentMessenger,
             registry: registry, coordinator: coordinator, conversations: agentConversations,
@@ -4441,12 +4485,11 @@ final class AppModel: ObservableObject {
               delivery.chainID == sessionID, delivery.originConversationID == origin,
               delivery.directOriginBinding == owner,
               canonical.senderID == source.senderAgentID, canonical.recipientID == source.recipientAgentID,
-              canonical.secretResponse == nil,
-              message.groupID == origin, message.senderID == source.authorAgentID,
-              message.secretRequest == nil else { throw AgentMessagingError.scopeMismatch }
+              message.groupID == origin, message.senderID == source.authorAgentID else { throw AgentMessagingError.scopeMismatch }
         switch source.kind {
         case .incoming:
-            guard canonical.questionResponse == nil, message.question == nil, message.cursorAgent == nil,
+            guard canonical.questionResponse == nil, canonical.secretResponse == nil,
+                  message.secretRequest == nil, message.question == nil, message.cursorAgent == nil,
                   delivery.state == .running, message.id == canonical.id,
                   message.text == canonical.text,
                   message.images ?? [] == canonical.images ?? [] else { throw AgentMessagingError.scopeMismatch }
@@ -4501,6 +4544,7 @@ final class AppModel: ObservableObject {
                 try await saveDirectPeerMessage(entry.source, message: entry.message, owner: owner,
                     sessionID: nil, checkScope: checkScope)
             }
+            await reloadAgentMessages()
             try checkScope()
             return true
         } catch {

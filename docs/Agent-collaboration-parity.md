@@ -1,5 +1,13 @@
 # 協作能力核對紀錄（更新至 2026-09-26）
 
+## 直接同儕安全輸入 App 串接（2026-09-26）
+
+前景委派及直接回答 factory 已接既有 `publishMailboxSecret`，沿用唯一 Slack／Discord bot token 的目的地驗證。建立卡片前後重驗直接執行範圍；App 以 canonical publication 動態呈現既有安全輸入卡，值不進訊息或模型。提交／取消保留原 binding、開新 session／chain，登記並清除 origin 與 peer 執行狀態；只投影代理人輸出，不將人類憑證回條冒充同儕訊息。原聊天不存在／綁定變更／聊天執行中等檢查與同儕問答共用，既有帳號／成員／Stop／目的地驗證保留。恢復時同步信箱快照，重開只有 retired 歷史卡，不重建 credential submission。
+
+依 pfw-modern-swiftui 將行為留在 AppModel，依 pfw-testing／CustomDump 使用隔離 AppModel 與計數寫入器。七種 provided／dismissed／binding／stop／account／archived／restart 情境通過，核對來源綁定、模型 wake、peer 回覆、無人類回條投影、恢復、假憑證不進推論／mailbox。初次 fixture 用文字 delta 而未依工具型 provider 契約 SendMessage，且重開未等待導航載入，已修正 fixture；App 另補恢復後 reloadAgentMessages。`direct-peer-secret-app-verified.log` 聚焦通過。原生 `direct-peer-secret-native.log`、verify-package、deep strict 簽章通過。
+
+最終完整非並行 `direct-peer-secret-full.log` exit 0，`git diff --check` 通過。這不等於任意網站／其他 connector 的帳密支援，也未實際登入 Slack／Discord，未做人工 UI 驗收。未 push、未啟動或重啟使用者 App／Xcode、未改真實帳號或 Keychain；整體 parity 維持 partial。
+
 ## 直接同儕憑證的 canonical 恢復契約（2026-09-26）
 
 `directPeerTranscript` 原本完全排除憑證卡與 secret response delivery。本輪加入無秘密值的卡片恢復與回答後代理人報告恢復：核對帳號、原始與回答 delivery 的 binding／origin、原交付完成狀態、成員、唯一 ID、回條雙向連結、stored／dismissed 狀態與固定 acknowledgement；人類回條不投影為代理人來訊。卡片本文需符合 host 產生的 label，不能混入問題、圖片或雲端卡；pending／retired 不得帶 response ID，重開仍沿用既有 pending 退休機制，不恢復可輸入權限。

@@ -9,6 +9,50 @@ import FiliconDomain
 import FiliconProviderKit
 import FiliconAutoReview
 import FiliconAppServices
+import FiliconChannels
+
+private final class PeerSecretWriter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var writes = 0
+    func write(_ value: AgentSecretValue, _ reference: CredentialRef) { lock.withLock { writes += 1 } }
+    var count: Int { lock.withLock { writes } }
+}
+
+private struct PeerSecretAppProvider: InteractiveToolProvider {
+    let descriptor = ProviderDescriptor(id: "delegate-fixture", displayName: "Secret fixture", requiresAPIKey: false)
+    let recipient: UUID
+    let probe: AgentWakeProbe
+    func models() async throws -> [AIModel] { [.init(id: "test")] }
+    func stream(_ request: InferenceRequest) -> AsyncThrowingStream<InferenceEvent, Error> {
+        AsyncThrowingStream { $0.finish(throwing: ProviderError.invalidResponse) }
+    }
+    func stream(_ request: InferenceRequest, executeTool: @escaping @Sendable (NormalizedToolCall) async throws -> NormalizedToolResult) -> AsyncThrowingStream<InferenceEvent, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    #expect(request.messages.allSatisfy { !$0.text.contains("FAKE-PEER-SECRET") })
+                    if request.messages.contains(where: { $0.role == .system && $0.text.contains("host-recorded human credential response") }) {
+                        await probe.record(recipient)
+                        let result = try await executeTool(.init(id: "report", name: "SendMessage", argumentsJSON:
+                            JSONEncoder().encode(["text": "Credential response received; no remote login claimed."])))
+                        #expect(!result.isError)
+                    } else if request.messages.last?.text.hasPrefix("Incoming peer message") == true {
+                        await probe.record(recipient)
+                        _ = try await executeTool(.init(id: "secret", name: "SendMessage", argumentsJSON:
+                            Data(#"{"type":"secret-request","secret":{"label":"Bot token","connector":"slack","field":"token"}}"#.utf8)))
+                        Issue.record("Expected secret request suspension")
+                    } else {
+                        let result = try await executeTool(.init(id: "delegate", name: "SendToAgent", argumentsJSON:
+                            JSONEncoder().encode(["recipientID": recipient.uuidString, "message": "Connect the configured bot"])))
+                        #expect(!result.isError)
+                    }
+                    continuation.yield(.completed(.stop)); continuation.finish()
+                } catch { continuation.finish(throwing: error) }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+}
 
 private actor AgentWakeProbe {
     var wakes: [UUID] = []
@@ -210,6 +254,83 @@ private struct DelegatingGroupProvider: InteractiveToolProvider {
 
 @Suite("SendToAgent app integration", .timeLimit(.minutes(1)))
 @MainActor struct SendToAgentAppIntegrationTests {
+    @Test(arguments: ["provided", "dismissed", "binding", "stop", "account", "archived", "restart"])
+    func directPeerSecretCardResumesOnlyItsBoundOrigin(mode: String) async throws {
+        let (root, _, _, sender, recipient, probe) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let channels = try ChannelService(storeURL: root.appending(path: "channels.json"))
+        let connectionID = UUID(uuidString: "00000000-0000-0000-0000-000000000004")!
+        try await channels.saveConnection(.init(id: connectionID, connectorID: "slack", displayName: "Fixture",
+            secretReference: "keychain://channels/\(connectionID)", agentID: recipient,
+            authKind: .botToken, accountID: "remote", ownerAccountID: "local"))
+        let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+        await model.bootstrap()
+        let writer = PeerSecretWriter()
+        model.secretCredentialWriter = writer.write
+        await model.registry.register(PeerSecretAppProvider(recipient: recipient, probe: probe))
+        let origin = try #require(await model.addConversation(agentID: sender))
+        await model.refreshModels()
+        model.draft = "Ask the designer to connect the bot"
+        model.send()
+        let approval = try await pending(model)
+        model.handleTranscriptCardIntent(.approveReview(reviewID: approval.id))
+        var deadline = ContinuousClock.now + .seconds(10)
+        while model.isConversationWorking(origin), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(!model.isConversationWorking(origin))
+        let peer = try #require(model.conversations.first { $0.agentBinding?.agentID == recipient })
+        let incoming = try #require(model.agentMessages.first)
+        let publication = try #require(incoming.delivery?.publications?.first)
+        #expect(model.directPeerSecret(conversationID: peer.id, messageID: publication.id) != nil)
+        #expect(model.canUseMailboxSecret(incoming, publication: publication))
+        let card = try #require(model.mailboxSecretCards[publication.id])
+        if mode == "binding" {
+            let index = try #require(model.conversations.firstIndex { $0.id == origin })
+            model.conversations[index].agentBinding = .init(accountID: "local", agentID: recipient)
+        }
+        if mode == "stop" { await model.stopAgentMessages(scopeID: origin) }
+        if mode == "account" { await model.cancelAutoReviewApprovals(nextAccountID: "other") }
+        if mode == "archived" { await model.archiveAgent(id: recipient) }
+        if mode == "restart" {
+            let restarted = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+            await restarted.bootstrap()
+            #expect(await restarted.recoverDirectPeerMessages(conversationID: origin))
+            restarted.selectRoute(.conversation(peer.id))
+            let loadDeadline = ContinuousClock.now + .seconds(5)
+            while restarted.directPeerSecret(conversationID: peer.id, messageID: publication.id) == nil,
+                  ContinuousClock.now < loadDeadline { try await Task.sleep(for: .milliseconds(10)) }
+            let restored = try #require(restarted.directPeerSecret(conversationID: peer.id, messageID: publication.id))
+            expectNoDifference(restored.publication.secretRequest?.state, .retired)
+            #expect(!restarted.canUseMailboxSecret(restored.incoming, publication: restored.publication))
+            #expect(restarted.mailboxSecretCards[publication.id] == nil)
+            expectNoDifference(writer.count, 0)
+            return
+        }
+        card.draft = "FAKE-PEER-SECRET"
+        if mode == "dismissed" { await card.dismissButtonTapped() }
+        else { await card.submitButtonTapped() }
+        deadline = ContinuousClock.now + .seconds(10)
+        while model.isConversationWorking(origin), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(!model.isConversationWorking(origin))
+        #expect(!model.isConversationWorking(peer.id))
+        let resumed = mode == "provided" || mode == "dismissed"
+        expectNoDifference(writer.count, mode == "provided" ? 1 : 0)
+        let wakes = await probe.wakes
+        expectNoDifference(wakes, resumed ? [recipient, recipient] : [recipient])
+        expectNoDifference(model.agentMessages.count, resumed ? 2 : 1)
+        if resumed {
+            let response = try #require(model.agentMessages.last)
+            #expect(response.delivery?.state == .completed, "\(String(describing: response.delivery)) / \(model.errorMessage ?? "")")
+            expectNoDifference(response.delivery?.directOriginBinding, incoming.delivery?.directOriginBinding)
+            let chat = try #require(model.conversations.first { $0.id == peer.id })
+            #expect(chat.messages.contains { $0.text == "Credential response received; no remote login claimed." }, "\(chat.messages.map(\.text))")
+            #expect(!chat.messages.contains { $0.id == response.id })
+            try await removeQuestionProjections(model: model, root: root, peerID: peer.id)
+            #expect(await model.recoverDirectPeerMessages(conversationID: origin))
+            #expect(model.directPeerSecret(conversationID: peer.id, messageID: publication.id) != nil)
+        }
+        #expect(!String(decoding: try Data(contentsOf: root.appending(path: "agent-messages.json")), as: UTF8.self).contains("FAKE-PEER-SECRET"))
+    }
+
     @Test(arguments: ["recover", "restart", "conflict"])
     func directPeerCloudReferencePersistsWithoutExecutingCloudWork(mode: String) async throws {
         let (root, initialModel, _, sender, recipient, probe) = try await fixture()

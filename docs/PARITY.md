@@ -1,5 +1,7 @@
 # Filicon / Grok Bot 0.18 功能 parity matrix（current implementation）
 
+直接同儕安全輸入（2026-09-26）：已接直接委派的 secret publisher、動態安全卡、提交／取消後保留 binding 的新回合、同儕回覆及 retired 歷史恢復。七種隔離 App 情境驗證，只有 host 已配置的唯一 Slack／Discord bot token 可作目的地，憑證不進模型／聊天；其他 connector、任意網站帳密與真實登入驗收仍 partial。此項取代下方「直接同儕憑證卡尚未接上」歷史狀態，詳細限制與證據見協作核對紀錄。
+
 直接同儕雲端參照卡（2026-09-26）：SendMessage cursor-agent 已接直接 mailbox、canonical 驗證、自己聊天室的持久卡片與恢復；衝突不覆寫，恢復不重跑模型。它是手動開啟既有 Cursor 代理人的連結，不是雲端啟動／查詢／控制權限；憑證卡及其他外部服務缺口仍維持 partial。詳見協作核對紀錄。
 
 綁定直接聊天→所屬群組文字轉交（2026-09-26）：前景及回答續接 factory 接上完整 audience／本文核准、持久發文及有界群組回覆；核准期間身份或成員變更拒絕，背景群組不繼承直接聊天私人圖片。六種隔離 App 情境及既有圖片／委派回歸驗證；詳細證據見協作核對紀錄。圖片群發、任意 file／HTTPS 來源、跨群組統一歷史與其他互動卡仍 partial。
