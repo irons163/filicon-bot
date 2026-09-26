@@ -3,6 +3,7 @@ import Foundation
 struct AgentPersistentState: Codable, Sendable {
     var schemaVersion = 2
     var agents: [AgentProfile] = []
+    var sidebarVisibility: [AgentSidebarVisibility] = []
     var subagents: [SubagentRecord] = []
     var wakes: [PendingAgentWake] = []
     var messages: [AgentMessage] = []
@@ -31,6 +32,7 @@ struct AgentPersistentState: Codable, Sendable {
         case memorySynthesisSettings
         case memoryTemporalReviews
         case memoryEpisodeSettings, memoryEpisodes
+        case sidebarVisibility
     }
 
     init() {}
@@ -39,6 +41,7 @@ struct AgentPersistentState: Codable, Sendable {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         schemaVersion = try values.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
         agents = try values.decodeIfPresent([AgentProfile].self, forKey: .agents) ?? []
+        sidebarVisibility = try values.decodeIfPresent([AgentSidebarVisibility].self, forKey: .sidebarVisibility) ?? []
         subagents = try values.decodeIfPresent([SubagentRecord].self, forKey: .subagents) ?? []
         wakes = try values.decodeIfPresent([PendingAgentWake].self, forKey: .wakes) ?? []
         messages = try values.decodeIfPresent([AgentMessage].self, forKey: .messages) ?? []

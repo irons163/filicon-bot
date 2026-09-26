@@ -5,11 +5,14 @@ public struct AgentServiceSnapshot: Sendable {
     public let revision: UInt64
     public let agents: [AgentProfile]
     public let subagents: [SubagentRecord]
+    public let sidebarVisibility: [AgentSidebarVisibility]
 
-    public init(revision: UInt64, agents: [AgentProfile], subagents: [SubagentRecord]) {
+    public init(revision: UInt64, agents: [AgentProfile], subagents: [SubagentRecord],
+                sidebarVisibility: [AgentSidebarVisibility] = []) {
         self.revision = revision
         self.agents = agents
         self.subagents = subagents
+        self.sidebarVisibility = sidebarVisibility
     }
 }
 
@@ -797,17 +800,44 @@ public actor AgentService {
                   state.agents[index].notificationSettingsRevision == change.previousRevision else {
                 throw AgentSettingsChangeError.stale
             }
+            if let visibility = change.visibility {
+                let proposed = visibility.proposed
+                guard proposed.agentID == change.agentID,
+                      !proposed.accountID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                      proposed.accountID.utf8.count <= 512,
+                      proposed.revision != visibility.previous?.revision else {
+                    throw AgentSettingsChangeError.invalid
+                }
+                let matches = state.sidebarVisibility.filter {
+                    $0.accountID == proposed.accountID && $0.agentID == proposed.agentID
+                        && $0.conversationID == proposed.conversationID
+                }
+                guard matches.count <= 1, matches.first == visibility.previous else {
+                    throw AgentSettingsChangeError.stale
+                }
+                state.sidebarVisibility.removeAll {
+                    $0.accountID == proposed.accountID && $0.agentID == proposed.agentID
+                        && $0.conversationID == proposed.conversationID
+                }
+                state.sidebarVisibility.append(proposed)
+            }
             if change.notifyOnUpdates != change.previousValue {
                 state.agents[index].notifyOnAgentUpdates = change.notifyOnUpdates
                 state.agents[index].notificationSettingsRevision = UUID()
                 state.agents[index].updatedAt = at
-                try persist()
             }
+            if change.notifyOnUpdates != change.previousValue || change.visibility != nil { try persist() }
             return state.agents[index]
         }
     }
 
     public func persistentStateSnapshot() -> Data? { try? JSONEncoder().encode(state) }
+
+    public func sidebarVisibility(accountID: String, agentID: UUID, conversationID: UUID) -> AgentSidebarVisibility? {
+        state.sidebarVisibility.first {
+            $0.accountID == accountID && $0.agentID == agentID && $0.conversationID == conversationID
+        }
+    }
 
     /// Returns an atomically seeded state stream. The first element is the
     /// current persisted state, so consumers cannot miss a mutation between a
@@ -905,7 +935,8 @@ public actor AgentService {
     }
 
     private func snapshot() -> AgentServiceSnapshot {
-        AgentServiceSnapshot(revision: revision, agents: state.agents, subagents: state.subagents)
+        AgentServiceSnapshot(revision: revision, agents: state.agents, subagents: state.subagents,
+                             sidebarVisibility: state.sidebarVisibility)
     }
 
     private func removeSnapshotListener(_ id: UUID) {

@@ -1,17 +1,47 @@
 import Foundation
 
-/// Only the host-selected agent's update-notification preference is mutable.
+/// Host-owned visibility override for one exact account/agent/conversation binding.
+/// The host must validate the conversation binding before proposing or committing it.
+public struct AgentSidebarVisibility: Codable, Sendable, Equatable {
+    public let accountID: String
+    public let agentID: UUID
+    public let conversationID: UUID
+    public let hidden: Bool
+    public let revision: UUID
+
+    public init(accountID: String, agentID: UUID, conversationID: UUID, hidden: Bool, revision: UUID = UUID()) {
+        self.accountID = accountID
+        self.agentID = agentID
+        self.conversationID = conversationID
+        self.hidden = hidden
+        self.revision = revision
+    }
+}
+
+public struct AgentSidebarVisibilityChange: Sendable, Equatable {
+    public let proposed: AgentSidebarVisibility
+    public let previous: AgentSidebarVisibility?
+    public init(proposed: AgentSidebarVisibility, previous: AgentSidebarVisibility?) {
+        self.proposed = proposed
+        self.previous = previous
+    }
+}
+
+/// Notification and optional host-bound visibility changes share one durable save.
 public struct AgentSettingsChange: Sendable, Equatable {
     public let agentID: UUID
     public let notifyOnUpdates: Bool
     public let previousValue: Bool
     public let previousRevision: UUID?
+    public let visibility: AgentSidebarVisibilityChange?
 
-    public init(agentID: UUID, notifyOnUpdates: Bool, previousValue: Bool, previousRevision: UUID?) {
+    public init(agentID: UUID, notifyOnUpdates: Bool, previousValue: Bool, previousRevision: UUID?,
+                visibility: AgentSidebarVisibilityChange? = nil) {
         self.agentID = agentID
         self.notifyOnUpdates = notifyOnUpdates
         self.previousValue = previousValue
         self.previousRevision = previousRevision
+        self.visibility = visibility
     }
 }
 

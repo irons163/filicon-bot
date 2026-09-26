@@ -33,6 +33,73 @@ struct AgentSettingsChangeTests {
         try .init(id: id, name: "update_state", argumentsJSON: Data(json.utf8))
     }
 
+    @Test func hostBoundVisibilityAndNotificationsCommitTogether() async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let hidden = AgentSidebarVisibility(accountID: "account-a", agentID: f.owner.id,
+            conversationID: f.context.conversationID, hidden: true)
+        let change = AgentSettingsChange(agentID: f.owner.id, notifyOnUpdates: false,
+            previousValue: true, previousRevision: nil, visibility: .init(proposed: hidden, previous: nil))
+        let saved = try await f.agents.applySettingsChange(change, lifetime: .init())
+        expectNoDifference(saved.notifyOnAgentUpdates, false)
+        let restored = try AgentService(storeURL: f.file)
+        let durable = await restored.sidebarVisibility(accountID: "account-a", agentID: f.owner.id,
+                                                       conversationID: f.context.conversationID)
+        expectNoDifference(durable, hidden)
+        let other = await restored.sidebarVisibility(accountID: "account-b", agentID: f.owner.id,
+                                                     conversationID: f.context.conversationID)
+        expectNoDifference(other, nil)
+        let peer = await restored.profile(id: f.peer.id)
+        expectNoDifference(peer, f.peer)
+        var iterator = await restored.snapshots().makeAsyncIterator()
+        let snapshot = await iterator.next()
+        expectNoDifference(snapshot?.sidebarVisibility, [hidden])
+        await #expect(throws: AgentSettingsChangeError.stale) {
+            _ = try await f.agents.applySettingsChange(change, lifetime: .init())
+        }
+        let shown = AgentSidebarVisibility(accountID: "account-a", agentID: f.owner.id,
+            conversationID: f.context.conversationID, hidden: false)
+        _ = try await f.agents.applySettingsChange(.init(agentID: f.owner.id, notifyOnUpdates: false,
+            previousValue: false, previousRevision: saved.notificationSettingsRevision,
+            visibility: .init(proposed: shown, previous: hidden)), lifetime: .init())
+        await #expect(throws: AgentSettingsChangeError.stale) {
+            _ = try await f.agents.applySettingsChange(.init(agentID: f.owner.id, notifyOnUpdates: true,
+                previousValue: false, previousRevision: saved.notificationSettingsRevision,
+                visibility: .init(proposed: hidden, previous: nil)), lifetime: .init())
+        }
+        let afterStale = await f.agents.profile(id: f.owner.id)
+        expectNoDifference(afterStale, saved)
+    }
+
+    @Test func mixedSettingsDiskFailureRollsBackBothFields() async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let hidden = AgentSidebarVisibility(accountID: "account-a", agentID: f.owner.id,
+            conversationID: f.context.conversationID, hidden: true)
+        let change = AgentSettingsChange(agentID: f.owner.id, notifyOnUpdates: false,
+            previousValue: true, previousRevision: nil, visibility: .init(proposed: hidden, previous: nil))
+        let revoked = AgentSettingsChangeLifetime(); revoked.close()
+        await #expect(throws: CancellationError.self) {
+            _ = try await f.agents.applySettingsChange(change, lifetime: revoked)
+        }
+        let backup = f.root.appending(path: "backup.json")
+        try FileManager.default.moveItem(at: f.file, to: backup)
+        try FileManager.default.createDirectory(at: f.file, withIntermediateDirectories: false)
+        let lifetime = AgentSettingsChangeLifetime()
+        await #expect(throws: (any Error).self) {
+            _ = try await f.agents.applySettingsChange(change, lifetime: lifetime)
+        }
+        let unchanged = await f.agents.profile(id: f.owner.id)
+        let visibility = await f.agents.sidebarVisibility(accountID: "account-a", agentID: f.owner.id,
+                                                         conversationID: f.context.conversationID)
+        expectNoDifference(unchanged, f.owner)
+        expectNoDifference(visibility, nil)
+        expectNoDifference(lifetime.committedProfile(for: change), nil)
+        try FileManager.default.removeItem(at: f.file)
+        try FileManager.default.moveItem(at: backup, to: f.file)
+        let restored = try AgentService(storeURL: f.file)
+        let durable = await restored.profile(id: f.owner.id)
+        expectNoDifference(durable, f.owner)
+    }
+
     @Test func settingsRequireExplicitApprovalByDefault() async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-settings-test-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }
