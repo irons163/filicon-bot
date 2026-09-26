@@ -1,5 +1,7 @@
 # Filicon / Grok Bot 0.18 功能 parity matrix（current implementation）
 
+最新記憶核對（2026-09-27，`94937dd`）：episodic 的獨立七語 consent、跨回合進度、六回合摘要／獨立驗證、host 來源權重與 UI、App direct／group 接線及清理復原紀錄已實作並有隔離測試。下方同日及更早「尚缺」記述為歷史進度，以 [Episodic-memory-parity.md](Episodic-memory-parity.md) 後續段落為準。整體仍 partial：長期保存目前 48 筆／12,000 字，不等價於參考月份 log；原版 500 是抽取掃描上限而非儲存容量。下一階段明確驗收見 [Memory-archive-parity.md](Memory-archive-parity.md)。復原紀錄自身無法落盤與 UI 事件尚未送达 service 就崩潰的邊界、真實模型／UI／外部服務驗收仍保留。
+
 Sweep 診斷（2026-09-27）：背景日期檢查在 runner 啟動前發生的失敗／取消，已接入獨立最近 64 筆分類摘要，不偽造 agent ID、不保存原始錯誤或路徑、不覆蓋前景錯誤；await 前捕捉 account journal，避免晚到結果污染新帳號。這是 diagnostics，不是使用者通知或自動重試；episodic 與外部驗收仍 partial。
 
 Episodic 分支核對（2026-09-27）：原版 `runTurnMemory` 在 synthesis evidence 接口存在時清除 episode pending 並 return；每六回合摘要是舊流程分支，不與 synthesis 同批執行。Filicon 尚缺該分支的明確 consent／跨回合進度／host episode 來源與權重；不得把停用 synthesis 當成自動保存 episode 的授權。具體來源及驗收見 [Episodic-memory-parity.md](Episodic-memory-parity.md)，狀態仍 partial。
