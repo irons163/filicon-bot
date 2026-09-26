@@ -365,6 +365,36 @@ private actor SynthesisAppTimer {
         #expect(f.model.runningGroups.isEmpty && f.model.reviewingMemoryGroups.isEmpty)
     }
 
+    @Test func episodePreferenceIsScopedPersistedAndRevokedBySynthesis() async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let initial = try await f.model.memoryEpisodeSettings(agentID: f.owner.id)
+        expectNoDifference(initial.enabled, false)
+        try await f.model.setMemoryEpisodesEnabled(true, expected: initial)
+        let enabled = try await f.model.memoryEpisodeSettings(agentID: f.owner.id)
+        expectNoDifference(enabled.enabled, true)
+        do {
+            try await f.model.setMemoryEpisodesEnabled(false, expected: initial)
+            Issue.record("Stale episode consent must be rejected")
+        } catch {}
+        do {
+            try await f.model.setMemoryEpisodesEnabled(true, expected: .init(accountID: "other", agentID: f.owner.id))
+            Issue.record("Foreign episode consent must be rejected")
+        } catch {}
+        let restored = AppModel(applicationSupportRoot: f.root, bootstrapImmediately: false)
+        await restored.reloadWorkspaceData()
+        let reopened = try await restored.memoryEpisodeSettings(agentID: f.owner.id)
+        expectNoDifference(reopened, enabled)
+        let synthesis = try await f.model.memorySynthesisSettings(agentID: f.owner.id)
+        try await f.model.setMemorySynthesisEnabled(true, expected: synthesis)
+        let revoked = try await f.model.memoryEpisodeSettings(agentID: f.owner.id)
+        expectNoDifference(revoked.enabled, false)
+        #expect(revoked.revision != enabled.revision)
+        do {
+            try await f.model.setMemoryEpisodesEnabled(true, expected: revoked)
+            Issue.record("Episode summaries cannot coexist with synthesis")
+        } catch {}
+    }
+
     @Test func synthesisPreferenceIsIndependentScopedAndPersisted() async throws {
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
         let initial = try await f.model.memorySynthesisSettings(agentID: f.owner.id)
@@ -548,7 +578,8 @@ private actor SynthesisAppTimer {
                 if language != "en" {
                     for key in ["Memory suggestions", "Save as private memory…", "Dismiss suggestion", "Reviewing memory suggestions…", AgentMemorySuggestionsNotice.disclosure,
                         "Automatic memory synthesis", "Disable automatic synthesis", "Enable automatic synthesis…",
-                        "Enable automatic memory synthesis?", AgentMemorySynthesisNotice.disclosure, AgentMemorySynthesisNotice.temporalDisclosure] {
+                        "Enable automatic memory synthesis?", AgentMemorySynthesisNotice.disclosure, AgentMemorySynthesisNotice.temporalDisclosure,
+                        "Episode summaries", "Disable episode summaries", "Enable episode summaries…", "Enable episode summaries?", AgentMemoryEpisodeNotice.disclosure] {
                         #expect(FiliconLocalization.string(key) != key)
                     }
                 }
@@ -557,6 +588,8 @@ private actor SynthesisAppTimer {
                     AgentMemorySuggestionsNotice()
                     Text(l10n("Automatic memory synthesis")).font(.headline)
                     AgentMemorySynthesisNotice()
+                    Text(l10n("Episode summaries")).font(.headline)
+                    AgentMemoryEpisodeNotice()
                     Button(l10n("Enable automatic synthesis…")) {}
                     AgentMemorySuggestionCard(suggestion: candidate, onSave: {}, onDismiss: {})
                     AgentMemoryReviewProgress()
@@ -565,7 +598,7 @@ private actor SynthesisAppTimer {
                 host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
                 let size = host.fittingSize
                 expectNoDifference(size.width, 380)
-                #expect(size.height > 250 && size.height < 1100)
+                #expect(size.height > 250 && size.height < 1700)
                 host.frame = .init(origin: .zero, size: size); host.layoutSubtreeIfNeeded()
                 let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
                 host.cacheDisplay(in: host.bounds, to: bitmap)

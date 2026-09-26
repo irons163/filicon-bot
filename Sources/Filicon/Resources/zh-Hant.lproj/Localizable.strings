@@ -1693,3 +1693,8 @@
 "Restore saved peer messages without running agents. Deleted chats stay deleted." = "補回已保存的同儕訊息，不執行代理人。已刪除的聊天不會恢復。";
 "Saved peer messages restored." = "已補回保存的同儕訊息。";
 "While enabled, the app also checks hourly for private memories due for a date-based review, including at startup. Reviews may incur extra model costs without a new chat message. After a review completes, the next review is due 24 hours after that review's start time." = "啟用期間，App 也會在啟動時及每小時檢查是否有到期的私有記憶需要日期檢視。即使沒有新的聊天訊息，檢視仍可能產生額外模型費用。檢視完成後，下次到期時間為該次檢視開始後 24 小時。";
+"Episode summaries" = "事件摘要";
+"Disable episode summaries" = "停用事件摘要";
+"Enable episode summaries…" = "啟用事件摘要…";
+"Enable episode summaries?" = "啟用事件摘要？";
+"Separate opt-in: retain bounded text from completed replies across turns. Every six eligible turns may incur extra model costs to summarize and independently verify private memories, saved without individual approval. Stopping, deleting the conversation, switching accounts or disabling clears pending text, not saved memories. Automatic synthesis disables this feature and clears pending text. No tool permissions are granted." = "需另行同意：跨回合保存已完成回覆的有限文字。每六個符合條件的回合可能產生額外模型費用，用於摘要並獨立驗證私人記憶，不逐筆詢問即儲存。停止、刪除對話、切換帳號或停用會清除待處理文字，但保留已儲存記憶。啟用自動記憶整合會停用此功能並清除待處理文字。不會授予工具權限。";

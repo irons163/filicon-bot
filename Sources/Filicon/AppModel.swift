@@ -4016,6 +4016,28 @@ final class AppModel: ObservableObject {
         return values
     }
 
+    func memoryEpisodeSettings(agentID: UUID) async throws -> AgentMemoryEpisodeSettings {
+        let generation = autoReviewAccountGeneration
+        guard let agentService, !agentMessagingAccountTransition else { throw CancellationError() }
+        let value = try await agentService.memoryEpisodeSettings(accountID: settings.accountScope ?? "local", agentID: agentID)
+        guard generation == autoReviewAccountGeneration else { throw CancellationError() }
+        return value
+    }
+
+    func setMemoryEpisodesEnabled(_ enabled: Bool, expected: AgentMemoryEpisodeSettings) async throws {
+        guard let agentService, !agentMessagingAccountTransition,
+              expected.accountID == (settings.accountScope ?? "local") else { throw CancellationError() }
+        let lifetime = agentMemorySuggestionUILifetime
+        if enabled {
+            try await memoryEpisodeAccountCleanup?.value
+            for cleanup in memoryEpisodeCleanups.values { try await cleanup.value }
+            try lifetime.check()
+        }
+        try await quotaWrite(scope: "workflow", key: "memory-episodes-\(expected.agentID)", data: try JSONEncoder().encode(expected)) {
+            try await agentService.setMemoryEpisodesEnabled(enabled, expected: expected, lifetime: lifetime)
+        }
+    }
+
     func memorySynthesisSettings(agentID: UUID) async throws -> AgentMemorySynthesisSettings {
         let generation = autoReviewAccountGeneration
         guard let agentService, !agentMessagingAccountTransition else { throw CancellationError() }

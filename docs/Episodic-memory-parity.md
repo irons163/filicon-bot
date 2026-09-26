@@ -76,3 +76,11 @@ App 原有 origin invalidation（direct Stop／刪除、group Stop／成員更�
 針對清理的 App 測試直接呼叫 Stop／delete／account 入口並重開 store 驗證 pending 消失、既存記憶保留；session 測試驗證 cleanup failure 不發出模型請求。尚待七語啟用 UI、來源顯示及使用者可見的清理失敗診斷；不能稱端到端已完成。
 
 本批完整非並行測試 `memory-episode-cleanup-full.log`、原生建置 `memory-episode-cleanup-native.log` exit 0；封裝 deep strict 簽章與 entitlements 通過。
+
+## 七語啟用介面（2026-09-27）
+
+代理人記憶設定新增預設關閉的事件摘要入口，啟用前明示跨回合有限文字保存、六回合門檻、額外模型費用、獨立驗證後免逐筆核准儲存，以及清理與 synthesis 互斥。七種語言均有翻譯；synthesis 啟用確認也包含事件摘要撤銷說明。App 設定 API 使用 account／revision／UI lifetime 防護，啟用前等待既有清理成功，清理失敗則拒絕啟用並顯示錯誤。
+
+完整非並行測試 `memory-episode-ui.log` exit 0；最後新增的 App 授權測試另以 `memory-episode-ui-app.log` 通過（13 tests），覆蓋重開持久化、舊授權、跨帳號拒絕與 synthesis 撤銷。七語明暗色 380pt 渲染檢查通過；原生建置 `memory-episode-ui-native.log` 與封裝 deep strict／entitlements 通過。未啟動真實 App。
+
+仍待事件來源 UI 標示、執行期間清理失敗的固定診斷提示，以及實際互動端到端驗收；保持 partial，不宣稱原版功能全部完成。

@@ -1693,3 +1693,8 @@
 "Restore saved peer messages without running agents. Deleted chats stay deleted." = "에이전트를 실행하지 않고 저장된 메시지를 복구합니다. 삭제된 채팅은 복구하지 않습니다.";
 "Saved peer messages restored." = "저장된 에이전트 메시지를 복구했습니다.";
 "While enabled, the app also checks hourly for private memories due for a date-based review, including at startup. Reviews may incur extra model costs without a new chat message. After a review completes, the next review is due 24 hours after that review's start time." = "활성화된 동안 앱은 시작 시와 매시간 날짜 기반 검토 시점이 된 비공개 기억을 확인합니다. 새 채팅 메시지가 없어도 검토에 추가 모델 비용이 발생할 수 있습니다. 검토가 완료되면 다음 검토 시점은 해당 검토가 시작된 시각으로부터 24시간 후입니다.";
+"Episode summaries" = "에피소드 요약";
+"Disable episode summaries" = "에피소드 요약 비활성화";
+"Enable episode summaries…" = "에피소드 요약 활성화…";
+"Enable episode summaries?" = "에피소드 요약을 활성화할까요?";
+"Separate opt-in: retain bounded text from completed replies across turns. Every six eligible turns may incur extra model costs to summarize and independently verify private memories, saved without individual approval. Stopping, deleting the conversation, switching accounts or disabling clears pending text, not saved memories. Automatic synthesis disables this feature and clears pending text. No tool permissions are granted." = "별도 동의가 필요합니다. 완료된 응답의 제한된 텍스트를 여러 턴에 걸쳐 보관합니다. 적격 턴 6개마다 추가 모델 비용이 발생할 수 있으며, 요약과 독립 검증을 거쳐 개별 승인 없이 비공개 메모리를 저장합니다. 중지, 대화 삭제, 계정 전환 또는 비활성화 시 대기 중인 텍스트만 지우고 저장된 메모리는 유지합니다. 자동 메모리 통합을 활성화하면 이 기능이 비활성화되고 대기 텍스트가 삭제됩니다. 도구 권한은 부여하지 않습니다.";

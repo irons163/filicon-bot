@@ -12,6 +12,8 @@ struct AgentMemorySuggestionsSection: View {
     @State private var confirmsSave = false
     @State private var synthesis: AgentMemorySynthesisSettings?
     @State private var confirmsSynthesis = false
+    @State private var episodes: AgentMemoryEpisodeSettings?
+    @State private var confirmsEpisodes = false
 
     var body: some View {
         Section(l10n("Memory suggestions")) {
@@ -22,6 +24,16 @@ struct AgentMemorySuggestionsSection: View {
                     Text(l10n(synthesis.enabled ? "Enabled" : "Disabled"))
                     Button(l10n(synthesis.enabled ? "Disable automatic synthesis" : "Enable automatic synthesis…"),
                         action: synthesisButtonTapped)
+                }
+            }
+            Divider()
+            VStack(alignment: .leading, spacing: 8) {
+                Text(l10n("Episode summaries")).font(.headline)
+                AgentMemoryEpisodeNotice()
+                if let episodes {
+                    Text(l10n(episodes.enabled ? "Enabled" : "Disabled"))
+                    Button(l10n(episodes.enabled ? "Disable episode summaries" : "Enable episode summaries…"), action: episodeButtonTapped)
+                        .disabled(synthesis?.enabled == true && !episodes.enabled)
                 }
             }
             Divider()
@@ -45,12 +57,17 @@ struct AgentMemorySuggestionsSection: View {
         }
         .disabled(busy)
         .task(id: model.settings.accountScope ?? "local") { await accountChanged() }
+        .confirmationDialog(l10n("Enable episode summaries?"), isPresented: $confirmsEpisodes, titleVisibility: .visible) {
+            Button(l10n("Enable")) { Task { await setEpisodesEnabled(true) } }
+            Button(l10n("Cancel"), role: .cancel) {}
+        } message: { Text(FiliconLocalization.string(AgentMemoryEpisodeNotice.disclosure)) }
         .confirmationDialog(l10n("Enable automatic memory synthesis?"), isPresented: $confirmsSynthesis, titleVisibility: .visible) {
             Button(l10n("Enable")) { Task { await setSynthesisEnabled(true) } }
             Button(l10n("Cancel"), role: .cancel) {}
         } message: {
             Text(FiliconLocalization.string(AgentMemorySynthesisNotice.disclosure) + "\n\n" +
-                FiliconLocalization.string(AgentMemorySynthesisNotice.temporalDisclosure))
+                FiliconLocalization.string(AgentMemorySynthesisNotice.temporalDisclosure) + "\n\n" +
+                FiliconLocalization.string(AgentMemoryEpisodeNotice.disclosure))
         }
         .confirmationDialog(l10n("Enable memory suggestions?"), isPresented: $confirmsEnable, titleVisibility: .visible) {
             Button(l10n("Enable")) { Task { await setEnabled(true) } }
@@ -76,6 +93,7 @@ struct AgentMemorySuggestionsSection: View {
     }
     private func accountChanged() async {
         synthesis = nil; confirmsSynthesis = false
+        episodes = nil; confirmsEpisodes = false
         snapshot = nil; selected = nil; confirmsEnable = false; confirmsSave = false; failure = nil
         await refresh()
     }
@@ -83,16 +101,31 @@ struct AgentMemorySuggestionsSection: View {
         do {
             let value = try await model.memorySuggestionSnapshot(agentID: agentID)
             let synthesisValue = try await model.memorySynthesisSettings(agentID: agentID)
+            let episodeValue = try await model.memoryEpisodeSettings(agentID: agentID)
             try Task.checkCancellation()
             guard value.settings.accountID == (model.settings.accountScope ?? "local"),
-                  synthesisValue.accountID == value.settings.accountID else { return }
+                  synthesisValue.accountID == value.settings.accountID,
+                  episodeValue.accountID == value.settings.accountID else { return }
             snapshot = value
             synthesis = synthesisValue
+            episodes = episodeValue
         } catch is CancellationError {} catch { failure = FiliconLocalization.string(error.localizedDescription) }
     }
     private func synthesisButtonTapped() {
         if synthesis?.enabled == true { Task { await setSynthesisEnabled(false) } }
         else { confirmsSynthesis = true }
+    }
+    private func episodeButtonTapped() {
+        if episodes?.enabled == true { Task { await setEpisodesEnabled(false) } }
+        else { confirmsEpisodes = true }
+    }
+    private func setEpisodesEnabled(_ enabled: Bool) async {
+        guard let expected = episodes else { return }
+        busy = true; failure = nil
+        defer { busy = false }
+        do { try await model.setMemoryEpisodesEnabled(enabled, expected: expected) }
+        catch is CancellationError {} catch { failure = FiliconLocalization.string(error.localizedDescription) }
+        await refresh()
     }
     private func setSynthesisEnabled(_ enabled: Bool) async {
         guard let expected = synthesis else { return }
@@ -116,6 +149,13 @@ struct AgentMemorySuggestionsSection: View {
         do { try await model.reviewMemorySuggestion(suggestion, accept: accept) }
         catch is CancellationError {} catch { failure = FiliconLocalization.string(error.localizedDescription) }
         await refresh()
+    }
+}
+
+struct AgentMemoryEpisodeNotice: View {
+    static let disclosure = "Separate opt-in: retain bounded text from completed replies across turns. Every six eligible turns may incur extra model costs to summarize and independently verify private memories, saved without individual approval. Stopping, deleting the conversation, switching accounts or disabling clears pending text, not saved memories. Automatic synthesis disables this feature and clears pending text. No tool permissions are granted."
+    var body: some View {
+        Text(FiliconLocalization.string(Self.disclosure)).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
     }
 }
 
