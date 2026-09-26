@@ -1,5 +1,15 @@
 # 協作能力核對紀錄（更新至 2026-09-26）
 
+## 記憶整合有界整組重試（2026-09-26）
+
+對照原版 `memory-synthesis-service.ts` 的三次 attempts／2 秒初始 backoff，公開 host run 現在最多重試三組 proposal＋independent verification；兩次等待為 2、4 秒，不只重送 verifier。整批 evidence、開始時間及 memory snapshot 固定，provider 請求仍為 fresh tool-free。格式錯誤、拒絕或 transport failure 可重試；取消、lifetime 撤銷與 stale consent 立即退出，每次重試前亦重驗快照。保存置於重試迴圈之外，因此保存失敗不重送模型或重複套用。內部單次 pipeline fixture 保留預設一次執行。
+
+依 pfw-testing／CustomDump 注入 retrySleep，不實際等待 backoff 或呼叫外部模型；七種情境驗證第三次恢復、持續拒絕、持續非法輸出、網路失敗、等待時取消、等待時停用、等待時人工新增記憶。確認相同 payload、請求次數、2／4 秒等待及沒有覆寫手動變更；既有 pipeline 與 16 種 App lifecycle 聚焦回歸也通過。
+
+仍沿用 transport 每 stage 45 秒 executionTimeout；原版整個 pair（含等待排程）的 90 秒 deadline、15 秒 debounce、有界跨回合 evidence queue／temporal sweep 與 episodic 尚未齊備，不將本項標成完整記憶 parity。未 push、未重啟使用者 App／Xcode，未變更真實資料。
+
+驗證：`memory-synthesis-retry.log` 聚焦通過（7 種新重試、20 種既有 pipeline 及 16 種 App lifecycle 情境）；`memory-synthesis-retry-full.log` 最終完整非並行套件 exit 0，包含前兩輪因鎖定失敗的持久化重開案例，解除那項回歸缺口。`memory-synthesis-retry-native.log` 原生建置、verify-package／deep strict 簽章與 git diff --check 通過。
+
 ## 自動記憶 App 生命週期驗收（2026-09-26）
 
 沿用隔離 AppModel fixture 與可控制的假 provider，新增直接／群組兩條實際前景入口的 16 種情境：啟用、未啟用、提案中停止、驗證中停止、帳號切換撤銷、停用、停用再啟用、刪除直接聊天／移除群組成員。只有正常啟用回合保存 synthesis 私有記憶，peer 不受影響；晚到結果不保存。另驗證維護请求沒有 tools／tool exchanges／附件、停止提案後不進入 verifier，及群組忙碌狀態清理。

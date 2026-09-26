@@ -1,5 +1,9 @@
 # Filicon / Grok Bot 0.18 功能 parity matrix（current implementation）
 
+解鎖後完整回歸補驗（2026-09-26）：`memory-synthesis-retry-full.log` 完整非並行套件 exit 0，原生建置／封裝簽章亦通過；下方兩輪因鎖定而保留的持久化重開驗收缺口已解除，不代表其餘功能 parity 已完成。
+
+記憶整合有界重試（2026-09-26）：公開 run 最多三次 proposal＋verification，等待 2／4 秒；固定 evidence／snapshot，取消與 stale 不重試，保存不在 retry 區域。七種新情境及既有 pipeline／App lifecycle 聚焦驗證通過。原版整組 90 秒 deadline（含排程）、debounce、pending evidence queue、temporal sweep、episodic 與外部驗收仍 partial；下方重試尚缺的歷史記述由此更新。
+
 自動記憶 App 生命週期補驗（2026-09-26）：16 種直接／群組假 provider 整合情境通過，覆蓋實際啟用保存與停止、切帳號、停用再啟用、刪除／移除成員拒絕晚到提交；取代下方 synthesis 專用 App 生命週期待驗記述。這些是現存隔離 instance 驗證，完整回歸及磁碟重開仍被螢幕鎖定阻擋；排程／重試／temporal／episodic 及真實模型缺口不變。
 
 自動記憶 UI 獨立授權（2026-09-26）：代理人記憶設定加入獨立啟用確認／停用與七語系費用、證據及自動修改範圍揭露，AppModel 延用帳號 generation／UI lifetime／quota 寫入保護。隔離設定保存、過期與跨帳號拒絕、七語系離屏檢查通過。此項補齊下方 UI 缺口，但不代表 synthesis 專用完整 App 生命週期、排程、episodic 或真實模型驗收已完成，仍 partial。

@@ -13,6 +13,7 @@ public struct AgentMemorySynthesisEvidence: Encodable, Equatable, Sendable {
 
 public enum AgentMemorySynthesisStage: Equatable, Sendable { case proposal, verification }
 public enum AgentMemorySynthesisOutcome: Equatable, Sendable { case noWork, committed, rejected }
+private enum MemorySynthesisAttemptError: Error { case rejected }
 
 extension AgentService {
     /// Host-only entry point; never register this as a model tool. A saved,
@@ -20,10 +21,12 @@ extension AgentService {
     public func runMemorySynthesis(settings: AgentMemorySynthesisSettings,
                                   evidence: [AgentMemorySynthesisEvidence], temporalReview: Bool = false,
                                   at: Date, lifetime: AgentMemorySuggestionLifetime,
+                                  retrySleep: @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) },
                                   execute: @Sendable (AgentMemorySynthesisStage, String, String) async throws -> String) async throws -> AgentMemorySynthesisOutcome {
         try requireMemorySynthesisConsent(settings)
         return try await synthesizeMemory(accountID: settings.accountID, agentID: settings.agentID,
-            evidence: evidence, temporalReview: temporalReview, at: at, lifetime: lifetime, settings: settings, execute: execute)
+            evidence: evidence, temporalReview: temporalReview, at: at, lifetime: lifetime, settings: settings,
+            attempts: 3, retrySleep: retrySleep, execute: execute)
     }
     /// Internal maintenance pipeline; never exposed as a model tool.
     /// Transport must perform a fresh, tool-free request per stage
@@ -32,6 +35,8 @@ extension AgentService {
                           evidence: [AgentMemorySynthesisEvidence], temporalReview: Bool = false,
                           at: Date, lifetime: AgentMemorySuggestionLifetime,
                           settings: AgentMemorySynthesisSettings? = nil,
+                          attempts: Int = 1,
+                          retrySleep: @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) },
                           execute: @Sendable (AgentMemorySynthesisStage, String, String) async throws -> String) async throws -> AgentMemorySynthesisOutcome {
         try lifetime.check()
         if let settings { try requireMemorySynthesisConsent(settings) }
@@ -66,32 +71,64 @@ extension AgentService {
         }, evidence: evidence)
         let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601; encoder.outputFormatting = [.sortedKeys]
         let payload = String(decoding: try encoder.encode(input), as: UTF8.self)
-        let proposed = try await execute(.proposal, Self.memorySynthesisInstructions, payload)
-        try lifetime.check()
-        if let settings { try requireMemorySynthesisConsent(settings) }
-        let parsed = try AgentMemorySynthesisProposal.parse(proposed, evidenceIDs: ids,
-            mutableMemoryIDs: snapshot.mutableMemoryIDs, clockEvidenceID: clock)
-        guard !parsed.changes.isEmpty else { return .noWork }
-        // The verifier sees the exact validated proposal and original evidence,
-        // in a fresh request, rather than the proposer's reasoning or verdict.
-        struct Verification: Encodable { let input: Input; let proposedChangesJSON: String }
-        let verification = String(decoding: try encoder.encode(Verification(input: input, proposedChangesJSON: proposed)), as: UTF8.self)
-        let verdict = try await execute(.verification, Self.memoryVerificationInstructions, verification)
-        try lifetime.check()
-        if let settings { try requireMemorySynthesisConsent(settings) }
-        guard verdict.utf8.count <= 1_024,
-              // Reject duplicate approved keys too; dictionary decoding alone
-              // discards duplicates and can disagree with another JSON reader.
-              verdict.range(of: #"\A[ \t\r\n]*\{[ \t\r\n]*"approved"[ \t\r\n]*:[ \t\r\n]*(true|false)[ \t\r\n]*\}[ \t\r\n]*\z"#,
-                  options: .regularExpression) != nil,
-              let object = try? JSONSerialization.jsonObject(with: Data(verdict.utf8)) as? [String: Any],
-              Set(object.keys) == ["approved"] else { throw AgentMemorySuggestionError.invalid }
-        struct Verdict: Decodable { let approved: Bool }
-        guard let result = try? JSONDecoder().decode(Verdict.self, from: Data(verdict.utf8)) else {
-            throw AgentMemorySuggestionError.invalid
+        func proposeAndVerify() async throws -> String? {
+            let proposed = try await execute(.proposal, Self.memorySynthesisInstructions, payload)
+            try Task.checkCancellation()
+            try lifetime.check()
+            if let settings { try requireMemorySynthesisConsent(settings) }
+            let parsed = try AgentMemorySynthesisProposal.parse(proposed, evidenceIDs: ids,
+                mutableMemoryIDs: snapshot.mutableMemoryIDs, clockEvidenceID: clock)
+            guard !parsed.changes.isEmpty else { return nil }
+            // The verifier sees the exact validated proposal and original evidence,
+            // in a fresh request, rather than the proposer's reasoning or verdict.
+            struct Verification: Encodable { let input: Input; let proposedChangesJSON: String }
+            let verification = String(decoding: try encoder.encode(Verification(input: input, proposedChangesJSON: proposed)), as: UTF8.self)
+            let verdict = try await execute(.verification, Self.memoryVerificationInstructions, verification)
+            try Task.checkCancellation()
+            try lifetime.check()
+            if let settings { try requireMemorySynthesisConsent(settings) }
+            guard verdict.utf8.count <= 1_024,
+                  // Reject duplicate approved keys too; dictionary decoding alone
+                  // discards duplicates and can disagree with another JSON reader.
+                  verdict.range(of: #"\A[ \t\r\n]*\{[ \t\r\n]*"approved"[ \t\r\n]*:[ \t\r\n]*(true|false)[ \t\r\n]*\}[ \t\r\n]*\z"#,
+                      options: .regularExpression) != nil,
+                  let object = try? JSONSerialization.jsonObject(with: Data(verdict.utf8)) as? [String: Any],
+                  Set(object.keys) == ["approved"] else { throw AgentMemorySuggestionError.invalid }
+            struct Verdict: Decodable { let approved: Bool }
+            guard let result = try? JSONDecoder().decode(Verdict.self, from: Data(verdict.utf8)) else {
+                throw AgentMemorySuggestionError.invalid
+            }
+            guard result.approved else { throw MemorySynthesisAttemptError.rejected }
+            return proposed
         }
-        guard result.approved else { return .rejected }
-        try applyVerifiedMemorySynthesis(proposed, expected: snapshot, evidenceIDs: ids,
+        // Retry the whole proposal + independent verification pair, using the
+        // same evidence and memory snapshot. Persistence is never retried here.
+        let limit = min(3, max(1, attempts))
+        var approved: String?
+        for attempt in 0..<limit {
+            try Task.checkCancellation()
+            try lifetime.check()
+            if let settings { try requireMemorySynthesisConsent(settings) }
+            guard try memorySynthesisSnapshot(accountID: accountID, agentID: agentID) == snapshot else {
+                throw AgentMemorySuggestionError.stale
+            }
+            do {
+                approved = try await proposeAndVerify()
+                break
+            } catch {
+                try Task.checkCancellation()
+                try lifetime.check()
+                if let settings { try requireMemorySynthesisConsent(settings) }
+                if error is CancellationError || (error as? AgentMemorySuggestionError) == .stale { throw error }
+                guard attempt + 1 < limit else {
+                    if error is MemorySynthesisAttemptError { return .rejected }
+                    throw error
+                }
+                try await retrySleep(.seconds(attempt == 0 ? 2 : 4))
+            }
+        }
+        guard let approved else { return .noWork }
+        try applyVerifiedMemorySynthesis(approved, expected: snapshot, evidenceIDs: ids,
             clockEvidenceID: clock, at: at, lifetime: lifetime)
         return .committed
     }

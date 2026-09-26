@@ -6,6 +6,8 @@ import CustomDump
 private actor SynthesisStageProbe {
     var stages: [AgentMemorySynthesisStage] = []
     var payloads: [String] = []
+    var delays: [Duration] = []
+    func delay(_ value: Duration) { delays.append(value) }
     func record(_ stage: AgentMemorySynthesisStage, _ payload: String) {
         stages.append(stage); payloads.append(payload)
     }
@@ -28,6 +30,51 @@ struct AgentMemorySynthesisTests {
         let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .millisecondsSince1970
         try encoder.encode(state).write(to: file)
         return (root, try AgentService(storeURL: file))
+    }
+
+    @Test(arguments: ["recover", "reject", "invalid", "transport", "cancel-delay", "disable-delay", "stale-delay"])
+    func productionRetriesWholePairButNeverRevokedOrStaleEvidence(mode: String) async throws {
+        let (root, service) = try fixture(); defer { try? FileManager.default.removeItem(at: root) }
+        let initial = try await service.memorySynthesisSettings(accountID: "local", agentID: owner)
+        try await service.setMemorySynthesisEnabled(true, expected: initial, lifetime: .init())
+        let settings = try await service.memorySynthesisSettings(accountID: "local", agentID: owner)
+        let lifetime = AgentMemorySuggestionLifetime(), probe = SynthesisStageProbe()
+        let operation = {
+            try await service.runMemorySynthesis(settings: settings, evidence: evidence, at: date, lifetime: lifetime,
+                retrySleep: { duration in
+                    await probe.delay(duration)
+                    if mode == "cancel-delay" { lifetime.close() }
+                    if mode == "disable-delay" { try await service.setMemorySynthesisEnabled(false, expected: settings, lifetime: .init()) }
+                    if mode == "stale-delay" {
+                        let fact = AgentMemory(id: UUID(uuidString: "00000000-0000-0000-0000-000000000002")!,
+                            accountID: "local", agentID: owner, fact: "Manual addition", createdAt: date)
+                        try await service.applyMemoryChange(.init(operation: .write, memory: fact), lifetime: .init())
+                    }
+                }, execute: { stage, _, payload in
+                    await probe.record(stage, payload)
+                    if mode == "transport" { throw URLError(.networkConnectionLost) }
+                    if stage == .proposal { return mode == "invalid" ? "invalid" : proposal }
+                    let count = await probe.stages.filter { $0 == .proposal }.count
+                    return mode == "recover" && count == 3 ? #"{"approved":true}"# : #"{"approved":false}"#
+                })
+        }
+        if mode == "recover" || mode == "reject" {
+            let outcome = try await operation()
+            expectNoDifference(outcome, mode == "recover" ? .committed : .rejected)
+        } else {
+            await #expect(throws: (any Error).self) { try await operation() }
+        }
+        let delays = await probe.delays
+        expectNoDifference(delays, mode.hasSuffix("-delay") ? [.seconds(2)] : [.seconds(2), .seconds(4)])
+        let stages = await probe.stages
+        let attempts = mode.hasSuffix("-delay") ? 1 : 3
+        expectNoDifference(stages.filter { $0 == .proposal }.count, attempts)
+        expectNoDifference(stages.filter { $0 == .verification }.count, ["invalid", "transport"].contains(mode) ? 0 : attempts)
+        let payloads = await probe.payloads
+        let proposals = zip(stages, payloads).filter { $0.0 == .proposal }.map { $0.1 }
+        expectNoDifference(Set(proposals).count, 1)
+        let facts = await service.memories(accountID: "local", agentID: owner)
+        expectNoDifference(facts.map(\.fact), mode == "recover" ? ["Prefers short answers"] : mode == "stale-delay" ? ["Manual addition"] : [])
     }
 
     @Test(arguments: ["approve", "reject", "numeric", "extra", "duplicate-verdict", "malformed", "oversized", "empty-proposal", "bad-proposal", "cancel-proposal", "cancel-verification", "stale", "transport"])
