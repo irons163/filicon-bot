@@ -1,5 +1,17 @@
 # 協作能力核對紀錄（更新至 2026-09-26）
 
+## 直接同儕圖片 App 接線（2026-09-26）
+
+前景直接聊天把當輪真實、非引用的人類 PNG／JPEG 經 owner／account／generation 驗證後匯入獨立 agent image store，提供 session 的動態目錄。委派與 SendMessage 發布各自使用圖片預覽核准；peer／問答 session 可處理 incoming 圖片，但不繼承新的前景圖片目錄。
+
+同儕投影核對 canonical incoming 圖片 metadata；發布仍以完整 canonical RoomMessage 比對。圖片 bytes 驗證後匯入對話附件 store、建立生命週期 reference，ChatMessage 與附件 metadata 一起保存；冪等比較包括附件。恢復清單保留 canonical 圖片，host 補回 blob／reference 及訊息，不重跑模型。後續人類回合將歷史同儕圖片從推論輸入移除，畫面保存的附件不變。失敗前已保存的 reference 由既有啟動 reconciliation 處理，不因本輪失敗刪 canonical mailbox。
+
+使用 pfw-testing／CustomDump 的五類 App fixture：批准、拒絕、Stop、帳號切換、缺漏恢復。核對收件人實際推論 bytes、獨立發布核准、SQLite 重讀附件、恢復不增加模型 wake，以及切換收件人聊天室後歷史不重送。`direct-peer-images-focused-final.log` 通過。鎖定時的失敗另留 `direct-peer-images-focused.log`；解鎖後既有重新載入案例正常，圖片 fixture 再修正圖片承載訊息及模型目錄載入等待，不降低檔案保護。
+
+仍未驗收真實 App 點擊／外部模型、任意 file／HTTPS 圖片來源、其他媒體格式；本批未覆蓋所有圖片專用保存故障注入及重新啟動場景，整體 partial 不變。
+
+最終 `direct-peer-images-full.log` 完整非並行回歸 exit 0；原生 `direct-peer-images-native.log`、測試編譯、封裝及 deep strict 簽章檢查通過。未 push、未啟動／重啟使用者 App 或 Xcode，未修改真實帳號／群組資料。
+
 ## 直接當輪圖片目錄契約（2026-09-26）
 
 `AgentMessagingSession` 新增可選 host-owned `directRequestImages` callback。只有 direct binding 同帳號、同前景 sender，且不是群組請求或 peer incoming 的工具才能取用。核准後重新取得目錄，沿用完整 metadata 比對、blob 驗證及獨立圖片核准；沒有 callback 的問答／憑證續接 session 不繼承圖片。callback 應由 host 綁定當輪真實人類訊息並重驗生命週期，不能從模型參數或歷史任意推導。

@@ -440,15 +440,14 @@ public actor AgentMessenger {
                   [.completed, .failed, .cancelled].contains(delivery.state),
                   item.secretResponse == nil,
                   (!MailboxMessageAddressing.isHuman(item, in: state) || validQuestionResponse(item)),
-                  item.senderID != item.recipientID, counts[item.id] == 1,
-                  item.images?.isEmpty != false else { continue }
+                  item.senderID != item.recipientID, counts[item.id] == 1 else { continue }
             let incoming = RoomMessage(id: item.id, groupID: originID, senderID: item.senderID,
-                text: item.text, createdAt: item.createdAt)
+                text: item.text, createdAt: item.createdAt, images: item.images ?? [])
             func append(_ message: RoomMessage, kind: AgentMessageSource.Kind) throws {
                 guard counts[message.id] == 1, message.groupID == originID,
                       message.senderID == (kind == .incoming ? item.senderID : item.recipientID),
                       !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                      message.images?.isEmpty != false, message.toolActivities.isEmpty,
+                      message.toolActivities.isEmpty,
                       message.secretRequest == nil, message.cursorAgent == nil,
                       message.memberOutcome == nil, message.questionReplyTo == nil else { return }
                 if let question = message.question {

@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 import CSQLite
 import Testing
 import CustomDump
@@ -16,6 +17,41 @@ private actor AgentWakeProbe {
     func record(_ id: UUID) { wakes.append(id) }
     func pauseAfterWake() { pausesAfterWake = true }
     func inspect(_ messages: [ChatMessage]) { inspectedMessages = messages }
+}
+
+private struct PeerImageAppProvider: InteractiveToolProvider {
+    let descriptor = ProviderDescriptor(id: "delegate-fixture", displayName: "Image fixture", requiresAPIKey: false)
+    let recipient: UUID
+    let image: AttachmentMetadata
+    let bytes: Data
+    let probe: AgentWakeProbe
+    func models() async throws -> [AIModel] { [.init(id: "test", capabilities: .init(inputModalities: [.text, .image]))] }
+    func stream(_ request: InferenceRequest) -> AsyncThrowingStream<InferenceEvent, Error> {
+        AsyncThrowingStream { $0.finish(throwing: ProviderError.invalidResponse) }
+    }
+    func stream(_ request: InferenceRequest, executeTool: @escaping @Sendable (NormalizedToolCall) async throws -> NormalizedToolResult) -> AsyncThrowingStream<InferenceEvent, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    if request.messages.last?.text.hasPrefix("Incoming peer message") == true {
+                        await probe.record(recipient)
+                        let incoming = try #require(request.messages.last(where: { !$0.attachments.isEmpty }))
+                        expectNoDifference(request.attachmentsByMessageID[incoming.id]?.map(\.data), [bytes])
+                        let args: [String: Any] = ["text": "Reviewed image", "images": [image.id]]
+                        let result = try await executeTool(.init(id: "publish-image", name: "SendMessage",
+                            argumentsJSON: JSONSerialization.data(withJSONObject: args)))
+                        #expect(!result.isError)
+                    } else {
+                        let args: [String: Any] = ["recipientID": recipient.uuidString, "message": "Review this image", "images": [image.id]]
+                        _ = try await executeTool(.init(id: "delegate-image", name: "SendToAgent",
+                            argumentsJSON: JSONSerialization.data(withJSONObject: args)))
+                    }
+                    continuation.yield(.completed(.stop)); continuation.finish()
+                } catch { continuation.finish(throwing: error) }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
 }
 
 private struct PeerQuestionAppProvider: InteractiveToolProvider {
@@ -111,6 +147,80 @@ private struct DelegatingGroupProvider: InteractiveToolProvider {
 
 @Suite("SendToAgent app integration", .timeLimit(.minutes(1)))
 @MainActor struct SendToAgentAppIntegrationTests {
+    @Test(arguments: ["approve", "deny", "stop", "account", "recover"])
+    func directPeerImagesAreApprovedPersistedAndRecoverable(mode: String) async throws {
+        let (root, model, _, sender, recipient, probe) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        await model.bootstrap()
+        let bitmap = try #require(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 2, pixelsHigh: 2,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
+            bytesPerRow: 0, bitsPerPixel: 0))
+        let bytes = try #require(bitmap.representation(using: .png, properties: [:]))
+        let storage = AttachmentStore(rootURL: root.appending(path: "attachments"))
+        let image = try await storage.ingest(data: bytes, filename: "layout.png", declaredMIMEType: "image/png")
+        await model.registry.register(PeerImageAppProvider(recipient: recipient, image: image, bytes: bytes, probe: probe))
+        let origin = try #require(await model.addConversation(agentID: sender))
+        await model.refreshModels()
+        model.pendingAttachments = [image]
+        model.draft = "Ask the designer to review this image"
+        model.send()
+        let approval = try await pending(model)
+        #expect(approval.action.context.metadata["agentImages"]?.contains(image.id) == true)
+        if mode == "stop" { model.cancel() }
+        if mode == "account" { await model.cancelAutoReviewApprovals(nextAccountID: "other") }
+        model.handleTranscriptCardIntent(mode == "deny" ? .rejectReview(reviewID: approval.id) : .approveReview(reviewID: approval.id))
+        let succeeds = ["approve", "recover"].contains(mode)
+        if succeeds {
+            var next: PendingApproval?
+            let limit = ContinuousClock.now + .seconds(10)
+            while next == nil, ContinuousClock.now < limit {
+                next = model.pendingAutoReviewApprovals.first { $0.id != approval.id }
+                if next == nil { try await Task.sleep(for: .milliseconds(10)) }
+            }
+            let publication = try #require(next)
+            expectNoDifference(publication.action.context.metadata["agentImagePublication"], "true")
+            model.handleTranscriptCardIntent(.approveReview(reviewID: publication.id))
+        }
+        let deadline = ContinuousClock.now + .seconds(10)
+        while model.isConversationWorking(origin), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(!model.isConversationWorking(origin))
+        let wakes = await probe.wakes
+        expectNoDifference(wakes, succeeds ? [recipient] : [])
+        if succeeds {
+            let peer = try #require(model.conversations.first { $0.agentBinding?.agentID == recipient })
+            expectNoDifference(peer.messages.map(\.attachments), [[image], [image]])
+            expectNoDifference(peer.messages.map(\.text), ["Review this image", "Reviewed image"])
+            let saved = try #require(try await ConversationStore(fileURL: root.appending(path: "conversations.json")).conversation(id: peer.id))
+            expectNoDifference(saved.messages.map(\.attachments), [[image], [image]])
+            let restoredBytes = try await storage.data(for: image)
+            expectNoDifference(restoredBytes, bytes)
+            if mode == "recover" {
+                try await removeQuestionProjections(model: model, root: root, peerID: peer.id)
+                #expect(await model.recoverDirectPeerMessages(conversationID: origin))
+                let restored = try #require(model.conversations.first { $0.id == peer.id })
+                expectNoDifference(restored.messages.map(\.attachments), [[image], [image]])
+                let after = await probe.wakes
+                expectNoDifference(after, wakes)
+            }
+            await model.registry.register(PeerHistoryInspectionProvider(probe: probe))
+            model.selectRoute(.conversation(peer.id))
+            await model.loadLatestMessages(for: peer.id)
+            await model.refreshModels()
+            model.draft = "Continue without reattaching old images"
+            model.send()
+            #expect(model.isConversationWorking(peer.id), "\(model.errorMessage ?? "No turn started")")
+            let limit = ContinuousClock.now + .seconds(10)
+            while model.isConversationWorking(peer.id), ContinuousClock.now < limit { try await Task.sleep(for: .milliseconds(10)) }
+            #expect(!model.isConversationWorking(peer.id))
+            let inspected = await probe.inspectedMessages
+            let peerContext = inspected.filter { $0.agentMessageSource != nil }
+            expectNoDifference(peerContext.count, 2)
+            #expect(peerContext.allSatisfy { $0.attachments.isEmpty })
+        } else {
+            #expect(model.agentMessages.isEmpty)
+        }
+    }
+
     @Test(arguments: ["option", "custom", "dismissed", "foreign", "delete", "stop", "restart", "recover-pending", "recover-answered"])
     func directPeerQuestionReturnsAnswerToOwnChat(mode: String) async throws {
         let (root, initialModel, _, sender, recipient, probe) = try await fixture()
