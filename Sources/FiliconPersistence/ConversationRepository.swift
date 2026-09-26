@@ -2,6 +2,11 @@ import Foundation
 import FiliconDomain
 import CSQLite
 
+public enum BoundConversationLookupError: Error, Equatable, Sendable {
+    case ambiguous
+    case invalidAccount
+}
+
 public actor ConversationRepository {
     public static let currentSchemaVersion = 13
     private let database: SQLiteDatabase
@@ -38,6 +43,25 @@ public actor ConversationRepository {
             result.append(conversation)
         }
         return result
+    }
+
+    /// Resolves the exact durable binding across all histories, including hidden
+    /// chats. Runs without suspension on the repository actor; a paged UI snapshot
+    /// cannot establish uniqueness. This is metadata only, not a history load.
+    public func uniqueBoundConversation(accountID: String, agentID: UUID) throws -> Conversation? {
+        guard !accountID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw BoundConversationLookupError.invalidAccount
+        }
+        let rows = try database.prepare("SELECT id, title, provider_id, model_id, updated_at, hidden_at, reasoning_effort, message_addresses_json, agent_binding_json FROM conversations", operation: "resolve unique agent conversation")
+        let binding = DirectConversationAgentBinding(accountID: accountID, agentID: agentID)
+        var match: Conversation?
+        while try rows.step() == SQLITE_ROW {
+            let conversation = try Self.decodeConversationMetadata(rows)
+            guard conversation.agentBinding == binding else { continue }
+            guard match == nil else { throw BoundConversationLookupError.ambiguous }
+            match = conversation
+        }
+        return match
     }
 
     /// Loads one stable keyset page of conversation metadata. The canonical

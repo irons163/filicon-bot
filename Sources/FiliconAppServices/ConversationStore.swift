@@ -78,6 +78,13 @@ public actor ConversationStore {
         )
     }
 
+    /// Durable, metadata-only lookup; never infer ownership from a chat title.
+    public func uniqueBoundConversation(accountID: String, agentID: UUID) async throws -> Conversation? {
+        let repository = try resolveRepository()
+        try await importLegacyIfNeeded(into: repository)
+        return try await repository.uniqueBoundConversation(accountID: accountID, agentID: agentID)
+    }
+
     /// Loads one backwards keyset page, returned in chronological order.
     public func messagePage(
         conversationID: UUID,
