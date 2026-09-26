@@ -1,4 +1,12 @@
-# 協作能力核對紀錄（更新至 2026-09-26）
+# 協作能力核對紀錄（更新至 2026-09-27）
+
+## 有界記憶整合診斷（2026-09-27）
+
+對照原版 SynthesisReport：production pipeline 每次 run 回報一次 committed／noWork／rejected／stale／invalidOutput／failed／cancelled，以及 evidence 數、輸入記憶數、最後有效提案變更數與 monotonic 耗時。整組 retries 共用一次回報，不把每次嘗試算成一次提交。結構不接受正文、provider error 字串、提示詞、帳號識別或憑證；輸出數值有界。格式解析錯誤明確歸為 invalidOutput。
+
+App／account 擁有獨立、僅記憶體的最近 64 筆 journal；切帳號替換實例，晚到 callback 留在舊實例，不污染新帳號。rootDiagnostics／複製診斷資訊含結果分類統計與最後一筆數量／耗時，不匯出 agent UUID。worker 容量／revision admission 丟棄另保留最多 64 筆 dropped events；其 agentID 代表新入列來源，不宣稱是被淘汰者，root 只匯出近期事件與丟棄 evidence 數。尚未處理尚未 run 的 sweep 本身失敗提示，亦不持久化背景工作歷史。
+
+pfw-testing／CustomDump 覆蓋整組成功／拒絕／格式錯誤／網路失敗／取消／stale 分類、memory／proposal 計數、固定耗時、64 筆上限、數值邊界、JSON 欄位白名單、App 私有正文不外洩及切帳號清除，以及 queue 12 筆／64 agent 淘汰回報。初次聚焦抓到 parser error 誤分類並已修正；`memory-synthesis-report-full.log` 完整非並行回歸 exit 0，`memory-synthesis-report-native.log` 原生建置 exit 0，verify-package／deep strict 簽章與 git diff --check 通過。未 push、未啟動 App 或操作真實資料。
 
 ## App 啟動與每小時日期檢視（2026-09-26）
 

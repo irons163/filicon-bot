@@ -1,5 +1,7 @@
 # Filicon / Grok Bot 0.18 功能 parity matrix（current implementation）
 
+記憶診斷（2026-09-27）：pipeline 回報一次有界結果分類／evidence／input memory／proposal change 數／monotonic 耗時；App 最近 64 筆僅記憶體 journal，切帳號替換並在 root diagnostics 匯出不含正文的摘要。queue admission 淘汰另有 64 筆上限；尚未 run 的 sweep 錯誤提示仍缺，episodic／外部服務驗收維持 partial。最終驗證見協作核對紀錄。
+
 App temporal 排程（2026-09-26）：啟動與每小時 sweep 接入 worker，每次最多新增 4 位到期且 opt-in 的代理人；排除已排隊相同 consent，跨帳號 await／保存由 generation 與 lifetime 保護。七語提示說明無新聊天仍可能產生模型費用。取代下方 startup／hourly 尚缺的歷史記述；失敗觀測、episodic、外部服務驗收仍 partial。最終驗證見協作核對紀錄。
 
 Temporal worker 接線（2026-09-26）：日期批次具有獨立可撤銷來源，App runner 傳遞日期標記，production pipeline 回報 24 小時 receipt；取消／stale 不回報。審批恢复後完整非並行測試、原生建置與封裝簽章通過，包含 7 種 worker／9 種 receipt 情境。App startup／hourly sweep 仍缺，維持 partial。

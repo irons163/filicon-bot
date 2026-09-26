@@ -173,6 +173,9 @@ private actor SynthesisAppTimer {
         try await wait { await model.isBackgroundMemorySynthesisIdle() }
         let requests = await probe.requests
         expectNoDifference(requests.count, mode == "scheduled" ? 1 : 0)
+        let diagnostic = model.rootDiagnostics()
+        #expect(diagnostic.contains(mode == "scheduled" ? "noWork=1" : "memorySynthesis=none"))
+        #expect(!diagnostic.contains("Existing preference"))
         if let request = requests.first {
             let payload = try #require(request.messages.last?.text)
             let object = try #require(JSONSerialization.jsonObject(with: Data(payload.utf8)) as? [String: Any])
@@ -195,6 +198,9 @@ private actor SynthesisAppTimer {
             try await wait { await model.isBackgroundMemorySynthesisIdle() }
             let nextDayCount = await probe.requests.count
             expectNoDifference(nextDayCount, 2)
+            #expect(model.rootDiagnostics().contains("noWork=2"))
+            await model.cancelAutoReviewApprovals(nextAccountID: "other")
+            #expect(model.rootDiagnostics().contains("memorySynthesis=none"))
         }
         model.stopMemoryTemporalReviews()
         await hourly.release()

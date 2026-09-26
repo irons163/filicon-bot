@@ -85,6 +85,28 @@ struct AgentMemorySynthesisWorkerTests {
         }
     }
 
+    @Test func queueCapacityLossIsReportedWithoutEvidenceText() async throws {
+        let clock = WorkerTime(), timers = WorkerTimers()
+        let worker = AgentMemorySynthesisWorker(now: { clock.now }, sleep: { try await timers.wait($0) }, run: { _, _ in
+            Issue.record("Pending diagnostics test must not run inference")
+        })
+        for index in 1...13 { try await worker.enqueue(settings: settings(), entry: entry(index)) }
+        let first = worker.diagnostics.snapshot()
+        expectNoDifference(first.count, 1)
+        expectNoDifference(first.first?.outcome, .dropped)
+        expectNoDifference(first.first?.evidenceCount, 1)
+        for index in 2...65 {
+            var next = AgentMemorySynthesisSettings(accountID: "local", agentID: UUID(uuidString: String(format: "00000000-0000-0000-0000-%012d", index))!)
+            next.enabled = true; next.revision = settings().revision
+            try await worker.enqueueTemporal(settings: next, sourceLifetime: .init())
+        }
+        let reports = worker.diagnostics.snapshot()
+        expectNoDifference(reports.count, 2)
+        expectNoDifference(reports.last?.evidenceCount, 12)
+        #expect(!worker.diagnostics.summary().contains("Preference"))
+        await worker.shutdown()
+    }
+
     @Test func debounceSerializesAndKeepsNewEvidenceForNextBatch() async throws {
         let clock = WorkerTime(), timers = WorkerTimers(), probe = WorkerProbe()
         let worker = AgentMemorySynthesisWorker(now: { clock.now }, sleep: { try await timers.wait($0) },

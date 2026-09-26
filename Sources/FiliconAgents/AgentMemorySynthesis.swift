@@ -28,13 +28,47 @@ extension AgentService {
                                   evidence: [AgentMemorySynthesisEvidence], temporalReview: Bool = false,
                                   at: Date, lifetime: AgentMemorySuggestionLifetime,
                                   retrySleep: @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) },
+                                  report: @Sendable (AgentMemorySynthesisReport) -> Void = { _ in },
+                                  measurementNow: @Sendable () -> ContinuousClock.Instant = { .now },
+                                  execute: @Sendable (AgentMemorySynthesisStage, String, String) async throws -> String) async throws -> AgentMemorySynthesisOutcome {
+        let measurements = AgentMemorySynthesisMeasurements(), started = measurementNow()
+        var status = AgentMemorySynthesisReport.Outcome.failed
+        defer {
+            let counts = measurements.counts(), duration = started.duration(to: measurementNow()).components
+            report(.init(outcome: status, agentID: settings.agentID, evidenceCount: evidence.count,
+                inputMemoryCount: counts.0, changeCount: counts.1,
+                durationMilliseconds: Double(duration.seconds) * 1_000 + Double(duration.attoseconds) / 1e15))
+        }
+        do {
+            let outcome = try await runMeasuredMemorySynthesis(settings: settings, evidence: evidence,
+                temporalReview: temporalReview, at: at, lifetime: lifetime, measurements: measurements,
+                retrySleep: retrySleep, execute: execute)
+            switch outcome {
+            case .committed: status = .committed
+            case .noWork: status = .noWork
+            case .rejected: status = .rejected
+            }
+            return outcome
+        } catch {
+            if error is CancellationError { status = .cancelled }
+            else if error is AgentMemorySynthesisSnapshotChanged || (error as? AgentMemorySuggestionError) == .stale { status = .stale }
+            else if error is AgentMemorySynthesisProposal.Invalid || (error as? AgentMemorySuggestionError) == .invalid { status = .invalidOutput }
+            throw error
+        }
+    }
+
+    private func runMeasuredMemorySynthesis(settings: AgentMemorySynthesisSettings,
+                                  evidence: [AgentMemorySynthesisEvidence], temporalReview: Bool,
+                                  at: Date, lifetime: AgentMemorySuggestionLifetime,
+                                  measurements: AgentMemorySynthesisMeasurements,
+                                  retrySleep: @Sendable (Duration) async throws -> Void,
                                   execute: @Sendable (AgentMemorySynthesisStage, String, String) async throws -> String) async throws -> AgentMemorySynthesisOutcome {
         try requireMemorySynthesisConsent(settings)
         let outcome: AgentMemorySynthesisOutcome
         do {
             outcome = try await synthesizeMemory(accountID: settings.accountID, agentID: settings.agentID,
                 evidence: evidence, temporalReview: temporalReview, at: at, lifetime: lifetime, settings: settings,
-                attempts: 3, retrySleep: retrySleep, execute: execute)
+                attempts: 3, measurements: measurements, retrySleep: retrySleep, execute: execute)
         } catch {
             // Snapshot races must retry against fresh state. Revocation is not a
             // completed review and must not write a receipt for an obsolete run.
@@ -56,6 +90,7 @@ extension AgentService {
                           at: Date, lifetime: AgentMemorySuggestionLifetime,
                           settings: AgentMemorySynthesisSettings? = nil,
                           attempts: Int = 1,
+                          measurements: AgentMemorySynthesisMeasurements? = nil,
                           retrySleep: @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) },
                           execute: @Sendable (AgentMemorySynthesisStage, String, String) async throws -> String) async throws -> AgentMemorySynthesisOutcome {
         try lifetime.check()
@@ -75,6 +110,7 @@ extension AgentService {
         _ = try AgentMemorySynthesisProposal.parse(#"{"changes":[]}"#, evidenceIDs: ids,
             mutableMemoryIDs: [], clockEvidenceID: clock)
         let snapshot = try memorySynthesisSnapshot(accountID: accountID, agentID: agentID)
+        measurements?.snapshotCount(snapshot.memories.count)
         guard !evidence.isEmpty || (temporalReview && !snapshot.memories.isEmpty) else { return .noWork }
         struct Fact: Encodable {
             let id: UUID; let content: String; let kind: AgentMemory.Tier
@@ -92,12 +128,14 @@ extension AgentService {
         let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601; encoder.outputFormatting = [.sortedKeys]
         let payload = String(decoding: try encoder.encode(input), as: UTF8.self)
         func proposeAndVerify() async throws -> String? {
+            measurements?.proposalCount(0)
             let proposed = try await execute(.proposal, Self.memorySynthesisInstructions, payload)
             try Task.checkCancellation()
             try lifetime.check()
             if let settings { try requireMemorySynthesisConsent(settings) }
             let parsed = try AgentMemorySynthesisProposal.parse(proposed, evidenceIDs: ids,
                 mutableMemoryIDs: snapshot.mutableMemoryIDs, clockEvidenceID: clock)
+            measurements?.proposalCount(parsed.changes.count)
             guard !parsed.changes.isEmpty else { return nil }
             // The verifier sees the exact validated proposal and original evidence,
             // in a fresh request, rather than the proposer's reasoning or verdict.

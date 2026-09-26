@@ -26,11 +26,12 @@ public struct AgentMemorySynthesisTransport: Sendable {
 
     public func run(settings: AgentMemorySynthesisSettings, evidence: [AgentMemorySynthesisEvidence],
                     temporalReview: Bool = false, at: Date, profile: AgentProfile, sessionID: UUID,
-                    lifetime: AgentMemorySuggestionLifetime) async throws -> AgentMemorySynthesisOutcome {
+                    lifetime: AgentMemorySuggestionLifetime,
+                    report: @Sendable (AgentMemorySynthesisReport) -> Void = { _ in }) async throws -> AgentMemorySynthesisOutcome {
         guard settings.agentID == profile.id else { throw AgentMemorySuggestionError.stale }
         let budget = MemorySynthesisDeadline(timeout: attemptTimeout)
         return try await agents.runMemorySynthesis(settings: settings, evidence: evidence,
-            temporalReview: temporalReview, at: at, lifetime: lifetime) { stage, instructions, payload in
+            temporalReview: temporalReview, at: at, lifetime: lifetime, report: report) { stage, instructions, payload in
                 let deadline = try await budget.deadline(for: stage)
                 return try await withThrowingTaskGroup(of: String.self) { tasks in
                     tasks.addTask {

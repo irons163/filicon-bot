@@ -313,6 +313,7 @@ final class AppModel: ObservableObject {
     private var agentMemorySuggestionUILifetime = AgentMemorySuggestionLifetime()
     private var memorySynthesisWorker: AgentMemorySynthesisWorker?
     private var memorySynthesisAccountLifetime = AgentMemorySuggestionLifetime()
+    private var memorySynthesisJournal = AgentMemorySynthesisJournal()
     private var memoryTemporalTask: Task<Void, Never>?
     var memoryTemporalNow: @Sendable () -> Date = { .now }
     var memoryTemporalSleep: @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
@@ -3053,6 +3054,7 @@ final class AppModel: ObservableObject {
 
     func rootDiagnostics(limit: Int = 4_096) -> String {
         let report = persistenceRecoveryReport
+        let memoryDrops = memorySynthesisWorker?.diagnostics.snapshot() ?? []
         let lines = [
             "root=\(dataRoot.path)",
             "route=\(startupSettlement.route.rawValue)",
@@ -3064,6 +3066,8 @@ final class AppModel: ObservableObject {
             "recoveredConversations=\(report?.recoveredConversations ?? 0)",
             "recoveredMessages=\(report?.recoveredMessages ?? 0)",
             "rejectedRows=\(report?.rejectedRows.count ?? 0)",
+            memorySynthesisJournal.summary(),
+            "memorySynthesisQueueRecentDrops=\(memoryDrops.count);evidence=\(memoryDrops.reduce(0) { $0 + $1.evidenceCount })",
         ]
         return String(lines.joined(separator: "\n").prefix(max(0, min(limit, 4_096))))
     }
@@ -4735,13 +4739,17 @@ final class AppModel: ObservableObject {
         let transport = AgentMemorySynthesisTransport(agents: agentService, registry: registry,
                                                       scheduler: agentExecutionScheduler)
         let now = memoryTemporalNow
+        let journal = memorySynthesisJournal
         let worker = memorySynthesisWorkerFactory { batch, lifetime in
             try lifetime.check()
             guard let profile = await agentService.profile(id: batch.settings.agentID), profile.archivedAt == nil else {
+                journal.append(.init(outcome: .stale, agentID: batch.settings.agentID, evidenceCount: batch.entries.count,
+                    inputMemoryCount: 0, changeCount: 0, durationMilliseconds: 0))
                 throw AgentMemorySuggestionError.stale
             }
             _ = try await transport.run(settings: batch.settings, evidence: batch.entries.map(\.evidence),
-                temporalReview: batch.temporalReview, at: now(), profile: profile, sessionID: UUID(), lifetime: lifetime)
+                temporalReview: batch.temporalReview, at: now(), profile: profile, sessionID: UUID(), lifetime: lifetime,
+                report: { journal.append($0) })
         }
         memorySynthesisWorker = worker
         return worker
@@ -6563,6 +6571,7 @@ final class AppModel: ObservableObject {
         agentMessagingAccountTransition = true
         memorySynthesisAccountLifetime.close()
         memorySynthesisAccountLifetime = .init()
+        memorySynthesisJournal = .init()
         memorySynthesisOrigins.removeAll()
         let oldMemoryWorker = memorySynthesisWorker
         memorySynthesisWorker = nil

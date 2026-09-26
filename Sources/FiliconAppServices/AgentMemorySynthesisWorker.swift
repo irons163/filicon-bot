@@ -5,6 +5,7 @@ import FiliconAgents
 /// profile and use the supplied lifetime for its final store commit. Enqueue is
 /// not permission to make a provider request. No user data is persisted here.
 public actor AgentMemorySynthesisWorker {
+    public nonisolated let diagnostics = AgentMemorySynthesisJournal()
     public typealias Runner = @Sendable (AgentMemorySynthesisQueue.Batch, AgentMemorySuggestionLifetime) async throws -> Void
     private let run: Runner
     private let now: @Sendable () -> ContinuousClock.Instant
@@ -63,6 +64,7 @@ public actor AgentMemorySynthesisWorker {
             }
         }
         let admission = try queue.enqueue(settings: settings, entry: entry, now: now())
+        recordAdmission(admission, settings: settings)
         guard admission.inserted else { return admission }
         if let sourceLifetime { sources.append(.init(settings: settings, evidenceID: entry.evidence.id, lifetime: sourceLifetime)) }
         // A new consent revision must also invalidate detached/active old work.
@@ -93,6 +95,7 @@ public actor AgentMemorySynthesisWorker {
             return .init(inserted: false, droppedAgents: 0, droppedEvidence: 0)
         }
         let admission = try queue.enqueueTemporal(settings: settings, now: now())
+        recordAdmission(admission, settings: settings)
         guard admission.inserted else { return admission }
         sources.append(.init(settings: settings, evidenceID: nil, lifetime: sourceLifetime))
         ready.removeAll { sameAgent($0.settings, settings) && $0.settings != settings }
@@ -120,6 +123,13 @@ public actor AgentMemorySynthesisWorker {
 
     private func sameAgent(_ lhs: AgentMemorySynthesisSettings, _ rhs: AgentMemorySynthesisSettings) -> Bool {
         lhs.accountID == rhs.accountID && lhs.agentID == rhs.agentID
+    }
+
+    private func recordAdmission(_ admission: AgentMemorySynthesisQueue.Admission, settings: AgentMemorySynthesisSettings) {
+        guard admission.droppedAgents > 0 || admission.droppedEvidence > 0 else { return }
+        // agentID is the incoming admission context, not the evicted agent.
+        diagnostics.append(.init(outcome: .dropped, agentID: settings.agentID,
+            evidenceCount: admission.droppedEvidence, inputMemoryCount: 0, changeCount: 0, durationMilliseconds: 0))
     }
 
     private func cancelActive() {

@@ -42,10 +42,11 @@ struct AgentMemorySynthesisTests {
             accountID: "local", agentID: owner, fact: "Existing explicit fact", createdAt: date)
         try await service.applyMemoryChange(.init(operation: .write, memory: fact), lifetime: .init())
         let token = AgentMemorySuggestionLifetime(), probe = SynthesisStageProbe()
+        let journal = AgentMemorySynthesisJournal()
         let temporal = !["committed", "chat-empty"].contains(mode)
         let operation = {
             try await service.runMemorySynthesis(settings: settings, evidence: mode == "empty" ? [] : evidence,
-                temporalReview: temporal, at: date, lifetime: token, retrySleep: { _ in }, execute: { stage, _, payload in
+                temporalReview: temporal, at: date, lifetime: token, retrySleep: { _ in }, report: { journal.append($0) }, execute: { stage, _, payload in
                     await probe.record(stage, payload)
                     if mode == "network" { throw URLError(.networkConnectionLost) }
                     if mode == "cancel" { throw CancellationError() }
@@ -67,12 +68,38 @@ struct AgentMemorySynthesisTests {
         let boundary = try await service.dueMemoryTemporalReviews(accountID: "local", at: date.addingTimeInterval(86_400))
         expectNoDifference(before, marked ? [] : [settings])
         expectNoDifference(boundary, [settings])
+        let reports = journal.snapshot()
+        expectNoDifference(reports.count, 1)
+        expectNoDifference(reports.first?.inputMemoryCount, 1)
+        if mode == "empty" || mode == "chat-empty" { expectNoDifference(reports.first?.outcome, .noWork) }
         if mode == "empty" {
             let payload = try #require(await probe.payloads.first)
             let input = try #require(JSONSerialization.jsonObject(with: Data(payload.utf8)) as? [String: Any])
             expectNoDifference(input["clockEvidenceID"] as? String, "clock")
             expectNoDifference((input["evidence"] as? [Any])?.count, 0)
         }
+    }
+
+    @Test func reportJournalIsBoundedAndContainsOnlyStructuredHostMetrics() throws {
+        let journal = AgentMemorySynthesisJournal()
+        expectNoDifference(journal.summary(), "memorySynthesis=none")
+        for index in 0..<70 {
+            journal.append(.init(outcome: .failed, agentID: owner, evidenceCount: index,
+                inputMemoryCount: 3, changeCount: 0, durationMilliseconds: 12))
+        }
+        let snapshot = journal.snapshot()
+        expectNoDifference(snapshot.count, 64)
+        expectNoDifference(snapshot.first?.evidenceCount, 6)
+        expectNoDifference(snapshot.last?.evidenceCount, 69)
+        #expect(journal.summary().contains("failed=64"))
+        let encoded = try JSONSerialization.jsonObject(with: JSONEncoder().encode(try #require(snapshot.last))) as? [String: Any]
+        expectNoDifference(Set(try #require(encoded).keys), ["outcome", "agentID", "evidenceCount", "inputMemoryCount", "changeCount", "durationMilliseconds"])
+        let bounded = AgentMemorySynthesisReport(outcome: .failed, agentID: owner, evidenceCount: -1,
+            inputMemoryCount: Int.max, changeCount: Int.max, durationMilliseconds: .infinity)
+        expectNoDifference(bounded.evidenceCount, 0)
+        expectNoDifference(bounded.inputMemoryCount, 1_000_000)
+        expectNoDifference(bounded.changeCount, 64)
+        expectNoDifference(bounded.durationMilliseconds, 0)
     }
 
     @Test(arguments: ["recover", "reject", "invalid", "transport", "cancel-delay", "disable-delay", "stale-delay"])
@@ -82,6 +109,7 @@ struct AgentMemorySynthesisTests {
         try await service.setMemorySynthesisEnabled(true, expected: initial, lifetime: .init())
         let settings = try await service.memorySynthesisSettings(accountID: "local", agentID: owner)
         let lifetime = AgentMemorySuggestionLifetime(), probe = SynthesisStageProbe()
+        let journal = AgentMemorySynthesisJournal(), instant = ContinuousClock.now
         let operation = {
             try await service.runMemorySynthesis(settings: settings, evidence: evidence, at: date, lifetime: lifetime,
                 retrySleep: { duration in
@@ -93,7 +121,7 @@ struct AgentMemorySynthesisTests {
                             accountID: "local", agentID: owner, fact: "Manual addition", createdAt: date)
                         try await service.applyMemoryChange(.init(operation: .write, memory: fact), lifetime: .init())
                     }
-                }, execute: { stage, _, payload in
+                }, report: { journal.append($0) }, measurementNow: { instant }, execute: { stage, _, payload in
                     await probe.record(stage, payload)
                     if mode == "transport" { throw URLError(.networkConnectionLost) }
                     if stage == .proposal { return mode == "invalid" ? "invalid" : proposal }
@@ -118,6 +146,18 @@ struct AgentMemorySynthesisTests {
         expectNoDifference(Set(proposals).count, 1)
         let facts = await service.memories(accountID: "local", agentID: owner)
         expectNoDifference(facts.map(\.fact), mode == "recover" ? ["Prefers short answers"] : mode == "stale-delay" ? ["Manual addition"] : [])
+        let expected: AgentMemorySynthesisReport.Outcome = switch mode {
+        case "recover": .committed
+        case "reject": .rejected
+        case "invalid": .invalidOutput
+        case "cancel-delay": .cancelled
+        case "disable-delay", "stale-delay": .stale
+        default: .failed
+        }
+        expectNoDifference(journal.snapshot(), [.init(outcome: expected, agentID: owner, evidenceCount: 1,
+            inputMemoryCount: 0, changeCount: ["invalid", "transport"].contains(mode) ? 0 : 1, durationMilliseconds: 0)])
+        let diagnostic = journal.summary()
+        #expect(!diagnostic.contains("Prefers short answers") && !diagnostic.contains("turn-1"))
     }
 
     @Test(arguments: ["approve", "reject", "numeric", "extra", "duplicate-verdict", "malformed", "oversized", "empty-proposal", "bad-proposal", "cancel-proposal", "cancel-verification", "stale", "transport"])
