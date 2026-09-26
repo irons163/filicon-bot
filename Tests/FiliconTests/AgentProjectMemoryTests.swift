@@ -172,7 +172,7 @@ struct AgentProjectMemoryTests {
         for i in 1..<8 { _ = try await write(f, fact: "Profile \(i)", tier: .profile) }
         await #expect(throws: AgentMemoryError.projectLimit) { _ = try await write(f, fact: "Overflow", agent: f.reader.id, tier: .profile) }
         for i in 8..<48 { _ = try await write(f, fact: "Log \(i)", agent: f.reader.id) }
-        await #expect(throws: AgentMemoryError.projectLimit) { _ = try await write(f, fact: "Overflow") }
+        _ = try await write(f, fact: "Retained beyond recall")
         try await membership(f, agent: f.writer.id, slug: "other")
         _ = try await write(f, fact: "Same fact", project: "other")
         try await membership(f, agent: f.writer.id, action: .leave)
@@ -182,7 +182,7 @@ struct AgentProjectMemoryTests {
         try await f.agents.archive(id: f.writer.id)
         try await f.agents.forgetMemoryFromEditor(first.memory, lifetime: .init())
         let remaining = await f.agents.projectMemoriesForEditor(accountID: "local")
-        #expect(!remaining.contains(first.memory)); expectNoDifference(remaining.count, 48)
+        #expect(!remaining.contains(first.memory)); expectNoDifference(remaining.count, 49)
     }
 
     @Test func boundedRecallSeparatesProjectDuplicatesAndSearchFencesMembershipABA() async throws {
@@ -228,10 +228,10 @@ struct AgentProjectMemoryTests {
         for i in 0..<12 {
             _ = try await write(f, fact: String(repeating: "文", count: 998) + String(format: "%02d", i), agent: i.isMultiple(of: 2) ? f.writer.id : f.reader.id)
         }
-        await #expect(throws: AgentMemoryError.projectLimit) { _ = try await write(f, fact: "x") }
+        _ = try await write(f, fact: "x")
         let stored = await f.agents.projectMemoriesForEditor(accountID: "local")
-        expectNoDifference(stored.count, 12)
-        expectNoDifference(stored.reduce(0) { $0 + $1.fact.count }, 12_000)
+        expectNoDifference(stored.count, 13)
+        expectNoDifference(stored.reduce(0) { $0 + $1.fact.count }, 12_001)
     }
 
     @Test func forgetApprovalCannotSurviveMembershipABA() async throws {

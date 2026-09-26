@@ -1702,3 +1702,6 @@
 "Source: automatic synthesis" = "출처: 자동 메모리 통합";
 "Source: episode summary" = "출처: 에피소드 요약";
 "Pending episode text could not be cleared. Episode collection for the affected conversations is blocked until cleanup succeeds. Saved memories are unchanged. Check available storage and file access, then retry the stop, deletion or account switch." = "대기 중인 에피소드 텍스트를 지울 수 없습니다. 정리가 성공할 때까지 해당 대화의 에피소드 수집이 차단됩니다. 저장된 메모리는 변경되지 않습니다. 저장 공간과 파일 접근 권한을 확인한 후 중지, 삭제 또는 계정 전환을 다시 시도하세요.";
+"Private memory supports at most 8 profile facts. Log and note history has no count limit." = "개인 기억의 기본 사실은 최대 8개입니다. 기록과 메모 이력에는 개수 제한이 없습니다.";
+"Shared user memory supports at most 8 profile facts per account. Log and note history has no count limit." = "공유 사용자 기억의 기본 사실은 계정당 최대 8개입니다. 기록과 메모 이력에는 개수 제한이 없습니다.";
+"Project memory supports at most 8 profile facts per project. Log and note history has no count limit." = "프로젝트 기억의 기본 사실은 프로젝트당 최대 8개입니다. 기록과 메모 이력에는 개수 제한이 없습니다.";

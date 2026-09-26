@@ -14,11 +14,11 @@
 
 | 面向 | 現況與證據 | 結論 |
 | --- | --- | --- |
-| 長期保存 | `AgentService` 的 explicit、suggestion、synthesis、episode 四條保存入口皆受 48 筆／12,000 字私人容量限制；另有 8 筆 profile 限制 | 不是參考的持續追加歷史 |
+| 長期保存 | `AgentService` 的 explicit、suggestion、synthesis、episode 四條保存入口已移除歷史 48 筆／12,000 字限制；私人、使用者共享與專案 scope 同步套用，仍保留 8 筆 profile 限制與單筆驗證 | 可追加歷史，但尚未完成大資料量驗收與 profile 容量對齊 |
 | 注入裁切 | `AgentMemoryRecall` 按 scope、重要性／相關性與 bytes 選取；未注入不等於刪除 | 基本區別已存在，不應為擴容取消 prompt 預算 |
-| 歷史搜尋 | `AgentMemorySearchPage` 可分頁搜尋所有可見已存事實，每頁最多 8 筆及 7,000 bytes；session 另有 32 次上限 | 不是只搜注入結果，但搜尋空間仍受保存容量限制 |
+| 歷史搜尋 | `AgentMemorySearchPage` 可分頁搜尋所有可見已存事實，每頁最多 8 筆及 7,000 bytes；session 另有 32 次上限 | 搜尋全部保存歷史，不是只搜注入結果 |
 | 抽取候選 | `AgentMemorySuggestionExtractor` 使用 `AgentMemoryExtractionContext`：私人近期 recall，加上 profile 優先／日期排序的最多 500 筆歷史候選中最相關的 10 筆；跨池正規化去重，事實陣列 JSON 上限 16,000 bytes，不截斷事實 | 抽取投影已補；500 是候選筆數，不是保存容量 |
-| 檔案 archive | 事實存在 `agents.json`，沒有原版月份記憶目錄，也沒有等價的超出 active 容量後保留區 | 尚缺，不能只提高常數就稱完成 |
+| 檔案 archive | 事實仍存在 `agents.json`；超過 recall 預算的事實不刪除，可搜尋／刪除／重開；沒有原版月份記憶目錄 | 語意上保留歷史，月份檔案與大資料量效能尚未對齊 |
 | 來源與刪除 | 已有 host episode origin、synthesis origin、顯式刪除 tombstone 與帳號／作者／project 邊界 | 新儲存層必須沿用，不能以 archive 重新喚回已忘記事實 |
 
 ## 下一階段必要驗收
@@ -30,6 +30,14 @@
 5. 加入超過 48 筆／12,000 字、歷史命中、相同內容去重、刪除重開、儲存失敗回滾、帳號／project 隔離與輸入預算測試，並驗證 UI 管理流程。
 
 此核對不新增檔案／Shell 權限，不調高真實使用者配額或擅自移動既有資料。長期記憶整體仍為 partial；上列是尚待實作的功能要求，不是已完成宣告。
+
+## 歷史保存路徑（2026-09-27）
+
+- 四條保存入口移除 48 筆／12,000 字總量拒絕條件，沿用原有單一 JSON 原子保存與失敗回滾，不新增第二份 archive 或遷移真實資料。Profile 仍限 8 筆；單筆內容、審批、tombstone、來源與 scope 驗證保留。
+- 顯式寫入改用與 suggestion／synthesis／episode 相同的正規化 fact key 去重；比較仍限同一私人／共享／專案保存範圍。
+- 新整合測試先以 explicit 保存 60 筆、超過 12,000 字，再通過 suggestion approval、兩階段 synthesis、兩階段 episode 保存；重開保留 63 筆與來源，recall 仍裁切。私人／共享測試涵蓋舊筆數及字數上限、重開、刪除再重開；專案測試涵蓋兩種舊上限與離開成員刪除。
+- 這不是全部 archive parity 完成：目前仍整份 JSON 保存；大資料量 I/O、管理介面分頁、synthesis 分批、profile 容量差異及月份檔案布局仍待处理。上方必要驗收清單是整體要求，本節只記錄已完成部分。
+- 最終完整 `swift test --no-parallel` exit 0（`.build/validation/memory-retention-final.log`），原生 Debug 建置與 App／XPC 封裝簽章驗證通過。七語限制提示已更新；沒有啟動 App 或變動真實資料。
 
 ## 抽取投影驗證（2026-09-27）
 

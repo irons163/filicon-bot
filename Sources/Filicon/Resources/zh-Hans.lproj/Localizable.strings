@@ -1702,3 +1702,6 @@
 "Source: automatic synthesis" = "来源：自动记忆整合";
 "Source: episode summary" = "来源：事件摘要";
 "Pending episode text could not be cleared. Episode collection for the affected conversations is blocked until cleanup succeeds. Saved memories are unchanged. Check available storage and file access, then retry the stop, deletion or account switch." = "无法清除待处理的事件文本。清理成功前，受影响对话不会收集事件记忆。已保存记忆保持不变。请检查可用存储空间及文件访问权限，再重试停止、删除或切换账号。";
+"Private memory supports at most 8 profile facts. Log and note history has no count limit." = "私人记忆最多可保存 8 项基础事实。记录与笔记历史不限条数。";
+"Shared user memory supports at most 8 profile facts per account. Log and note history has no count limit." = "共享用户记忆每个账号最多可保存 8 项基础事实。记录与笔记历史不限条数。";
+"Project memory supports at most 8 profile facts per project. Log and note history has no count limit." = "项目记忆每个项目最多可保存 8 项基础事实。记录与笔记历史不限条数。";

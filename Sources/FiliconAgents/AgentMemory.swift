@@ -77,13 +77,13 @@ public enum AgentMemoryError: String, LocalizedError, Sendable {
     case invalid = "Use memory write/forget with one fact of at most 1,000 characters, scope agent/user/project, and tier profile/log/note. Project scope requires an exact joined project slug. Forget requires exact recorded text, the same scope/project, and no tier."
     case stale = "This memory changed or no longer exists. Refresh the memories and request approval again."
     case duplicate = "This fact is already saved for this agent."
-    case limit = "Agent memory is limited to 48 facts, including 8 profile facts, and 12,000 characters per account and agent."
+    case limit = "Private memory supports at most 8 profile facts. Log and note history has no count limit."
     case sharedDuplicate = "This fact is already saved in shared user memory."
-    case sharedLimit = "Shared user memory is limited to 48 facts, including 8 profile facts, and 12,000 characters per account across all agents."
+    case sharedLimit = "Shared user memory supports at most 8 profile facts per account. Log and note history has no count limit."
     case unavailable = "The memory owner is unavailable."
     case projectUnavailable = "Project memory requires an active member of an existing project in this account. Use an exact project slug with scope project only."
     case projectDuplicate = "This fact is already saved in this project's shared memory."
-    case projectLimit = "Each project's shared memory is limited to 48 facts, including 8 foundational facts, and 12,000 characters across all writers in this account."
+    case projectLimit = "Project memory supports at most 8 profile facts per project. Log and note history has no count limit."
     public var errorDescription: String? { rawValue }
 }
 

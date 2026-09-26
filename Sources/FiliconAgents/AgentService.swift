@@ -449,9 +449,6 @@ public actor AgentService {
                   !saved.contains(where: { AgentMemorySuggestionParser.key($0.fact) == AgentMemorySuggestionParser.key(narrative) }) else {
                 return .noWork
             }
-            guard saved.count < 48, saved.reduce(0, { $0 + $1.fact.count }) + narrative.count <= 12_000 else {
-                throw AgentMemoryError.limit
-            }
             state.memories.append(memory)
             try persist()
             return .committed
@@ -542,8 +539,7 @@ public actor AgentService {
                         state.memoryTombstones.remove(.init(duplicate))
                     }
                 } else {
-                    guard saved.count < 48, saved.reduce(0, { $0 + $1.fact.count }) + suggestion.fact.count <= 12_000,
-                          suggestion.tier != .profile || saved.filter({ $0.tier == .profile }).count < 8 else { throw AgentMemoryError.limit }
+                    guard suggestion.tier != .profile || saved.filter({ $0.tier == .profile }).count < 8 else { throw AgentMemoryError.limit }
                     let memory = AgentMemory(accountID: suggestion.accountID, agentID: suggestion.agentID,
                         fact: suggestion.fact, tier: suggestion.tier)
                     state.memories.append(memory)
@@ -599,8 +595,7 @@ public actor AgentService {
                 }
                 next.append(memory)
             }
-            guard next.count <= 48, next.filter({ $0.tier == .profile }).count <= 8,
-                  next.reduce(0, { $0 + $1.fact.count }) <= 12_000 else { throw AgentMemoryError.limit }
+            guard next.filter({ $0.tier == .profile }).count <= 8 else { throw AgentMemoryError.limit }
             guard next != expected.memories else { return }
             // No intermediate mutation, suspension, or partial write.
             state.memories.removeAll { $0.accountID == expected.accountID && $0.agentID == expected.agentID && $0.scope == .agent }
@@ -705,11 +700,11 @@ public actor AgentService {
                 case .agent: current = memories(accountID: memory.accountID, agentID: memory.agentID)
                 case .project: current = state.memories.filter { $0.accountID == memory.accountID && $0.scope == .project && $0.project == memory.project }
                 }
-                guard !current.contains(where: { $0.fact == memory.fact }), !state.memories.contains(where: { $0.id == memory.id }) else {
+                guard !current.contains(where: { AgentMemorySuggestionParser.key($0.fact) == AgentMemorySuggestionParser.key(memory.fact) }),
+                      !state.memories.contains(where: { $0.id == memory.id }) else {
                     throw memory.scope == .project ? AgentMemoryError.projectDuplicate : memory.scope == .user ? AgentMemoryError.sharedDuplicate : AgentMemoryError.duplicate
                 }
-                guard current.count < 48, current.reduce(0, { $0 + $1.fact.count }) + memory.fact.count <= 12_000,
-                      memory.tier != .profile || current.filter({ $0.tier == .profile }).count < 8 else {
+                guard memory.tier != .profile || current.filter({ $0.tier == .profile }).count < 8 else {
                     throw memory.scope == .project ? AgentMemoryError.projectLimit : memory.scope == .user ? AgentMemoryError.sharedLimit : AgentMemoryError.limit
                 }
                 state.memories.append(memory)

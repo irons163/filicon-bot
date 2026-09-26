@@ -32,6 +32,50 @@ struct AgentMemorySynthesisTests {
         return (root, try AgentService(storeURL: file))
     }
 
+    @Test func allWritersRetainHistoryPastFormerCapacity() async throws {
+        let (root, service) = try fixture(); defer { try? FileManager.default.removeItem(at: root) }
+        for index in 0..<60 {
+            try await service.applyMemoryChange(.init(operation: .write, memory: .init(accountID: "local",
+                agentID: owner, fact: "History \(index) " + String(repeating: "x", count: 250), createdAt: date)), lifetime: .init())
+        }
+        let original = await service.memories(accountID: "local", agentID: owner)
+        #expect(original.reduce(0) { $0 + $1.fact.count } > 12_000)
+        let disabled = try await service.memorySuggestions(accountID: "local", agentID: owner).settings
+        try await service.setMemorySuggestionsEnabled(true, expected: disabled, lifetime: .init())
+        let settings = try await service.memorySuggestions(accountID: "local", agentID: owner).settings
+        let exchange = UUID(uuidString: "00000000-0000-0000-0000-000000000100")!
+        let suggestion = AgentMemorySuggestion(accountID: "local", agentID: owner, exchangeID: exchange,
+            fact: "Human approved history", evidence: "Human approved history", tier: .log, createdAt: date)
+        try await service.recordMemorySuggestions([suggestion], settings: settings, exchangeID: exchange, lifetime: .init())
+        try await service.reviewMemorySuggestion(suggestion, accept: true, lifetime: .init())
+        let result = try await service.synthesizeMemory(accountID: "local", agentID: owner,
+            evidence: evidence, at: date, lifetime: .init()) { stage, _, _ in
+                stage == .proposal ? proposal : #"{"approved":true}"#
+            }
+        expectNoDifference(result, .committed)
+        let initial = try await service.memoryEpisodeSettings(accountID: "local", agentID: owner)
+        try await service.setMemoryEpisodesEnabled(true, expected: initial, lifetime: .init())
+        let episode = try await service.memoryEpisodeSettings(accountID: "local", agentID: owner)
+        for index in 0..<6 {
+            let turn = UUID(uuidString: String(format: "00000000-0000-0000-0001-%012d", index))!
+            try await service.recordMemoryEpisode(settings: episode, originID: exchange, exchangeID: turn,
+                at: date, user: "Design an accessible site", assistant: "Agreed on keyboard navigation", lifetime: .init())
+        }
+        let summarized = try await service.runMemoryEpisode(settings: episode, originID: exchange, lifetime: .init()) { stage, _, _ in
+            stage == .proposal ? "Agreed on keyboard navigation for the site." : #"{"approved":true}"#
+        }
+        expectNoDifference(summarized, .committed)
+        let reopened = try AgentService(storeURL: root.appending(path: "agents.json"))
+        let saved = await reopened.memories(accountID: "local", agentID: owner)
+        expectNoDifference(saved.count, 63)
+        #expect(Set(original.map(\.id)).isSubset(of: Set(saved.map(\.id))))
+        expectNoDifference(saved.filter { $0.origin == .synthesis }.count, 1)
+        expectNoDifference(saved.filter { $0.origin == .episode }.count, 1)
+        let recall = try AgentMemoryRecall(memories: saved, accountID: "local", agentID: owner)
+        #expect(recall.memories.count < saved.count)
+        #expect(recall.factsJSON.utf8.count <= 12_000)
+    }
+
     @Test(arguments: ["empty", "rejected", "invalid", "network", "cancel", "revoked", "snapshot", "committed", "chat-empty"])
     func completionUpdatesOnlyEligibleTemporalReceipts(mode: String) async throws {
         let (root, service) = try fixture(); defer { try? FileManager.default.removeItem(at: root) }

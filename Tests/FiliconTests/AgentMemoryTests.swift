@@ -204,7 +204,7 @@ struct AgentMemoryTests {
     }
 
     @Test(arguments: ["facts", "profile", "characters"], [AgentMemory.Scope.agent, .user])
-    func boundedStoreDoesNotEvictExistingFacts(mode: String, scope: AgentMemory.Scope) async throws {
+    func historyOutgrowsRecallWithoutEvictingFacts(mode: String, scope: AgentMemory.Scope) async throws {
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
         let count = mode == "facts" ? 48 : mode == "profile" ? 8 : 12
         for number in 0..<count {
@@ -216,11 +216,23 @@ struct AgentMemoryTests {
         let before = await f.agents.memoryContext(accountID: "local", agentID: f.owner.id)
         expectNoDifference(before.count, count)
         let extra = AgentMemory(accountID: "local", agentID: f.owner.id, fact: "Over limit", tier: mode == "profile" ? .profile : .log, scope: scope)
-        await #expect(throws: scope == .user ? AgentMemoryError.sharedLimit : AgentMemoryError.limit) {
+        if mode == "profile" {
+            await #expect(throws: scope == .user ? AgentMemoryError.sharedLimit : AgentMemoryError.limit) {
+                try await f.agents.applyMemoryChange(.init(operation: .write, memory: extra), lifetime: .init())
+            }
+        } else {
             try await f.agents.applyMemoryChange(.init(operation: .write, memory: extra), lifetime: .init())
         }
         let after = await f.agents.memoryContext(accountID: "local", agentID: f.owner.id)
-        expectNoDifference(after, before)
+        expectNoDifference(Set(after.map(\.id)), Set((mode == "profile" ? before : before + [extra]).map(\.id)))
+        let reopened = try AgentService(storeURL: f.file)
+        let durable = await reopened.memoryContext(accountID: "local", agentID: f.owner.id)
+        expectNoDifference(durable.map(\.id), after.map(\.id))
+        let oldest = try #require(durable.first)
+        try await reopened.forgetMemoryFromEditor(oldest, lifetime: .init())
+        let again = try AgentService(storeURL: f.file)
+        let remaining = await again.memoryContext(accountID: "local", agentID: f.owner.id)
+        expectNoDifference(Set(remaining.map(\.id)), Set(after.map(\.id)).subtracting([oldest.id]))
     }
 
     @Test func forgettingSurvivesDateRoundTripAndPersistenceFailureWithoutRemovingReplacement() async throws {

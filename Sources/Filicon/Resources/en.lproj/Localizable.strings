@@ -1702,3 +1702,6 @@
 "Source: automatic synthesis" = "Source: automatic synthesis";
 "Source: episode summary" = "Source: episode summary";
 "Pending episode text could not be cleared. Episode collection for the affected conversations is blocked until cleanup succeeds. Saved memories are unchanged. Check available storage and file access, then retry the stop, deletion or account switch." = "Pending episode text could not be cleared. Episode collection for the affected conversations is blocked until cleanup succeeds. Saved memories are unchanged. Check available storage and file access, then retry the stop, deletion or account switch.";
+"Private memory supports at most 8 profile facts. Log and note history has no count limit." = "Private memory supports at most 8 profile facts. Log and note history has no count limit.";
+"Shared user memory supports at most 8 profile facts per account. Log and note history has no count limit." = "Shared user memory supports at most 8 profile facts per account. Log and note history has no count limit.";
+"Project memory supports at most 8 profile facts per project. Log and note history has no count limit." = "Project memory supports at most 8 profile facts per project. Log and note history has no count limit.";
