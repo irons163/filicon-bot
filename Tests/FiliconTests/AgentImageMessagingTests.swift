@@ -43,6 +43,8 @@ private struct ImagePeerProvider: InteractiveToolProvider {
 }
 
 private actor ImagePeerProbe {
+    var directImages: [AttachmentMetadata] = []
+    func setDirectImages(_ images: [AttachmentMetadata]) { directImages = images }
     var requests: [InferenceRequest] = []
     var approvals: [[AttachmentMetadata]] = []
     func request(_ value: InferenceRequest) -> Int { requests.append(value); return requests.count }
@@ -97,6 +99,49 @@ private func forwardImage(_ target: UUID, ids: [String], id: ToolCallID = "forwa
 
 @Suite("Peer image storage and delivery", .timeLimit(.minutes(1)))
 struct AgentImageMessagingTests {
+    @Test(arguments: ["valid", "stale", "denied", "wrong-owner", "wrong-account", "foreign-image", "no-directory", "closed"])
+    func directImagesRequireCurrentHostDirectoryAndFreshApproval(mode: String) async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let bytes = try peerImageBytes()
+        let image = try await f.store.importImage(data: bytes, filename: "current.png")
+        let foreign = try await f.store.importImage(data: peerImageBytes(shade: 0.75), filename: "old.png")
+        await f.probe.setDirectImages(mode == "no-directory" ? [] : [image])
+        await f.registry.register(ImagePeerProvider { request, _ in
+            _ = await f.probe.request(request)
+            let attached = request.messages.filter { !$0.attachments.isEmpty }
+            let transport = try #require(attached.last)
+            expectNoDifference(request.attachmentsByMessageID[transport.id]?.map(\.data), [bytes])
+            return "Reviewed"
+        })
+        let session = AgentMessagingSession(originConversationID: f.origin, agents: f.agents,
+            messenger: f.messenger, registry: f.registry,
+            coordinator: TurnCoordinator(registry: f.registry, toolCatalog: ToolCatalog()),
+            directOriginBinding: .init(accountID: mode == "wrong-account" ? "other" : "local",
+                agentID: mode == "wrong-owner" ? f.recipient.id : f.sender.id),
+            directRequestImages: { await f.probe.directImages }, imageStore: f.store,
+            authorizeImages: { _, _, _, images, _, _ in
+                await f.probe.approve(images)
+                if mode == "denied" { throw AgentMessagingError.approvalRequired }
+                if mode == "stale" { await f.probe.setDirectImages([]) }
+            })
+        if mode == "closed" { try await session.close() }
+        let call = try forwardImage(f.recipient.id, ids: [mode == "foreign-image" ? foreign.id : image.id])
+        if ["wrong-account", "closed"].contains(mode) {
+            await #expect(throws: AgentMessagingError.self) {
+                _ = try await session.tool(for: f.sender.id).execute(call, context: .init(conversationID: f.origin))
+            }
+        } else {
+            let result = try await session.tool(for: f.sender.id).execute(call, context: .init(conversationID: f.origin))
+            expectNoDifference(result.isError, mode != "valid")
+        }
+        if mode == "valid" { try await session.drain() }
+        let messages = await f.messenger.allMessages()
+        expectNoDifference(messages.count, mode == "valid" ? 1 : 0)
+        let requests = await f.probe.requests, approvals = await f.probe.approvals
+        expectNoDifference(requests.count, mode == "valid" ? 1 : 0)
+        expectNoDifference(approvals.count, ["valid", "stale", "denied"].contains(mode) ? 1 : 0)
+    }
+
     private struct Fixture {
         let root: URL
         let agents: AgentService

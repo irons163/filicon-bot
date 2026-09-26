@@ -1,5 +1,13 @@
 # 協作能力核對紀錄（更新至 2026-09-26）
 
+## 直接當輪圖片目錄契約（2026-09-26）
+
+`AgentMessagingSession` 新增可選 host-owned `directRequestImages` callback。只有 direct binding 同帳號、同前景 sender，且不是群組請求或 peer incoming 的工具才能取用。核准後重新取得目錄，沿用完整 metadata 比對、blob 驗證及獨立圖片核准；沒有 callback 的問答／憑證續接 session 不繼承圖片。callback 應由 host 綁定當輪真實人類訊息並重驗生命週期，不能從模型參數或歷史任意推導。
+
+八類 fixture 覆蓋有效送達與實際推論 bytes、核准期間目錄失效、拒絕、錯誤 owner／account、非當輪圖片、空目錄、停止。使用 pfw-testing 隔離資料與 CustomDump 檢查佇列／核准／推論次數。這批只補 session 契約，尚未在 App factory 啟用；圖片匯入、附件投影／持久化／恢復與實際 UI 仍待接線，不宣稱直接圖片功能完成。
+
+驗證：初次 fixture 修正 actor 快照讀取與既有 scope／closed 拋錯預期後，`direct-image-directory-full.log` 完整非並行回歸 exit 0，八類新增案例通過；`direct-image-directory-native.log` 原生 Debug 建置與 verify-package／deep strict 簽章通過。未 push 或啟動使用者 App。
+
 ## 直接同儕圖片缺口的實際接線核對（2026-09-26）
 
 本次為唯讀核對，不宣稱圖片能力已完成。原始 `source/host/agents/agent-messaging.ts` 明確描述 SendToAgent 的圖片送達、收件者推論可見，以及圖片可再經 SendMessage／SendToAgent 轉交。它接受 file／HTTPS 來源；Filicon 目前的 host 圖片 ID 契約不能代表完整原版來源能力。

@@ -64,6 +64,9 @@ public actor AgentMessagingSession {
     private var activeGroupID: UUID?
     private let accountID: String
     private let directOriginBinding: DirectConversationAgentBinding?
+    /// Host-owned current human-request directory. Re-evaluated after approval;
+    /// never used by peer wakes or human question/credential response sessions.
+    private let directRequestImages: (@Sendable () async throws -> [AttachmentMetadata])?
     private let supportsMailboxQuestions: Bool
     public typealias SecretPublisher = @Sendable (AgentSecretRequest, AgentMessage, UUID?, AgentPublicationLifetime) async throws -> RoomMessage
     private let publishSecret: SecretPublisher?
@@ -103,6 +106,7 @@ public actor AgentMessagingSession {
                 registry: ProviderRegistry, coordinator: TurnCoordinator, turnTimeout: Duration = .seconds(180),
                 conversations: AgentConversationStore? = nil, accountID: String = "local", management: AgentManagementSession? = nil,
                 directOriginBinding: DirectConversationAgentBinding? = nil,
+                directRequestImages: (@Sendable () async throws -> [AttachmentMetadata])? = nil,
                 memoryExtractor: AgentMemorySuggestionExtractor? = nil,
                 supportsMailboxQuestions: Bool = false,
                 publishSecret: SecretPublisher? = nil,
@@ -119,6 +123,7 @@ public actor AgentMessagingSession {
         self.agents = agents; self.messenger = messenger; self.registry = registry; self.coordinator = coordinator
         self.conversations = conversations; self.accountID = accountID
         self.directOriginBinding = directOriginBinding
+        self.directRequestImages = directRequestImages
         self.supportsMailboxQuestions = supportsMailboxQuestions
         self.publishSecret = publishSecret
         self.management = management
@@ -231,6 +236,12 @@ public actor AgentMessagingSession {
 
     fileprivate func availableImages(senderID: UUID, replyTo: AgentMessage?, groupUserMessageID: UUID?) async throws -> [AttachmentMetadata] {
         try checkOpen()
+        if replyTo == nil, groupUserMessageID == nil, let binding = directOriginBinding {
+            guard binding.accountID == accountID, binding.agentID == senderID else { throw AgentImageError.unavailable }
+            let images = try await directRequestImages?() ?? []
+            try checkOpen()
+            return images
+        }
         if let groupUserMessageID {
             guard replyTo == nil, let groups else { throw AgentImageError.unavailable }
             let images = try await groups.imagesForCurrentUserRequest(groupID: originConversationID,
