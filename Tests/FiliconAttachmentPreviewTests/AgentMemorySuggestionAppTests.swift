@@ -125,6 +125,19 @@ private actor SynthesisAppTimer {
         return .init(root: root, model: model, owner: owner, peer: peer, group: try #require(model.groups.first))
     }
 
+    @Test func temporalSweepFailureIsPrivateAndAccountScoped() async throws {
+        let f = try await fixture()
+        defer { try? FileManager.default.removeItem(at: f.root) }
+        f.model.memoryTemporalNow = { Date(timeIntervalSince1970: .nan) }
+        await f.model.sweepMemoryTemporalReviews()
+        #expect(f.model.rootDiagnostics().contains("memoryTemporalSweep[recent=1]=failed=1,cancelled=0"))
+        f.model.memoryTemporalNow = { Date(timeIntervalSince1970: 1_900_000_000) }
+        await f.model.sweepMemoryTemporalReviews()
+        #expect(f.model.rootDiagnostics().contains("memoryTemporalSweep[recent=1]"))
+        await f.model.cancelAutoReviewApprovals(nextAccountID: "other")
+        #expect(!f.model.rootDiagnostics().contains("memoryTemporalSweep"))
+    }
+
     @Test(arguments: ["scheduled", "account", "disabled"])
     func startupAndHourlyTemporalReviewRemainAccountFenced(mode: String) async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "temporal-app-\(UUID())")

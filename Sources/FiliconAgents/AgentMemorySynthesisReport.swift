@@ -26,8 +26,10 @@ public struct AgentMemorySynthesisReport: Encodable, Equatable, Sendable {
 /// One App/account owns one journal. Replacing it on account transition also
 /// isolates late callbacks still holding the old journal. Never persisted.
 public final class AgentMemorySynthesisJournal: @unchecked Sendable {
+    public enum SweepOutcome: String, Sendable { case failed, cancelled }
     private let lock = NSLock()
     private var reports: [AgentMemorySynthesisReport] = []
+    private var sweeps: [SweepOutcome] = []
     public init() {}
     public func append(_ report: AgentMemorySynthesisReport) {
         lock.withLock {
@@ -36,12 +38,22 @@ public final class AgentMemorySynthesisJournal: @unchecked Sendable {
         }
     }
     public func snapshot() -> [AgentMemorySynthesisReport] { lock.withLock { reports } }
+    /// Scheduling failures have no agent identity and must not fabricate one.
+    public func recordSweep(_ outcome: SweepOutcome) {
+        lock.withLock {
+            sweeps.append(outcome)
+            if sweeps.count > 64 { sweeps.removeFirst(sweeps.count - 64) }
+        }
+    }
     public func summary() -> String {
         let values = snapshot()
+        let sweepValues = lock.withLock { sweeps }
+        let sweepSummary = sweepValues.isEmpty ? "" :
+            "\nmemoryTemporalSweep[recent=\(sweepValues.count)]=failed=\(sweepValues.filter { $0 == .failed }.count),cancelled=\(sweepValues.filter { $0 == .cancelled }.count)"
         let counts = Dictionary(grouping: values, by: \.outcome).map { "\($0.key.rawValue)=\($0.value.count)" }.sorted()
-        guard let last = values.last else { return "memorySynthesis=none" }
+        guard let last = values.last else { return "memorySynthesis=none" + sweepSummary }
         return "memorySynthesis[recent=\(values.count)]=\(counts.joined(separator: ","))\n" +
-            "memorySynthesisLast=\(last.outcome.rawValue);evidence=\(last.evidenceCount);memories=\(last.inputMemoryCount);changes=\(last.changeCount);ms=\(Int(last.durationMilliseconds))"
+            "memorySynthesisLast=\(last.outcome.rawValue);evidence=\(last.evidenceCount);memories=\(last.inputMemoryCount);changes=\(last.changeCount);ms=\(Int(last.durationMilliseconds))" + sweepSummary
     }
 }
 

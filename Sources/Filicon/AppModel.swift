@@ -4779,6 +4779,8 @@ final class AppModel: ObservableObject {
         let account = settings.accountScope ?? "local"
         let generation = autoReviewAccountGeneration
         let token = memorySynthesisAccountLifetime
+        // Capture before suspension: a late failure belongs to the old account.
+        let journal = memorySynthesisJournal
         do {
             try token.check()
             let pending = await memorySynthesisWorker?.pendingTemporalSettings() ?? []
@@ -4791,7 +4793,13 @@ final class AppModel: ObservableObject {
                       let worker = backgroundMemorySynthesisWorker() else { return }
                 try await worker.enqueueTemporal(settings: setting, sourceLifetime: token)
             }
-        } catch { /* Background review must not replace a foreground error or reply. */ }
+        } catch is CancellationError {
+            journal.recordSweep(.cancelled)
+        } catch {
+            // No raw error (which may contain private paths or content), and no
+            // replacement of the foreground error/reply.
+            journal.recordSweep(.failed)
+        }
     }
 
     deinit {

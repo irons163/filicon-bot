@@ -80,6 +80,14 @@ struct AgentMemorySynthesisTests {
         }
     }
 
+    @Test func sweepDiagnosticsRemainBoundedAndSeparateFromModelRuns() {
+        let journal = AgentMemorySynthesisJournal()
+        for _ in 0..<70 { journal.recordSweep(.failed) }
+        journal.recordSweep(.cancelled)
+        expectNoDifference(journal.snapshot(), [])
+        expectNoDifference(journal.summary(), "memorySynthesis=none\nmemoryTemporalSweep[recent=64]=failed=63,cancelled=1")
+    }
+
     @Test func reportJournalIsBoundedAndContainsOnlyStructuredHostMetrics() throws {
         let journal = AgentMemorySynthesisJournal()
         expectNoDifference(journal.summary(), "memorySynthesis=none")
