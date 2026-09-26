@@ -2,7 +2,17 @@
 
 核對日期：2026-09-27。參考 `grok-bot-0.18-reconstructed` commit `a9f633e09d49a85829b8236331b9e21f7e612634`；Filicon 基準 `94937dd`。原始碼核對，不是真實模型或 UI 驗收。
 
+## Profile 保存修正（2026-09-27）
+
+- Explicit（私人／使用者共享／專案）、suggestion approval、verified synthesis 不再拒絕第 9 筆 profile；單筆驗證、來源、審批、tombstone、完整 snapshot fence 與 recall 預算保持不變。模型工具說明同步移除舊保存上限。
+- 私人／共享測試涵蓋第 9 筆保存、搜尋、重開與刪除；專案測試涵蓋跨作者第 9 筆。多來源測試以 8 筆 profile 起始，suggestion 與 synthesis 各追加一筆，重開確認 10 筆 profile／63 筆總歷史。
+- 下方「仍保留 8 筆 profile 限制」屬先前進度，已由本節取代。Recall 仍有界；不宣稱注入數量與原版完全相同，也不因內部 JSON／月份檔案格式不同就要求重寫儲存層。
+- 後續已定位的注入差異：原版 `sand-memory.ts` 的私人／使用者／專案 profile 筆數為 100／50／25；Filicon 目前各 8 筆並另有 JSON bytes 預算，專案池也是合併而非逐專案選取。這是下一項行為核對，不可把提高筆數等同取消 payload 預算或擴大 project 可見性。
+- 驗證：完整非並行 Swift 測試 exit 0（`.build/validation/memory-profile-retention-full.log`）、原生 Debug build exit 0 與 `verify-package.sh --xcode-debug` 通過。未啟動 App、使用真實模型或修改實際帳號資料。
+
 ## 參考實際行為
+
+- Profile 保存也沒有 8 筆限制；`profileLimit`／`MEMORY_PROFILE_PROMPT_LIMIT` 限制的是模型注入選取，不是 `addMemory()` 的保存容量。
 
 - `source/host/extensions/memory/memory-service.ts` 的 `FileMemoryStore.facts()` 讀取 `profile.md` 與所有月份 log 檔；`addMemory()` 正規化／去重後追加對應月份檔案，這條路徑沒有 48 筆或 12,000 字儲存上限。
 - 同檔 `listMemories(limit = 100)` 是一次讀取結果的限制，先 profile、再日期排序，不是保留容量。`recall` 同樣只裁切注入結果，不刪檔案中的歷史。

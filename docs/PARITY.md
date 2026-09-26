@@ -1,6 +1,6 @@
 # Filicon / Grok Bot 0.18 功能 parity matrix（current implementation）
 
-最新記憶核對（2026-09-27，`94937dd`）：episodic 的獨立七語 consent、跨回合進度、六回合摘要／獨立驗證、host 來源權重與 UI、App direct／group 接線及清理復原紀錄已實作並有隔離測試。下方同日及更早「尚缺」記述為歷史進度，以 [Episodic-memory-parity.md](Episodic-memory-parity.md) 後續段落為準。整體仍 partial：四條記憶保存入口已移除 48 筆／12,000 字歷史總量限制，保留 8 筆 profile 與有界 recall／search／抽取，新增 63 筆多來源重開測試；仍不等價於參考月份 log，人類管理頁已接每頁 20 筆與七語控制項；synthesis 已對齊原版最多 512 候選與完整歷史 stale fence（原版不逐批遍歷），另有 64,000-byte 投影上限；磁碟 I/O、profile 容量與月份檔案差異仍待核對。原版 500 是抽取掃描上限而非儲存容量。下一階段明確驗收見 [Memory-archive-parity.md](Memory-archive-parity.md)。復原紀錄自身無法落盤與 UI 事件尚未送达 service 就崩潰的邊界、真實模型／UI／外部服務驗收仍保留。
+最新記憶核對（2026-09-27，`94937dd`）：episodic 的獨立七語 consent、跨回合進度、六回合摘要／獨立驗證、host 來源權重與 UI、App direct／group 接線及清理復原紀錄已實作並有隔離測試。下方同日及更早「尚缺」記述為歷史進度，以 [Episodic-memory-parity.md](Episodic-memory-parity.md) 後續段落為準。整體仍 partial：四條記憶保存入口已移除 48 筆／12,000 字歷史總量限制，另已移除 8 筆 profile 保存限制，保留有界 recall／search／抽取，新增 63 筆多來源重開測試；仍不等價於參考月份 log，人類管理頁已接每頁 20 筆與七語控制項；synthesis 已對齊原版最多 512 候選與完整歷史 stale fence（原版不逐批遍歷），另有 64,000-byte 投影上限；注入選取差異與大資料量磁碟 I/O 仍待核對；月份檔案布局差異本身不等同缺少使用者功能。原版 500 是抽取掃描上限而非儲存容量。下一階段明確驗收見 [Memory-archive-parity.md](Memory-archive-parity.md)。復原紀錄自身無法落盤與 UI 事件尚未送达 service 就崩潰的邊界、真實模型／UI／外部服務驗收仍保留。
 
 Sweep 診斷（2026-09-27）：背景日期檢查在 runner 啟動前發生的失敗／取消，已接入獨立最近 64 筆分類摘要，不偽造 agent ID、不保存原始錯誤或路徑、不覆蓋前景錯誤；await 前捕捉 account journal，避免晚到結果污染新帳號。這是 diagnostics，不是使用者通知或自動重試；episodic 與外部驗收仍 partial。
 

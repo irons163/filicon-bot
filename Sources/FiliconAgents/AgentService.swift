@@ -539,7 +539,6 @@ public actor AgentService {
                         state.memoryTombstones.remove(.init(duplicate))
                     }
                 } else {
-                    guard suggestion.tier != .profile || saved.filter({ $0.tier == .profile }).count < 8 else { throw AgentMemoryError.limit }
                     let memory = AgentMemory(accountID: suggestion.accountID, agentID: suggestion.agentID,
                         fact: suggestion.fact, tier: suggestion.tier)
                     state.memories.append(memory)
@@ -595,7 +594,6 @@ public actor AgentService {
                 }
                 next.append(memory)
             }
-            guard next.filter({ $0.tier == .profile }).count <= 8 else { throw AgentMemoryError.limit }
             guard next != expected.memories else { return }
             // No intermediate mutation, suspension, or partial write.
             state.memories.removeAll { $0.accountID == expected.accountID && $0.agentID == expected.agentID && $0.scope == .agent }
@@ -715,9 +713,6 @@ public actor AgentService {
                 guard !current.contains(where: { AgentMemorySuggestionParser.key($0.fact) == AgentMemorySuggestionParser.key(memory.fact) }),
                       !state.memories.contains(where: { $0.id == memory.id }) else {
                     throw memory.scope == .project ? AgentMemoryError.projectDuplicate : memory.scope == .user ? AgentMemoryError.sharedDuplicate : AgentMemoryError.duplicate
-                }
-                guard memory.tier != .profile || current.filter({ $0.tier == .profile }).count < 8 else {
-                    throw memory.scope == .project ? AgentMemoryError.projectLimit : memory.scope == .user ? AgentMemoryError.sharedLimit : AgentMemoryError.limit
                 }
                 state.memories.append(memory)
                 state.memoryTombstones.remove(.init(memory))

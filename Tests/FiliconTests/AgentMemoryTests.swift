@@ -216,18 +216,19 @@ struct AgentMemoryTests {
         let before = await f.agents.memoryContext(accountID: "local", agentID: f.owner.id)
         expectNoDifference(before.count, count)
         let extra = AgentMemory(accountID: "local", agentID: f.owner.id, fact: "Over limit", tier: mode == "profile" ? .profile : .log, scope: scope)
-        if mode == "profile" {
-            await #expect(throws: scope == .user ? AgentMemoryError.sharedLimit : AgentMemoryError.limit) {
-                try await f.agents.applyMemoryChange(.init(operation: .write, memory: extra), lifetime: .init())
-            }
-        } else {
-            try await f.agents.applyMemoryChange(.init(operation: .write, memory: extra), lifetime: .init())
-        }
+        try await f.agents.applyMemoryChange(.init(operation: .write, memory: extra), lifetime: .init())
         let after = await f.agents.memoryContext(accountID: "local", agentID: f.owner.id)
-        expectNoDifference(Set(after.map(\.id)), Set((mode == "profile" ? before : before + [extra]).map(\.id)))
+        expectNoDifference(Set(after.map(\.id)), Set((before + [extra]).map(\.id)))
+        if mode == "profile" {
+            let recall = try AgentMemoryRecall(memories: after, accountID: "local", agentID: f.owner.id)
+            #expect(recall.memories.count <= 8)
+        }
         let reopened = try AgentService(storeURL: f.file)
         let durable = await reopened.memoryContext(accountID: "local", agentID: f.owner.id)
         expectNoDifference(durable.map(\.id), after.map(\.id))
+        let search = try AgentMemorySearchPage(memories: durable, accountID: "local", agentID: f.owner.id, query: "Over limit")
+        expectNoDifference(search.totalMatches, 1)
+        expectNoDifference(search.facts.map(\.fact), [extra.fact])
         let oldest = try #require(durable.first)
         try await reopened.forgetMemoryFromEditor(oldest, lifetime: .init())
         let again = try AgentService(storeURL: f.file)

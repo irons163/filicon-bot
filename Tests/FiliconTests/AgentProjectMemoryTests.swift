@@ -170,7 +170,7 @@ struct AgentProjectMemoryTests {
         let first = try await write(f, fact: "Same fact", tier: .profile)
         await #expect(throws: AgentMemoryError.projectDuplicate) { _ = try await write(f, fact: "Same fact", agent: f.reader.id) }
         for i in 1..<8 { _ = try await write(f, fact: "Profile \(i)", tier: .profile) }
-        await #expect(throws: AgentMemoryError.projectLimit) { _ = try await write(f, fact: "Overflow", agent: f.reader.id, tier: .profile) }
+        _ = try await write(f, fact: "Ninth foundation", agent: f.reader.id, tier: .profile)
         for i in 8..<48 { _ = try await write(f, fact: "Log \(i)", agent: f.reader.id) }
         _ = try await write(f, fact: "Retained beyond recall")
         try await membership(f, agent: f.writer.id, slug: "other")
@@ -182,7 +182,7 @@ struct AgentProjectMemoryTests {
         try await f.agents.archive(id: f.writer.id)
         try await f.agents.forgetMemoryFromEditor(first.memory, lifetime: .init())
         let remaining = await f.agents.projectMemoriesForEditor(accountID: "local")
-        #expect(!remaining.contains(first.memory)); expectNoDifference(remaining.count, 49)
+        #expect(!remaining.contains(first.memory)); expectNoDifference(remaining.count, 50)
         var paged: [AgentMemory] = []
         for index in 0..<3 {
             let page = await f.agents.memoryEditorPage(accountID: "local", agentID: f.reader.id, scope: .project, index: index)
