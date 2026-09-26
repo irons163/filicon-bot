@@ -94,6 +94,45 @@ struct AgentMemorySynthesisTransportTests {
         expectNoDifference(progress?.turns.count, 0)
     }
 
+    @Test(arguments: ["enabled", "disabled", "stop", "parent", "unprepared", "pass", "synthesis"])
+    func foregroundEpisodesAccumulateAcrossSessionsOnlyWithConsent(mode: String) async throws {
+        let (root, agents, profile) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let registry = ProviderRegistry(), probe = SynthesisTransportProbe()
+        let initial = try await agents.memoryEpisodeSettings(accountID: "local", agentID: profile.id)
+        if mode != "disabled" { try await agents.setMemoryEpisodesEnabled(true, expected: initial, lifetime: .init()) }
+        if mode == "synthesis" {
+            let synthesis = try await agents.memorySynthesisSettings(accountID: "local", agentID: profile.id)
+            try await agents.setMemorySynthesisEnabled(true, expected: synthesis, lifetime: .init())
+        }
+        await registry.register(SynthesisTransportProvider(probe: probe, events: [],
+            synthesisStages: mode == "synthesis", episodeStages: mode != "synthesis"))
+        let transport = AgentMemorySynthesisTransport(agents: agents, registry: registry, scheduler: .init())
+        let messenger = try AgentMessenger(service: agents, storeURL: root.appending(path: "messages.json"))
+        for n in 1...6 {
+            let parent = AgentMemorySuggestionLifetime()
+            let messaging = AgentMessagingSession(originConversationID: session, agents: agents, messenger: messenger,
+                registry: registry, coordinator: TurnCoordinator(registry: registry), memorySynthesis: transport,
+                memorySynthesisLifetime: parent)
+            if mode != "unprepared" {
+                await messaging.prepareMemorySuggestion(profile: profile,
+                    exchangeID: UUID(uuidString: String(format: "00000000-0000-0000-0000-%012d", n))!,
+                    user: "Build keyboard navigation")
+            }
+            await messaging.remember(agentID: profile.id, messages: [], response: mode == "pass" ? "PASS" : "Agreed")
+            if mode == "stop" { messaging.revokeProfileChanges() }
+            if mode == "parent" { parent.close() }
+            await messaging.suggestMemories()
+            await messaging.suggestMemories()
+            try await messaging.close(preservingMemorySynthesis: true)
+        }
+        let memories = await agents.memories(accountID: "local", agentID: profile.id)
+        expectNoDifference(memories.filter { $0.origin == .episode }.count, mode == "enabled" ? 1 : 0)
+        let requests = await probe.requests
+        if mode != "synthesis" { expectNoDifference(requests.count, mode == "enabled" ? 2 : 0) }
+        if mode == "synthesis" { #expect(!requests.contains { $0.messages.first?.text.hasPrefix("Summarize") == true }) }
+    }
+
     @Test(arguments: ["enabled", "disabled", "unprepared", "pass", "revoked", "disabled-after-prepare"])
     func foregroundSessionSynthesizesOnlyPreparedCompletedOptedInExchanges(mode: String) async throws {
         let (root, agents, profile) = try await fixture(); defer { try? FileManager.default.removeItem(at: root) }

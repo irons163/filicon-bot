@@ -2082,6 +2082,8 @@ final class AppModel: ObservableObject {
                                     exchangeID: exchangeID, lifetime: lifetime, originID: id,
                                     generation: publicationGeneration)
                             }),
+                        memorySynthesis: AgentMemorySynthesisTransport(agents: agentService, registry: registry,
+                            scheduler: agentExecutionScheduler),
                         memorySynthesisWorker: backgroundMemorySynthesisWorker(),
                         memorySynthesisLifetime: backgroundMemorySynthesisLifetime(originID: id),
                         supportsMailboxQuestions: true,
@@ -3864,6 +3866,8 @@ final class AppModel: ObservableObject {
                     try await self.recordMemorySuggestions(suggestions, settings: settings, exchangeID: exchangeID,
                         lifetime: lifetime, originID: originID, generation: generation)
                 }),
+            memorySynthesis: AgentMemorySynthesisTransport(agents: agentService, registry: registry,
+                scheduler: agentExecutionScheduler),
             memorySynthesisWorker: backgroundMemorySynthesisWorker(),
             memorySynthesisLifetime: backgroundMemorySynthesisLifetime(originID: originID),
             supportsMailboxQuestions: supportsMailboxQuestions,

@@ -99,6 +99,7 @@ public actor AgentMessagingSession {
     private struct MemoryExchange {
         let settings: AgentMemorySuggestionSettings?
         let synthesisSettings: AgentMemorySynthesisSettings?
+        let episodeSettings: AgentMemoryEpisodeSettings?
         let occurredAt: Date
         let profile: AgentProfile
         let exchangeID: UUID
@@ -282,9 +283,11 @@ public actor AgentMessagingSession {
         guard !closed, memoryExtractor != nil || memorySynthesis != nil || memorySynthesisWorker != nil, memoryExchanges[profile.id] == nil else { return }
         let settings = memoryExtractor == nil ? nil : try? await agents.memorySuggestions(accountID: accountID, agentID: profile.id).settings
         let synthesis = memorySynthesis == nil && memorySynthesisWorker == nil ? nil : try? await agents.memorySynthesisSettings(accountID: accountID, agentID: profile.id)
-        guard settings?.enabled == true || synthesis?.enabled == true, !closed, !Task.isCancelled else { return }
+        let episode = memorySynthesis == nil || synthesis?.enabled == true ? nil : try? await agents.memoryEpisodeSettings(accountID: accountID, agentID: profile.id)
+        guard settings?.enabled == true || synthesis?.enabled == true || episode?.enabled == true, !closed, !Task.isCancelled else { return }
         memoryExchanges[profile.id] = .init(settings: settings?.enabled == true ? settings : nil,
                                            synthesisSettings: synthesis?.enabled == true ? synthesis : nil,
+                                           episodeSettings: episode?.enabled == true ? episode : nil,
                                            occurredAt: .now, profile: profile, exchangeID: exchangeID,
                                            user: String(user.prefix(8_000)))
     }
@@ -314,6 +317,16 @@ public actor AgentMessagingSession {
                             user: exchange.user, assistant: exchange.response)],
                         at: .now, profile: exchange.profile, sessionID: id, lifetime: memorySuggestionLifetime)
                 } catch { /* Maintenance failure must not undo the completed reply. */ }
+            }
+            if let memorySynthesis, let settings = exchange.episodeSettings {
+                do {
+                    let lifetime = AgentMemorySuggestionLifetime(parents: [memorySuggestionLifetime, memorySynthesisLifetime])
+                    try await agents.recordMemoryEpisode(settings: settings, originID: originConversationID,
+                        exchangeID: exchange.exchangeID, at: exchange.occurredAt, user: exchange.user,
+                        assistant: exchange.response, lifetime: lifetime)
+                    _ = try await memorySynthesis.runEpisode(settings: settings, originID: originConversationID,
+                        profile: exchange.profile, sessionID: id, lifetime: lifetime)
+                } catch { /* A failed episode never undoes the settled reply. */ }
             }
             guard let memoryExtractor, let settings = exchange.settings else { continue }
             do {

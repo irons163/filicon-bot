@@ -60,3 +60,11 @@
 新增 host-owned `.episode` 來源，私有 log、時間取最後回合，recall importance 1.5；公共 write 不能偽造來源，`[episode]` 字樣不提升權重。仍待來源 UI 呈現、七語 consent／費用說明、App 前景與生命週期接線；端到端保持 partial。
 
 此批完整非並行測試（`memory-episode-runner-full.log`）與原生建置（`memory-episode-runner-native.log`）exit 0；runner 包含 9 種結果／撤銷／新增回合情境，transport 成功與逾時皆經測試。使用隔離測試 provider，沒有真實模型或使用者聊天驗收。
+
+## 聊天完成接線（2026-09-27）
+
+`AgentMessagingSession` 在 prepare 時捕捉獨立 episode consent，只有已保存的前景回覆完成後才累積及嘗試摘要；synthesis 啟用時不準備 episode。App 的群組／綁定 direct 入口已提供 transport。正常完成跨 session 累積；未 prepare、PASS、停用不觸發。episode 寫入同時受 session 與 account／origin composite lifetime 保護，Stop 或父來源撤銷後不可寫入。
+
+此接線仍不提供啟用 UI，也**尚未完成 Stop／刪除／成員變更時清理既存 pending 文字**（目前 lifetime 阻止新寫入，不能替代清理）；後續需把 source 清理與 UI 授權一起驗收。session 測試包含 7 種啟用／撤銷／synthesis 分支，跨六個 session 只生成一筆事件記憶。
+
+本批完整非並行測試 `memory-episode-session-full.log` 及原生建置 `memory-episode-session-native.log` exit 0，封裝簽章／entitlements 通過；未使用真實模型、聊天或帳號。
