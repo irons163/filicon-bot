@@ -93,6 +93,8 @@ public actor AgentMessagingSession {
     private var userMessageID: UUID?
     private let memoryExtractor: AgentMemorySuggestionExtractor?
     private let memorySynthesis: AgentMemorySynthesisTransport?
+    private let memorySynthesisWorker: AgentMemorySynthesisWorker?
+    private let memorySynthesisLifetime: AgentMemorySuggestionLifetime
     private let memorySuggestionLifetime = AgentMemorySuggestionLifetime()
     private struct MemoryExchange {
         let settings: AgentMemorySuggestionSettings?
@@ -112,6 +114,8 @@ public actor AgentMessagingSession {
                 directRequestImages: (@Sendable () async throws -> [AttachmentMetadata])? = nil,
                 memoryExtractor: AgentMemorySuggestionExtractor? = nil,
                 memorySynthesis: AgentMemorySynthesisTransport? = nil,
+                memorySynthesisWorker: AgentMemorySynthesisWorker? = nil,
+                memorySynthesisLifetime: AgentMemorySuggestionLifetime = .init(),
                 supportsMailboxQuestions: Bool = false,
                 publishSecret: SecretPublisher? = nil,
                 groups: GroupService? = nil,
@@ -133,6 +137,8 @@ public actor AgentMessagingSession {
         self.management = management
         self.memoryExtractor = memoryExtractor
         self.memorySynthesis = memorySynthesis
+        self.memorySynthesisWorker = memorySynthesisWorker
+        self.memorySynthesisLifetime = memorySynthesisLifetime
         self.groups = groups; self.authorizeGroup = authorizeGroup; self.postGroup = postGroup
         self.runGroup = runGroup; self.finishGroup = finishGroup
         self.authorize = authorize; self.onChange = onChange; self.turnTimeout = turnTimeout
@@ -267,14 +273,15 @@ public actor AgentMessagingSession {
     /// suspension on Stop/account transition, even while this actor unwinds.
     public nonisolated func revokeProfileChanges() {
         management?.close(); groupLifetime.close(); publicationLifetime.close(); memorySuggestionLifetime.close()
+        memorySynthesisLifetime.close()
     }
 
     /// Only a foreground group or bound direct responder supplies a current human
     /// request. Peer wakes/background tasks do not invent human memory evidence.
     public func prepareMemorySuggestion(profile: AgentProfile, exchangeID: UUID, user: String) async {
-        guard !closed, memoryExtractor != nil || memorySynthesis != nil, memoryExchanges[profile.id] == nil else { return }
+        guard !closed, memoryExtractor != nil || memorySynthesis != nil || memorySynthesisWorker != nil, memoryExchanges[profile.id] == nil else { return }
         let settings = memoryExtractor == nil ? nil : try? await agents.memorySuggestions(accountID: accountID, agentID: profile.id).settings
-        let synthesis = memorySynthesis == nil ? nil : try? await agents.memorySynthesisSettings(accountID: accountID, agentID: profile.id)
+        let synthesis = memorySynthesis == nil && memorySynthesisWorker == nil ? nil : try? await agents.memorySynthesisSettings(accountID: accountID, agentID: profile.id)
         guard settings?.enabled == true || synthesis?.enabled == true, !closed, !Task.isCancelled else { return }
         memoryExchanges[profile.id] = .init(settings: settings?.enabled == true ? settings : nil,
                                            synthesisSettings: synthesis?.enabled == true ? synthesis : nil,
@@ -293,7 +300,14 @@ public actor AgentMessagingSession {
             guard !closed, !Task.isCancelled else { return }
             let response = exchange.response.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !response.isEmpty, !["PASS", "(PASS)"].contains(response.uppercased()) else { continue }
-            if let memorySynthesis, let settings = exchange.synthesisSettings {
+            if let memorySynthesisWorker, let settings = exchange.synthesisSettings {
+                do {
+                    try await memorySynthesisWorker.enqueue(settings: settings,
+                        entry: .init(originID: originConversationID, evidence: .init(id: exchange.exchangeID.uuidString,
+                            occurredAt: exchange.occurredAt, user: exchange.user, assistant: exchange.response)),
+                        sourceLifetime: memorySynthesisLifetime)
+                } catch { /* Maintenance admission never undoes the completed reply. */ }
+            } else if let memorySynthesis, let settings = exchange.synthesisSettings {
                 do {
                     _ = try await memorySynthesis.run(settings: settings,
                         evidence: [.init(id: exchange.exchangeID.uuidString, occurredAt: exchange.occurredAt,
@@ -793,9 +807,11 @@ public actor AgentMessagingSession {
     }
 
     /// Closing always fences sends first, before any suspension/cancellation.
-    public func close() async throws {
+    public func close(preservingMemorySynthesis: Bool = false) async throws {
         closed = true
-        revokeProfileChanges()
+        if preservingMemorySynthesis {
+            management?.close(); groupLifetime.close(); publicationLifetime.close(); memorySuggestionLifetime.close()
+        } else { revokeProfileChanges() }
         memoryExchanges.removeAll()
         await memoryExtractor?.cancel(sessionID: id)
         await memorySynthesis?.cancel(sessionID: id, lifetime: memorySuggestionLifetime)

@@ -30,6 +30,13 @@ public struct AgentMemorySynthesisQueue: Sendable {
     public var count: Int { pending.count }
     public init() {}
 
+    /// Used by the host to release per-evidence cancellation context after eviction.
+    public func contains(settings: AgentMemorySynthesisSettings, evidenceID: String) -> Bool {
+        guard let batch = pending[Key(accountID: settings.accountID, agentID: settings.agentID)],
+              batch.settings == settings else { return false }
+        return batch.entries.contains { $0.evidence.id == evidenceID }
+    }
+
     @discardableResult
     public mutating func enqueue(settings: AgentMemorySynthesisSettings, entry: Entry,
                                  now: ContinuousClock.Instant) throws -> Admission {
@@ -101,6 +108,14 @@ public struct AgentMemorySynthesisQueue: Sendable {
             if pending[key]?.entries.isEmpty == true { pending[key] = nil }
         }
         order.removeAll { pending[$0] == nil }
+        if pending.isEmpty { nextRun = nil }
+    }
+
+    public mutating func removeEvidence(settings: AgentMemorySynthesisSettings, evidenceID: String) {
+        let key = Key(accountID: settings.accountID, agentID: settings.agentID)
+        guard pending[key]?.settings == settings else { return }
+        pending[key]?.entries.removeAll { $0.evidence.id == evidenceID }
+        if pending[key]?.entries.isEmpty == true { pending[key] = nil; order.removeAll { $0 == key } }
         if pending.isEmpty { nextRun = nil }
     }
 

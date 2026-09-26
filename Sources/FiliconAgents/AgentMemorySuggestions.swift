@@ -59,18 +59,31 @@ public enum AgentMemorySuggestionError: String, LocalizedError, Sendable {
 public final class AgentMemorySuggestionLifetime: @unchecked Sendable {
     private let lock = NSLock()
     private var active = true
-    public init() {}
+    private let ancestors: [AgentMemorySuggestionLifetime]
+    /// Immutable parent graph: a batch may depend on several foreground scopes.
+    /// Keep all their locks through the final synchronous save, not just through
+    /// a preflight check that could race a subsequent Stop/account transition.
+    public init(parents: [AgentMemorySuggestionLifetime] = []) {
+        var unique: [ObjectIdentifier: AgentMemorySuggestionLifetime] = [:]
+        for parent in parents {
+            unique[ObjectIdentifier(parent)] = parent
+            for ancestor in parent.ancestors { unique[ObjectIdentifier(ancestor)] = ancestor }
+        }
+        ancestors = Array(unique.values)
+    }
     public func close() { lock.withLock { active = false } }
     public func check() throws {
-        try lock.withLock { if !active { throw CancellationError() } }
-        try Task.checkCancellation()
+        try commit {}
     }
     func commit<T>(_ action: () throws -> T) throws -> T {
-        try lock.withLock {
-            guard active else { throw CancellationError() }
-            try Task.checkCancellation()
-            return try action()
+        let scopes = (ancestors + [self]).sorted {
+            UInt(bitPattern: ObjectIdentifier($0)) < UInt(bitPattern: ObjectIdentifier($1))
         }
+        for scope in scopes { scope.lock.lock() }
+        defer { for scope in scopes.reversed() { scope.lock.unlock() } }
+        guard scopes.allSatisfy({ $0.active }) else { throw CancellationError() }
+        try Task.checkCancellation()
+        return try action()
     }
 }
 

@@ -311,6 +311,13 @@ final class AppModel: ObservableObject {
     private var agentMessagingAccountTransition = false
     private var agentMemoryUILifetime = AgentMemoryChangeLifetime()
     private var agentMemorySuggestionUILifetime = AgentMemorySuggestionLifetime()
+    private var memorySynthesisWorker: AgentMemorySynthesisWorker?
+    private var memorySynthesisAccountLifetime = AgentMemorySuggestionLifetime()
+    private struct WeakMemorySynthesisOrigin { weak var value: AgentMemorySuggestionLifetime? }
+    private var memorySynthesisOrigins: [UUID: WeakMemorySynthesisOrigin] = [:]
+    var memorySynthesisWorkerFactory: @Sendable (@escaping AgentMemorySynthesisWorker.Runner) -> AgentMemorySynthesisWorker = {
+        AgentMemorySynthesisWorker(run: $0)
+    }
     private let subagentService: SubagentService?
     private let agentAvatarStore: AgentAvatarStore
     private let groupService: GroupService?
@@ -2070,8 +2077,8 @@ final class AppModel: ObservableObject {
                                     exchangeID: exchangeID, lifetime: lifetime, originID: id,
                                     generation: publicationGeneration)
                             }),
-                        memorySynthesis: AgentMemorySynthesisTransport(agents: agentService, registry: registry,
-                            scheduler: agentExecutionScheduler),
+                        memorySynthesisWorker: backgroundMemorySynthesisWorker(),
+                        memorySynthesisLifetime: backgroundMemorySynthesisLifetime(originID: id),
                         supportsMailboxQuestions: true,
                         publishSecret: { [weak self] request, incoming, target, lifetime in
                             guard let self else { throw CancellationError() }
@@ -2187,7 +2194,7 @@ final class AppModel: ObservableObject {
             }
             await publisher?.close()
             if let messaging {
-                do { try await messaging.close() }
+                do { try await messaging.close(preservingMemorySynthesis: succeeded) }
                 catch { errorMessage = error.localizedDescription }
                 await cancelAgentMessageTools(scopeID: id)
                 clearDirectPeerExecutions(originID: id, sessionID: messaging.id)
@@ -3849,8 +3856,8 @@ final class AppModel: ObservableObject {
                     try await self.recordMemorySuggestions(suggestions, settings: settings, exchangeID: exchangeID,
                         lifetime: lifetime, originID: originID, generation: generation)
                 }),
-            memorySynthesis: AgentMemorySynthesisTransport(agents: agentService, registry: registry,
-                scheduler: agentExecutionScheduler),
+            memorySynthesisWorker: backgroundMemorySynthesisWorker(),
+            memorySynthesisLifetime: backgroundMemorySynthesisLifetime(originID: originID),
             supportsMailboxQuestions: supportsMailboxQuestions,
             publishSecret: secretPublisher,
             groups: groupService,
@@ -4708,6 +4715,7 @@ final class AppModel: ObservableObject {
     }
 
     private func cancelDirectMessaging(conversationID: UUID) {
+        invalidateBackgroundMemorySynthesis(originID: conversationID)
         guard directMessagingScopes.contains(conversationID) else { return }
         turnTasks[conversationID]?.cancel()
         let session = agentMessagingSessions[conversationID]
@@ -4716,6 +4724,36 @@ final class AppModel: ObservableObject {
         // A detached cleanup must not revoke a subsequent turn's approvals.
         Task { try? await session?.close() }
     }
+
+    private func backgroundMemorySynthesisWorker() -> AgentMemorySynthesisWorker? {
+        if let memorySynthesisWorker { return memorySynthesisWorker }
+        guard let agentService else { return nil }
+        let transport = AgentMemorySynthesisTransport(agents: agentService, registry: registry,
+                                                      scheduler: agentExecutionScheduler)
+        let worker = memorySynthesisWorkerFactory { batch, lifetime in
+            try lifetime.check()
+            guard let profile = await agentService.profile(id: batch.settings.agentID), profile.archivedAt == nil else {
+                throw AgentMemorySuggestionError.stale
+            }
+            _ = try await transport.run(settings: batch.settings, evidence: batch.entries.map(\.evidence),
+                at: .now, profile: profile, sessionID: UUID(), lifetime: lifetime)
+        }
+        memorySynthesisWorker = worker
+        return worker
+    }
+
+    private func backgroundMemorySynthesisLifetime(originID: UUID) -> AgentMemorySuggestionLifetime {
+        memorySynthesisOrigins = memorySynthesisOrigins.filter { $0.value.value != nil }
+        let origin = memorySynthesisOrigins[originID]?.value ?? AgentMemorySuggestionLifetime()
+        memorySynthesisOrigins[originID] = .init(value: origin)
+        return .init(parents: [memorySynthesisAccountLifetime, origin])
+    }
+
+    private func invalidateBackgroundMemorySynthesis(originID: UUID) {
+        memorySynthesisOrigins.removeValue(forKey: originID)?.value?.close()
+    }
+
+    func isBackgroundMemorySynthesisIdle() async -> Bool { await memorySynthesisWorker?.isIdle ?? true }
 
     func markAgentMessagesRead(recipientID: UUID) async {
         guard let agentMessenger else {
@@ -4994,6 +5032,7 @@ final class AppModel: ObservableObject {
         guard let groupService else { errorMessage = l10n("Group storage is unavailable."); return false }
         do {
             if runningGroups.contains(groupID) { await stopGroup(id: groupID) }
+            invalidateBackgroundMemorySynthesis(originID: groupID)
             try await groupService.update(groupID: groupID, name: name, summary: summary, memberIDs: memberIDs)
             groups = await groupService.list()
             groupMessages[groupID] = await groupService.messages(groupID: groupID)
@@ -5006,6 +5045,7 @@ final class AppModel: ObservableObject {
 
     func updateGroupMembers(groupID: UUID, memberIDs: [UUID]) async {
         guard let groupService else { return }
+        invalidateBackgroundMemorySynthesis(originID: groupID)
         if runningGroups.contains(groupID) { await stopGroup(id: groupID) }
         do {
             try await groupService.updateMembers(groupID: groupID, memberIDs: memberIDs)
@@ -5035,6 +5075,7 @@ final class AppModel: ObservableObject {
         agentMessagingSessions[groupID] = messaging
         var imageRecipientName: String?
         var imageRecipientIDs: Set<UUID> = []
+        var preserveMemorySynthesis = false
         defer {
             questionLifetime.close()
             groupQuestionLifetimes[groupID] = nil
@@ -5107,6 +5148,7 @@ final class AppModel: ObservableObject {
                 if await messaging?.hasMemorySuggestionsToProcess == true { reviewingMemoryGroups.insert(groupID) }
                 await messaging?.suggestMemories()
                 reviewingMemoryGroups.remove(groupID)
+                preserveMemorySynthesis = true
             }
         } catch is CancellationError {
             let messages = await groupService.messages(groupID: groupID)
@@ -5119,12 +5161,13 @@ final class AppModel: ObservableObject {
                 errorMessage = imageRecipientName.map { "\($0): \(detail)" } ?? detail
             }
         }
-        do { try await messaging?.close() }
+        do { try await messaging?.close(preservingMemorySynthesis: preserveMemorySynthesis) }
         catch { errorMessage = error.localizedDescription }
         await cancelAutoReviewApprovals(conversationID: groupID, lifecycle: .cancelled)
     }
 
     func stopGroup(id: UUID) async {
+        invalidateBackgroundMemorySynthesis(originID: id)
         if let originID = delegatedGroupOrigins[id] {
             if runningAgentMessageScopes.contains(originID) { await stopAgentMessages(scopeID: originID) }
             else { await stopGroup(id: originID) }
@@ -6469,6 +6512,11 @@ final class AppModel: ObservableObject {
     func cancelAutoReviewApprovals(nextAccountID: String) async {
         // Queued peer work is scoped to the account that approved the exchange.
         agentMessagingAccountTransition = true
+        memorySynthesisAccountLifetime.close()
+        memorySynthesisAccountLifetime = .init()
+        memorySynthesisOrigins.removeAll()
+        let oldMemoryWorker = memorySynthesisWorker
+        memorySynthesisWorker = nil
         for key in Array(directSecretContexts.keys) { invalidateDirectSecret(key) }
         for key in Array(mailboxSecretContexts.keys) { invalidateMailboxSecret(key) }
         dismissAttachmentPreview()
@@ -6482,6 +6530,7 @@ final class AppModel: ObservableObject {
         for session in agentMessagingSessions.values { session.revokeProfileChanges() }
         autoReviewAccountGeneration &+= 1
         defer { agentMessagingAccountTransition = false }
+        await oldMemoryWorker?.shutdown()
         await agentExecutionScheduler.cancelAll()
         await subagentService?.cancelAll()
         for scopeID in Array(agentMessagingSessions.keys) {

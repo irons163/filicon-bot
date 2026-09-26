@@ -17,6 +17,13 @@ public actor AgentMemorySynthesisWorker {
     private var lifetime: AgentMemorySuggestionLifetime?
     private var task: Task<Void, Never>?
     private var stopped = false
+    private struct Source {
+        let settings: AgentMemorySynthesisSettings
+        let evidenceID: String
+        let lifetime: AgentMemorySuggestionLifetime
+    }
+    private var sources: [Source] = []
+    public var isIdle: Bool { queue.count == 0 && ready.isEmpty && task == nil && timer == nil }
 
     public init(run: @escaping Runner) {
         self.run = run
@@ -31,8 +38,12 @@ public actor AgentMemorySynthesisWorker {
     }
 
     @discardableResult
-    public func enqueue(settings: AgentMemorySynthesisSettings, entry: AgentMemorySynthesisQueue.Entry) throws -> AgentMemorySynthesisQueue.Admission {
+    public func enqueue(settings: AgentMemorySynthesisSettings, entry: AgentMemorySynthesisQueue.Entry,
+                        sourceLifetime: AgentMemorySuggestionLifetime? = nil) throws -> AgentMemorySynthesisQueue.Admission {
         guard !stopped else { throw CancellationError() }
+        try Task.checkCancellation()
+        try sourceLifetime?.check()
+        discardRevokedSources()
         // Pending queue deduplication alone cannot see detached work.
         for batch in ready + (active.map { [$0] } ?? []) where batch.settings == settings {
             if let duplicate = batch.entries.first(where: { $0.evidence.id == entry.evidence.id }) {
@@ -42,9 +53,11 @@ public actor AgentMemorySynthesisWorker {
         }
         let admission = try queue.enqueue(settings: settings, entry: entry, now: now())
         guard admission.inserted else { return admission }
+        if let sourceLifetime { sources.append(.init(settings: settings, evidenceID: entry.evidence.id, lifetime: sourceLifetime)) }
         // A new consent revision must also invalidate detached/active old work.
         ready.removeAll { sameAgent($0.settings, settings) && $0.settings != settings }
         if let active, sameAgent(active.settings, settings), active.settings != settings { cancelActive() }
+        pruneSources()
         armTimer()
         return admission
     }
@@ -55,6 +68,7 @@ public actor AgentMemorySynthesisWorker {
         // the entire mixed batch rather than commit evidence from a removed source.
         ready.removeAll { $0.entries.contains { $0.originID == originID } }
         if active?.entries.contains(where: { $0.originID == originID }) == true { cancelActive() }
+        pruneSources()
         armTimer()
     }
 
@@ -62,12 +76,14 @@ public actor AgentMemorySynthesisWorker {
         queue.removeAgent(accountID: accountID, agentID: agentID)
         ready.removeAll { $0.settings.accountID == accountID && $0.settings.agentID == agentID }
         if active?.settings.accountID == accountID && active?.settings.agentID == agentID { cancelActive() }
+        pruneSources()
         armTimer()
     }
 
     public func shutdown() {
         stopped = true
         queue.removeAll(); ready.removeAll()
+        sources.removeAll()
         timerGeneration += 1; timer?.cancel(); timer = nil
         cancelActive()
     }
@@ -98,6 +114,7 @@ public actor AgentMemorySynthesisWorker {
     private func timerFired(_ generation: Int) {
         guard !stopped, generation == timerGeneration else { return }
         timer = nil
+        discardRevokedSources()
         ready = queue.takeReady(now: now())
         startNext()
     }
@@ -105,7 +122,10 @@ public actor AgentMemorySynthesisWorker {
     private func startNext() {
         guard !stopped, task == nil else { return }
         guard !ready.isEmpty else { armTimer(); return }
-        let batch = ready.removeFirst(), token = AgentMemorySuggestionLifetime(), run = self.run
+        let batch = ready.removeFirst(), run = self.run
+        let token = AgentMemorySuggestionLifetime(parents: sources.filter { source in
+            source.settings == batch.settings && batch.entries.contains { $0.evidence.id == source.evidenceID }
+        }.map(\.lifetime))
         active = batch; lifetime = token
         task = Task { [weak self] in
             do { try token.check(); try await run(batch, token) }
@@ -117,7 +137,30 @@ public actor AgentMemorySynthesisWorker {
 
     private func finished() {
         task = nil; active = nil; lifetime = nil
+        pruneSources()
         startNext()
+    }
+
+    private func pruneSources() {
+        let detached = ready + (active.map { [$0] } ?? [])
+        sources.removeAll { source in
+            !queue.contains(settings: source.settings, evidenceID: source.evidenceID) &&
+            !detached.contains { batch in
+                batch.settings == source.settings && batch.entries.contains { $0.evidence.id == source.evidenceID }
+            }
+        }
+    }
+
+    private func discardRevokedSources() {
+        for source in sources where (try? source.lifetime.check()) == nil {
+            queue.removeEvidence(settings: source.settings, evidenceID: source.evidenceID)
+            let matches: (AgentMemorySynthesisQueue.Batch) -> Bool = { batch in
+                batch.settings == source.settings && batch.entries.contains { $0.evidence.id == source.evidenceID }
+            }
+            ready.removeAll(where: matches)
+            if let active, matches(active) { cancelActive() }
+        }
+        pruneSources()
     }
 
     deinit { timer?.cancel(); lifetime?.close(); task?.cancel() }

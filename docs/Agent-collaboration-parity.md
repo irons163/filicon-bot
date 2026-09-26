@@ -1,5 +1,17 @@
 # 協作能力核對紀錄（更新至 2026-09-26）
 
+## 聊天完成後背景記憶接管（2026-09-26）
+
+AppModel 的 bound direct／group session 現在共用一個 synthesis worker。完成的人類訊息與該 agent 回覆入列後立即交回前景；15 秒 debounce 後同 account／agent 的多來源證據合併執行。正常 close 明確保留 synthesis lifetime，錯誤／Stop 預設 close 仍撤銷；舊人工審核候選 extractor 保持原流程。worker 執行時讀取當前 profile，transport 仍重驗 consent／profile、使用無工具請求與既有整組 deadline／retry。
+
+新增 immutable composite lifetime：batch 同時依賴 account、origin 與 session，最終同步保存依一致順序鎖住所有祖先，避免 preflight 與保存間撤銷競態；去重祖先可避免 diamond graph 重複上鎖。App origin 索引使用 weak reference，不累積已完成證據。Stop／刪除 direct／群組設定更新同步撤銷 origin；account transition 先撤銷全部祖先再 shutdown worker。pending 的已撤銷 evidence 在下次入列／timer 清除；active mixed batch 的任一來源撤銷使整批不可保存。生命週期撤銷本身不保證立即中止 provider 網路串流，仍由現有 bounded transport deadline 收尾。
+
+隔離 App fixture 以可控制 timer 驗證 group 與 direct 正常收尾且沒有前景 busy、兩筆合成一批、等待期間移除 group 只保留 direct evidence，以及切帳號不發出提案。既有 16 種直接／群組 lifecycle 測試改為等待 background idle；另測多祖先任一撤銷拒絕 final commit、相反 parent 順序不死鎖。不使用真實 provider 或帳號資料。
+
+此項取代下方「App 尚未接線／逐回合整合」的歷史記述。temporal sweep、stale 重排、失敗觀測與 episodic 仍未完成，整體 parity 保持 partial。
+
+驗證：`memory-synthesis-handoff-full.log` 完整非並行套件 exit 0，包含 3 種跨聊天接管、16 種 lifecycle 與 composite lifetime 測試。`memory-synthesis-handoff-native.log` 原生建置、verify-package／deep strict 簽章及 git diff --check 通過。未 push、未啟動 App／Xcode、未改真實資料。
+
 ## 記憶整合背景 worker 基礎（2026-09-26）
 
 新增 `AgentMemorySynthesisWorker` actor，使用前述 queue 的 monotonic 15 秒 deadline、自動可取消 timer 與 generation fence，序列處理 ready batches。執行中的新 evidence 留在 pending，完成舊批次不會清掉新證據；pending 與 detached 各自有 64 組上限，不宣稱合計只有 64 組。去重涵蓋 pending、ready 與 active；同 ID 衝突拒絕。變更 consent revision 會移除 detached 舊版本並撤銷 active lifetime。

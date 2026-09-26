@@ -3,7 +3,7 @@ import SwiftUI
 import Testing
 import CustomDump
 import FiliconAgents
-import FiliconAppServices
+@testable import FiliconAppServices
 import FiliconDomain
 import FiliconProviderKit
 @testable import Filicon
@@ -69,6 +69,28 @@ private struct MemorySuggestionAppProvider: AIProvider {
     }
 }
 
+private final class SynthesisAppTime: @unchecked Sendable {
+    private let lock = NSLock()
+    private var instant = ContinuousClock.now
+    var now: ContinuousClock.Instant { lock.withLock { instant } }
+    func advance(to deadline: ContinuousClock.Instant) { lock.withLock { instant = max(instant, deadline) } }
+}
+
+private actor SynthesisAppTimer {
+    private(set) var count = 0
+    private var gates: [AsyncStream<Void>.Continuation] = []
+    func wait() async throws {
+        let pair = AsyncStream<Void>.makeStream()
+        gates.append(pair.continuation); count += 1
+        for await _ in pair.stream { break }
+        try Task.checkCancellation()
+    }
+    func release() {
+        for gate in gates { gate.yield(()); gate.finish() }
+        gates.removeAll()
+    }
+}
+
 @Suite("Memory suggestion app integration", .timeLimit(.minutes(1)))
 @MainActor struct AgentMemorySuggestionAppTests {
     private struct Fixture {
@@ -86,10 +108,67 @@ private struct MemorySuggestionAppProvider: AIProvider {
     private func fixture() async throws -> Fixture {
         let root = FileManager.default.temporaryDirectory.appending(path: "memory-suggestion-app-\(UUID())")
         let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+        let time = SynthesisAppTime()
+        model.memorySynthesisWorkerFactory = { run in
+            AgentMemorySynthesisWorker(now: { time.now }, sleep: { deadline in
+                try Task.checkCancellation()
+                time.advance(to: deadline)
+            }, run: run)
+        }
         let owner = try #require(await model.createAgent(name: "Owner", summary: "", instructions: "", providerID: "memory-app-fixture", modelID: "test"))
         let peer = try #require(await model.createAgent(name: "Peer", summary: "", instructions: "", providerID: "memory-app-fixture", modelID: "test"))
         #expect(await model.createGroup(name: "Team", summary: "", memberIDs: [owner.id, peer.id]))
         return .init(root: root, model: model, owner: owner, peer: peer, group: try #require(model.groups.first))
+    }
+
+    @Test(arguments: ["keep", "remove-group", "account"])
+    func completedChatsHandoffAndCoalesceWithoutKeepingForegroundBusy(mode: String) async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let time = SynthesisAppTime(), timer = SynthesisAppTimer()
+        f.model.memorySynthesisWorkerFactory = { run in
+            AgentMemorySynthesisWorker(now: { time.now }, sleep: { deadline in
+                try await timer.wait(); time.advance(to: deadline)
+            }, run: run)
+        }
+        await f.model.bootstrap()
+        let initial = try await f.model.memorySynthesisSettings(agentID: f.owner.id)
+        try await f.model.setMemorySynthesisEnabled(true, expected: initial)
+        await f.model.registry.register(MemorySuggestionAppProvider(probe: f.probe, synthesis: true))
+        await f.model.sendGroupMessage(groupID: f.group.id, text: "@Owner I prefer accessible layouts")
+        #expect(f.model.runningGroups.isEmpty && f.model.reviewingMemoryGroups.isEmpty)
+        let directID = try #require(await f.model.addConversation(agentID: f.owner.id))
+        f.model.draft = "I prefer short summaries"; f.model.send()
+        let deadline = ContinuousClock.now + .seconds(10)
+        while f.model.isConversationWorking(directID), ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(!f.model.isConversationWorking(directID))
+        while await timer.count < 2, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
+        #expect(await timer.count >= 2)
+        let before = await f.probe.requests.filter { $0.messages.first?.text.contains("Maintain compact durable") == true }
+        expectNoDifference(before.count, 0)
+        switch mode {
+        case "remove-group": await f.model.updateGroupMembers(groupID: f.group.id, memberIDs: [])
+        case "account": await f.model.cancelAutoReviewApprovals(nextAccountID: "other")
+        default: break
+        }
+        await timer.release()
+        while !(await f.model.isBackgroundMemorySynthesisIdle()), ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(await f.model.isBackgroundMemorySynthesisIdle())
+        let proposals = await f.probe.requests.filter { $0.messages.first?.text.contains("Maintain compact durable") == true }
+        expectNoDifference(proposals.count, mode == "account" ? 0 : 1)
+        if mode != "account" {
+            let proposal = try #require(proposals.first)
+            let data = Data(try #require(proposal.messages.last?.text).utf8)
+            let object = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+            let evidence = try #require(object["evidence"] as? [[String: Any]])
+            expectNoDifference(evidence.count, mode == "keep" ? 2 : 1)
+            if mode == "remove-group" { expectNoDifference(evidence.first?["user"] as? String, "I prefer short summaries") }
+        }
+        let facts = try await f.model.savedAgentMemories(agentID: f.owner.id)
+        expectNoDifference(facts.count, mode == "account" ? 0 : 1)
     }
 
     @Test(arguments: ["direct", "group"], ["enabled", "disabled", "stop-proposal", "stop-verification", "account", "disable", "reenable", "delete-or-members"])
@@ -141,6 +220,11 @@ private struct MemorySuggestionAppProvider: AIProvider {
             }
             #expect(!f.model.isConversationWorking(directID))
         }
+        let backgroundDeadline = ContinuousClock.now + .seconds(10)
+        while !(await f.model.isBackgroundMemorySynthesisIdle()), ContinuousClock.now < backgroundDeadline {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(await f.model.isBackgroundMemorySynthesisIdle())
         let facts = try await f.model.savedAgentMemories(agentID: f.owner.id)
         expectNoDifference(facts.map(\.fact), mode == "enabled" ? ["Prefers accessible layouts"] : [])
         expectNoDifference(facts.map(\.origin), mode == "enabled" ? [.synthesis] : [])
