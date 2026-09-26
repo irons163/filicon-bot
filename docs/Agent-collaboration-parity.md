@@ -1,5 +1,13 @@
 # 協作能力核對紀錄（更新至 2026-09-26）
 
+## 日期檢視 worker 與完成紀錄接線（2026-09-26）
+
+Worker 新增 host-only 日期入列，必須提供獨立 lifetime；pending／ready／active 去重、revision 撤銷與 snapshot 重排沿用原有流程。日期來源不偽造 evidence ID，撤銷 pending 日期來源只清日期標記並保留聊天證據；active mixed batch 任一來源撤銷仍整批拒絕提交。App runner 傳遞 temporalReview 至 transport。
+
+Production synthesis 完成日期檢視（含無變更、拒絕、重試耗盡）或成功提交聊天記憶後，記錄開始時間加 24 小時；取消、授權 stale、snapshot changed 不記完成。Receipt 自身仍重新驗證 consent 與 lifetime。App 啟動／hourly sweep 尚未接線，因此不宣稱已自動定期執行。
+
+驗證：`memory-temporal-worker-focused.log` 24 項／4 suites 通過。補充純日期撤銷案例及消除測試 timer 註冊競態後，初次完整回歸因自動審批用量上限未啟動；恢復後 `memory-temporal-worker-full.log` 完整非並行套件 exit 0，包含 7 種 worker 與 9 種完成紀錄情境。`memory-temporal-worker-native.log` 原生建置 exit 0，verify-package／deep strict 簽章與 git diff --check 通過。未啟動 App、未改真實資料。
+
 ## 無新證據的日期檢視批次（2026-09-26）
 
 Queue 增加 temporalReview 標記與 host-only enqueueTemporal。可建立空 evidence 的檢視批次，不偽造 human turn；可與同 consent 的新證據合併。重複日期排隊不延長 debounce，stale restore 合併保留標記，新 consent 不被舊 batch 覆蓋；移除聊天 evidence 不會誤刪獨立日期檢視。沿用 64 組容量、enabled revision 驗證與 15 秒等待。

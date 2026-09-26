@@ -27,6 +27,64 @@ struct AgentMemorySynthesisWorkerTests {
         throw CancellationError()
     }
 
+    @Test(arguments: ["pure", "mixed", "remove-origin", "revoke-temporal", "revoke-pure", "revoke-active", "snapshot"])
+    func temporalBatchesHaveIndependentRevocableSources(mode: String) async throws {
+        let clock = WorkerTime(), timers = WorkerTimers(), probe = WorkerProbe()
+        let source = AgentMemorySuggestionLifetime()
+        let worker = AgentMemorySynthesisWorker(now: { clock.now }, sleep: { try await timers.wait($0) }) { batch, token in
+            try await probe.run(batch, lifetime: token)
+            if mode == "snapshot", await probe.started.count == 1 { throw AgentMemorySynthesisSnapshotChanged() }
+        }
+        try await worker.enqueueTemporal(settings: settings(), sourceLifetime: source)
+        try await eventually { await timers.count == 1 }
+        let duplicate = try await worker.enqueueTemporal(settings: settings(), sourceLifetime: source)
+        expectNoDifference(duplicate.inserted, false)
+        let mixed = ["mixed", "remove-origin", "revoke-temporal"].contains(mode)
+        if mixed {
+            try await worker.enqueue(settings: settings(), entry: entry(1))
+            try await eventually { await timers.count == 2 }
+        }
+        if mode == "remove-origin" { await worker.removeOrigin(origin) }
+        if mode == "revoke-temporal" || mode == "revoke-pure" { source.close() }
+        // Wait for the final debounce task to register before firing all gates.
+        let expectedTimers = mixed ? (mode == "remove-origin" ? 3 : 2) : 1
+        try await eventually { await timers.count >= expectedTimers }
+        clock.advance(15); await timers.fireAll()
+        if mode == "revoke-pure" {
+            try await eventually { await worker.isIdle }
+            let started = await probe.started
+            expectNoDifference(started, [])
+            await worker.shutdown()
+            return
+        }
+        try await eventually { await probe.started.count == 1 }
+        let flags = await probe.temporal
+        expectNoDifference(flags, [mode != "revoke-temporal"])
+        let batches = await probe.started
+        expectNoDifference(batches, [mixed && mode != "remove-origin" ? ["turn-1"] : []])
+        if mode == "revoke-active" { source.close() }
+        if mode != "revoke-temporal" && mode != "revoke-active" {
+            let activeDuplicate = try await worker.enqueueTemporal(settings: settings(), sourceLifetime: source)
+            expectNoDifference(activeDuplicate.inserted, false)
+        }
+        await probe.release()
+        if mode == "snapshot" {
+            try await eventually { await timers.count == 2 }
+            clock.advance(15); await timers.fireAll()
+            try await eventually { await probe.started.count == 2 }
+            let restored = await probe.temporal
+            expectNoDifference(restored, [true, true])
+            await probe.release()
+        }
+        try await eventually { await worker.isIdle }
+        let commits = await probe.committed.count
+        expectNoDifference(commits, mode == "revoke-active" ? 0 : mode == "snapshot" ? 2 : 1)
+        await worker.shutdown()
+        await #expect(throws: CancellationError.self) {
+            try await worker.enqueueTemporal(settings: settings(), sourceLifetime: .init())
+        }
+    }
+
     @Test func debounceSerializesAndKeepsNewEvidenceForNextBatch() async throws {
         let clock = WorkerTime(), timers = WorkerTimers(), probe = WorkerProbe()
         let worker = AgentMemorySynthesisWorker(now: { clock.now }, sleep: { try await timers.wait($0) },
@@ -155,6 +213,7 @@ private actor WorkerTimers {
 }
 
 private actor WorkerProbe {
+    private(set) var temporal: [Bool] = []
     private(set) var started: [[String]] = []
     private(set) var committed: [[String]] = []
     private(set) var active = 0
@@ -165,7 +224,7 @@ private actor WorkerProbe {
         let ids = batch.entries.map(\.evidence.id)
         let pair = AsyncStream<Void>.makeStream()
         continuation = pair.continuation
-        started.append(ids); active += 1; maximumActive = max(maximumActive, active)
+        started.append(ids); temporal.append(batch.temporalReview); active += 1; maximumActive = max(maximumActive, active)
         defer { active -= 1 }
         for await _ in pair.stream { break }
         // Check from an uncancelled task, proving lifetime revocation itself

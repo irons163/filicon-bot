@@ -19,8 +19,14 @@ public actor AgentMemorySynthesisWorker {
     private var stopped = false
     private struct Source {
         let settings: AgentMemorySynthesisSettings
-        let evidenceID: String
+        // nil identifies the independent host temporal source, not a made-up turn.
+        let evidenceID: String?
         let lifetime: AgentMemorySuggestionLifetime
+        func matches(_ batch: AgentMemorySynthesisQueue.Batch) -> Bool {
+            guard settings == batch.settings else { return false }
+            if let evidenceID { return batch.entries.contains { $0.evidence.id == evidenceID } }
+            return batch.temporalReview
+        }
     }
     private var sources: [Source] = []
     public var isIdle: Bool { queue.count == 0 && ready.isEmpty && task == nil && timer == nil }
@@ -70,6 +76,25 @@ public actor AgentMemorySynthesisWorker {
         if active?.entries.contains(where: { $0.originID == originID }) == true { cancelActive() }
         pruneSources()
         armTimer()
+    }
+
+    @discardableResult
+    public func enqueueTemporal(settings: AgentMemorySynthesisSettings,
+                                sourceLifetime: AgentMemorySuggestionLifetime) throws -> AgentMemorySynthesisQueue.Admission {
+        guard !stopped else { throw CancellationError() }
+        try sourceLifetime.check()
+        discardRevokedSources()
+        if (ready + (active.map { [$0] } ?? [])).contains(where: { $0.settings == settings && $0.temporalReview }) {
+            return .init(inserted: false, droppedAgents: 0, droppedEvidence: 0)
+        }
+        let admission = try queue.enqueueTemporal(settings: settings, now: now())
+        guard admission.inserted else { return admission }
+        sources.append(.init(settings: settings, evidenceID: nil, lifetime: sourceLifetime))
+        ready.removeAll { sameAgent($0.settings, settings) && $0.settings != settings }
+        if let active, sameAgent(active.settings, settings), active.settings != settings { cancelActive() }
+        pruneSources()
+        armTimer()
+        return admission
     }
 
     public func removeAgent(accountID: String, agentID: UUID) {
@@ -124,7 +149,7 @@ public actor AgentMemorySynthesisWorker {
         guard !ready.isEmpty else { armTimer(); return }
         let batch = ready.removeFirst(), run = self.run
         let token = AgentMemorySuggestionLifetime(parents: sources.filter { source in
-            source.settings == batch.settings && batch.entries.contains { $0.evidence.id == source.evidenceID }
+            source.matches(batch)
         }.map(\.lifetime))
         active = batch; lifetime = token
         task = Task { [weak self] in
@@ -154,21 +179,19 @@ public actor AgentMemorySynthesisWorker {
     private func pruneSources() {
         let detached = ready + (active.map { [$0] } ?? [])
         sources.removeAll { source in
-            !queue.contains(settings: source.settings, evidenceID: source.evidenceID) &&
-            !detached.contains { batch in
-                batch.settings == source.settings && batch.entries.contains { $0.evidence.id == source.evidenceID }
-            }
+            let pending = source.evidenceID.map { queue.contains(settings: source.settings, evidenceID: $0) }
+                ?? queue.containsTemporal(settings: source.settings)
+            return !pending && !detached.contains(where: source.matches)
         }
     }
 
     private func discardRevokedSources() {
         for source in sources where (try? source.lifetime.check()) == nil {
-            queue.removeEvidence(settings: source.settings, evidenceID: source.evidenceID)
-            let matches: (AgentMemorySynthesisQueue.Batch) -> Bool = { batch in
-                batch.settings == source.settings && batch.entries.contains { $0.evidence.id == source.evidenceID }
-            }
-            ready.removeAll(where: matches)
-            if let active, matches(active) { cancelActive() }
+            if let evidenceID = source.evidenceID {
+                queue.removeEvidence(settings: source.settings, evidenceID: evidenceID)
+            } else { queue.removeTemporal(settings: source.settings) }
+            ready.removeAll(where: source.matches)
+            if let active, source.matches(active) { cancelActive() }
         }
         pruneSources()
     }

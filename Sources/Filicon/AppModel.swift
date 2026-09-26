@@ -4736,7 +4736,7 @@ final class AppModel: ObservableObject {
                 throw AgentMemorySuggestionError.stale
             }
             _ = try await transport.run(settings: batch.settings, evidence: batch.entries.map(\.evidence),
-                at: .now, profile: profile, sessionID: UUID(), lifetime: lifetime)
+                temporalReview: batch.temporalReview, at: .now, profile: profile, sessionID: UUID(), lifetime: lifetime)
         }
         memorySynthesisWorker = worker
         return worker

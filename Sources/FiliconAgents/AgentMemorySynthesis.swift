@@ -30,9 +30,23 @@ extension AgentService {
                                   retrySleep: @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) },
                                   execute: @Sendable (AgentMemorySynthesisStage, String, String) async throws -> String) async throws -> AgentMemorySynthesisOutcome {
         try requireMemorySynthesisConsent(settings)
-        return try await synthesizeMemory(accountID: settings.accountID, agentID: settings.agentID,
-            evidence: evidence, temporalReview: temporalReview, at: at, lifetime: lifetime, settings: settings,
-            attempts: 3, retrySleep: retrySleep, execute: execute)
+        let outcome: AgentMemorySynthesisOutcome
+        do {
+            outcome = try await synthesizeMemory(accountID: settings.accountID, agentID: settings.agentID,
+                evidence: evidence, temporalReview: temporalReview, at: at, lifetime: lifetime, settings: settings,
+                attempts: 3, retrySleep: retrySleep, execute: execute)
+        } catch {
+            // Snapshot races must retry against fresh state. Revocation is not a
+            // completed review and must not write a receipt for an obsolete run.
+            if error is AgentMemorySynthesisSnapshotChanged || error is CancellationError ||
+                (error as? AgentMemorySuggestionError) == .stale { throw error }
+            if temporalReview { try markMemoryTemporalReview(settings: settings, at: at, lifetime: lifetime) }
+            throw error
+        }
+        if temporalReview || outcome == .committed {
+            try markMemoryTemporalReview(settings: settings, at: at, lifetime: lifetime)
+        }
+        return outcome
     }
     /// Internal maintenance pipeline; never exposed as a model tool.
     /// Transport must perform a fresh, tool-free request per stage

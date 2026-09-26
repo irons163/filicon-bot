@@ -32,6 +32,49 @@ struct AgentMemorySynthesisTests {
         return (root, try AgentService(storeURL: file))
     }
 
+    @Test(arguments: ["empty", "rejected", "invalid", "network", "cancel", "revoked", "snapshot", "committed", "chat-empty"])
+    func completionUpdatesOnlyEligibleTemporalReceipts(mode: String) async throws {
+        let (root, service) = try fixture(); defer { try? FileManager.default.removeItem(at: root) }
+        let disabled = try await service.memorySynthesisSettings(accountID: "local", agentID: owner)
+        try await service.setMemorySynthesisEnabled(true, expected: disabled, lifetime: .init())
+        let settings = try await service.memorySynthesisSettings(accountID: "local", agentID: owner)
+        let fact = AgentMemory(id: UUID(uuidString: "00000000-0000-0000-0000-000000000002")!,
+            accountID: "local", agentID: owner, fact: "Existing explicit fact", createdAt: date)
+        try await service.applyMemoryChange(.init(operation: .write, memory: fact), lifetime: .init())
+        let token = AgentMemorySuggestionLifetime(), probe = SynthesisStageProbe()
+        let temporal = !["committed", "chat-empty"].contains(mode)
+        let operation = {
+            try await service.runMemorySynthesis(settings: settings, evidence: mode == "empty" ? [] : evidence,
+                temporalReview: temporal, at: date, lifetime: token, retrySleep: { _ in }, execute: { stage, _, payload in
+                    await probe.record(stage, payload)
+                    if mode == "network" { throw URLError(.networkConnectionLost) }
+                    if mode == "cancel" { throw CancellationError() }
+                    if mode == "revoked" { token.close(); return #"{"changes":[]}"# }
+                    if mode == "snapshot" { throw AgentMemorySynthesisSnapshotChanged() }
+                    if stage == .verification { return mode == "rejected" ? #"{"approved":false}"# : #"{"approved":true}"# }
+                    if mode == "invalid" { return "invalid" }
+                    return ["empty", "chat-empty"].contains(mode) ? #"{"changes":[]}"# : proposal
+                })
+        }
+        if ["invalid", "network", "cancel", "revoked", "snapshot"].contains(mode) {
+            await #expect(throws: (any Error).self) { try await operation() }
+        } else {
+            let result = try await operation()
+            expectNoDifference(result, mode == "committed" ? .committed : mode == "rejected" ? .rejected : .noWork)
+        }
+        let marked = ["empty", "rejected", "invalid", "network", "committed"].contains(mode)
+        let before = try await service.dueMemoryTemporalReviews(accountID: "local", at: date.addingTimeInterval(86_399))
+        let boundary = try await service.dueMemoryTemporalReviews(accountID: "local", at: date.addingTimeInterval(86_400))
+        expectNoDifference(before, marked ? [] : [settings])
+        expectNoDifference(boundary, [settings])
+        if mode == "empty" {
+            let payload = try #require(await probe.payloads.first)
+            let input = try #require(JSONSerialization.jsonObject(with: Data(payload.utf8)) as? [String: Any])
+            expectNoDifference(input["clockEvidenceID"] as? String, "clock")
+            expectNoDifference((input["evidence"] as? [Any])?.count, 0)
+        }
+    }
+
     @Test(arguments: ["recover", "reject", "invalid", "transport", "cancel-delay", "disable-delay", "stale-delay"])
     func productionRetriesWholePairButNeverRevokedOrStaleEvidence(mode: String) async throws {
         let (root, service) = try fixture(); defer { try? FileManager.default.removeItem(at: root) }

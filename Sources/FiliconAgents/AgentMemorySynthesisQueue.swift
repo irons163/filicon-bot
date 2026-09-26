@@ -177,4 +177,19 @@ public struct AgentMemorySynthesisQueue: Sendable {
     public mutating func removeAll() {
         order.removeAll(); pending.removeAll(); nextRun = nil
     }
+
+    public func containsTemporal(settings: AgentMemorySynthesisSettings) -> Bool {
+        let batch = pending[Key(accountID: settings.accountID, agentID: settings.agentID)]
+        return batch?.settings == settings && batch?.temporalReview == true
+    }
+
+    public mutating func removeTemporal(settings: AgentMemorySynthesisSettings) {
+        let key = Key(accountID: settings.accountID, agentID: settings.agentID)
+        guard pending[key]?.settings == settings else { return }
+        pending[key]?.temporalReview = false
+        if pending[key]?.entries.isEmpty == true {
+            pending[key] = nil; order.removeAll { $0 == key }
+        }
+        if pending.isEmpty { nextRun = nil }
+    }
 }
