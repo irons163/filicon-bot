@@ -249,14 +249,15 @@ public actor AgentService {
         }
     }
 
-    public func dueMemoryTemporalReviews(accountID: String, at: Date) throws -> [AgentMemorySynthesisSettings] {
+    public func dueMemoryTemporalReviews(accountID: String, at: Date,
+                                        excluding: [AgentMemorySynthesisSettings] = []) throws -> [AgentMemorySynthesisSettings] {
         guard at.timeIntervalSince1970.isFinite, !accountID.isEmpty, accountID.count <= 512 else {
             throw AgentMemorySuggestionError.invalid
         }
         var result: [AgentMemorySynthesisSettings] = []
         for agent in list() {
             let settings = try memorySynthesisSettings(accountID: accountID, agentID: agent.id)
-            guard settings.enabled, settings.revision != nil,
+            guard settings.enabled, settings.revision != nil, !excluding.contains(settings),
                   !memories(accountID: accountID, agentID: agent.id).isEmpty else { continue }
             let receipt = state.memoryTemporalReviews.first { $0.settings == settings }
             if let next = receipt?.nextReviewAt, next.timeIntervalSince1970.isFinite, next > at { continue }

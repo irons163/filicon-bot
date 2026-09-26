@@ -1692,3 +1692,4 @@
 "Recover agent messages" = "Recuperar mensajes de agentes";
 "Restore saved peer messages without running agents. Deleted chats stay deleted." = "Restaura mensajes guardados sin ejecutar agentes. Los chats eliminados no se restauran.";
 "Saved peer messages restored." = "Se restauraron los mensajes guardados de los agentes.";
+"While enabled, the app also checks hourly for private memories due for a date-based review, including at startup. Reviews may incur extra model costs without a new chat message. After a review completes, the next review is due 24 hours after that review's start time." = "Mientras esté activado, la aplicación comprueba al iniciarse y cada hora si hay recuerdos privados pendientes de una revisión por fecha. Estas revisiones pueden generar costes adicionales del modelo sin un nuevo mensaje. Al finalizar una revisión, la siguiente vence 24 horas después del inicio de esa revisión.";

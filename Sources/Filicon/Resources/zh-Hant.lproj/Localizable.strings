@@ -1692,3 +1692,4 @@
 "Recover agent messages" = "恢復代理人訊息";
 "Restore saved peer messages without running agents. Deleted chats stay deleted." = "補回已保存的同儕訊息，不執行代理人。已刪除的聊天不會恢復。";
 "Saved peer messages restored." = "已補回保存的同儕訊息。";
+"While enabled, the app also checks hourly for private memories due for a date-based review, including at startup. Reviews may incur extra model costs without a new chat message. After a review completes, the next review is due 24 hours after that review's start time." = "啟用期間，App 也會在啟動時及每小時檢查是否有到期的私有記憶需要日期檢視。即使沒有新的聊天訊息，檢視仍可能產生額外模型費用。檢視完成後，下次到期時間為該次檢視開始後 24 小時。";

@@ -31,6 +31,11 @@ public actor AgentMemorySynthesisWorker {
     private var sources: [Source] = []
     public var isIdle: Bool { queue.count == 0 && ready.isEmpty && task == nil && timer == nil }
 
+    public func pendingTemporalSettings() -> [AgentMemorySynthesisSettings] {
+        discardRevokedSources()
+        return queue.temporalSettings + (ready + (active.map { [$0] } ?? [])).filter(\.temporalReview).map(\.settings)
+    }
+
     public init(run: @escaping Runner) {
         self.run = run
         self.now = { .now }

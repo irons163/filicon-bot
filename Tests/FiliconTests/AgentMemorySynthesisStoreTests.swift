@@ -76,6 +76,8 @@ struct AgentMemorySynthesisStoreTests {
         }
         let first = try await agents.dueMemoryTemporalReviews(accountID: "local", at: date)
         expectNoDifference(first, Array(expected.prefix(4)))
+        let skippingPending = try await agents.dueMemoryTemporalReviews(accountID: "local", at: date, excluding: first)
+        expectNoDifference(skippingPending, Array(expected.suffix(1)))
         for settings in first { try await agents.markMemoryTemporalReview(settings: settings, at: date, lifetime: .init()) }
         let remaining = try await agents.dueMemoryTemporalReviews(accountID: "local", at: date)
         expectNoDifference(remaining, Array(expected.suffix(1)))

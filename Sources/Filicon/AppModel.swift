@@ -313,6 +313,9 @@ final class AppModel: ObservableObject {
     private var agentMemorySuggestionUILifetime = AgentMemorySuggestionLifetime()
     private var memorySynthesisWorker: AgentMemorySynthesisWorker?
     private var memorySynthesisAccountLifetime = AgentMemorySuggestionLifetime()
+    private var memoryTemporalTask: Task<Void, Never>?
+    var memoryTemporalNow: @Sendable () -> Date = { .now }
+    var memoryTemporalSleep: @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
     private struct WeakMemorySynthesisOrigin { weak var value: AgentMemorySuggestionLifetime? }
     private var memorySynthesisOrigins: [UUID: WeakMemorySynthesisOrigin] = [:]
     var memorySynthesisWorkerFactory: @Sendable (@escaping AgentMemorySynthesisWorker.Runner) -> AgentMemorySynthesisWorker = {
@@ -719,6 +722,7 @@ final class AppModel: ObservableObject {
         await rebuildSharedRoomClient()
         await refreshSharedRooms()
         await restoreAccountAndOnboarding()
+        startMemoryTemporalReviews()
         for link in deepLinkCoordinator.markReady() { dispatchDeepLink(link) }
         if rootConnection.phase != .unreachable {
             let queued = rootResilience.succeed(ticket: rootTicket)
@@ -4730,16 +4734,61 @@ final class AppModel: ObservableObject {
         guard let agentService else { return nil }
         let transport = AgentMemorySynthesisTransport(agents: agentService, registry: registry,
                                                       scheduler: agentExecutionScheduler)
+        let now = memoryTemporalNow
         let worker = memorySynthesisWorkerFactory { batch, lifetime in
             try lifetime.check()
             guard let profile = await agentService.profile(id: batch.settings.agentID), profile.archivedAt == nil else {
                 throw AgentMemorySuggestionError.stale
             }
             _ = try await transport.run(settings: batch.settings, evidence: batch.entries.map(\.evidence),
-                temporalReview: batch.temporalReview, at: .now, profile: profile, sessionID: UUID(), lifetime: lifetime)
+                temporalReview: batch.temporalReview, at: now(), profile: profile, sessionID: UUID(), lifetime: lifetime)
         }
         memorySynthesisWorker = worker
         return worker
+    }
+
+    /// Start once after provider/account restoration. Each sweep captures a fresh
+    /// account fence; the timer never carries account authority across an hour.
+    func startMemoryTemporalReviews() {
+        guard memoryTemporalTask == nil else { return }
+        let sleep = memoryTemporalSleep
+        memoryTemporalTask = Task { [weak self] in
+            while !Task.isCancelled {
+                guard self != nil else { return }
+                await self?.sweepMemoryTemporalReviews()
+                do { try await sleep(.seconds(3_600)) } catch { return }
+            }
+        }
+    }
+
+    func stopMemoryTemporalReviews() {
+        memoryTemporalTask?.cancel()
+        memoryTemporalTask = nil
+    }
+
+    func sweepMemoryTemporalReviews() async {
+        guard !agentMessagingAccountTransition, let agentService else { return }
+        let account = settings.accountScope ?? "local"
+        let generation = autoReviewAccountGeneration
+        let token = memorySynthesisAccountLifetime
+        do {
+            try token.check()
+            let pending = await memorySynthesisWorker?.pendingTemporalSettings() ?? []
+            let due = try await agentService.dueMemoryTemporalReviews(accountID: account,
+                at: memoryTemporalNow(), excluding: pending)
+            for setting in due {
+                try token.check()
+                guard generation == autoReviewAccountGeneration, !agentMessagingAccountTransition,
+                      account == (settings.accountScope ?? "local"),
+                      let worker = backgroundMemorySynthesisWorker() else { return }
+                try await worker.enqueueTemporal(settings: setting, sourceLifetime: token)
+            }
+        } catch { /* Background review must not replace a foreground error or reply. */ }
+    }
+
+    deinit {
+        memoryTemporalTask?.cancel()
+        memorySynthesisAccountLifetime.close()
     }
 
     private func backgroundMemorySynthesisLifetime(originID: UUID) -> AgentMemorySuggestionLifetime {

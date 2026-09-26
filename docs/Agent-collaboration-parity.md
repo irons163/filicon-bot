@@ -1,5 +1,15 @@
 # 協作能力核對紀錄（更新至 2026-09-26）
 
+## App 啟動與每小時日期檢視（2026-09-26）
+
+在 bootstrap 完成 provider／account 還原後啟動一次 sweep，接著每 3,600 秒檢查。只選當前帳號已 opt-in、有私有記憶且到期的 active agent，每次最多新增 4 位；排除相同 consent 已 pending／ready／active 的日期批次，避免前四位阻塞其他到期者。沿用 15 秒 worker debounce 與 24 小時 receipt；不產生假的人類訊息。開啟期間即使沒有新聊天仍可能產生模型費用，啟用對話與設定提示均補上七語說明。
+
+每次 sweep 重新取得 account generation／lifetime，跨 await 後再次檢查，切帳號沿用同步撤銷舊 account token 與 shutdown worker；下次 hourly sweep 使用當前帳號。timer 使用 weak AppModel，停止／釋放時取消；不為測試啟動真實 App。可注入 wall clock、debounce 及 hourly wait。
+
+pfw-testing／CustomDump 的隔離 App 案例涵蓋 bootstrap 日期請求、重複 start 不重複排程、3,600 秒等待、24 小時內跳過／到期重跑、預設停用、切帳號排隊撤銷，並驗證 clock evidence／空人類 evidence／無工具。store 案例驗證跳過已排隊前四位後可選第五位。失敗觀測、episodic 與真實外部服務驗收仍未完成，不能宣稱整體 parity 完成。
+
+驗證：首次 App／store 聚焦通過，初版完整回歸及原生封裝通過。補上七語背景提示後，`memory-temporal-app-full.log` 因螢幕鎖定出現受保護檔案 Code 257／EPERM，exit 1；未降低檔案保護。解鎖後 `memory-temporal-app-unlocked-full.log` 最終完整非並行套件 exit 0，包含 3 種 App 排程情境與七語提示渲染。`memory-temporal-app-native.log` 最終原生建置 exit 0，verify-package／deep strict 簽章及 git diff --check 通過。未啟動真實 App、未操作真實帳號資料。
+
 ## 日期檢視 worker 與完成紀錄接線（2026-09-26）
 
 Worker 新增 host-only 日期入列，必須提供獨立 lifetime；pending／ready／active 去重、revision 撤銷與 snapshot 重排沿用原有流程。日期來源不偽造 evidence ID，撤銷 pending 日期來源只清日期標記並保留聊天證據；active mixed batch 任一來源撤銷仍整批拒絕提交。App runner 傳遞 temporalReview 至 transport。

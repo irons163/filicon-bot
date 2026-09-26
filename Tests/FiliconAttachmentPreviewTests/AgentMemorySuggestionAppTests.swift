@@ -39,7 +39,8 @@ private struct MemorySuggestionAppProvider: AIProvider {
                     if gatedSynthesisStage == (proposal ? "proposal" : "verification") { await probe.hold() }
                     let object = try? JSONSerialization.jsonObject(with: Data((request.messages.last?.text ?? "").utf8)) as? [String: Any]
                     let evidenceID = (object?["evidence"] as? [[String: Any]])?.first?["id"] as? String ?? "missing"
-                    let text = proposal
+                    let temporal = object?["clockEvidenceID"] as? String == "clock"
+                    let text = proposal && temporal ? #"{"changes":[]}"# : proposal
                         ? #"{"changes":[{"action":"create","content":"Prefers accessible layouts","kind":"profile","sourceEvidenceIds":["\#(evidenceID)"]}]}"#
                         : #"{"approved":true}"#
                     continuation.yield(.textDelta(text)); continuation.yield(.completed(.stop)); continuation.finish()
@@ -72,6 +73,9 @@ private struct MemorySuggestionAppProvider: AIProvider {
 private final class SynthesisAppTime: @unchecked Sendable {
     private let lock = NSLock()
     private var instant = ContinuousClock.now
+    private var wallDate = Date(timeIntervalSince1970: 1_900_000_000)
+    var date: Date { lock.withLock { wallDate } }
+    func advanceDate(_ seconds: TimeInterval) { lock.withLock { wallDate.addTimeInterval(seconds) } }
     var now: ContinuousClock.Instant { lock.withLock { instant } }
     func advance(to deadline: ContinuousClock.Instant) { lock.withLock { instant = max(instant, deadline) } }
 }
@@ -119,6 +123,81 @@ private actor SynthesisAppTimer {
         let peer = try #require(await model.createAgent(name: "Peer", summary: "", instructions: "", providerID: "memory-app-fixture", modelID: "test"))
         #expect(await model.createGroup(name: "Team", summary: "", memberIDs: [owner.id, peer.id]))
         return .init(root: root, model: model, owner: owner, peer: peer, group: try #require(model.groups.first))
+    }
+
+    @Test(arguments: ["scheduled", "account", "disabled"])
+    func startupAndHourlyTemporalReviewRemainAccountFenced(mode: String) async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "temporal-app-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let date = Date(timeIntervalSince1970: 1_900_000_000)
+        let service = try AgentService(storeURL: root.appending(path: "agents.json"))
+        let owner = try await service.create(name: "Owner", instructions: "", providerID: "memory-app-fixture", modelID: "test", at: date)
+        try await service.applyMemoryChange(.init(operation: .write, memory: .init(accountID: "local", agentID: owner.id,
+            fact: "Existing preference", createdAt: date)), lifetime: .init())
+        if mode != "disabled" {
+            let disabled = try await service.memorySynthesisSettings(accountID: "local", agentID: owner.id)
+            try await service.setMemorySynthesisEnabled(true, expected: disabled, lifetime: .init())
+        }
+        let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+        let time = SynthesisAppTime(), debounce = SynthesisAppTimer(), hourly = SynthesisAppTimer()
+        let probe = MemorySuggestionAppProbe()
+        model.memoryTemporalNow = { time.date }
+        model.memoryTemporalSleep = { duration in
+            expectNoDifference(duration, .seconds(3_600))
+            try await hourly.wait()
+        }
+        model.memorySynthesisWorkerFactory = { run in
+            AgentMemorySynthesisWorker(now: { time.now }, sleep: { deadline in
+                try await debounce.wait(); time.advance(to: deadline)
+            }, run: run)
+        }
+        defer { model.stopMemoryTemporalReviews() }
+        await model.bootstrap()
+        await model.registry.register(MemorySuggestionAppProvider(probe: probe, synthesis: true))
+        func wait(_ condition: () async -> Bool) async throws {
+            for _ in 0..<500 {
+                if await condition() { return }
+                try await Task.sleep(for: .milliseconds(5))
+            }
+            Issue.record("Temporal app did not reach the expected state")
+            throw CancellationError()
+        }
+        try await wait { await hourly.count == 1 }
+        model.startMemoryTemporalReviews() // Idempotent; no second startup sweep/timer.
+        if mode != "disabled" { try await wait { await debounce.count == 1 } }
+        if mode == "account" {
+            await model.cancelAutoReviewApprovals(nextAccountID: "other")
+            model.settings.scopeToAccount("other")
+        }
+        await debounce.release()
+        try await wait { await model.isBackgroundMemorySynthesisIdle() }
+        let requests = await probe.requests
+        expectNoDifference(requests.count, mode == "scheduled" ? 1 : 0)
+        if let request = requests.first {
+            let payload = try #require(request.messages.last?.text)
+            let object = try #require(JSONSerialization.jsonObject(with: Data(payload.utf8)) as? [String: Any])
+            expectNoDifference(object["clockEvidenceID"] as? String, "clock")
+            expectNoDifference((object["evidence"] as? [Any])?.count, 0)
+            #expect(request.tools.isEmpty)
+        }
+        await hourly.release()
+        try await wait { await hourly.count == 2 }
+        let after = await probe.requests
+        expectNoDifference(after.count, requests.count)
+        let timerCount = await debounce.count
+        expectNoDifference(timerCount, mode == "disabled" ? 0 : 1)
+        if mode == "scheduled" {
+            time.advanceDate(86_400)
+            await hourly.release()
+            try await wait { await hourly.count == 3 }
+            try await wait { await debounce.count == 2 }
+            await debounce.release()
+            try await wait { await model.isBackgroundMemorySynthesisIdle() }
+            let nextDayCount = await probe.requests.count
+            expectNoDifference(nextDayCount, 2)
+        }
+        model.stopMemoryTemporalReviews()
+        await hourly.release()
     }
 
     @Test(arguments: ["keep", "remove-group", "account"])
@@ -422,7 +501,7 @@ private actor SynthesisAppTimer {
                 if language != "en" {
                     for key in ["Memory suggestions", "Save as private memory…", "Dismiss suggestion", "Reviewing memory suggestions…", AgentMemorySuggestionsNotice.disclosure,
                         "Automatic memory synthesis", "Disable automatic synthesis", "Enable automatic synthesis…",
-                        "Enable automatic memory synthesis?", AgentMemorySynthesisNotice.disclosure] {
+                        "Enable automatic memory synthesis?", AgentMemorySynthesisNotice.disclosure, AgentMemorySynthesisNotice.temporalDisclosure] {
                         #expect(FiliconLocalization.string(key) != key)
                     }
                 }

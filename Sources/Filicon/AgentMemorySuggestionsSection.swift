@@ -48,7 +48,10 @@ struct AgentMemorySuggestionsSection: View {
         .confirmationDialog(l10n("Enable automatic memory synthesis?"), isPresented: $confirmsSynthesis, titleVisibility: .visible) {
             Button(l10n("Enable")) { Task { await setSynthesisEnabled(true) } }
             Button(l10n("Cancel"), role: .cancel) {}
-        } message: { Text(FiliconLocalization.string(AgentMemorySynthesisNotice.disclosure)) }
+        } message: {
+            Text(FiliconLocalization.string(AgentMemorySynthesisNotice.disclosure) + "\n\n" +
+                FiliconLocalization.string(AgentMemorySynthesisNotice.temporalDisclosure))
+        }
         .confirmationDialog(l10n("Enable memory suggestions?"), isPresented: $confirmsEnable, titleVisibility: .visible) {
             Button(l10n("Enable")) { Task { await setEnabled(true) } }
             Button(l10n("Cancel"), role: .cancel) {}
@@ -117,9 +120,11 @@ struct AgentMemorySuggestionsSection: View {
 }
 
 struct AgentMemorySynthesisNotice: View {
+    static let temporalDisclosure = "While enabled, the app also checks hourly for private memories due for a date-based review, including at startup. Reviews may incur extra model costs without a new chat message. After a review completes, the next review is due 24 hours after that review's start time."
     static let disclosure = "Separate opt-in: completed direct and group replies may trigger extra paid model requests using this agent's current human message, reply and private memories. After independent model verification, generated memories can be added, updated or removed without individual approval. Manually saved memories are protected. Disabling keeps saved memories and grants no tool permissions."
     var body: some View {
         Text(FiliconLocalization.string(Self.disclosure)).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        Text(FiliconLocalization.string(Self.temporalDisclosure)).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
     }
 }
 

@@ -183,6 +183,10 @@ public struct AgentMemorySynthesisQueue: Sendable {
         return batch?.settings == settings && batch?.temporalReview == true
     }
 
+    public var temporalSettings: [AgentMemorySynthesisSettings] {
+        order.compactMap { pending[$0] }.filter(\.temporalReview).map(\.settings)
+    }
+
     public mutating func removeTemporal(settings: AgentMemorySynthesisSettings) {
         let key = Key(accountID: settings.accountID, agentID: settings.agentID)
         guard pending[key]?.settings == settings else { return }

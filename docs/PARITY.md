@@ -1,5 +1,7 @@
 # Filicon / Grok Bot 0.18 功能 parity matrix（current implementation）
 
+App temporal 排程（2026-09-26）：啟動與每小時 sweep 接入 worker，每次最多新增 4 位到期且 opt-in 的代理人；排除已排隊相同 consent，跨帳號 await／保存由 generation 與 lifetime 保護。七語提示說明無新聊天仍可能產生模型費用。取代下方 startup／hourly 尚缺的歷史記述；失敗觀測、episodic、外部服務驗收仍 partial。最終驗證見協作核對紀錄。
+
 Temporal worker 接線（2026-09-26）：日期批次具有獨立可撤銷來源，App runner 傳遞日期標記，production pipeline 回報 24 小時 receipt；取消／stale 不回報。審批恢复後完整非並行測試、原生建置與封裝簽章通過，包含 7 種 worker／9 種 receipt 情境。App startup／hourly sweep 仍缺，維持 partial。
 
 Temporal queue（2026-09-26）：支援空 evidence 日期檢視批次及與聊天證據合併，重排保留標記且不覆蓋新版 consent；仍待 worker／App hourly sweep 與完成回報接線，定期檢視維持 partial。
