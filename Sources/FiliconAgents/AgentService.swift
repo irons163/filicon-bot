@@ -337,7 +337,7 @@ public actor AgentService {
         try lifetime.commit {
             guard at.timeIntervalSince1970.isFinite else { throw AgentMemorySuggestionError.invalid }
             guard try memorySynthesisSnapshot(accountID: expected.accountID, agentID: expected.agentID) == expected else {
-                throw AgentMemorySuggestionError.stale
+                throw AgentMemorySynthesisSnapshotChanged()
             }
             let proposal = try AgentMemorySynthesisProposal.parse(text, evidenceIDs: evidenceIDs,
                 mutableMemoryIDs: expected.mutableMemoryIDs, clockEvidenceID: clockEvidenceID)

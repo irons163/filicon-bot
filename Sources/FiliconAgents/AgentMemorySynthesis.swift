@@ -13,6 +13,12 @@ public struct AgentMemorySynthesisEvidence: Encodable, Equatable, Sendable {
 
 public enum AgentMemorySynthesisStage: Equatable, Sendable { case proposal, verification }
 public enum AgentMemorySynthesisOutcome: Equatable, Sendable { case noWork, committed, rejected }
+
+/// The evidence may be reused with a fresh memory snapshot. Consent failures
+/// remain a separate, terminal error and must never trigger automatic requeue.
+public struct AgentMemorySynthesisSnapshotChanged: Error, Sendable {
+    public init() {}
+}
 private enum MemorySynthesisAttemptError: Error { case rejected }
 
 extension AgentService {
@@ -110,7 +116,7 @@ extension AgentService {
             try lifetime.check()
             if let settings { try requireMemorySynthesisConsent(settings) }
             guard try memorySynthesisSnapshot(accountID: accountID, agentID: agentID) == snapshot else {
-                throw AgentMemorySuggestionError.stale
+                throw AgentMemorySynthesisSnapshotChanged()
             }
             do {
                 approved = try await proposeAndVerify()

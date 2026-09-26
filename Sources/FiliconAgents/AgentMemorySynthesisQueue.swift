@@ -87,6 +87,26 @@ public struct AgentMemorySynthesisQueue: Sendable {
         return .init(inserted: true, droppedAgents: droppedAgents, droppedEvidence: droppedEvidence)
     }
 
+    /// Restore older evidence ahead of evidence that arrived during execution.
+    /// Capacity shedding keeps the newest evidence; never replace newer consent.
+    public mutating func requeue(_ batch: Batch, now: ContinuousClock.Instant) throws {
+        let key = Key(accountID: batch.settings.accountID, agentID: batch.settings.agentID)
+        if let current = pending[key], current.settings != batch.settings { return }
+        var merged = batch.entries
+        for entry in pending[key]?.entries ?? [] {
+            if let duplicate = merged.first(where: { $0.evidence.id == entry.evidence.id }) {
+                guard duplicate == entry else { throw AgentMemorySuggestionError.invalid }
+            } else { merged.append(entry) }
+        }
+        // Stage the whole operation so an invalid entry cannot partially restore.
+        var candidate = self
+        candidate.removeAgent(accountID: batch.settings.accountID, agentID: batch.settings.agentID)
+        for entry in merged.suffix(12) {
+            try candidate.enqueue(settings: batch.settings, entry: entry, now: now)
+        }
+        self = candidate
+    }
+
     /// Atomically detach ready batches. Evidence enqueued while a detached batch
     /// is running belongs to a later batch and cannot be erased by its completion.
     public mutating func takeReady(now: ContinuousClock.Instant) -> [Batch] {

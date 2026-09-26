@@ -129,10 +129,20 @@ public actor AgentMemorySynthesisWorker {
         active = batch; lifetime = token
         task = Task { [weak self] in
             do { try token.check(); try await run(batch, token) }
+            catch is AgentMemorySynthesisSnapshotChanged {
+                await self?.restoreStale(batch, token: token)
+            }
             catch { /* Maintenance failure never invalidates a completed foreground reply. */ }
             token.close()
             await self?.finished()
         }
+    }
+
+    private func restoreStale(_ batch: AgentMemorySynthesisQueue.Batch, token: AgentMemorySuggestionLifetime) {
+        guard !stopped, (try? token.check()) != nil else { return }
+        // Reuse only evidence, never the stale proposal/verdict. The next runner
+        // captures fresh state and revalidates consent before any provider call.
+        try? queue.requeue(batch, now: now())
     }
 
     private func finished() {

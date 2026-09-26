@@ -57,7 +57,7 @@ struct AgentMemorySynthesisStoreTests {
         let reopened = try AgentService(storeURL: file)
         let restored = try await reopened.memorySynthesisSnapshot(accountID: "local", agentID: owner)
         expectNoDifference(restored, after)
-        await #expect(throws: AgentMemorySuggestionError.stale) {
+        await #expect(throws: AgentMemorySynthesisSnapshotChanged.self) {
             try await service.applyVerifiedMemorySynthesis(text(rows), expected: before, evidenceIDs: ["turn"], at: date, lifetime: .init())
         }
     }

@@ -1,5 +1,15 @@
 # 協作能力核對紀錄（更新至 2026-09-26）
 
+## 記憶快照變動重排（2026-09-26）
+
+對照原版 applySynthesis 的 stale／needsAnotherPass：以 `AgentMemorySynthesisSnapshotChanged` 區分記憶／tombstone 快照改變與 consent stale。worker 只對前者恢復 evidence，丟棄舊 proposal／verdict，重設 15 秒 debounce；下一次 run 重新讀取 snapshot 並重驗 consent。取消、來源撤銷、shutdown 或授權 stale 不恢復；若其間已有新版 consent pending，不覆蓋新版。
+
+恢復時舊 evidence 在前、執行期間的新 evidence 在後，按既有最近 12 筆及 64 組容量限制保留；整筆操作先 staging，衝突不部分修改。來源 lifetime 跟隨保留下來的 evidence，不使用已關閉的前一批 token。連續快照衝突可再次 debounce 重排，與原版一致；這不是網路錯誤的無限 retry。
+
+以 pfw-testing／CustomDump 與可控制時間驗證 snapshot 重排、consent terminal、取消 terminal、容量保留新證據與授權版本隔離；既有 store 快照 fence 改驗明確錯誤型別。temporal sweep、失敗觀測與 episodic 尚未完成。
+
+驗證：`memory-synthesis-stale-full.log` 完整非並行套件 exit 0；新增 3 種 worker 重排情境、queue 恢復容量／revision 案例及既有快照保存 fence 通過。`memory-synthesis-stale-native.log` 原生建置、verify-package／deep strict 簽章、git diff --check 通過。未啟動 App、未使用真實模型／帳號資料。
+
 ## 聊天完成後背景記憶接管（2026-09-26）
 
 AppModel 的 bound direct／group session 現在共用一個 synthesis worker。完成的人類訊息與該 agent 回覆入列後立即交回前景；15 秒 debounce 後同 account／agent 的多來源證據合併執行。正常 close 明確保留 synthesis lifetime，錯誤／Stop 預設 close 仍撤銷；舊人工審核候選 extractor 保持原流程。worker 執行時讀取當前 profile，transport 仍重驗 consent／profile、使用無工具請求與既有整組 deadline／retry。

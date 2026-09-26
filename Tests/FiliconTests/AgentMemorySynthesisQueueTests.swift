@@ -35,6 +35,23 @@ struct AgentMemorySynthesisQueueTests {
         expectNoDifference(queue.nextRun, nil)
     }
 
+    @Test func staleRestoreKeepsNewerEvidenceAndConsent() throws {
+        var queue = AgentMemorySynthesisQueue()
+        let now = ContinuousClock.now
+        try queue.enqueue(settings: settings(), entry: entry(1), now: now)
+        let old = try #require(queue.takeReady(now: now.advanced(by: .seconds(15))).first)
+        for n in 2...14 { try queue.enqueue(settings: settings(), entry: entry(n), now: now) }
+        try queue.requeue(old, now: now.advanced(by: .seconds(20)))
+        expectNoDifference(queue.nextRun, now.advanced(by: .seconds(35)))
+        let merged = queue.takeReady(now: now.advanced(by: .seconds(35)))
+        expectNoDifference(merged.first?.entries, (3...14).map { entry($0) })
+        try queue.enqueue(settings: settings(revision: 101), entry: entry(15), now: now)
+        try queue.requeue(old, now: now)
+        let updated = queue.takeReady(now: now.advanced(by: .seconds(15)))
+        expectNoDifference(updated.first?.entries, [entry(15)])
+        expectNoDifference(updated.first?.settings, settings(revision: 101))
+    }
+
     @Test func capsEvictOldestAgentsAndEvidenceWithoutCrossAccountMixing() throws {
         var queue = AgentMemorySynthesisQueue()
         let now = ContinuousClock.now

@@ -64,6 +64,37 @@ struct AgentMemorySynthesisWorkerTests {
         await worker.shutdown()
     }
 
+    @Test(arguments: ["snapshot", "consent", "cancelled"])
+    func onlySnapshotChangesRestoreEvidence(mode: String) async throws {
+        let clock = WorkerTime(), timers = WorkerTimers(), probe = WorkerProbe()
+        let source = AgentMemorySuggestionLifetime()
+        let worker = AgentMemorySynthesisWorker(now: { clock.now }, sleep: { try await timers.wait($0) }) { batch, lifetime in
+            try await probe.run(batch, lifetime: lifetime)
+            if await probe.started.count == 1 {
+                if mode == "consent" { throw AgentMemorySuggestionError.stale }
+                throw AgentMemorySynthesisSnapshotChanged()
+            }
+        }
+        try await worker.enqueue(settings: settings(), entry: entry(1), sourceLifetime: source)
+        try await eventually { await timers.count == 1 }
+        clock.advance(15); await timers.fireAll()
+        try await eventually { await probe.started.count == 1 }
+        if mode == "cancelled" { source.close() }
+        await probe.release()
+        if mode == "snapshot" {
+            try await eventually { await timers.count == 2 }
+            clock.advance(15); await timers.fireAll()
+            try await eventually { await probe.started.count == 2 }
+            let batches = await probe.started
+            expectNoDifference(batches, [["turn-1"], ["turn-1"]])
+            await probe.release()
+        }
+        try await eventually { await worker.isIdle }
+        let count = await probe.started.count
+        expectNoDifference(count, mode == "snapshot" ? 2 : 1)
+        await worker.shutdown()
+    }
+
     @Test(arguments: ["origin", "agent", "revision", "shutdown"])
     func cancellationFencesActiveBatch(mode: String) async throws {
         let clock = WorkerTime(), timers = WorkerTimers(), probe = WorkerProbe()
