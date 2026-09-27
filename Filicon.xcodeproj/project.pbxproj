@@ -26,6 +26,7 @@
 		31FC7996892BEE5C71AF8E96F5307FB6 /* FiliconRichContent in Frameworks */ = {isa = PBXBuildFile; productRef = CEFDD3E81747FCF8469FF8C5DB9C6407 /* FiliconRichContent */; };
 		34FF42E59454801BA4F3825328398AC6 /* GroupConversationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 749D860B64D2CA208ED09345E51F67F7 /* GroupConversationView.swift */; };
 		36A8ED7DAE2920944BFDBE4D83626364 /* CursorAgentReferenceCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 302E6F2D2268D08A214832B4D3C9C46E /* CursorAgentReferenceCard.swift */; };
+		A70100000000000000000001 /* RemoteAttachmentCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = A70100000000000000000002 /* RemoteAttachmentCard.swift */; };
 		3CACF24A5FB6E09BC063AC94003B56E3 /* WorkspaceFolderAccess.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89E3BEF21F65831A148587445112ADAB /* WorkspaceFolderAccess.swift */; };
 		3FDD892FB19C8C3E9A9FB206D7684093 /* TranscriptPresentationState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49AE2C6929CEDCF96D37CC00ECE3142B /* TranscriptPresentationState.swift */; };
 		42A4DADCCAEC00226ABE621ACE4F3DDD /* PetAvatars in Resources */ = {isa = PBXBuildFile; fileRef = 46DD2EE4B7165B84ECE94217CB9D5A82 /* PetAvatars */; };
@@ -176,6 +177,7 @@
 		2E170DAC06297FBA3A51398E2D5D1C5A /* AttachmentSpreadsheetPreview.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AttachmentSpreadsheetPreview.swift; sourceTree = "<group>"; };
 		2E381225B1EB1F018EA62384CC255CE8 /* ko */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.strings; name = ko; path = ko.lproj/Localizable.strings; sourceTree = "<group>"; };
 		302E6F2D2268D08A214832B4D3C9C46E /* CursorAgentReferenceCard.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CursorAgentReferenceCard.swift; sourceTree = "<group>"; };
+		A70100000000000000000002 /* RemoteAttachmentCard.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RemoteAttachmentCard.swift; sourceTree = "<group>"; };
 		31D80F1C3174604D9501C45FCD4A777D /* AgentsWorkspaceScreen.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AgentsWorkspaceScreen.swift; sourceTree = "<group>"; };
 		32199218211D63BC5A845C9DF156318B /* WindowStateController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WindowStateController.swift; sourceTree = "<group>"; };
 		342F439F73F5BE0522CC4F8321E96C08 /* WorkspaceNavigationBridge.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WorkspaceNavigationBridge.swift; sourceTree = "<group>"; };
@@ -400,6 +402,7 @@
 				C89894E48962169E7CF115D1DBBCD4A5 /* ConversationOutlineView.swift */,
 				A8DF63A7E8912AF0D092B112A6DF1558 /* ConversationPaginationState.swift */,
 				302E6F2D2268D08A214832B4D3C9C46E /* CursorAgentReferenceCard.swift */,
+				A70100000000000000000002 /* RemoteAttachmentCard.swift */,
 				A5E843102734C11AF7A63B8739D7BCF3 /* FiliconApp.swift */,
 				773E5C8BF82838BECD4F9E253A73D846 /* FiliconLocalization.swift */,
 				C6EEDE36A0752435764B0A2437282789 /* FiliconTheme.swift */,
@@ -730,6 +733,7 @@
 				45C4C113C9E72BA4852EBBBFD7A993A9 /* ConversationOutlineView.swift in Sources */,
 				FDDF31956462C9F707066FBC6CE1C9F7 /* ConversationPaginationState.swift in Sources */,
 				36A8ED7DAE2920944BFDBE4D83626364 /* CursorAgentReferenceCard.swift in Sources */,
+				A70100000000000000000001 /* RemoteAttachmentCard.swift in Sources */,
 				7E461F86A9B012E0CFCA39DDA4C2F5EE /* FiliconApp.swift in Sources */,
 				7C8992662DE294352CB709EAE3111315 /* FiliconLocalization.swift in Sources */,
 				7A928AE549C62CE7E031200F97259CB6 /* FiliconTheme.swift in Sources */,

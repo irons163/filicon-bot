@@ -1721,3 +1721,5 @@
 "Image preview unavailable. Reject this request and try again." = "画像をプレビューできません。このリクエストを拒否して再試行してください。";
 "This exact image will be saved after approval. The source file is not changed." = "承認後、この画像をそのまま保存します。元のファイルは変更されません。";
 "This saves the reviewed file in this group. It does not add responders or automatically send the file to other models." = "承認したファイルをこのグループに保存します。返信するメンバーを追加したり、他のモデルにファイルを自動送信したりすることはありません。";
+"Remote attachment" = "リモート添付ファイル";
+"Open external link. Content has not been downloaded or verified." = "外部リンクを開きます。内容はダウンロードも検証もされていません。";

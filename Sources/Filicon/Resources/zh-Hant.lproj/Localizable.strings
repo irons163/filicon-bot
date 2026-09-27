@@ -1721,3 +1721,5 @@
 "Image preview unavailable. Reject this request and try again." = "無法顯示圖片預覽。請拒絕這次要求後重試。";
 "This exact image will be saved after approval. The source file is not changed." = "核准後將儲存這張圖片，來源檔案不會變更。";
 "This saves the reviewed file in this group. It does not add responders or automatically send the file to other models." = "這會將已核准的檔案儲存在此群組，不會新增回覆者或自動將檔案傳給其他模型。";
+"Remote attachment" = "遠端附件";
+"Open external link. Content has not been downloaded or verified." = "開啟外部連結。內容尚未下載或驗證。";

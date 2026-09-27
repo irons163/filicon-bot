@@ -1721,3 +1721,5 @@
 "Image preview unavailable. Reject this request and try again." = "이미지 미리보기를 표시할 수 없습니다. 이 요청을 거부한 후 다시 시도하세요.";
 "This exact image will be saved after approval. The source file is not changed." = "승인 후 이 이미지가 그대로 저장됩니다. 원본 파일은 변경되지 않습니다.";
 "This saves the reviewed file in this group. It does not add responders or automatically send the file to other models." = "승인된 파일을 이 그룹에 저장합니다. 응답자를 추가하거나 다른 모델에 파일을 자동으로 전송하지 않습니다.";
+"Remote attachment" = "원격 첨부 파일";
+"Open external link. Content has not been downloaded or verified." = "외부 링크를 엽니다. 콘텐츠가 다운로드되거나 검증되지 않았습니다.";

@@ -593,6 +593,9 @@ struct GroupMessageBubble: View {
                 if let reference = message.cursorAgent {
                     CursorAgentReferenceCard(reference: reference)
                 }
+                if let reference = message.remoteAttachment {
+                    RemoteAttachmentCard(reference: reference)
+                }
                 if !message.text.isEmpty && message.question == nil && message.cursorAgent == nil {
                     Group {
                         if isUser {

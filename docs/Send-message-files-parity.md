@@ -378,3 +378,9 @@ AgentFilePublicationTransaction 的 input／review／receipt 加入可選 altTex
 單聊 AttachmentCard、群組 file row、信箱 file row 顯示已保存 altText，採兩行純文字副標，懸停可查看完整描述。保留檔名、大小與既有預覽動作；描述不解析 Markdown、不建立連結。既有 AttachmentMediaViewer 已顯示完整描述，沿用而不另建預覽。
 
 依 pfw-modern-swiftui 沿用既有視圖與單行 action。信箱卡片以七種語言 × 有／無長描述進行 14 個 NSHostingView bitmap render／尺寸測試，全部通過（local-alt-ui-target.log）；原生 Debug build 與 deep strict 簽章通過（local-alt-ui-native.log）。未人工啟動 App，未重跑完整回歸；此證據不代表所有視覺場景已人工驗收。遠端媒體 UI、App 核准與其他已列差異仍未完成。
+
+## 第三十三階段：群組遠端 locator 卡片（2026-09-28）
+
+群組對 remoteAttachment 顯示 RemoteAttachmentCard：描述、精確 URL 及未下載／驗證提示，點擊才交給既有 openURL 環境。沒有載入時網路請求，也沒有把 URL 猜成圖片／影片。七種語言提示已補齊，新檔案加入原生 Xcode target。
+
+14 個語言 × 深淺色 NSHostingView bitmap／尺寸案例通過，openURL spy 確認 rendering 不會開啟網址（remote-card-target.log）；原生 Debug build 與 deep strict 簽章通過（remote-card-native.log）。未重跑完整回歸，未啟動使用者 App。本卡片只是 locator 的可見呈現，不替代原版媒體預覽，亦未完成 App host 啟用、遠端信箱／單聊等差異。

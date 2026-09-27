@@ -1721,3 +1721,5 @@
 "Image preview unavailable. Reject this request and try again." = "Vista previa no disponible. Rechaza esta solicitud y vuelve a intentarlo.";
 "This exact image will be saved after approval. The source file is not changed." = "Se guardará esta misma imagen tras la aprobación. El archivo original no cambia.";
 "This saves the reviewed file in this group. It does not add responders or automatically send the file to other models." = "El archivo aprobado se guardará en este grupo. No se añadirán participantes ni se enviará automáticamente el archivo a otros modelos.";
+"Remote attachment" = "Archivo adjunto remoto";
+"Open external link. Content has not been downloaded or verified." = "Abrir enlace externo. El contenido no se ha descargado ni verificado.";
