@@ -6,6 +6,7 @@ import FiliconAppServices
 import FiliconAutoReview
 import FiliconDomain
 import FiliconLocalTools
+import FiliconPersistence
 import FiliconProviderKit
 @testable import Filicon
 
@@ -71,7 +72,7 @@ private struct GroupFileAppProvider: AIProvider {
 
 @Suite("App group file publication", .timeLimit(.minutes(1)))
 @MainActor struct GroupFilePublicationAppTests {
-    @Test(arguments: ["approve", "deny", "stop", "destination-stop", "account", "members", "source-changed", "quota-reserve", "quota-blob", "quota-message"], ["foreground", "group", "direct", "mailbox"])
+    @Test(arguments: ["approve", "deny", "stop", "destination-stop", "account", "members", "source-changed", "quota-reserve", "quota-blob", "quota-message", "message-write"], ["foreground", "group", "direct", "mailbox"])
     func requiresApprovalAndKeepsReviewedBytes(mode: String, route: String) async throws {
         let background = route != "foreground"
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-file-app-\(UUID())")
@@ -152,6 +153,14 @@ private struct GroupFileAppProvider: AIProvider {
         if mode == "account" { await model.cancelAutoReviewApprovals(nextAccountID: "other") }
         if mode == "members" { await model.updateGroupMembers(groupID: destination.id, memberIDs: []) }
         if mode.hasPrefix("quota-") { fault.arm(mode) }
+        let groupsURL = root.appending(path: "groups.json")
+        let backupURL = root.appending(path: "groups-before-write.json")
+        if mode == "message-write" {
+            // Only this test's isolated store is replaced. Atomic writes cannot
+            // replace a directory, so GroupService reaches a real save failure.
+            try FileManager.default.moveItem(at: groupsURL, to: backupURL)
+            try FileManager.default.createDirectory(at: groupsURL, withIntermediateDirectories: false)
+        }
         await model.resolveGroupApproval(approval, groupID: originID, approve: mode != "deny")
         await send.value
         let deadline = ContinuousClock.now + .seconds(10)
@@ -163,6 +172,21 @@ private struct GroupFileAppProvider: AIProvider {
         #expect(!model.runningAgentMessageScopes.contains(originID))
         #expect(model.pendingAutoReviewApprovals.isEmpty)
         if mode.hasPrefix("quota-") { #expect(fault.didTrigger) }
+        if mode == "message-write" {
+            let inMemory = model.groupMessages[destination.id, default: []]
+            #expect(inMemory.allSatisfy { $0.files?.isEmpty != false })
+            let prepared = try PreparedAgentPublicationFile(bytes: bytes, filename: "report.txt")
+            let index = try AttachmentReferenceRepository(databaseURL: root.appending(path: "attachment-index.sqlite"))
+            let referenceCount = try await index.referenceCount(blobID: prepared.digest)
+            expectNoDifference(referenceCount, 0)
+            let storedBlob = try await index.blob(id: prepared.digest)
+            let blob = try #require(storedBlob)
+            expectNoDifference(blob.state, .quarantined)
+            expectNoDifference(blob.byteCount, Int64(bytes.count))
+            // Restore the untouched snapshot only after the run has unwound.
+            try FileManager.default.removeItem(at: groupsURL)
+            try FileManager.default.moveItem(at: backupURL, to: groupsURL)
+        }
         let agents = try AgentService(storeURL: root.appending(path: "agents.json"))
         let groups = try GroupService(agents: agents, storeURL: root.appending(path: "groups.json"))
         let messages = await groups.messages(groupID: destination.id)

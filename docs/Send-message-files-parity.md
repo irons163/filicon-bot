@@ -196,3 +196,13 @@ App 隔離 fixture 以不同來源／目的群組實際執行 SendToAgent → Se
 此階段不是所有儲存故障驗收：GroupService 實際保存失敗、程序中止／crash recovery、委派重用（ABA）仍待補驗。direct／mailbox 本身一般檔案發布、遠端 URL／媒體能力缺口也仍存在。
 
 驗證：40 種定向情境與完整非平行 Swift 測試 exit 0；原生 Debug build、deep strict 封裝／簽章通過。故障重現日誌 `.build/validation/group-file-quota-{target,repeat}.log`；修正後 `.build/validation/group-file-quota-{fixed,full,native}.log`。完整回歸亦包含成功工具活動斷言。
+
+## 第十四階段：群組訊息實際寫入失敗（2026-09-28）
+
+在傳檔核准期間，測試把隔離 fixture 的 groups.json 移至備份位置、以目錄佔住原路徑，使 GroupService 的 atomic write 真正失敗，而不是僅由 quota callback 模擬錯誤。來源涵蓋前景群組、群組委派、direct 委派、mailbox 委派；四種新增案例與既有 40 種合計 44 種。
+
+等執行完全收尾後，確認記憶體無檔案訊息、SQLite 中該 blob 的 reference count 為 0、blob 已進入 quarantined 且 byte count 相符，再還原原始快照並重新載入，確認沒有新檔案訊息。檢查 quarantine 防止「根本未執行到寫入」形成假陽性。此測試只移動／還原各案例自己建立的臨時檔，沒有修改真實 groups.json。依 pfw-testing 驗證狀態與可重開資料。
+
+底層寫入失敗的既有清理流程符合上述斷言，本批沒有變更 production code。程序中止／crash recovery 與委派重用（ABA）尚未由這些案例證明；direct／mailbox 自身一般檔案發布及遠端／媒體能力仍未完成。
+
+驗證：44 種定向情境通過，補上 quarantine 斷言後完整非平行 Swift 測試 exit 0；日誌 `.build/validation/group-file-write-failure-{target,full}.log`。本批僅測試與文件變更，未重建或啟動使用者 App；production build／簽章證據沿用第十三階段。
