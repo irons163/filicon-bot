@@ -967,6 +967,62 @@ struct AgentImageMessagingTests {
         expectNoDifference(restored.first(where: { $0.id == saved.id })?.files?.map(\.id), [metadata.id])
     }
 
+    @Test func reviewedMailboxRemoteIsScopedReplayableAndReplyable() async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let inbound = AgentMessage(senderID: f.sender.id, recipientID: f.recipient.id, text: "Remote",
+            delivery: .init(chainID: UUID(), originConversationID: f.origin))
+        try await f.messenger.send(inbound)
+        try await f.messenger.updateDelivery(id: inbound.id, state: .running)
+        let reference = try RemoteAttachmentReference(url: "https://example.com/report?sig=a%2Bb", alt: "報表")
+        let lifetime = AgentPublicationLifetime()
+        let reviewed = ReviewedMailboxRemoteAttachment(reference: reference, incomingID: inbound.id, originID: f.origin,
+            senderID: f.recipient.id, messageID: UUID(), lifetime: lifetime)
+        for (incoming, origin, sender) in [(UUID(), f.origin, f.recipient.id),
+                                          (inbound.id, UUID(), f.recipient.id),
+                                          (inbound.id, f.origin, f.sender.id)] {
+            let invalid = ReviewedMailboxRemoteAttachment(reference: reference, incomingID: incoming, originID: origin,
+                senderID: sender, messageID: UUID(), lifetime: lifetime)
+            await #expect(throws: AgentPublicationError.invalid) { try await f.messenger.publishRemoteAttachment(invalid) }
+        }
+        await #expect(throws: AgentPublicationError.invalid) {
+            try await f.messenger.publish(reviewed.publication, replyingTo: inbound.id, lifetime: lifetime)
+        }
+        let file = f.root.appending(path: "messages.json"), backup = f.root.appending(path: "remote.backup")
+        try FileManager.default.moveItem(at: file, to: backup)
+        try FileManager.default.createDirectory(at: file, withIntermediateDirectories: false)
+        await #expect(throws: (any Error).self) { try await f.messenger.publishRemoteAttachment(reviewed) }
+        let unsaved = await f.messenger.allMessages()
+        expectNoDifference(unsaved.first?.delivery?.publications, nil)
+        try FileManager.default.removeItem(at: file)
+        try FileManager.default.moveItem(at: backup, to: file)
+        let saved = try await f.messenger.publishRemoteAttachment(reviewed)
+        let replay = try await f.messenger.publishRemoteAttachment(reviewed)
+        expectNoDifference(saved, replay)
+        expectNoDifference(saved.remoteAttachment, reference)
+        #expect(saved.shortAddress != nil)
+        let changed = ReviewedMailboxRemoteAttachment(reference: reference, incomingID: inbound.id, originID: f.origin,
+            senderID: f.recipient.id, messageID: saved.id, replyToMessageID: inbound.id, lifetime: lifetime)
+        await #expect(throws: AgentPublicationError.invalid) { try await f.messenger.publishRemoteAttachment(changed) }
+        let directory = try await f.messenger.replyDirectory(replyingTo: inbound.id)
+        #expect(directory.contains(where: { $0.id == saved.id }))
+        var reply = RoomMessage(groupID: f.origin, senderID: f.recipient.id, text: "See report")
+        reply.replyToMessageID = saved.id
+        try await f.messenger.publish(reply, replyingTo: inbound.id, lifetime: lifetime)
+        let extra = ReviewedMailboxRemoteAttachment(reference: reference, incomingID: inbound.id, originID: f.origin,
+            senderID: f.recipient.id, messageID: UUID(), lifetime: lifetime)
+        await #expect(throws: AgentPublicationError.limit) { try await f.messenger.publishRemoteAttachment(extra) }
+        lifetime.close()
+        await #expect(throws: CancellationError.self) { try await f.messenger.publishRemoteAttachment(reviewed) }
+        let reopened = try AgentMessenger(service: f.agents, storeURL: file)
+        let restored = try await reopened.replyDirectory(replyingTo: inbound.id)
+        expectNoDifference(restored.first(where: { $0.id == saved.id })?.remoteAttachment, reference)
+        let afterRestart = ReviewedMailboxRemoteAttachment(reference: reference, incomingID: inbound.id, originID: f.origin,
+            senderID: f.recipient.id, messageID: UUID(), lifetime: AgentPublicationLifetime())
+        await #expect(throws: AgentPublicationError.invalid) {
+            try await reopened.publishRemoteAttachment(afterRestart)
+        }
+    }
+
     @Test func oldTextPublicationsAndRoomMessagesDecodeWithoutImages() throws {
         let delivery = AgentMessageDelivery(chainID: UUID(), originConversationID: UUID(), state: .completed, response: "Old reply")
         let encoded = try JSONEncoder().encode(delivery)

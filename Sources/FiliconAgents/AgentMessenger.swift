@@ -21,6 +21,25 @@ public struct ReviewedMailboxFile: Sendable {
     }
 }
 
+/// Host-only evidence of locator review, scoped to one mailbox delivery.
+/// This does not download content or grant access to the referenced service.
+public struct ReviewedMailboxRemoteAttachment: Sendable {
+    public let incomingID: UUID
+    public let publication: RoomMessage
+    public let lifetime: AgentPublicationLifetime
+
+    public init(reference: RemoteAttachmentReference, incomingID: UUID, originID: UUID,
+                senderID: UUID, messageID: UUID, replyToMessageID: UUID? = nil,
+                lifetime: AgentPublicationLifetime) {
+        self.incomingID = incomingID
+        self.lifetime = lifetime
+        var message = RoomMessage(id: messageID, groupID: originID, senderID: senderID, text: "")
+        message.remoteAttachment = reference
+        message.replyToMessageID = replyToMessageID
+        self.publication = message
+    }
+}
+
 /// A canonical transcript candidate, never an execution or permission request.
 public struct AgentPeerTranscriptEntry: Hashable, Sendable {
     public let source: AgentMessageSource
@@ -144,6 +163,12 @@ public actor AgentMessenger {
         try publishValidated(file.publication, replyingTo: file.incomingID,
                              lifetime: file.lifetime, reviewedFile: file)
         return addressedReceipt(file.publication)
+    }
+
+    public func publishRemoteAttachment(_ remote: ReviewedMailboxRemoteAttachment) throws -> RoomMessage {
+        try publishValidated(remote.publication, replyingTo: remote.incomingID,
+                             lifetime: remote.lifetime, reviewedRemote: remote)
+        return addressedReceipt(remote.publication)
     }
 
     /// The host supplies account/scope; the model supplies only question content.
@@ -335,7 +360,7 @@ public actor AgentMessenger {
         let counts = Dictionary(grouping: candidates, by: \.id).mapValues(\.count)
         let addressCounts = Dictionary(grouping: candidates.compactMap(\.shortAddress), by: { $0 }).mapValues(\.count)
         return Array(candidates.filter {
-            counts[$0.id] == 1 && (!$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !($0.images ?? []).isEmpty || !($0.files ?? []).isEmpty)
+            counts[$0.id] == 1 && (!$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !($0.images ?? []).isEmpty || !($0.files ?? []).isEmpty || $0.remoteAttachment != nil)
         }.map { message in
             var target = message
             if let address = target.shortAddress,
@@ -347,8 +372,12 @@ public actor AgentMessenger {
     }
 
     private func publishValidated(_ publication: RoomMessage, replyingTo id: UUID, lifetime: AgentPublicationLifetime,
-                                  reviewedFile: ReviewedMailboxFile? = nil) throws {
-        guard publication.remoteAttachment == nil else { throw AgentPublicationError.invalid }
+                                  reviewedFile: ReviewedMailboxFile? = nil,
+                                  reviewedRemote: ReviewedMailboxRemoteAttachment? = nil) throws {
+        if let reviewedRemote {
+            guard reviewedFile == nil, reviewedRemote.incomingID == id,
+                  reviewedRemote.publication == publication else { throw AgentPublicationError.invalid }
+        } else if publication.remoteAttachment != nil { throw AgentPublicationError.invalid }
         if let reviewedFile {
             guard reviewedFile.incomingID == id, reviewedFile.publication == publication else {
                 throw AgentPublicationError.invalid
@@ -367,7 +396,7 @@ public actor AgentMessenger {
                   delivery.state == .running,
                   publication.groupID == delivery.originConversationID,
                   publication.senderID == state.messages[index].recipientID,
-                  (!publication.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !(publication.images ?? []).isEmpty || reviewedFile != nil),
+                  (!publication.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !(publication.images ?? []).isEmpty || reviewedFile != nil || reviewedRemote != nil),
                   publication.text.count <= 8_000, publication.toolActivities.isEmpty,
                   publication.memberOutcome == nil,
                   publication.shortAddress == nil else { throw AgentPublicationError.invalid }

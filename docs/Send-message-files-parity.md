@@ -404,3 +404,11 @@ App 背景委派授權、信箱／單聊 HTTPS、真正媒體預覽仍未完成�
 依 pfw-testing 使用隔離 fixture 與結構化斷言，未下載遠端內容、未啟動使用者 App、未改真實資料。HTTPS 信箱／單聊保存及真正媒體預覽等仍未完成，不能把這批視為全功能 parity。
 
 完整非平行 Swift 回歸 exit 0（remote-background-host-full.log）。
+
+## 第三十六階段：信箱遠端附件可信保存層（2026-09-28）
+
+新增不可由模型解碼的 ReviewedMailboxRemoteAttachment，綁定 incoming ID、origin、sender、message ID、reply target 與 publication lifetime。AgentMessenger 提供獨立 host 入口，普通 publish 仍拒絕遠端附件；只有 running delivery 且作者／來源相符才保存。保存沿用原子寫入、訊息 ID 防重用、兩則上限及停止檢查。遠端附件也可取得短地址並作為信箱 replyDirectory 的回覆目標。
+
+新增整合測試涵蓋錯誤收件／來源／作者、普通入口拒絕、實際寫入失敗無殘留、精確 URL／alt 保存、同 ID 重播、變更重播拒絕、回覆定位、上限、關閉 lifetime 及重開 store。定向通過；AgentImageMessagingTests 全部 28 tests 通過（remote-mailbox-regression.log），原生 Debug build 及 deep strict 簽章通過（remote-mailbox-native.log）。本批未重跑完整回歸。
+
+這只是信箱可信保存層，尚未接入 session 遠端交易、App 核准及信箱 UI。直接對話／媒體預覽仍有差異；未下載內容、未 push、未啟動 App 或改真實資料。
