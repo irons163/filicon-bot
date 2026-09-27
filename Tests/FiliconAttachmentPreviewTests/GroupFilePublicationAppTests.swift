@@ -66,7 +66,7 @@ private struct GroupFileAppProvider: AIProvider {
                         arguments = ["recipientID": destinationID.uuidString, "message": "Publish the reviewed report"]
                     } else {
                         name = "SendMessage"
-                        arguments = ["type": "attachment", "url": url]
+                        arguments = ["type": "attachment", "url": url, "alt": "報表說明"]
                     }
                     let call = try NormalizedToolCall(id: "publish-report", name: name,
                         argumentsJSON: JSONSerialization.data(withJSONObject: arguments))
@@ -144,6 +144,7 @@ private struct GroupFileAppProvider: AIProvider {
         }
         if let message = files.first {
             let metadata = try #require(message.attachments.first)
+            expectNoDifference(metadata.altText, "報表說明")
             expectNoDifference(message.text, "")
             #expect(message.shortAddress != nil)
             let lifecycle = try AttachmentLifecycle.live(applicationSupportDirectory: root)
@@ -233,6 +234,7 @@ private struct GroupFileAppProvider: AIProvider {
         let files = messages.flatMap { $0.delivery?.publications ?? [] }.filter { $0.files?.isEmpty == false }
         expectNoDifference(files.count, ["approve", "source-changed", "quota-message"].contains(mode) ? 1 : 0)
         if let message = files.first, let file = message.files?.first {
+            expectNoDifference(file.altText, "報表說明")
             expectNoDifference(messages.first?.delivery?.state, .completed)
             let lifecycle = try AttachmentLifecycle.live(applicationSupportDirectory: root)
             let data = try await lifecycle.data(for: file, owner: .init(conversationID: originID, messageID: message.id))
@@ -423,6 +425,7 @@ private struct GroupFileAppProvider: AIProvider {
         let publications = messages.filter { $0.files?.isEmpty == false }
         expectNoDifference(publications.count, ["approve", "source-changed", "quota-message"].contains(mode) ? 1 : 0)
         if let message = publications.first, let file = message.files?.first {
+            expectNoDifference(file.altText, "報表說明")
             let activity = try #require(messages.flatMap(\.toolActivities).first(where: { $0.name == "SendMessage" }))
             expectNoDifference(activity.status, .succeeded)
             let lifecycle = try AttachmentLifecycle.live(applicationSupportDirectory: root)

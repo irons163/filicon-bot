@@ -274,7 +274,7 @@ public actor AgentMessagingSession {
             commit: { [self, messenger, publicationLifetime, onChange] review, call, context in
                 let saved = try await capability.services.commit(review, call, context) { metadata, messageID in
                     guard metadata.id == review.file.digest, metadata.filename == review.file.filename,
-                          metadata.byteCount == review.file.bytes.count else { throw AgentFilePublicationError.invalidReceipt }
+                          metadata.byteCount == review.file.bytes.count, metadata.altText == review.altText else { throw AgentFilePublicationError.invalidReceipt }
                     try await validate()
                     let file = try ReviewedMailboxFile(metadata: metadata, incomingID: inbound.id,
                         originID: self.originConversationID, senderID: sender.id, messageID: messageID,
@@ -291,7 +291,7 @@ public actor AgentMessagingSession {
                 await onChange()
                 return .init(messageID: saved.id, conversationID: saved.groupID, senderID: sender.id,
                     replyTo: saved.replyToMessageID, digest: file.id, filename: file.filename,
-                    byteCount: Int(file.byteCount), savedMessage: saved)
+                    byteCount: Int(file.byteCount), savedMessage: saved, altText: file.altText)
             })
     }
 
@@ -316,7 +316,7 @@ public actor AgentMessagingSession {
             }, commit: { [self] review, call, context in
                 let saved = try await groupFiles.commit(review, call, context) { [self] metadata, messageID in
                     guard metadata.id == review.file.digest, metadata.filename == review.file.filename,
-                          metadata.byteCount == review.file.bytes.count else { throw AgentFilePublicationError.invalidReceipt }
+                          metadata.byteCount == review.file.bytes.count, metadata.altText == review.altText else { throw AgentFilePublicationError.invalidReceipt }
                     try await validate()
                     let file = try ReviewedGroupFile(metadata: metadata, groupID: review.conversationID,
                         senderID: sender.id, lifetime: publicationLifetime, messageID: messageID)
@@ -332,7 +332,7 @@ public actor AgentMessagingSession {
                     throw AgentFilePublicationError.invalidReceipt
                 }
                 return .init(messageID: saved.id, conversationID: saved.groupID, senderID: sender.id,
-                    replyTo: saved.replyToMessageID, digest: file.id, filename: file.filename, byteCount: Int(file.byteCount), savedMessage: saved)
+                    replyTo: saved.replyToMessageID, digest: file.id, filename: file.filename, byteCount: Int(file.byteCount), savedMessage: saved, altText: file.altText)
             })
     }
 

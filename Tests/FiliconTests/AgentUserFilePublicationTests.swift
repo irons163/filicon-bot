@@ -138,7 +138,7 @@ struct AgentUserFilePublicationTests {
             #"{"type":"attachment","url":"file:///a","image_id":"private"}"#,
             #"{"type":"attachment","url":"file:///a","content":"mixed"}"#,
             #"{"type":"attachment","url":"file:///a","channel":"elsewhere"}"#,
-            #"{"type":"attachment","url":"file:///a","alt":"unsupported"}"#,
+            #"{"type":"attachment","url":"file:///a","alt":"   "}"#,
             #"{"type":"attachment","url":"file:///a","reply_to":"invented"}"#,
             #"{"type":"text","content":"a","url":"file:///a"}"#
         ] {

@@ -362,3 +362,13 @@ AgentFilePublicationTransaction 的 input／review／receipt 加入可選 altTex
 新增 5 個描述交易情境，涵蓋成功重播、改標籤、回條遺失描述、空白、控制字元與過長。定向交易測試與原生 Debug build／deep strict 簽章通過（local-alt-contract-target/native.log）。這是資料契約，工具輸入、App 核准文字與三條路徑的 message-local metadata 仍待接上；目前仍不宣稱本機 alt 可用。
 
 完整非平行 Swift 回歸 exit 0（local-alt-contract-full.log），既有群組／單聊／信箱傳檔維持通過。未 push、重啟 App 或改真實資料。
+
+## 第三十一階段：本機附件描述 host 接線（2026-09-28）
+
+本機 SendMessage 開放 alt，透過傳檔交易驗證並納入 call identity；schema 與 runtime 說明同步。App 的單聊、信箱、群組核准 details 包含精確描述，commit 後只在 message-local metadata 加上 altText，不修改共用 blob。session adapter 在 save 前核對 metadata 描述，回條保留描述，交易再次核對。
+
+既有 App 傳檔 fixture 改成實際傳送繁中描述，成功路徑檢查單聊附件、信箱 publication、群組 publication 的 altText。既有非法本機 alt 測試改為空白值，合法描述不再列為不支援。原生 Debug build 與 deep strict 封裝／簽章通過（local-alt-host-native.log）。完整回歸結果記於下方。
+
+本機描述已接通核准與保存，不代表所有媒體展示已完成；遠端 App 核准、信箱／單聊 HTTPS 保存及媒體 UI 等差異仍在。未 push、重啟 App 或改真實資料。
+
+完整非平行 Swift 回歸 exit 0（local-alt-host-full.log），包含上述 App 描述保存案例。

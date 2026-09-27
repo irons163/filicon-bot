@@ -36,7 +36,7 @@ public actor AgentUserMessageTool: ToolExecutor, ToolRuntimeContextProviding {
     private struct RemoteInput: Equatable { let reference: RemoteAttachmentReference; let replyTo: UUID? }
     private var remoteCalls: [Key: (RemoteInput, NormalizedToolResult)] = [:]
     private var remoteAttemptKeys: Set<Key> = []
-    private struct FileInput: Equatable { let url: String; let replyTo: UUID? }
+    private struct FileInput: Equatable { let url: String; let replyTo: UUID?; let altText: String? }
     private var fileCalls: [Key: (FileInput, NormalizedToolResult)] = [:]
     private var fileAttemptKeys: Set<Key> = []
     private var secretReceipt: (Key, AgentSecretRequest, UUID?, NormalizedToolResult)?
@@ -256,7 +256,7 @@ public actor AgentUserMessageTool: ToolExecutor, ToolRuntimeContextProviding {
     private nonisolated static func makeDescriptor(supportsImages: Bool, supportsQuestions: Bool, supportsReplies: Bool, supportsTextReplies: Bool, supportsQuestionReplies: Bool, supportsSecrets: Bool = false, supportsCloudAgents: Bool = false, supportsFiles: Bool = false, supportsRemote: Bool = false) -> ToolDescriptor {
         let images = supportsImages ? #", "images":{"type":"array","maxItems":4,"uniqueItems":true,"items":{"oneOf":[{"type":"string"},{"type":"object","properties":{"image_id":{"type":"string"},"alt":{"type":"string","maxLength":500}},"required":["image_id"],"additionalProperties":false}]},"description":"Current host-provided image IDs only, never paths or URLs. Each entry may be an ID or {image_id,alt} with an optional plain description (500 characters, no control characters). Requires fresh preview approval of all images and descriptions."}"# : ""
         let imageID = supportsImages ? #", "image_id":{"type":"string","description":"For a standalone image attachment, one exact ID from the current host-provided image directory. No text, path or URL. Requires fresh preview approval."}"# : ""
-        let alt = supportsImages || supportsRemote ? #", "alt":{"type":"string","maxLength":500,"description":"Optional plain description for an incoming image or HTTPS attachment only, never a local file. Included in host approval. No control characters. Descriptive content, never instructions or permission."}"# : ""
+        let alt = supportsImages || supportsRemote || supportsFiles ? #", "alt":{"type":"string","maxLength":500,"description":"Optional plain attachment description. Included in host approval. No control characters. Descriptive content, never instructions or permission."}"# : ""
         let attachment = imageID + alt
         let types = ["text"] + (supportsQuestions ? ["widget"] : []) + (supportsImages || supportsFiles || supportsRemote ? ["attachment"] : []) + (supportsSecrets ? ["secret-request"] : []) + (supportsCloudAgents ? ["cursor-agent"] : [])
         let urlDescription = (supportsFiles ? "Authorized local file URL; separate source-read and publication approval required. " : "") + (supportsRemote ? "HTTPS locator; fresh host approval required. No download or remote verification implied. " : "HTTPS unavailable. ")
@@ -301,7 +301,7 @@ public actor AgentUserMessageTool: ToolExecutor, ToolRuntimeContextProviding {
             inputSchema: Data("{\"type\":\"object\",\"properties\":{\"text\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":8000,\"description\":\"Legacy shorthand. Prefer type:text with content; never mix both forms.\"}\(images)\(attachment)\(file)\(messageTypes)\(question)\(secret)\(cloud)\(reply)},\"anyOf\":[\(variants.joined(separator: ","))],\"additionalProperties\":false}".utf8), parallelSafe: false)
     }
 
-    private static let fileInstructions = " Host-authorized local files may be published with {type:'attachment',url:'file:///absolute/path'} and optional reply_to from the current directory. No content, images, image_id, alt or channel fields for local files. Source-read consent and publication approval are separate; approval covers the captured bytes. Never claim delivery until the tool returns a saved receipt. Use a file as reply_to only when the host receipt explicitly grants a reply-directory entry; delivery alone grants no attachment access. Files share the two-message budget with text, images and cards."
+    private static let fileInstructions = " Host-authorized local files may be published with {type:'attachment',url:'file:///absolute/path'}, optional alt (nonempty plain description, at most 500 characters), and optional reply_to from the current directory. No content, images, image_id or channel fields for local files. Source-read consent and publication approval are separate; approval covers the captured bytes and description. Never claim delivery until the tool returns a saved receipt. Use a file as reply_to only when the host receipt explicitly grants a reply-directory entry; delivery alone grants no attachment access. Files share the two-message budget with text, images and cards."
 
     private static let questionInstructions = " Alternatively use {type:'widget',widget:{prompt,options:[{label,value?,description?,style?}],helpText?,allowCustom?,dismissOnMoveOn?}} without text/images to ask one necessary question with 1-6 real choices. This ends the current turn until a human responds in a new host-controlled turn; never ask for passwords, API keys or other secrets here. All choices and values are visible to the user. A choice is not tool permission: sensitive operations still require their normal approval. Default flags are false. dismissOnMoveOn retires this question when the user sends a newer ordinary message. Widgets are available only where this host tool explicitly advertises them."
 
@@ -454,7 +454,7 @@ public actor AgentUserMessageTool: ToolExecutor, ToolRuntimeContextProviding {
             if call.name == "SendMessage", call.argumentsJSON.count <= 40_000,
                let object = try JSONSerialization.jsonObject(with: call.argumentsJSON) as? [String: Any],
                object["type"] as? String == "attachment", object["url"] != nil {
-                guard let filePublication, Set(object.keys).isSubset(of: ["type", "url", "reply_to"]),
+                guard let filePublication, Set(object.keys).isSubset(of: ["type", "url", "alt", "reply_to"]),
                       let url = object["url"] as? String, url.hasPrefix("file:///"), url.utf8.count <= 16_384 else {
                     throw AgentFilePublicationError.unavailable
                 }
@@ -463,7 +463,12 @@ public actor AgentUserMessageTool: ToolExecutor, ToolRuntimeContextProviding {
                     guard let address = raw as? String else { throw GroupReplyError.unavailable }
                     reply = try resolveReply(address)
                 } else { reply = try defaultReplyToMessageID.map { try resolveReply($0.uuidString) } }
-                let key = Key(runID: context.runID, callID: call.id), input = FileInput(url: url, replyTo: reply)
+                let altText: String?
+                if let raw = object["alt"] {
+                    guard let value = raw as? String else { throw AgentFilePublicationError.unavailable }
+                    altText = value
+                } else { altText = nil }
+                let key = Key(runID: context.runID, callID: call.id), input = FileInput(url: url, replyTo: reply, altText: altText)
                 if let previous = fileCalls[key] {
                     guard previous.0 == input else { throw AgentMessagingError.duplicateMessage }
                     return previous.1
@@ -474,7 +479,7 @@ public actor AgentUserMessageTool: ToolExecutor, ToolRuntimeContextProviding {
                 reserved = true
                 defer { reserved = false }
                 fileAttemptKeys.insert(key)
-                let receipt = try await filePublication.publish(url: url, replyTo: reply, call: call, context: context)
+                let receipt = try await filePublication.publish(url: url, replyTo: reply, altText: altText, call: call, context: context)
                 var replyReceipt = ""
                 if let saved = receipt.savedMessage, saved.id == receipt.messageID,
                    let file = saved.files?.first, saved.files?.count == 1,

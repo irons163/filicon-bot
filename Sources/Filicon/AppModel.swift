@@ -2500,7 +2500,7 @@ final class AppModel: ObservableObject {
                 guard let self else { throw CancellationError() }
                 let saved = try await self.commitDirectFile(review, assistantID: assistantID, account: account, generation: generation)
                 return .init(messageID: saved.id, conversationID: id, senderID: id, replyTo: review.replyTo,
-                    digest: review.file.digest, filename: review.file.filename, byteCount: review.file.bytes.count, savedMessage: saved)
+                    digest: review.file.digest, filename: review.file.filename, byteCount: review.file.bytes.count, savedMessage: saved, altText: review.altText)
             })
     }
 
@@ -2511,7 +2511,7 @@ final class AppModel: ObservableObject {
         guard review.senderID == id, context.conversationID == id else { throw AgentFilePublicationError.unavailable }
         let fence = ApprovalFence(accountID: account, agentID: id.uuidString.lowercased(), runID: context.runID, generation: generation)
         await autoReviewBroker.activate(fence)
-        let details = "\(review.file.filename)\n\(ByteCountFormatter.string(fromByteCount: Int64(review.file.bytes.count), countStyle: .file))\nSHA-256: \(review.file.digest)"
+        let details = "\(review.file.filename)\n\(ByteCountFormatter.string(fromByteCount: Int64(review.file.bytes.count), countStyle: .file))\nSHA-256: \(review.file.digest)" + (review.altText.map { "\n\($0)" } ?? "")
         let action = AutoReviewAction(summary: review.file.filename,
             target: .resource(kind: "conversation", identifier: id.uuidString), risks: [.sensitive],
             context: .init(fence: fence, conversationID: id, toolCallID: call.id.rawValue,
@@ -2535,7 +2535,8 @@ final class AppModel: ObservableObject {
         var metadata: AttachmentMetadata?
         do {
             try checkDirectFileScope(id, assistantID: assistantID, account: account, generation: generation)
-            let file = try await attachmentLifecycle.commit(upload, to: fileOwner)
+            var file = try await attachmentLifecycle.commit(upload, to: fileOwner)
+            file.altText = review.altText
             metadata = file
             try checkDirectFileScope(id, assistantID: assistantID, account: account, generation: generation)
             guard let ci = conversations.firstIndex(where: { $0.id == id }) else { throw CancellationError() }
@@ -4334,7 +4335,7 @@ final class AppModel: ObservableObject {
         let fence = ApprovalFence(accountID: settings.accountScope ?? "local", agentID: originID.uuidString.lowercased(),
             runID: context.runID, generation: generation)
         await autoReviewBroker.activate(fence)
-        let details = "\(review.file.filename)\n\(ByteCountFormatter.string(fromByteCount: Int64(review.file.bytes.count), countStyle: .file))\nSHA-256: \(review.file.digest)"
+        let details = "\(review.file.filename)\n\(ByteCountFormatter.string(fromByteCount: Int64(review.file.bytes.count), countStyle: .file))\nSHA-256: \(review.file.digest)" + (review.altText.map { "\n\($0)" } ?? "")
         let action = AutoReviewAction(summary: "\(sender.name) → \(l10n("User in this conversation")): \(review.file.filename)",
             target: .resource(kind: "conversation", identifier: originID.uuidString), risks: [.sensitive],
             context: .init(fence: fence, conversationID: originID, toolCallID: call.id.rawValue,
@@ -4360,7 +4361,9 @@ final class AppModel: ObservableObject {
         var committedMetadata: AttachmentMetadata?
         do {
             try await checkMailboxFileScope(incoming, originID: originID, generation: generation)
-            let metadata = try await attachmentLifecycle.commit(upload, to: fileOwner)
+            var annotated = try await attachmentLifecycle.commit(upload, to: fileOwner)
+            annotated.altText = review.altText
+            let metadata = annotated
             committedMetadata = metadata
             let record = RoomMessage(id: messageID, groupID: originID, senderID: review.senderID, text: "", files: [metadata])
             return try await quotaWrite(scope: "mailbox-file-message", key: messageID.uuidString, data: JSONEncoder().encode(record)) { [weak self] in
@@ -4444,7 +4447,7 @@ final class AppModel: ObservableObject {
         let fence = ApprovalFence(accountID: settings.accountScope ?? "local", agentID: originID.uuidString.lowercased(),
             runID: context.runID, generation: generation)
         await autoReviewBroker.activate(fence)
-        let details = "\(review.file.filename)\n\(ByteCountFormatter.string(fromByteCount: Int64(review.file.bytes.count), countStyle: .file))\nSHA-256: \(review.file.digest)"
+        let details = "\(review.file.filename)\n\(ByteCountFormatter.string(fromByteCount: Int64(review.file.bytes.count), countStyle: .file))\nSHA-256: \(review.file.digest)" + (review.altText.map { "\n\($0)" } ?? "")
         let action = AutoReviewAction(summary: "\(sender.name) → \(audience.name): \(review.file.filename)",
             target: .resource(kind: "group", identifier: audience.id.uuidString), risks: [.sensitive],
             context: .init(fence: fence, conversationID: originID, toolCallID: call.id.rawValue,
@@ -4472,7 +4475,9 @@ final class AppModel: ObservableObject {
         var committedMetadata: AttachmentMetadata?
         do {
             try checkGroupFileScope(senderID: review.senderID, audience: audience, generation: generation, originID: originID, dispatchID: dispatchID)
-            let metadata = try await attachmentLifecycle.commit(upload, to: owner)
+            var annotated = try await attachmentLifecycle.commit(upload, to: owner)
+            annotated.altText = review.altText
+            let metadata = annotated
             committedMetadata = metadata
             let record = RoomMessage(id: messageID, groupID: audience.id, senderID: review.senderID, text: "", files: [metadata])
             return try await quotaWrite(scope: "group-file-message", key: messageID.uuidString,
