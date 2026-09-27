@@ -294,3 +294,11 @@ direct 主回合建立 SendMessage 的 replyHistory 時，除了圖片也帶入�
 依 pfw-testing 加入 4 種有效 URL、20 種非法 URL（包括偽造持久化資料）與 5 種 alt 案例。這只是下階段核准與保存的資料契約；尚未加入 RoomMessage、工具 schema、三種聊天路徑或媒體顯示，App 仍不會因此接受 HTTPS 附件。後續需接上不可變 locator 核准與 durable receipt，再另行驗證使用者開啟／預覽及下載網路政策；不能以此替代原版的媒體展示需求。
 
 驗證：29 個定向案例與原生 Debug build exit 0，deep strict 封裝／簽章通過。日誌 `.build/validation/remote-attachment-reference-final-target.log`、`remote-attachment-reference-native.log`。本批未重跑完整測試套件；沒有網路請求、App 啟動或真實資料修改。
+
+## 第二十三階段：遠端 locator 核准交易（2026-09-28）
+
+AgentRemotePublicationTransaction 將來源對話、目的對話、sender、精確 RemoteAttachmentReference 與 reply target 綁定到 host review。必要的 scope validator、authorize 與 commit 沒有預設放行實作；核准後重查 scope 才保存。回條必須完全匹配 review 且不可重用訊息 ID；它只證明 host 保存了 locator，不證明遠端內容已下載或可達。
+
+相同 run／call 的已保存回條可重播，close 後也不再次核准／保存；更換輸入拒絕。開始保存後拋錯或回條不符，該 identity 進入 uncertainCommit，不盲目重試。核准中取消不保存，保存成功後的取消不抹除結果。同一保存中 call 重入回報 uncertainCommit，不同 call 重入回報 busy。
+
+依 pfw-testing 以可控制 gate 驗證 10 種情境：錯誤對話／tool／已關閉、成功重播、拒絕、核准後撤銷、保存失敗、錯誤回條、核准中與保存中取消；核對回呼順序與保存次數。定向測試及原生 Debug build exit 0。本批未重跑完整套件，亦未加入 RoomMessage／工具 schema／App UI 接線；不是 HTTPS 傳送功能已可使用的證據。日誌 `.build/validation/remote-publication-transaction-final-target.log`、`remote-publication-transaction-native.log`。
