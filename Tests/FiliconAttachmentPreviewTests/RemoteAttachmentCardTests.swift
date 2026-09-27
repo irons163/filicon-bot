@@ -3,6 +3,7 @@ import SwiftUI
 import Testing
 import CustomDump
 import FiliconAgents
+import FiliconDomain
 @testable import Filicon
 
 @Suite("Remote attachment card rendering", .timeLimit(.minutes(1)))
@@ -43,6 +44,26 @@ import FiliconAgents
             mailbox.layoutSubtreeIfNeeded()
             let mailboxBitmap = try #require(mailbox.bitmapImageRepForCachingDisplay(in: mailbox.bounds))
             mailbox.cacheDisplay(in: mailbox.bounds, to: mailboxBitmap)
+
+            let root = FileManager.default.temporaryDirectory.appending(path: "remote-direct-ui-\(UUID())")
+            defer { try? FileManager.default.removeItem(at: root) }
+            let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+            let message = ChatMessage(role: .assistant, text: "", remoteAttachment: reference)
+            let direct = NSHostingView(rootView: TranscriptMessageView(message: message,
+                conversation: Conversation(messages: [message]), onJumpToMessage: { _ in })
+                .environmentObject(model).padding(16).frame(width: 520)
+                .environment(\.openURL, OpenURLAction { _ in
+                    Issue.record("Direct rendering must not open remote content"); return .handled
+                }).environment(\.locale, Locale(identifier: language))
+                .environment(\.colorScheme, dark ? .dark : .light))
+            direct.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+            let directSize = direct.fittingSize
+            expectNoDifference(directSize.width, 520)
+            #expect(directSize.height > 80 && directSize.height < 500)
+            direct.frame = .init(origin: .zero, size: directSize)
+            direct.layoutSubtreeIfNeeded()
+            let directBitmap = try #require(direct.bitmapImageRepForCachingDisplay(in: direct.bounds))
+            direct.cacheDisplay(in: direct.bounds, to: directBitmap)
         }
     }
 }

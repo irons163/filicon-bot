@@ -460,3 +460,11 @@ schema 14 新增 nullable JSON locator 欄位（預設字串 null），完整載
 尚待單聊工具發布、peer projection 與 UI；持久層支援不代表使用者端已完整可用。僅使用隔離測試資料庫，未 push、重啟 App 或改真實帳號／群組。
 
 修正後完整非平行 Swift 回歸 exit 0（remote-direct-sqlite-full-fixed.log），上述舊版 migration 與遠端附件測試均通過。
+
+## 第四十二階段：單聊遠端附件卡片（2026-09-28）
+
+TranscriptMessageView 顯示共用 RemoteAttachmentCard；無文字但有本機／遠端附件時，不再額外顯示空白回覆的省略號。依 pfw-modern-swiftui 沿用共同元件，遠端描述保持純文字，render 不觸發 openURL。
+
+七種語言 × 深淺色 14 案例同時驗證獨立卡片、信箱、完整單聊訊息列的尺寸與 bitmap render（remote-direct-ui-target.log）。原生 Debug build、deep strict 簽章通過（remote-direct-ui-native.log）。未重跑完整回歸、未人工啟動 App，故不宣稱實機視覺驗收完成。
+
+單聊工具發布與 peer projection 仍待補；遠端 locator 卡片不是媒體內容預覽。未 push、重啟 App 或改真實資料。

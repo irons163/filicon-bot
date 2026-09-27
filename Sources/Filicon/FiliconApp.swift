@@ -1497,7 +1497,8 @@ struct TranscriptMessageView: View {
                     MarkdownText(source: message.text, messageReferences: referenceNavigation)
                         .foregroundStyle(FiliconTheme.textPrimary)
                 }
-            } else if message.reasoningText.isEmpty && message.toolActivities.isEmpty && message.transcriptCards.isEmpty {
+            } else if message.reasoningText.isEmpty && message.toolActivities.isEmpty && message.transcriptCards.isEmpty
+                        && message.attachments.isEmpty && message.remoteAttachment == nil {
                 Text(message.deliveryStatus == .failed ? l10n("No response was delivered.") : "…")
                     .foregroundStyle(FiliconTheme.textSecondary)
             }
@@ -1522,6 +1523,9 @@ struct TranscriptMessageView: View {
                     }
                     TranscriptCardRow(card: card) { model.handleTranscriptCardIntent($0) }
                 }
+            }
+            if let reference = message.remoteAttachment {
+                RemoteAttachmentCard(reference: reference)
             }
             if !message.attachments.isEmpty {
                 ScrollView(.horizontal) {
