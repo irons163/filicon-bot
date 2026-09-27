@@ -13,7 +13,9 @@ struct SafeFileSystem: Sendable {
     func read(root: String, relativePath: String) throws -> Data {
         let (parent, leaf) = try openParent(root: root, relativePath: relativePath)
         defer { Darwin.close(parent) }
-        let fd = openat(parent, leaf, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+        // Open nonblocking so a named pipe cannot hang before the regular-file
+        // check. O_NONBLOCK has no effect on ordinary filesystem files.
+        let fd = openat(parent, leaf, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK)
         guard fd >= 0 else { throw systemError("open read") }
         defer { Darwin.close(fd) }
         try requireRegularFile(fd)

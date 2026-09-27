@@ -52,3 +52,15 @@ CAS 已存在時必須與準備資料完全相同；讀取頭像也核對內容�
 驗證：第二階段的完整非平行 Swift 測試、原生 Debug 建置及封裝檢查皆通過；新增案例也實際執行包含 durable receipt 的分支。沒有啟動使用者 App 或更改真實資料。
 
 **App 尚未啟用 path**：目前仍缺 App 的來源讀取 adapter、真正圖片核准 UI 與七語顯示、完整格式驗證、quota／帳號切換整合及 CAS 清理策略。上述初始可達流程表代表 `a57e545` 基準；現行底層提案能力已增加，但使用者端尚未達到完整圖片 parity。
+
+## 第三階段：具體來源讀取器
+
+`AgentAvatarSourceReader` 實際使用 WorkspaceAuthorizationStore／WorkspaceFolderCoordinator／ToolPermissionPolicy 及 LocalToolRuntime：找最長的完整路徑元件匹配授權 root，缺失或失效時要求使用者選擇資料夾；不把選擇其他資料夾當作改讀另一檔案的授權。資料夾授權不取代 exact-operation read review。核准前後與 helper 回傳後都檢查有效 scope／Never policy／原 grant 身分，準備圖片不安裝 CAS。LocalToolRuntime 使用既有 descriptor-relative safe filesystem；該讀取現在以 O_NONBLOCK 開啟後才檢查 regular file，避免 FIFO 在檢查前阻塞。
+
+`AgentRemoteAvatarSourceReader` 使用固定 backend 與 host-selected remoteAgentID，不取工具參數中的 owner 或 UI 目前選取電腦。沿用 RemoteFileTransfer 的 5 MiB 有界下載與 size/SHA-256 完整性驗證，下載前後檢查 scope、先經獨立讀取核准，不自動登入、啟動遠端 runtime 或上傳檔案。
+
+隔離來源測試使用具體 LocalToolProcessHost（in-process、仍驗證 operation receipt）讀取暫存檔，以及 fake RemoteFileBackend；不是只 stub 圖片結果。覆蓋既有／新增／更新 grant、同前綴不同資料夾、選錯資料夾、拒絕、Never、核准後撤銷／scope／policy 變更、符號連結、目錄、FIFO、大小超限、遠端 owner／大小參數、內容指紋失敗及下載後 scope 失效。沒有操作真實帳號／書籤／來源檔案。
+
+仍未在 AppModel 注入這兩個讀取器，沒有開放使用者端 path schema。接下來須完成來源路由與帳號／remote profile revision fence、圖片專用 UI、quota 與保存整合、格式測試；真實遠端 HTTP 服務驗收另列。這些 reader 自身不會把 local 權限拒絕偷偷轉成 remote download。
+
+驗證：第三階段完整非平行 Swift 測試、原生 Debug 建置、封裝／簽章檢查通過。来源 suite 實際跑過 15 種本機情境及 5 種假遠端情境；沒有啟動 App 或重啟 Xcode。
