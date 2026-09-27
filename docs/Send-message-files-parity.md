@@ -1,6 +1,6 @@
 # SendMessage 檔案與媒體交付核對
 
-2026-09-27；來源核對 Filicon 基準 `549f96f`，reference `grok-bot-0.18-reconstructed` 基準 `a9f633e09d49a85829b8236331b9e21f7e612634`。狀態：**來源、交易與快照儲存元件已實作，App 發佈尚未接線**。本文件不代表全部 parity 已重驗。
+2026-09-27 首次核對；來源基準 Filicon `549f96f`、reference `grok-bot-0.18-reconstructed` `a9f633e09d49a85829b8236331b9e21f7e612634`。2026-09-28 最新 App 基準 `356fe1b`：**本機檔案的 group／mailbox／direct 發布已接線並有隔離驗證；遠端 URL、文字內 URL 圖片、大檔與完整 crash recovery 未完成**。以下「Filicon 現況」及早期階段是當時紀錄，最新進展請見後續階段。本文件不代表全部 parity 已重驗。
 
 ## 來源證據
 
@@ -284,3 +284,13 @@ direct 主回合建立 SendMessage 的 replyHistory 時，除了圖片也帶入�
 首輪完整回歸暴露信箱預覽測試使用另一個 messenger JSON 解碼後的 metadata，與 UI 即時 metadata 的 Date 精度可能不同；改用畫面實際持有的 metadata 模擬點擊，仍檢查檔案 identity、錯誤 message ID 拒絕及預覽 bytes，沒有放寬 production 比對。
 
 驗證：9 種主回合傳檔情境、18 種信箱／委派情境及完整非平行 Swift 回歸 exit 0。原生 Debug build 與 deep strict 封裝／簽章通過。日誌 `.build/validation/direct-file-host-final-full.log`、`direct-file-host-native.log`。未啟動或重啟使用者 App／Xcode，未改真實資料。
+
+## 第二十二階段：HTTPS 附件 locator 與下載結果分離（2026-09-28）
+
+重新讀取 reference `send-message-tool.ts:30` 的 resolveAttachmentSource 與 `:39` 的 buildSandSendMessage：非 file URL 直接保留來源；HTTPS classifier 是可選依賴，只有明確分類為 file 才改成文字 URL。此證據不支持把「先下載成 CAS blob」視為所有 HTTPS 附件的必要語義，也不能把原始 URL 回條宣稱為遠端內容已驗證。
+
+新增 RemoteAttachmentReference，獨立保存精確 HTTPS URL 與可選 alt，不含本機 digest／byte count。建構與 Codable 解碼走同一驗證，拒絕帳密、控制字元、錯誤 percent encoding、空 host、非法 port、非 HTTPS、空白／反斜線歧義與超限。保留 query／fragment 原值，避免破壞簽名 URL；此型別不發送請求、不帶入登入狀態、不解析 MIME、不聲稱遠端可達，也不是 SSRF 防護或下載授權。
+
+依 pfw-testing 加入 4 種有效 URL、20 種非法 URL（包括偽造持久化資料）與 5 種 alt 案例。這只是下階段核准與保存的資料契約；尚未加入 RoomMessage、工具 schema、三種聊天路徑或媒體顯示，App 仍不會因此接受 HTTPS 附件。後續需接上不可變 locator 核准與 durable receipt，再另行驗證使用者開啟／預覽及下載網路政策；不能以此替代原版的媒體展示需求。
+
+驗證：29 個定向案例與原生 Debug build exit 0，deep strict 封裝／簽章通過。日誌 `.build/validation/remote-attachment-reference-final-target.log`、`remote-attachment-reference-native.log`。本批未重跑完整測試套件；沒有網路請求、App 啟動或真實資料修改。
