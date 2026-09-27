@@ -80,3 +80,15 @@ commit 回條須匹配對話、sender、reply、檔名、bytes 數、digest，�
 App 目前未注入檔案交易，因此真實對話仍維持原先權限。下一步仍是 App 核准 UI、原子 quota、訊息附件欄位與保存 callback，以及 group／direct／mailbox 整合驗收。文字搭配新圖片、檔案 alt、檔案回條引用、大檔／遠端／HTTPS 也仍待完成。
 
 驗證：定向測試通過，補齊引用測試的模組匯入後，最終完整非平行 Swift 測試 exit 0；原生 Debug build 及 deep strict 封裝／簽章通過。日誌 `.build/validation/publication-tool-{focused,full,native}.log`。依 pfw-testing 使用可控 prepare／authorize／commit fixture，未啟動 App、未改真實資料。
+
+## 第五階段：群組檔案訊息保存邊界（2026-09-28）
+
+RoomMessage 新增可選 files 欄位，舊資料缺少欄位仍可解碼；不把新檔案塞入只允許當輪來源的 images。ReviewedGroupFile 是不可由 JSON 解碼的 host attestation，攜帶檔案 metadata、固定群組、成員及可撤銷 lifetime。host 必須先完成 bytes 保存、核准與 quota；此型別本身不證明磁碟檔案存在，也不代替這些步驟。
+
+GroupService 在保存前檢查群組、當前成員及不混用圖片／問題／雲端卡片，透過同一同步 lifetime 鎖完成資料保存。檔案訊息共用回覆額度，以 digest 去重，允許無文字附件；引用編號、thread projection 及未讀判斷辨識 files。保存 callback 回傳的是持久化後含短編號的訊息。模型工具的檔案回條仍未接入 reply directory，兩者不可混為已完成。
+
+隔離測試涵蓋舊 JSON、檔案重開、檔案引用、錯誤群組／成員、撤銷、混用欄位、重複內容及無效 metadata。依 pfw-testing 使用固定附件時間及隔離資料目錄。App 尚未注入檔案交易，沒有變更真實對話、重啟 App 或放寬實際工具權限。
+
+待完成仍包含 App 核准 UI、原子 quota／blob reference 與訊息保存整合、檔案顯示，以及 direct／mailbox 接線、大檔與遠端來源。此階段不宣稱端到端可用。
+
+驗證：修正測試對既有毫秒時間格式的比較後，完整非平行 Swift 測試 exit 0；原生 Debug build、deep strict 封裝／簽章均通過。日誌 `.build/validation/publication-group-{full,native}.log`。未啟動 App／Xcode。

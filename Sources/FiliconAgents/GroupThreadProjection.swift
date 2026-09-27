@@ -59,7 +59,7 @@ public struct GroupThreadProjection: Sendable {
     public func canReply(to messageID: UUID) -> Bool { replyableIDs.contains(messageID) }
 
     private static func canThread(_ message: RoomMessage) -> Bool {
-        message.memberOutcome == nil && (!message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !(message.images ?? []).isEmpty)
+        message.memberOutcome == nil && (!message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !(message.images ?? []).isEmpty || !(message.files ?? []).isEmpty)
     }
 }
 
