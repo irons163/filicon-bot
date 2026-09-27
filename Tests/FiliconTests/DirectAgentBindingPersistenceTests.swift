@@ -61,7 +61,7 @@ struct DirectAgentBindingPersistenceTests {
         var database: OpaquePointer?
         try #require(sqlite3_open(url.path, &database) == SQLITE_OK)
         defer { sqlite3_close_v2(database) }
-        try #require(sqlite3_exec(database, "ALTER TABLE conversations DROP COLUMN agent_binding_json; ALTER TABLE messages DROP COLUMN agent_message_source_json; UPDATE schema_version SET version=11", nil, nil, nil) == SQLITE_OK)
+        try #require(sqlite3_exec(database, "ALTER TABLE conversations DROP COLUMN agent_binding_json; ALTER TABLE messages DROP COLUMN agent_message_source_json; ALTER TABLE messages DROP COLUMN remote_attachment_json; UPDATE schema_version SET version=11", nil, nil, nil) == SQLITE_OK)
         for _ in 0..<2 {
             let upgraded = try ConversationRepository(databaseURL: url)
             let values = try await upgraded.load()

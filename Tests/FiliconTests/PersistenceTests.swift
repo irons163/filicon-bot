@@ -4,6 +4,34 @@ import FiliconDomain
 import FiliconPersistence
 import FiliconAppServices
 import CSQLite
+import CustomDump
+
+@Test func remoteAttachmentSQLiteMigrationAndPaging() async throws {
+    let directory = try persistenceTemporaryDirectory(); defer { try? FileManager.default.removeItem(at: directory) }
+    let url = directory.appending(path: "remote.sqlite3")
+    let reference = try RemoteAttachmentReference(url: "https://example.com/report?sig=a%2Bb", alt: "報表")
+    var conversation = Conversation(messages: [.init(role: .assistant, text: "", remoteAttachment: reference)])
+    let repository = try ConversationRepository(databaseURL: url)
+    try await repository.save([conversation])
+    let reopened = try ConversationRepository(databaseURL: url)
+    let loaded = try await reopened.load()
+    expectNoDifference(loaded.first?.messages.first?.remoteAttachment, reference)
+    let page = try await reopened.messagePage(conversationID: conversation.id)
+    expectNoDifference(page.items.first?.remoteAttachment, reference)
+    var database: OpaquePointer?
+    #expect(sqlite3_open(url.path, &database) == SQLITE_OK)
+    defer { sqlite3_close(database) }
+    #expect(sqlite3_exec(database, "ALTER TABLE messages DROP COLUMN remote_attachment_json; UPDATE schema_version SET version=13", nil, nil, nil) == SQLITE_OK)
+    let migrated = try ConversationRepository(databaseURL: url)
+    let legacy = try await migrated.load()
+    expectNoDifference(legacy.first?.messages.first?.remoteAttachment, nil)
+    conversation.messages[0].remoteAttachment = reference
+    try await migrated.save([conversation])
+    let restored = try await migrated.load()
+    expectNoDifference(restored.first?.messages.first?.remoteAttachment, reference)
+    #expect(sqlite3_exec(database, "UPDATE messages SET remote_attachment_json='{\"url\":\"file:///private/report\"}'", nil, nil, nil) == SQLITE_OK)
+    await #expect(throws: PersistenceError.self) { try await migrated.load() }
+}
 
 private func persistenceTemporaryDirectory() throws -> URL {
     let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)

@@ -450,3 +450,13 @@ RemoteAttachmentReference 移至 FiliconDomain，FiliconAgents 保留 public typ
 本批只提供共用資料欄位，尚未完成單聊 publication、持久層／peer projection 與 UI；不能宣稱單聊遠端附件已可用。未 push、啟動 App 或改真實資料。
 
 完整非平行 Swift 回歸 exit 0（remote-direct-model-full.log），包含短地址案例。最終原生 Debug build 與 deep strict 簽章通過（remote-direct-model-native.log）。已確認 SQLite 使用分欄保存，後續需同步 migration、讀写與 recovery，不能只依 JSON round-trip 宣稱持久化完成。
+
+## 第四十一階段：單聊遠端附件 SQLite 保存與救援（2026-09-28）
+
+schema 14 新增 nullable JSON locator 欄位（預設字串 null），完整載入、keyset 分頁、保存及 salvage 掃描／寫回皆同步。解碼沿用 RemoteAttachmentReference 驗證，非法 file URL 不會被當成有效遠端附件。
+
+新增重開／分頁／13 升 14／非法 URL 拒絕測試，既有損壞列救援測試加上合法遠端附件並確認保存。第一輪全測抓到三個人工降版 fixture 留著新版欄位，已修正其 9／11／12 版結構，未放寬正式 migration。原生 Debug build 與 deep strict 簽章通過（remote-direct-sqlite-native.log）；修正後完整回歸另記。
+
+尚待單聊工具發布、peer projection 與 UI；持久層支援不代表使用者端已完整可用。僅使用隔離測試資料庫，未 push、重啟 App 或改真實帳號／群組。
+
+修正後完整非平行 Swift 回歸 exit 0（remote-direct-sqlite-full-fixed.log），上述舊版 migration 與遠端附件測試均通過。
