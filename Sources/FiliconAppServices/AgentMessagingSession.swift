@@ -74,6 +74,7 @@ public actor AgentMessagingSession {
     private let authorizeImages: ImageAuthorizer
     private let imageStore: AgentImageStore?
     private let authorizePublication: PublicationAuthorizer
+    private let groupFiles: AgentGroupFilePublicationServices?
     private let publicationLifetime = AgentPublicationLifetime()
     private let onChange: @Sendable () async -> Void
     private let turnTimeout: Duration
@@ -128,6 +129,7 @@ public actor AgentMessagingSession {
                 imageStore: AgentImageStore? = nil,
                 authorizeImages: @escaping ImageAuthorizer = { _, _, _, _, _, _ in throw AgentMessagingError.approvalRequired },
                 authorizePublication: @escaping PublicationAuthorizer = { _, _, _, _, _ in throw AgentMessagingError.approvalRequired },
+                groupFiles: AgentGroupFilePublicationServices? = nil,
                 authorize: @escaping Authorizer = { _, _, _, _, _ in throw AgentMessagingError.approvalRequired },
                 onChange: @escaping @Sendable () async -> Void = {}) {
         self.id = id; self.originConversationID = originConversationID
@@ -148,6 +150,7 @@ public actor AgentMessagingSession {
         self.authorize = authorize; self.onChange = onChange; self.turnTimeout = turnTimeout
         self.imageStore = imageStore; self.authorizeImages = authorizeImages
         self.authorizePublication = authorizePublication
+        self.groupFiles = groupFiles
     }
 
     public nonisolated func tool(for senderID: UUID, groupUserMessageID: UUID? = nil) -> any ToolExecutor {
@@ -188,6 +191,7 @@ public actor AgentMessagingSession {
         let images = try await availableImages(senderID: senderID, replyTo: nil, groupUserMessageID: userMessageID)
         guard let sender = await agents.profile(id: senderID), sender.archivedAt == nil else { throw AgentMessagingError.invalidRecipient }
         try checkOpen()
+        let filePublication = makeGroupFilePublication(sender: sender, userMessageID: userMessageID, publish: publish)
         return AgentUserMessageTool(conversationID: originConversationID, senderID: senderID, replyHistory: replyHistory,
             supportsQuestions: questionAccountID != nil, defaultReplyToMessageID: defaultReplyToMessageID,
             availableImages: images, imageStore: imageStore,
@@ -199,7 +203,7 @@ public actor AgentMessagingSession {
                 try await validateGroupPublication(images: [], senderID: senderID, userMessageID: userMessageID)
                 return try await publish(.init(text: reference.summary, sourceUserMessageID: userMessageID,
                     lifetime: publicationLifetime, replyToMessageID: replyID, cursorAgent: reference))
-            }) { [self] text, images, replyID, question in
+            }, filePublication: filePublication) { [self] text, images, replyID, question in
                 try await validateGroupPublication(images: images, senderID: senderID, userMessageID: userMessageID)
                 let card = question.flatMap { question in questionAccountID.map {
                     GroupQuestion(question: question, accountID: $0, memberIDs: memberIDs)
@@ -207,6 +211,39 @@ public actor AgentMessagingSession {
                 return try await publish(.init(text: text, images: images, sourceUserMessageID: userMessageID,
                     lifetime: publicationLifetime, question: card, replyToMessageID: replyID))
             }
+    }
+
+    private func makeGroupFilePublication(sender: AgentProfile, userMessageID: UUID,
+        publish: @escaping @Sendable (GroupAgentPublication) async throws -> RoomMessage?) -> AgentFilePublicationTransaction? {
+        guard let groupFiles else { return nil }
+        return AgentFilePublicationTransaction(conversationID: originConversationID, senderID: sender.id,
+            validateScope: { [self] in
+                _ = try await availableImages(senderID: sender.id, replyTo: nil, groupUserMessageID: userMessageID)
+            }, prepare: { url, call, context in
+                try await groupFiles.prepare(sender, url, call, context)
+            }, authorize: { review, call, context in
+                try await groupFiles.authorize(sender, review, call, context)
+            }, commit: { [self] review, call, context in
+                let saved = try await groupFiles.commit(review, call, context) { [self] metadata in
+                    guard metadata.id == review.file.digest, metadata.filename == review.file.filename,
+                          metadata.byteCount == review.file.bytes.count else { throw AgentFilePublicationError.invalidReceipt }
+                    _ = try await availableImages(senderID: sender.id, replyTo: nil, groupUserMessageID: userMessageID)
+                    let file = try ReviewedGroupFile(metadata: metadata, groupID: review.conversationID,
+                        senderID: sender.id, lifetime: publicationLifetime)
+                    guard let saved = try await publish(.init(text: "", replyToMessageID: review.replyTo, file: file)) else {
+                        throw AgentFilePublicationError.invalidReceipt
+                    }
+                    return saved
+                }
+                guard saved.groupID == review.conversationID, saved.senderID == sender.id,
+                      saved.replyToMessageID == review.replyTo, saved.files?.count == 1,
+                      let file = saved.files?.first, file.id == review.file.digest,
+                      file.filename == review.file.filename, file.byteCount == review.file.bytes.count else {
+                    throw AgentFilePublicationError.invalidReceipt
+                }
+                return .init(messageID: saved.id, conversationID: saved.groupID, senderID: sender.id,
+                    replyTo: saved.replyToMessageID, digest: file.id, filename: file.filename, byteCount: Int(file.byteCount))
+            })
     }
 
     /// A peer-message wake retains the originating conversation's tool scope,

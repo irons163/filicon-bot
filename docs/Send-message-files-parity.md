@@ -102,3 +102,13 @@ GroupService 在保存前檢查群組、當前成員及不混用圖片／問題�
 依 pfw-modern-swiftui 使用 callback 傳遞開啟動作，依 pfw-testing 以隔離已保存群組及 CAS fixture 驗證六種預覽情況。七語系離屏 render 通過，繁中截圖人工檢視檔名／大小／預覽圖示無截斷。未開啟使用者 App、未改真實帳號或群組。下一步仍為實際核准及原子 quota 的發佈接線，不宣稱全部完成。
 
 驗證：定向與完整非平行 Swift 測試 exit 0；原生 Debug build、deep strict 封裝／簽章通過。日誌 `.build/validation/group-file-preview-{focused,full,native}.log`，離屏截圖 `.build/validation/group-file-ui/`，均不提交。
+
+## 第七階段：群組 messaging session 交易接線（2026-09-28）
+
+AgentMessagingSession.savedGroupPublisher 可接收 host 的 AgentGroupFilePublicationServices（來源擷取、發佈核准、配額／儲存 commit 三項皆必填），建立綁定當輪 sender 與群組的 AgentFilePublicationTransaction。缺少服務仍不宣告或接受檔案 URL。前景群組完成此接口；背景群組／mailbox 尚未加入。
+
+交易開始、核准後及保存 callback 前，重新驗證最新使用者訊息 ID、當輪被選中的成員與 session 未關閉。host 安裝後回傳的 metadata 必須符合核准快照 digest、檔名、大小；再使用 session lifetime 呼叫 GroupService 保存。保存後驗證訊息群組、作者、reply target 與附件，才建立交易回條，不用假 UUID 代表成功。
+
+隔離 session→tool→transaction→AttachmentStore→GroupService 測試涵蓋成功、精確重播、重開、拒絕、核准後換輪、保存前換輪、錯誤 metadata、close 與未注入服務。依 pfw-testing 使用固定快照與注入 callback；未改真實資料。測試 host commit 尚不代表 App 的核准／quota 接線完成；AppModel 目前仍未注入 services，此缺口保留供下一步實作，不宣稱使用者端已能傳檔。
+
+驗證：定向與完整非平行 Swift 測試 exit 0；原生 Debug build 與 deep strict 封裝／簽章通過。日誌 `.build/validation/group-file-session-{focused,full,native}.log`。未啟動 App 或 Xcode。

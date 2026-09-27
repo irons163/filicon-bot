@@ -1,6 +1,23 @@
 import CryptoKit
 import Foundation
 import FiliconDomain
+import FiliconAgents
+
+/// Host services for a foreground group publisher. Commit owns quota and blob
+/// references and must invoke save only after installing the reviewed bytes.
+/// No defaults: absent services mean the model has no file publication tool.
+public struct AgentGroupFilePublicationServices: Sendable {
+    public typealias Prepare = @Sendable (AgentProfile, String, NormalizedToolCall, ToolContext) async throws -> PreparedAgentPublicationFile
+    public typealias Authorize = @Sendable (AgentProfile, AgentFilePublicationTransaction.Review, NormalizedToolCall, ToolContext) async throws -> Void
+    public typealias Save = @Sendable (AttachmentMetadata) async throws -> RoomMessage
+    public typealias Commit = @Sendable (AgentFilePublicationTransaction.Review, NormalizedToolCall, ToolContext, @escaping Save) async throws -> RoomMessage
+    public let prepare: Prepare
+    public let authorize: Authorize
+    public let commit: Commit
+    public init(prepare: @escaping Prepare, authorize: @escaping Authorize, commit: @escaping Commit) {
+        self.prepare = prepare; self.authorize = authorize; self.commit = commit
+    }
+}
 
 /// Captured bytes, not a promise to read a mutable path after approval.
 public struct PreparedAgentPublicationFile: Sendable, Equatable {

@@ -99,6 +99,70 @@ private func forwardImage(_ target: UUID, ids: [String], id: ToolCallID = "forwa
 
 @Suite("Peer image storage and delivery", .timeLimit(.minutes(1)))
 struct AgentImageMessagingTests {
+    @Test(arguments: ["valid", "denied", "stale-review", "stale-save", "bad-metadata", "closed", "unavailable"])
+    func groupFileTransactionUsesSessionAndDurablePublication(mode: String) async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let groups = try GroupService(agents: f.agents, storeURL: f.root.appending(path: "groups.json"))
+        let group = try await groups.create(name: "Files", memberIDs: [f.sender.id])
+        let user = try await groups.postUserMessage("Send report", groupID: group.id)
+        let prepared = try PreparedAgentPublicationFile(bytes: Data("Report".utf8), filename: "report.txt")
+        let store = AttachmentStore(rootURL: f.root.appending(path: "attachments"))
+        let services = AgentGroupFilePublicationServices(prepare: { sender, url, _, _ in
+            expectNoDifference(sender.id, f.sender.id)
+            expectNoDifference(url, "file:///review/report.txt")
+            return prepared
+        }, authorize: { sender, review, _, _ in
+            expectNoDifference(review.senderID, sender.id)
+            expectNoDifference(review.conversationID, group.id)
+            expectNoDifference(review.file, prepared)
+            if mode == "denied" { throw AgentMessagingError.approvalRequired }
+            if mode == "stale-review" { _ = try await groups.postUserMessage("New request", groupID: group.id) }
+        }, commit: { review, _, _, save in
+            let metadata = try await store.ingest(prepared: review.file, createdAt: Date(timeIntervalSince1970: 123))
+            if mode == "stale-save" { _ = try await groups.postUserMessage("New request", groupID: group.id) }
+            if mode == "bad-metadata" {
+                return try await save(.init(id: metadata.id, filename: "different.txt", mimeType: metadata.mimeType,
+                    byteCount: metadata.byteCount, kind: metadata.kind, createdAt: metadata.createdAt))
+            }
+            return try await save(metadata)
+        })
+        let session = AgentMessagingSession(originConversationID: group.id, agents: f.agents, messenger: f.messenger,
+            registry: f.registry, coordinator: TurnCoordinator(registry: f.registry, toolCatalog: ToolCatalog()),
+            groups: groups, groupFiles: mode == "unavailable" ? nil : services)
+        let responder = ImageGroupSavedPublicationResponder { publish in
+            let tool = try await session.savedGroupPublisher(for: f.sender.id, userMessageID: user.id,
+                replyHistory: [user], questionAccountID: nil, memberIDs: [f.sender.id], publish: publish)
+            if mode == "closed" { try await session.close() }
+            let call = try NormalizedToolCall(id: "report", name: "SendMessage",
+                argumentsJSON: Data(#"{"type":"attachment","url":"file:///review/report.txt"}"#.utf8))
+            do {
+                let context = ToolContext(conversationID: group.id)
+                let result = try await tool.execute(call, context: context)
+                expectNoDifference(result.isError, mode != "valid")
+                if mode == "valid" {
+                    let replay = try await tool.execute(call, context: context)
+                    expectNoDifference(replay.wireText, result.wireText)
+                }
+            } catch {
+                #expect(mode != "valid")
+            }
+            return ["PASS"]
+        }
+        _ = try await groups.run(groupID: group.id, responder: responder)
+        let history = await groups.messages(groupID: group.id)
+        let files = history.filter { $0.files?.isEmpty == false }
+        expectNoDifference(files.count, mode == "valid" ? 1 : 0)
+        if let metadata = files.first?.files?.first {
+            let bytes = try await store.data(for: metadata)
+            expectNoDifference(bytes, prepared.bytes)
+            expectNoDifference(files.first?.shortAddress, "t0s0")
+            let reopened = try GroupService(agents: f.agents, storeURL: f.root.appending(path: "groups.json"))
+            let restored = await reopened.messages(groupID: group.id).filter { $0.files?.isEmpty == false }
+            expectNoDifference(restored.first?.files, files.first?.files)
+        }
+        try await session.close()
+    }
+
     @Test(arguments: ["valid", "stale", "denied", "wrong-owner", "wrong-account", "foreign-image", "no-directory", "closed"])
     func directImagesRequireCurrentHostDirectoryAndFreshApproval(mode: String) async throws {
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
