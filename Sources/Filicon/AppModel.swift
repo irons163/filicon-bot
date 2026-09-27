@@ -402,6 +402,7 @@ final class AppModel: ObservableObject {
     private var sharedRoomClient: SharedRoomClient?
     private var sharedRoomLocalStateURL: URL!
     private var remoteComputerBackend: HTTPSRemoteComputerBackend?
+    private var avatarRemoteRevision = UUID()
     private var remoteComputerLifecycle: RemoteComputerLifecycle?
     private var remoteTerminalController: RemoteTerminalController?
     private var remoteFileTransfer: RemoteFileTransfer?
@@ -3831,6 +3832,8 @@ final class AppModel: ObservableObject {
     private func makeAgentManagementSession(originID: UUID) -> AgentManagementSession? {
         guard let agentService else { return nil }
         let generation = autoReviewAccountGeneration
+        let remoteBackend = remoteComputerBackend
+        let remoteRevision = avatarRemoteRevision
         return AgentManagementSession(originID: originID, agents: agentService,
             authorize: { [weak self] sender, change, call, context in
                 guard let self else { throw CancellationError() }
@@ -3851,6 +3854,13 @@ final class AppModel: ObservableObject {
             }, commitAvatar: { [weak self] change, lifetime in
                 guard let self else { throw CancellationError() }
                 return try await self.commitAgentAvatarChange(change, lifetime: lifetime, originID: originID, generation: generation)
+            }, prepareAvatarImage: { [weak self] path, sender, call, context in
+                guard let self else { throw CancellationError() }
+                return try await self.prepareAgentAvatarImage(path: path, sender: sender, call: call, context: context,
+                    originID: originID, generation: generation, remoteBackend: remoteBackend, remoteRevision: remoteRevision)
+            }, authorizeAvatarImage: { [weak self] sender, change, call, context in
+                guard let self else { throw CancellationError() }
+                try await self.authorizeAgentImageAvatarChange(sender: sender, change: change, call: call, context: context)
             }, automations: automationService, authorizeRoutine: { [weak self] sender, change, call, context in
                 guard let self else { throw CancellationError() }
                 try await self.authorizeAgentRoutineChange(sender: sender, change: change, call: call, context: context)
@@ -3893,6 +3903,80 @@ final class AppModel: ObservableObject {
                 guard let self else { throw CancellationError() }
                 try await self.commitAgentProjectChange(change, lifetime: lifetime, originID: originID, generation: generation)
             })
+    }
+
+    private func validateAvatarSourceScope(ownerID: UUID, originID: UUID, generation: UInt64,
+                                          remoteRevision: UUID? = nil) async throws {
+        try Task.checkCancellation()
+        guard let service = agentService, generation == autoReviewAccountGeneration,
+              isAgentMessagingScopeActive(originID),
+              remoteRevision == nil || (remoteRevision == avatarRemoteRevision && remoteComputerBackend != nil),
+              let owner = await service.profile(id: ownerID), owner.archivedAt == nil else { throw CancellationError() }
+        guard generation == autoReviewAccountGeneration, isAgentMessagingScopeActive(originID),
+              remoteRevision == nil || (remoteRevision == avatarRemoteRevision && remoteComputerBackend != nil) else {
+            throw CancellationError()
+        }
+    }
+
+    private func prepareAgentAvatarImage(path: String, sender: AgentProfile, call: NormalizedToolCall,
+        context: ToolContext, originID: UUID, generation: UInt64,
+        remoteBackend: HTTPSRemoteComputerBackend?, remoteRevision: UUID) async throws -> PreparedAgentAvatar {
+        try await validateAvatarSourceScope(ownerID: sender.id, originID: originID, generation: generation)
+        let grants = await localToolRuntime.workspaceStore.authorizations()
+        // An explicit local grant wins. A refused/failed local read is never
+        // retried against a different machine with the same pathname.
+        let local = grants.contains { path.hasPrefix($0.path == "/" ? "/" : $0.path + "/") }
+        let remote = !local && ["/workspace/", "/home/", "/root/"].contains { path.hasPrefix($0) }
+        if remote {
+            guard let remoteBackend else { throw RemoteComputerError.unsupportedCapability }
+            return try await AgentRemoteAvatarSourceReader(backend: remoteBackend,
+                remoteAgentID: sender.id.uuidString, imageStore: agentAvatarStore,
+                validateScope: { [weak self] in
+                    guard let self else { throw CancellationError() }
+                    try await self.validateAvatarSourceScope(ownerID: sender.id, originID: originID,
+                        generation: generation, remoteRevision: remoteRevision)
+                }, authorizeRead: { [weak self] path, context, callID in
+                    guard let self else { throw CancellationError() }
+                    try await self.authorizeRemoteAvatarRead(path: path, sender: sender, context: context,
+                        callID: callID, generation: generation, remoteRevision: remoteRevision)
+                }).prepare(path: path, call: call, context: context)
+        }
+        return try await AgentAvatarSourceReader(runtime: localToolRuntime, folders: workspaceFolders,
+            policy: localToolPermissionPolicy, imageStore: agentAvatarStore,
+            validateScope: { [weak self] in
+                guard let self else { throw CancellationError() }
+                try await self.validateAvatarSourceScope(ownerID: sender.id, originID: originID, generation: generation)
+            }, authorizeRead: { [weak self] operation, context, callID in
+                guard let self else { throw CancellationError() }
+                try await self.authorizeLocalAvatarRead(operation, context: context, callID: callID)
+            }).prepare(path: path, agentID: sender.id, call: call, context: context)
+    }
+
+    private func authorizeLocalAvatarRead(_ operation: LocalOperation, context: ToolContext, callID: ToolCallID) async throws {
+        let target = try await localToolRuntime.authorizationTarget(for: operation)
+        let decision = await localToolPermissionPolicy.evaluate(action: .readFile, conversationID: context.conversationID,
+            toolCallID: "avatar-source:\(callID.rawValue)", title: target, reason: l10n("Image avatar"))
+        switch decision {
+        case .denied: throw LocalToolError.permissionMismatch
+        case .requiresApproval(let request):
+            guard await localToolApprovalBroker.requestApproval(request) else { throw CancellationError() }
+        case .allowed: break
+        }
+    }
+
+    private func authorizeRemoteAvatarRead(path: String, sender: AgentProfile, context: ToolContext,
+                                          callID: ToolCallID, generation: UInt64, remoteRevision: UUID) async throws {
+        let fence = ApprovalFence(accountID: settings.accountScope ?? "local", agentID: context.conversationID.uuidString.lowercased(),
+            runID: context.runID, generation: generation)
+        await autoReviewBroker.activate(fence)
+        try await validateAvatarSourceScope(ownerID: sender.id, originID: context.conversationID,
+            generation: generation, remoteRevision: remoteRevision)
+        let action = AutoReviewAction(summary: "\(sender.name) → \(l10n("Read file")): \(path)",
+            target: .resource(kind: "remote-file", identifier: "\(sender.id.uuidString):\(path)"), risks: [.sensitive],
+            context: .init(fence: fence, conversationID: context.conversationID, toolCallID: "avatar-source:\(callID.rawValue)",
+                metadata: ["tool": "avatar-source", "agentName": sender.name, "remoteAgentID": sender.id.uuidString]))
+        let pending = PendingApproval(action: action, reason: "Approval required", expiresAt: Date().addingTimeInterval(300))
+        try await autoReviewBroker.waitForApprovalToExecute(pending) { [weak self] in await self?.registerAutoReviewApproval($0) }
     }
 
     private func makeAgentMessagingSession(originID: UUID, supportsMailboxQuestions: Bool = false,
@@ -7276,6 +7360,7 @@ final class AppModel: ObservableObject {
     }
 
     func clearRemoteComputer(removeCredential: Bool) async {
+        avatarRemoteRevision = UUID()
         remoteOperationTask?.cancel(); remoteOperationTask = nil
         remoteTerminalPollingTask?.cancel(); remoteTerminalPollingTask = nil
         if removeCredential, !remoteComputerCredentialReference.isEmpty {
@@ -7985,6 +8070,7 @@ final class AppModel: ObservableObject {
     }
 
     private func rebuildRemoteComputerClient() {
+        avatarRemoteRevision = UUID()
         remoteOperationTask?.cancel(); remoteOperationTask = nil
         remoteTerminalPollingTask?.cancel(); remoteTerminalPollingTask = nil
         guard let endpoint = URL(string: remoteComputerEndpoint),

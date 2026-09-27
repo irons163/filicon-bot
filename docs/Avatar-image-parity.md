@@ -106,3 +106,17 @@ AppModel 圖片專用核准流程按 pending ID 保留預覽，結束時移除�
 仍未注入 session 的圖片 preparer／authorizer，故沒有對使用者開放模型 path。人工匯入的既有同步寫入路徑尚未改為配額保留；啟動掃描會計入其占用，但不宣稱人工匯入已具提交前配額控制。若 blob 安裝或 quota 持久化途中出錯，仍需要後續 authoritative reconcile；未實作孤立 CAS 自動回收，不能宣稱所有崩潰路徑已原子復原。這些是後續整合驗收項，不因本批測試而移除。
 
 驗證：完整非平行 Swift 測試 exit 0；最後補上無效 UTF-8 檔名拒絕後，圖片配額／inventory 定向重跑 exit 0，原生 Debug 建置與 deep strict 封裝／簽章檢查通過。日誌 `.build/validation/avatar-quota-{full,final-focused,native}.log`。沒有啟動 App、沒有刪除使用者圖片或更改真實群組／帳號。
+
+## 第七階段：模型 session 接線
+
+`AppModel.makeAgentManagementSession` 現在注入圖片 preparer、圖片專用 authorizer 與配額 committer，模型 `update_state` 的 avatar/path 分支可達。這一階段取代上文「尚未注入」的歷史狀態，但不代表整個圖片 parity 已完成。
+
+本機圖片走工作區授權、精確 readFile 權限與 helper 的實際讀取，再顯示不可變 PNG 預覽；圖片核准不能代替來源讀取核准。來源檔在預覽後被替換，不會改變核准的圖片。讀取前後重驗帳號 generation、active origin 與發話成員仍未封存；保存仍檢查原頭像、lifetime 與配額。拒絕或取消不會安裝圖片。
+
+已有本機 grant 的 component-boundary 路徑優先走本機；其他 `/workspace/`、`/home/`、`/root/` 路徑走當輪捕捉的遠端 backend（根據 reference `box-transfer.ts` 的三個 root）。遠端不存在時拒絕，不能因本機權限拒絕而改讀另一台機器。遠端 owner 固定為發話成員 UUID，不採畫面目前選取成員；重建／清除 remote client 會更換 revision，使進行中的來源讀取失效。遠端檔案下載獨立要求明示核准，再進行圖片預覽核准，不自動啟動遠端電腦。這與 reference「本機讀取失敗後 fallback box」不同，是明確的授權邊界。
+
+新增 App 整合測試以真正模型 provider → update_state → helper → 圖片 pending → commit 路徑測試核准、讀取核准、拒絕圖片、拒絕讀取、Never、Stop、帳號切換、人工頭像衝突及預覽後替換來源；檢查 owner／peer、CAS 實際檔案數、重開保存結果。測試使用隔離工作區與有簽署 receipt 的 in-process helper，不操作使用者資料。
+
+剩餘驗收：遠端 App composition 的 HTTP fixture／revision 切換整合測試及真實服務驗收；單獨聊天與 mailbox 圖片流程的直接整合覆蓋；人工匯入提交前配額與孤立 CAS 復原／回收策略；SVG 子集與最低支援系統驗收。現有底層遠端 reader 測試不能替代以上端到端證據。
+
+驗證：完整非平行 Swift 測試 exit 0（`avatar-app-full.log`）；最後補上遠端 approval activate 後的 scope／revision 重驗後，App management 與來源 adapter 的 43 個測試定向重跑 exit 0（`avatar-app-final-focused.log`，含 9 種新模型圖片情境）。最終原生 Debug 建置與 `verify-package.sh --xcode-debug` deep strict 簽章檢查通過。測試依 pfw-testing 的隔離依賴與 CustomDump 差異斷言方式實作。

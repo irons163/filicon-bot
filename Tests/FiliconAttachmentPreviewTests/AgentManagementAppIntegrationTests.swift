@@ -11,6 +11,7 @@ import FiliconAutoReview
 import FiliconAutomations
 import FiliconChannels
 import FiliconAppServices
+import FiliconLocalTools
 
 private struct ManagingAgentProvider: InteractiveToolProvider {
     let descriptor = ProviderDescriptor(id: "management-fixture", displayName: "Profile fixture", requiresAPIKey: false)
@@ -39,9 +40,9 @@ private actor ManagementWakeProbe {
 
 @Suite("Agent profile tools app integration", .timeLimit(.minutes(1)))
 @MainActor struct AgentManagementAppIntegrationTests {
-    private func fixture() async throws -> (URL, AppModel, UUID, AgentProfile, AgentProfile) {
+    private func fixture(runtime: LocalToolRuntime? = nil) async throws -> (URL, AppModel, UUID, AgentProfile, AgentProfile) {
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-profile-app-\(UUID())")
-        let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+        let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false, localToolRuntime: runtime)
         let sender = try #require(await model.createAgent(name: "Engineer", summary: "", instructions: "ENGINEER_PRIVATE_PERSONA",
                                                           providerID: "management-fixture", modelID: "test"))
         let target = try #require(await model.createAgent(name: "Designer", summary: "Visual review", instructions: "DESIGNER_PRIVATE_PERSONA",
@@ -1223,6 +1224,69 @@ private actor ManagementWakeProbe {
         expectNoDifference(saved.modelID, original.modelID); expectNoDifference(saved.summary, original.summary)
         expectNoDifference(model.agents.first { $0.id == peer.id }?.avatar, peer.avatar)
         #expect(model.pendingAutoReviewApprovals.isEmpty && model.runningGroups.isEmpty && model.agentMessages.isEmpty)
+        let restored = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+        await restored.reloadWorkspaceData()
+        expectNoDifference(restored.agents.first { $0.id == owner.id }?.avatar, expected)
+    }
+
+    @Test(arguments: ["approve", "approve-read", "deny", "stop", "account", "stale", "replace-source", "never", "deny-read"])
+    func modelImageAvatarTraversesReadPreviewAndCommit(mode: String) async throws {
+        let workspace = FileManager.default.temporaryDirectory.appending(path: "avatar-app-source-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: workspace) }
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        let source = workspace.appending(path: "avatar.svg")
+        try Data(#"<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"><rect width="20" height="20" fill="red"/></svg>"#.utf8).write(to: source)
+        let store = WorkspaceAuthorizationStore(fileURL: workspace.appending(path: "grants.json"))
+        try await store.authorize(workspace)
+        let generation = UUID(), key = Data(repeating: 42, count: 32)
+        let authenticator = LocalSessionAuthenticator(sessionKey: key)
+        let host = LocalToolProcessHost(generation: generation, requiresPermissionReceipts: true,
+            authenticate: { _ in true }, verifyReceipt: { authenticator.verify($0) })
+        let runtime = LocalToolRuntime(workspaceStore: store, generation: generation, sessionKey: key, helper: host)
+        let (root, model, groupID, owner, peer) = try await fixture(runtime: runtime)
+        defer { try? FileManager.default.removeItem(at: root) }
+        await model.setLocalToolPermission(mode == "never" ? .never : ["deny-read", "approve-read"].contains(mode) ? .ask : .always, for: .readFile)
+        let success = ["approve", "approve-read", "replace-source"].contains(mode)
+        await model.registry.register(ManagingAgentProvider { _, execute in
+            let result = try await execute(.init(id: "image-avatar", name: "update_state", argumentsJSON:
+                JSONEncoder().encode(["target": "avatar", "action": "set", "path": source.path])))
+            expectNoDifference(result.isError, !success)
+            return "PASS"
+        })
+        let run = Task { await model.sendGroupMessage(groupID: groupID, text: "Use this image as your avatar") }
+        var expected = owner.avatar
+        if ["deny-read", "approve-read"].contains(mode) {
+            for _ in 0..<1_000 {
+                if !model.pendingToolApprovals.isEmpty { break }
+                try await Task.sleep(for: .milliseconds(5))
+            }
+            let read = try #require(model.pendingToolApprovals.first)
+            #expect(model.pendingAutoReviewApprovals.isEmpty)
+            model.resolveLocalToolApproval(id: read.id, allowed: mode == "approve-read")
+        }
+        if !["never", "deny-read"].contains(mode) {
+            let approval = try await pending(model, tool: "update_state")
+            let preview = try #require(model.avatarApprovalPreview(for: approval))
+            #expect(preview.matches(approval.action.context.metadata))
+            expectNoDifference(approval.action.context.metadata["agentAvatarOwner"], owner.id.uuidString)
+            expectNoDifference(model.agents.first { $0.id == owner.id }?.avatar, owner.avatar)
+            if success { expected = preview.proposed.avatar }
+            if mode == "replace-source" { try Data("not an image".utf8).write(to: source) }
+            if mode == "stop" { await model.stopGroup(id: groupID) }
+            if mode == "account" { await model.cancelAutoReviewApprovals(nextAccountID: "other") }
+            if mode == "stale" {
+                var changed = owner; changed.avatar = .pet(.seedy)
+                #expect(await model.updateAgent(changed)); expected = changed.avatar
+            }
+            await model.resolveGroupApproval(approval, groupID: groupID, approve: mode != "deny")
+        }
+        await run.value
+        expectNoDifference(model.agents.first { $0.id == owner.id }?.avatar, expected)
+        expectNoDifference(model.agents.first { $0.id == peer.id }, peer)
+        let images = AgentAvatarStore(rootURL: root.appending(path: "agent-avatars"))
+        expectNoDifference(try images.storageInventory().count, success ? 1 : 0)
+        if success { #expect(images.imageData(for: try #require(expected)) != nil) }
+        #expect(model.pendingAutoReviewApprovals.isEmpty && model.pendingToolApprovals.isEmpty)
         let restored = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
         await restored.reloadWorkspaceData()
         expectNoDifference(restored.agents.first { $0.id == owner.id }?.avatar, expected)
