@@ -38,6 +38,7 @@ struct GroupRemotePublicationTests {
             expectNoDifference(profile.id, sender.id)
             expectNoDifference(review.conversationID, group.id)
             expectNoDifference(review.replyTo, user.id)
+            expectNoDifference(review.reference.alt, "報表預覽")
             if mode == "deny" { throw AgentMessagingError.approvalRequired }
             if mode == "new-user" { _ = try await groups.postUserMessage("Changed request", groupID: group.id) }
         }
@@ -72,7 +73,7 @@ struct GroupRemotePublicationTests {
             }
             if mode == "revoked" { session.revokeProfileChanges() }
             let call = try NormalizedToolCall(id: "remote", name: "SendMessage", argumentsJSON:
-                JSONEncoder().encode(["type": "attachment", "url": "https://example.com/media", "reply_to": user.id.uuidString]))
+                JSONEncoder().encode(["type": "attachment", "url": "https://example.com/media", "alt": "報表預覽", "reply_to": user.id.uuidString]))
             do {
                 let result = try await tool.execute(call, context: .init(conversationID: origin))
                 expectNoDifference(result.isError, mode != "approve")
@@ -89,6 +90,7 @@ struct GroupRemotePublicationTests {
         expectNoDifference(saved.count, mode == "approve" ? 1 : 0)
         if let message = saved.first {
             expectNoDifference(message.remoteAttachment?.url, "https://example.com/media")
+            expectNoDifference(message.remoteAttachment?.alt, "報表預覽")
             expectNoDifference(message.shortAddress, "t0s0")
             expectNoDifference(message.replyToMessageID, user.id)
         }

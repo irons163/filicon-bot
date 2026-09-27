@@ -344,3 +344,13 @@ AgentMessagingSession 新增可選的 host 遠端發布核准回呼；未配置�
 群組整合測試擴充前景／背景兩條路徑：核准、拒絕、缺 capability、請求失效、撤銷，並加入錯誤 origin／destination capability 必須拒絕的斷言。成功重開 store 驗證目的群組 locator／reply／短地址，失敗不得保存。
 
 驗證：18 個群組定向案例通過（remote-background-final-target.log），原生 Debug build 與 deep strict 簽章通過（remote-background-native.log）。本批未重跑完整套件。App host 核准與可用 UI、信箱／單聊遠端持久化、alt／媒體顯示仍待完成；未 push、未重啟 App、無網路或真實資料變更。
+
+## 第二十九階段：HTTPS 附件描述（2026-09-28）
+
+SendMessage 的 HTTPS attachment 接受可選 alt，限非空白、無控制字元、500 字元，與精確 URL 一起經 immutable review、canonical receipt 和持久化。Schema 只在圖片或遠端能力存在時提供 alt，避免重複 JSON key；改描述重播同一 call 拒絕。加入繁中描述的前景／背景核准及重開 store 驗證，以及空白、過長、null、控制字元的負向測試。
+
+重新核對 reference buildSandSendMessage：原版也支持本機 attachment 的 alt。本批僅完成遠端描述，本機仍拒絕 alt（既有回歸覆蓋），此限制是待補差異而非完成對齊。文字內遠端圖片、媒體 UI、App 核准、信箱／單聊仍未完成。
+
+定向交易／工具測試 30 案例通過（remote-alt-target.log）；原生 Debug build 與 deep strict 封裝／簽章通過（remote-alt-native.log）。完整回歸結果另記於下方。未 push、未重啟 App、無真實資料或網路變更。
+
+完整非平行 Swift 回歸 exit 0（remote-alt-full.log），包含更新後的前景／背景描述持久化案例。

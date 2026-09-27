@@ -29,11 +29,12 @@ private actor RemotePublicationGate {
 
 @Suite("Remote locator publication transaction", .timeLimit(.minutes(1)))
 struct AgentRemotePublicationTransactionTests {
-    @Test(arguments: ["success", "unavailable", "wrong-scope", "deny", "missing-receipt", "http", "mixed"])
+    @Test(arguments: ["success", "alt", "empty-alt", "long-alt", "null-alt", "control-alt", "unavailable", "wrong-scope", "deny", "missing-receipt", "http", "mixed"])
     func userToolRequiresCanonicalPublication(mode: String) async throws {
         let origin = UUID(), sender = UUID(), messageID = UUID(), probe = RemotePublicationProbe()
         let transaction = AgentRemotePublicationTransaction(conversationID: mode == "wrong-scope" ? UUID() : origin,
-            senderID: sender, validateScope: {}, authorize: { _, _, _ in
+            senderID: sender, validateScope: {}, authorize: { review, _, _ in
+                expectNoDifference(review.reference.alt, mode == "alt" ? "圖片說明" : nil)
                 await probe.record("review")
                 if mode == "deny" { throw AgentMessagingError.approvalRequired }
             }, commit: { review, _, _ in
@@ -41,7 +42,7 @@ struct AgentRemotePublicationTransactionTests {
                 let message = RoomMessage(id: messageID, groupID: origin, senderID: sender, text: "",
                     createdAt: Date(timeIntervalSince1970: 0))
                 var json = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(message)) as? [String: Any])
-                json["remoteAttachment"] = ["url": review.reference.url]
+                json["remoteAttachment"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(review.reference))
                 let saved = try JSONDecoder().decode(RoomMessage.self, from: JSONSerialization.data(withJSONObject: json))
                 return .init(messageID: messageID, review: review, savedMessage: mode == "missing-receipt" ? nil : saved)
             })
@@ -52,15 +53,25 @@ struct AgentRemotePublicationTransactionTests {
                 message.replyToMessageID = reply
                 return message
             })
-        var args: [String: String] = ["type": "attachment", "url": mode == "http" ? "http://example.com/media" : "https://example.com/media"]
+        var args: [String: Any] = ["type": "attachment", "url": mode == "http" ? "http://example.com/media" : "https://example.com/media"]
         if mode == "mixed" { args["content"] = "unexpected" }
+        if mode == "alt" { args["alt"] = "圖片說明" }
+        if mode == "empty-alt" { args["alt"] = "   " }
+        if mode == "long-alt" { args["alt"] = String(repeating: "a", count: 501) }
+        if mode == "null-alt" { args["alt"] = NSNull() }
+        if mode == "control-alt" { args["alt"] = "a\nb" }
         let call = try NormalizedToolCall(id: "remote", name: "SendMessage", argumentsJSON: JSONSerialization.data(withJSONObject: args))
         let context = ToolContext(conversationID: origin)
         let result = try await tool.execute(call, context: context)
-        expectNoDifference(result.isError, mode != "success")
-        if mode == "success" {
+        let succeeds = mode == "success" || mode == "alt"
+        expectNoDifference(result.isError, !succeeds)
+        if succeeds {
             let replay = try await tool.execute(call, context: context)
             expectNoDifference(replay, result)
+            args["alt"] = "Changed"
+            let relabeled = try NormalizedToolCall(id: "remote", name: "SendMessage", argumentsJSON: JSONSerialization.data(withJSONObject: args))
+            let labelResult = try await tool.execute(relabeled, context: context)
+            #expect(labelResult.isError)
             let changed = try NormalizedToolCall(id: "remote", name: "SendMessage", argumentsJSON: Data(#"{"text":"different"}"#.utf8))
             let rejected = try await tool.execute(changed, context: context)
             #expect(rejected.isError)
@@ -72,7 +83,7 @@ struct AgentRemotePublicationTransactionTests {
             #expect(limited.isError)
         }
         let events = await probe.events
-        expectNoDifference(events, mode == "success" || mode == "missing-receipt" ? ["review", "save"] : mode == "deny" ? ["review"] : [])
+        expectNoDifference(events, succeeds || mode == "missing-receipt" ? ["review", "save"] : mode == "deny" ? ["review"] : [])
     }
 
     @Test(arguments: ["valid", "id", "group", "sender", "reference", "reply", "text", "missing-reference"])
