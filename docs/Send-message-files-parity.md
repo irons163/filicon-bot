@@ -440,3 +440,13 @@ App mailboxRemote 核准 factory 仍待接入，locator 卡片也不等同真正
 本批證明信箱入口核准／保存，不代表單聊 transcript 的 remote projection 或真正媒體預覽已完成；這些仍是明確差異。未啟動使用者 App、未 push、未改真實帳號／群組。
 
 完整非平行 Swift 回歸 exit 0（remote-mailbox-host-full.log）。
+
+## 第四十階段：單聊遠端附件資料模型（2026-09-28）
+
+RemoteAttachmentReference 移至 FiliconDomain，FiliconAgents 保留 public typealias 以相容既有匯入。URL／alt 驗證規則不變，ChatMessage 增加 optional remoteAttachment，舊訊息缺欄位仍可解碼；resend 清除舊 reference。只有遠端附件的 assistant 訊息也分配穩定短地址。
+
+新增 ChatMessage JSON round-trip、舊資料相容、file URL 注入拒絕、resend 清除與短地址測試。既有 locator 驗證定向測試通過（remote-direct-model-target.log）；最後加入短地址案例後的完整回歸與原生建置另記。
+
+本批只提供共用資料欄位，尚未完成單聊 publication、持久層／peer projection 與 UI；不能宣稱單聊遠端附件已可用。未 push、啟動 App 或改真實資料。
+
+完整非平行 Swift 回歸 exit 0（remote-direct-model-full.log），包含短地址案例。最終原生 Debug build 與 deep strict 簽章通過（remote-direct-model-native.log）。已確認 SQLite 使用分欄保存，後續需同步 migration、讀写與 recovery，不能只依 JSON round-trip 宣稱持久化完成。

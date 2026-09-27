@@ -2,9 +2,30 @@ import CustomDump
 import Foundation
 import Testing
 import FiliconAgents
+import FiliconDomain
 
 @Suite("Remote attachment locators")
 struct RemoteAttachmentReferenceTests {
+    @Test func directMessagePreservesLocatorAndClearsItOnResend() throws {
+        let reference = try RemoteAttachmentReference(url: "https://example.com/report?sig=a%2Bb", alt: "報表")
+        var message = ChatMessage(role: .assistant, text: "", remoteAttachment: reference)
+        var conversation = Conversation(messages: [message])
+        DirectMessageAddressing.assignMissing(in: &conversation)
+        expectNoDifference(conversation.messages.first?.shortAddress, "tbs0")
+        let data = try JSONEncoder().encode(message)
+        expectNoDifference(try JSONDecoder().decode(ChatMessage.self, from: data), message)
+        var fields = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        fields.removeValue(forKey: "remoteAttachment")
+        let legacy = try JSONDecoder().decode(ChatMessage.self, from: JSONSerialization.data(withJSONObject: fields))
+        expectNoDifference(legacy.remoteAttachment, nil)
+        fields["remoteAttachment"] = ["url": "file:///private/report"]
+        #expect(throws: RemoteAttachmentReference.ValidationError.invalidURL) {
+            try JSONDecoder().decode(ChatMessage.self, from: JSONSerialization.data(withJSONObject: fields))
+        }
+        message.prepareForResend()
+        expectNoDifference(message.remoteAttachment, nil)
+    }
+
     @Test(arguments: [
         "https://example.com/report.pdf",
         "https://example.com/%E5%A0%B1%E5%91%8A%20final.pdf?signature=a%2Bb%2F&part=2#page=3",

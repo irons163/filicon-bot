@@ -70,6 +70,7 @@ public struct ChatMessage: Identifiable, Codable, Hashable, Sendable {
     /// Host-assigned reference identity; never derived from a paginated view.
     public var shortAddress: String?
     public var agentMessageSource: AgentMessageSource?
+    public var remoteAttachment: RemoteAttachmentReference?
 
     public init(
         id: UUID = UUID(),
@@ -85,7 +86,8 @@ public struct ChatMessage: Identifiable, Codable, Hashable, Sendable {
         replyToMessageID: UUID? = nil,
         reactions: [ChatReaction] = [],
         shortAddress: String? = nil,
-        agentMessageSource: AgentMessageSource? = nil
+        agentMessageSource: AgentMessageSource? = nil,
+        remoteAttachment: RemoteAttachmentReference? = nil
     ) {
         self.id = id
         self.role = role
@@ -101,6 +103,7 @@ public struct ChatMessage: Identifiable, Codable, Hashable, Sendable {
         self.reactions = reactions
         self.shortAddress = shortAddress
         self.agentMessageSource = agentMessageSource
+        self.remoteAttachment = remoteAttachment
     }
 
     public mutating func toggleReaction(emoji: String, actorID: String) -> Bool {
@@ -119,6 +122,7 @@ public struct ChatMessage: Identifiable, Codable, Hashable, Sendable {
         reasoningText = ""
         toolActivities = []
         transcriptCards = []
+        remoteAttachment = nil
         deliveryStatus = .queued
         deliveryError = nil
     }
@@ -126,7 +130,7 @@ public struct ChatMessage: Identifiable, Codable, Hashable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case id, role, text, createdAt, attachments, deliveryStatus, deliveryError
         case reasoningText, toolActivities, transcriptCards, replyToMessageID, reactions, shortAddress
-        case agentMessageSource
+        case agentMessageSource, remoteAttachment
     }
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -143,6 +147,7 @@ public struct ChatMessage: Identifiable, Codable, Hashable, Sendable {
         replyToMessageID = try values.decodeIfPresent(UUID.self, forKey: .replyToMessageID)
         shortAddress = try values.decodeIfPresent(String.self, forKey: .shortAddress)
         agentMessageSource = try values.decodeIfPresent(AgentMessageSource.self, forKey: .agentMessageSource)
+        remoteAttachment = try values.decodeIfPresent(RemoteAttachmentReference.self, forKey: .remoteAttachment)
         guard agentMessageSource == nil || role == .assistant else {
             throw DecodingError.dataCorruptedError(forKey: .agentMessageSource, in: values, debugDescription: "Peer messages must have assistant role")
         }
@@ -195,7 +200,7 @@ public enum DirectMessageAddressing {
             guard message.role == .user || message.role == .assistant else { continue }
             let key = message.id.uuidString
             var address = conversation.messageAddressReservations[key] ?? message.shortAddress
-            if address == nil, message.role == .user || !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !message.attachments.isEmpty {
+            if address == nil, message.role == .user || !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !message.attachments.isEmpty || message.remoteAttachment != nil {
                 if message.role == .user, nextTurn < limit {
                     address = "t\(nextTurn)u"
                     nextTurn += 1
