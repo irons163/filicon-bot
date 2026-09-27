@@ -98,6 +98,7 @@ final class AppModel: ObservableObject {
     @Published var agents: [AgentProfile] = []
     @Published private(set) var agentSidebarVisibility: [AgentSidebarVisibility] = []
     private var sidebarVisibilityRevision: UInt64?
+    private var sidebarSettingsLeases: [UUID: ConversationBindingLease] = [:]
     private var manualSidebarChanges: [UUID: AgentSettingsChangeLifetime] = [:]
     @Published var requestedAgentInspectionID: UUID?
     @Published var pinnedAgentIDs: Set<UUID> = []
@@ -1089,6 +1090,7 @@ final class AppModel: ObservableObject {
     }
 
     func deleteConversation(id: UUID) {
+        for lease in sidebarSettingsLeases.values where lease.conversationID == id { lease.close() }
         manualSidebarChanges[id]?.close()
         let wasBound = conversations.first(where: { $0.id == id })?.agentBinding != nil
         if let peer = directPeerExecutions[id] { cancelConversationWork(peer.originID) }
@@ -3865,6 +3867,10 @@ final class AppModel: ObservableObject {
             }, commitSettings: { [weak self] change, lifetime in
                 guard let self else { throw CancellationError() }
                 return try await self.commitAgentSettingsChange(change, lifetime: lifetime, originID: originID, generation: generation)
+            }, prepareSidebarSettings: { [weak self] agentID, hidden in
+                guard let self else { throw CancellationError() }
+                return try await self.prepareAgentSidebarSettings(agentID: agentID, hidden: hidden,
+                    originID: originID, generation: generation)
             }, channels: channelService, authorizeChannel: { [weak self] sender, change, call, context in
                 guard let self else { throw CancellationError() }
                 try await self.authorizeAgentChannelDisconnection(sender: sender, change: change, call: call, context: context)
@@ -4499,6 +4505,20 @@ final class AppModel: ObservableObject {
         }
     }
 
+    private func prepareAgentSidebarSettings(agentID: UUID, hidden: Bool, originID: UUID,
+                                             generation: UInt64) async throws -> AgentSidebarVisibilityChange {
+        guard let agentService, generation == autoReviewAccountGeneration,
+              isAgentMessagingScopeActive(originID) else { throw CancellationError() }
+        let account = settings.accountScope ?? "local"
+        guard let chat = try await store.uniqueBoundConversation(accountID: account, agentID: agentID),
+              !deletedConversationIDs.contains(chat.id) else { throw AgentSettingsChangeError.invalid }
+        let previous = await agentService.sidebarVisibility(accountID: account, agentID: agentID, conversationID: chat.id)
+        guard generation == autoReviewAccountGeneration, isAgentMessagingScopeActive(originID),
+              !deletedConversationIDs.contains(chat.id) else { throw CancellationError() }
+        return .init(proposed: .init(accountID: account, agentID: agentID, conversationID: chat.id, hidden: hidden),
+            previous: previous, previousHidden: previous?.hidden ?? (chat.hiddenAt != nil))
+    }
+
     private func authorizeAgentSettingsChange(sender: AgentProfile, change: AgentSettingsChange,
                                               call: NormalizedToolCall, context: ToolContext) async throws {
         guard isAgentMessagingScopeActive(context.conversationID) else { throw CancellationError() }
@@ -4533,19 +4553,46 @@ final class AppModel: ObservableObject {
               var proposed = await agentService.profile(id: change.agentID) else { throw CancellationError() }
         proposed.notifyOnAgentUpdates = change.notifyOnUpdates
         let payload = try JSONEncoder().encode(proposed)
+        let lease: ConversationBindingLease?
+        if let visibility = change.visibility {
+            let target = visibility.proposed
+            guard target.accountID == (settings.accountScope ?? "local"),
+                  !deletedConversationIDs.contains(target.conversationID) else { throw CancellationError() }
+            let acquired = try await store.leaseUniqueBinding(accountID: target.accountID, agentID: target.agentID,
+                conversationID: target.conversationID)
+            guard generation == autoReviewAccountGeneration, isAgentMessagingScopeActive(originID),
+                  !deletedConversationIDs.contains(target.conversationID),
+                  visibility.previous != nil || (acquired.legacyHiddenAt != nil) == visibility.previousHidden else {
+                acquired.close()
+                throw CancellationError()
+            }
+            sidebarSettingsLeases[target.revision] = acquired
+            lease = acquired
+        } else { lease = nil }
+        defer {
+            lease?.close()
+            if let target = change.visibility?.proposed { sidebarSettingsLeases[target.revision] = nil }
+        }
         let profile: AgentProfile
         do {
             profile = try await quotaWrite(scope: "workflow", key: "agent-\(change.agentID)", data: payload) {
-                try await agentService.applySettingsChange(change, lifetime: lifetime)
+                if let lease, let visibility = change.visibility?.proposed {
+                    return try await self.quotaWrite(scope: "workflow",
+                        key: "sidebar-\(visibility.accountID)-\(visibility.conversationID)", data: JSONEncoder().encode(visibility)) {
+                        try await agentService.applyBoundSettingsChange(change, lifetime: lifetime, bindingLease: lease)
+                    }
+                }
+                return try await agentService.applySettingsChange(change, lifetime: lifetime)
             }
         } catch {
             guard let saved = lifetime.committedProfile(for: change) else { throw error }
             errorMessage = Self.quotaMessage(error)
             profile = saved
         }
-        let current = await agentService.list(includeArchived: true)
+        let snapshot = await agentService.currentSnapshot()
         guard generation == autoReviewAccountGeneration else { return profile }
-        agents = current
+        agents = snapshot.agents.sorted { $0.createdAt < $1.createdAt }
+        updateSidebarVisibility(snapshot)
         await projectAgentNotifications()
         return profile
     }
@@ -6731,6 +6778,7 @@ final class AppModel: ObservableObject {
     }
 
     func cancelAutoReviewApprovals(nextAccountID: String) async {
+        for lease in sidebarSettingsLeases.values { lease.close() }
         for lifetime in manualSidebarChanges.values { lifetime.close() }
         // Queued peer work is scoped to the account that approved the exchange.
         agentMessagingAccountTransition = true

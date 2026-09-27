@@ -6,12 +6,14 @@ import Foundation
 public final class ConversationBindingLease: @unchecked Sendable {
     public let conversationID: UUID
     public let binding: DirectConversationAgentBinding
+    public let legacyHiddenAt: Date?
     private let lock = NSLock()
     private var active = true
 
-    public init(conversationID: UUID, binding: DirectConversationAgentBinding) {
+    public init(conversationID: UUID, binding: DirectConversationAgentBinding, legacyHiddenAt: Date? = nil) {
         self.conversationID = conversationID
         self.binding = binding
+        self.legacyHiddenAt = legacyHiddenAt
     }
 
     public var isActive: Bool { lock.withLock { active } }

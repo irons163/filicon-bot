@@ -71,7 +71,7 @@ public actor ConversationRepository {
         guard let value = try uniqueBoundConversation(accountID: accountID, agentID: agentID),
               value.id == conversationID, let binding = value.agentBinding else { throw CancellationError() }
         bindingLeases.removeAll { !$0.isActive }
-        let lease = ConversationBindingLease(conversationID: conversationID, binding: binding)
+        let lease = ConversationBindingLease(conversationID: conversationID, binding: binding, legacyHiddenAt: value.hiddenAt)
         bindingLeases.append(lease)
         return lease
     }
@@ -158,7 +158,8 @@ public actor ConversationRepository {
         // a proposal, but must never leave a stale ownership permit usable.
         for lease in bindingLeases {
             let matches = values.filter { $0.agentBinding == lease.binding }
-            if matches.count != 1 || matches.first?.id != lease.conversationID { lease.close() }
+            if matches.count != 1 || matches.first?.id != lease.conversationID
+                || matches.first?.hiddenAt != lease.legacyHiddenAt { lease.close() }
         }
         bindingLeases.removeAll { !$0.isActive }
         try database.transaction("save conversations") {

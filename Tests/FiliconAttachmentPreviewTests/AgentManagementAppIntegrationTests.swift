@@ -516,6 +516,73 @@ private actor ManagementWakeProbe {
         }
     }
 
+    @Test(arguments: ["approve", "hidden-only", "deny", "stop", "account", "delete", "duplicate", "archive", "disk", "manual"], [false, true])
+    func sidebarSettingsUseOneApprovalAndRespectBinding(mode: String, hidden: Bool) async throws {
+        let (root, model, groupID, owner, peer) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        await model.bootstrap()
+        let chatID = try #require(await model.addConversation(agentID: owner.id))
+        if !hidden { #expect(await model.saveBoundConversationVisibility(id: chatID, hidden: true)) }
+        await model.registry.register(ManagingAgentProvider { request, execute in
+            let instructions = request.messages.filter { $0.role == .system }.map(\.text).joined()
+            #expect(instructions.contains("hidden_from_sidebar"))
+            let notification = mode == "hidden-only" ? "" : "\"notify_on_updates\":false,"
+            let result = try await execute(.init(id: "sidebar-settings", name: "update_state",
+                argumentsJSON: Data("{\"target\":\"settings\",\"action\":\"set\",\(notification)\"hidden_from_sidebar\":\(hidden)}".utf8)))
+            expectNoDifference(result.isError, mode != "approve" && mode != "hidden-only")
+            return "PASS"
+        })
+        let run = Task { await model.sendGroupMessage(groupID: groupID, text: "Change your sidebar visibility and notification preference") }
+        let approval = try await pending(model, tool: "update_state")
+        expectNoDifference(approval.action.context.metadata["agentSidebarConversationID"], chatID.uuidString)
+        expectNoDifference(model.hiddenConversations.contains(where: { $0.id == chatID }), !hidden)
+        expectNoDifference(model.agents.first { $0.id == owner.id }?.notifyOnAgentUpdates, true)
+        if mode == "stop" { await model.stopGroup(id: groupID) }
+        if mode == "account" { await model.cancelAutoReviewApprovals(nextAccountID: "other") }
+        if mode == "delete" { model.deleteConversation(id: chatID) }
+        if mode == "duplicate" { #expect(await model.addConversation(agentID: owner.id) != nil) }
+        if mode == "archive" { await model.archiveAgent(id: owner.id) }
+        if mode == "manual" { #expect(await model.saveBoundConversationVisibility(id: chatID, hidden: !hidden)) }
+        if mode == "disk" {
+            let file = root.appending(path: "agents.json")
+            try FileManager.default.moveItem(at: file, to: root.appending(path: "agents-backup.json"))
+            try FileManager.default.createDirectory(at: file, withIntermediateDirectories: false)
+        }
+        await model.resolveGroupApproval(approval, groupID: groupID, approve: mode != "deny")
+        await run.value
+        expectNoDifference(model.agents.first { $0.id == owner.id }?.notifyOnAgentUpdates, mode != "approve")
+        expectNoDifference(model.agents.first { $0.id == peer.id }?.notifyOnAgentUpdates, true)
+        expectNoDifference(model.groups.first { $0.id == groupID }?.memberIDs, [owner.id])
+        #expect(model.pendingAutoReviewApprovals.isEmpty && model.runningGroups.isEmpty)
+        if mode == "approve" || mode == "hidden-only" {
+            expectNoDifference(model.hiddenConversations.contains(where: { $0.id == chatID }), hidden)
+            let reopened = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+            await reopened.bootstrap()
+            expectNoDifference(reopened.hiddenConversations.contains(where: { $0.id == chatID }), hidden)
+            expectNoDifference(reopened.agents.first { $0.id == owner.id }?.notifyOnAgentUpdates, mode == "hidden-only")
+        }
+    }
+
+    @Test(arguments: [false, true])
+    func sidebarSettingsRejectMissingOrAmbiguousHistory(duplicate: Bool) async throws {
+        let (root, model, groupID, owner, _) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        await model.bootstrap()
+        if duplicate {
+            #expect(await model.addConversation(agentID: owner.id) != nil)
+            #expect(await model.addConversation(agentID: owner.id) != nil)
+        }
+        await model.registry.register(ManagingAgentProvider { _, execute in
+            let result = try await execute(.init(id: "no-target", name: "update_state",
+                argumentsJSON: Data(#"{"target":"settings","action":"set","hidden_from_sidebar":true}"#.utf8)))
+            #expect(result.isError)
+            return "PASS"
+        })
+        await model.sendGroupMessage(groupID: groupID, text: "Hide your chat")
+        #expect(model.pendingAutoReviewApprovals.isEmpty)
+        #expect(model.agentSidebarVisibility.isEmpty)
+    }
+
     @Test(arguments: ["approve", "deny", "stop", "account", "aba", "archive"], [false, true])
     func ownNotificationSettingsAlwaysAskAndRespectLifecycle(mode: String, enabled: Bool) async throws {
         let (root, model, groupID, owner, peer) = try await fixture()

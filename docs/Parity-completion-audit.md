@@ -8,7 +8,9 @@
 
 以下保留全部驗收範圍：UI-01…04、CONV-01…04、ATT-01…04、PROV-01…04、MCP-01…04、AGENT-01…04、AUTO-01…04、COMP-01…04、ACCT-01…04、NOTIF-01…04、PERS-01…04、UPD-01…04。尚未逐項重驗者標記為未重驗，不推論缺失，也不視為已完成。
 
-## 已核對的下一個本機缺口：自身側欄可見性
+## 自身側欄可見性：基準缺口與實作驗收
+
+以下依提交順序保留歷史進度；最新 App 接線狀態見本節末的「模型入口」。不以中間階段的「尚未接線」當成目前結論，也不以此單一功能取代其餘 48 項驗收。
 
 - reference `runner/tools/sand-state-tool.ts` 的 settings schema／dispatch 接受 optional boolean `hidden_from_sidebar` 與 `notify_on_updates`，只更新提供欄位；`extensions/memory/agent-state.ts/updateSettings` 寫入設定後回報成功，空修改拒絕。
 - reference session summary 讀 settings.hiddenFromSidebar 並投影為 isHiddenFromSidebar；工具描述明示隱藏不封存、不停止任務，仍可搜尋與由 Hidden chats 恢復。
@@ -82,6 +84,16 @@ App 現在於啟動、重新載入及 agent snapshot 更新時讀取已保存的
 App 尚未啟用模型 preparer；還要將憑證取得、finally 撤銷、來源生命週期、quota 及保存後畫面接線並完成 App 測試。來源查找確認目前 AppModel 建立一個 ConversationStore，該 store 快取一個 repository；若新增不同 repository instance 的寫入路徑，必須先統一或擴充 fence，不能直接宣稱端到端已完成。
 
 驗證：定向 13 項測試通過，含最終精確錯誤斷言的完整 nonparallel Swift tests／原生 Debug build 均 exit 0，verify-package deep/strict 通過。日誌 `.build/validation/sidebar-lease-{focused,full,native}.log` 不提交；未啟動使用者 App，未改真實資料。
+
+### 模型入口（2026-09-27）
+
+App 已注入 sidebar preparer。模型可提出 optional `hidden_from_sidebar`／`notify_on_updates`，至少一項；host 依當前帳號和自身 agent 查唯一 direct chat，模型無法指定目標 ID。核准卡列出兩個設定的 before/after 及聊天 ID。核准後重新取得 repository lease；聊天刪除或帳號切換會同步撤銷 App 登記的 lease，原有 session lifetime 保護 Stop。legacy hiddenAt 變更也撤銷 lease，避免核准舊狀態後覆蓋人工操作。通知與側欄各自先保留 quota，兩者由同一次 agents state 保存；保存後才更新共用 snapshot。晚到的 quota 記帳錯誤保留 durable receipt，不謊稱資料回滾。
+
+App fixture 覆蓋隱藏／恢復、合併修改及單改可見性保留通知、核准前未變更、拒絕／停止／切帳號／刪除／重複綁定／封存／磁碟失敗／人工版本衝突、重開保留與不影響群組成員及他人通知。缺少或歧義聊天在核准前拒絕。服務／repository 測試另涵蓋重新綁定、舊 hiddenAt 變更、嚴格 boolean、重播、保存失敗及精確帳號投影。
+
+驗證：runtime 最終 source 的完整 nonparallel Swift tests／原生 Debug build exit 0，verify-package deep/strict 通過；最後新增的人工版本衝突及 legacy hiddenAt 測試再定向通過（App 20＋2 cases，repository 8 cases＋查找測試）。日誌 `.build/validation/sidebar-host-{focused,full,native,final-focused}.log` 不提交。
+
+原生 App 採單一 ConversationStore／repository；憑證仍不是跨程序 CAS。未做真實帳號操作、沒有啟動使用者 App；整體 parity 仍須下列其他分類的當前證據，不能標記全部完成。
 
 ## 必須保留的其他分類
 

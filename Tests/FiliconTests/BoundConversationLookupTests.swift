@@ -8,7 +8,7 @@ import Testing
 
 @Suite("Exact sidebar conversation binding")
 struct BoundConversationLookupTests {
-    @Test(arguments: ["rename", "messages", "delete", "rebind", "duplicate", "closed", "wrong-target"])
+    @Test(arguments: ["rename", "messages", "delete", "rebind", "duplicate", "closed", "wrong-target", "legacy-hide"])
     func leaseFencesAtomicSettingsSave(mode: String) async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-binding-lease-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }
@@ -32,10 +32,11 @@ struct BoundConversationLookupTests {
             var duplicate = Conversation(id: UUID(uuidString: "00000000-0000-0000-0000-000000000002")!, title: "Duplicate")
             duplicate.agentBinding = chat.agentBinding
             try await store.upsert(duplicate, replacingLoadedMessageIDs: [], historyComplete: true)
-        case "rebind", "rename", "messages":
+        case "rebind", "rename", "messages", "legacy-hide":
             if mode == "rebind" { chat.agentBinding = .init(accountID: "other", agentID: agent.id) }
             if mode == "rename" { chat.title = "After" }
             if mode == "messages" { chat.messages = [.init(role: .user, text: "New message")] }
+            if mode == "legacy-hide" { chat.hiddenAt = Date(timeIntervalSince1970: 200) }
             try await store.upsert(chat, replacingLoadedMessageIDs: [], historyComplete: true)
         default: break
         }
