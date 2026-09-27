@@ -15,7 +15,7 @@ public struct DirectMessageReferenceDirectory: Sendable {
             var row = RoomMessage(
                 id: message.id, groupID: conversation.id,
                 senderID: message.role == .user ? nil : conversation.id,
-                text: message.text)
+                text: message.text, remoteAttachment: message.remoteAttachment)
             // Keep every row/address for duplicate detection, including invalid roles.
             row.shortAddress = message.shortAddress
             let address = message.shortAddress

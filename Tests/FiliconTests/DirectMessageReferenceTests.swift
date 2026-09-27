@@ -6,6 +6,25 @@ import FiliconAgents
 
 @Suite("Direct inline message reference index")
 struct DirectMessageReferenceTests {
+    @Test func remoteOnlyTargetsPreserveVisibilityAndAddressChecks() throws {
+        let remote = try RemoteAttachmentReference(url: "https://example.com/report?signature=exact", alt: "Report")
+        var conversation = Conversation(title: "Remote references")
+        let target = ChatMessage(role: .assistant, text: "", shortAddress: "t0s0", remoteAttachment: remote)
+        let response = ChatMessage(role: .assistant, text: "See report", shortAddress: "t0s1")
+        let url = try #require(URL(string: "sand-msg:t0s0"))
+        conversation.messages = [target, response]
+        for complete in [false, true] {
+            let directory = DirectMessageReferenceDirectory(conversation: conversation, historyComplete: complete)
+            expectNoDifference(directory.target(for: url, from: response.id, in: conversation.id), complete ? target.id : nil)
+        }
+        conversation.messages[0].role = .tool
+        let privateDirectory = DirectMessageReferenceDirectory(conversation: conversation, historyComplete: true)
+        expectNoDifference(privateDirectory.target(for: url, from: response.id, in: conversation.id), nil)
+        conversation.messages = [target, target, response]
+        let duplicateDirectory = DirectMessageReferenceDirectory(conversation: conversation, historyComplete: true)
+        expectNoDifference(duplicateDirectory.target(for: url, from: response.id, in: conversation.id), nil)
+    }
+
     @Test func completeHistoryAndExactConversationAreRequired() throws {
         var conversation = Conversation(title: "References")
         let original = ChatMessage(role: .user, text: "Original", shortAddress: "t57u")

@@ -52,6 +52,7 @@ private struct GroupFileAppProvider: AIProvider {
     let url: String
     var destinationID: UUID? = nil
     var peerRecipientID: UUID? = nil
+    var replyTo: String? = nil
     var expectedFileSuccess: Bool? = nil
     let descriptor = ProviderDescriptor(id: "group-file-app", displayName: "Files fixture", requiresAPIKey: false)
     func models() async throws -> [AIModel] { [.init(id: "test")] }
@@ -60,7 +61,7 @@ private struct GroupFileAppProvider: AIProvider {
             do {
                 if request.toolExchanges.isEmpty {
                     let name: ToolName
-                    let arguments: [String: String]
+                    var arguments: [String: String]
                     if let peerRecipientID, request.messages.first?.text.contains("You are Sender,") == true {
                         name = "SendToAgent"
                         arguments = ["recipientID": peerRecipientID.uuidString, "message": "Publish the reviewed report"]
@@ -70,6 +71,7 @@ private struct GroupFileAppProvider: AIProvider {
                     } else {
                         name = "SendMessage"
                         arguments = ["type": "attachment", "url": url, "alt": "報表說明"]
+                        if let replyTo { arguments["reply_to"] = replyTo }
                     }
                     let call = try NormalizedToolCall(id: "publish-report", name: name,
                         argumentsJSON: JSONSerialization.data(withJSONObject: arguments))
@@ -149,7 +151,7 @@ private struct GroupFileAppProvider: AIProvider {
         expectNoDifference(attachments, mode == "approve" ? [try RemoteAttachmentReference(url: url, alt: "報表說明")] : [])
     }
 
-    @Test(arguments: ["approve", "deny", "stop", "account", "direct-message-reserve", "direct-message-late"])
+    @Test(arguments: ["approve", "reply", "deny", "stop", "account", "direct-message-reserve", "direct-message-late"])
     func directMainPublishesReviewedRemote(mode: String) async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-direct-remote-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }
@@ -158,19 +160,25 @@ private struct GroupFileAppProvider: AIProvider {
             quotaFaultInjector: { try fault.inject($0) })
         await model.bootstrap()
         let reference = try RemoteAttachmentReference(url: "https://example.com/report?sig=a%2Bb", alt: "報表說明")
+        let priorReference = try RemoteAttachmentReference(url: "https://example.com/prior")
+        let prior = ChatMessage(role: .assistant, text: "", shortAddress: "t0s0", remoteAttachment: priorReference)
         await model.registry.register(GroupFileAppProvider(url: reference.url,
-            expectedFileSuccess: ["approve", "direct-message-late"].contains(mode)))
+            replyTo: mode == "reply" ? "t0s0" : nil,
+            expectedFileSuccess: ["approve", "reply", "direct-message-late"].contains(mode)))
         let id = try #require(model.selection)
         let ci = try #require(model.conversations.firstIndex(where: { $0.id == id }))
         model.conversations[ci].providerID = "group-file-app"
         model.conversations[ci].modelID = "test"
+        if mode == "reply" {
+            model.conversations[ci].messages = [ChatMessage(role: .user, text: "Previous report", shortAddress: "t0u"), prior]
+        }
         await model.refreshModels()
         model.draft = "Publish report"
         model.send()
         let approval = try await pending(model)
         expectNoDifference(approval.action.context.metadata["agentRemotePublication"], "true")
         #expect(approval.action.context.metadata["agentMessage"]?.contains(reference.url) == true)
-        #expect(model.conversations[ci].messages.allSatisfy { $0.remoteAttachment == nil })
+        expectNoDifference(model.conversations[ci].messages.compactMap(\.remoteAttachment), mode == "reply" ? [priorReference] : [])
         if mode.hasPrefix("direct-message-") { fault.arm(mode) }
         if mode == "stop" { model.cancel() }
         if mode == "account" { await model.cancelAutoReviewApprovals(nextAccountID: "other") }
@@ -183,7 +191,10 @@ private struct GroupFileAppProvider: AIProvider {
         let store = ConversationStore(fileURL: root.appending(path: "conversations.json"))
         let saved = try #require(try await store.conversation(id: id))
         let attachments = saved.messages.compactMap(\.remoteAttachment)
-        expectNoDifference(attachments, ["approve", "direct-message-late"].contains(mode) ? [reference] : [])
+        expectNoDifference(attachments, mode == "reply" ? [priorReference, reference] : (["approve", "direct-message-late"].contains(mode) ? [reference] : []))
+        if mode == "reply" {
+            expectNoDifference(saved.messages.first(where: { $0.remoteAttachment == reference })?.replyToMessageID, prior.id)
+        }
         if mode.hasPrefix("direct-message-") { #expect(fault.didTrigger) }
     }
 

@@ -486,3 +486,11 @@ App 核准測試擴為信箱／單聊 × 同意、拒絕、停止、帳號切換
 六個隔離 App 測試涵蓋同意、拒絕、停止、帳號切換、保存前與保存後故障（remote-direct-host-target-fixed.log）。完整回歸首次因既有核准測試的固定 yield 次數過早耗盡失敗；依 pfw-testing 將其等待改為五秒單調時鐘上限並保留逾時失敗。重跑完整非平行 Swift 測試 exit 0（remote-direct-host-full-fixed.log），原生 Debug build 與 deep strict 簽章通過（remote-direct-host-native.log）。
 
 尚待單聊引用歷史／跳轉索引補齊遠端欄位；locator 卡片並非真正媒體預覽。未 push、重啟 App／Xcode 或修改真實帳號資料。
+
+## 第四十五階段：單聊遠端附件引用（2026-09-28）
+
+單聊主代理人的 replyHistory 與 DirectMessageReferenceDirectory 保留 remoteAttachment，讓純遠端附件成為有效回覆與 sand-msg 跳轉目標；仍拒絕非公開角色、重複身分與不完整歷史。
+
+引用索引四項測試通過（remote-direct-reference-target.log）；App 發布測試擴為七案例，新增以 t0s0 回覆既有純遠端附件，核對核准前無新增發布與重開資料庫後 replyToMessageID（remote-direct-reference-app.log）。原生 Debug build、deep strict 簽章通過（remote-direct-reference-native.log）。此小批未另重跑完整回歸，上一階段完整回歸已通過。
+
+尚不代表媒體下載／預覽或原版全部功能對齊；未 push、重啟 App／Xcode 或修改真實資料。
