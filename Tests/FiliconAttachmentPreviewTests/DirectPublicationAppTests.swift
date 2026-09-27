@@ -17,7 +17,9 @@ private struct DirectPublicationProvider: AIProvider {
         .init(id: "direct-publication-test", displayName: "Direct publication test",
               requiresAPIKey: false, supportsToolCalling: toolSupport)
     }
-    func models() async throws -> [AIModel] { [.init(id: "test")] }
+    func models() async throws -> [AIModel] {
+        [.init(id: "test", capabilities: .init(inputModalities: [.text, .document]))]
+    }
     func stream(_ request: InferenceRequest) -> AsyncThrowingStream<InferenceEvent, Error> {
         AsyncThrowingStream { continuation in
             do {
@@ -209,8 +211,8 @@ struct DirectPublicationAppTests {
         expectNoDifference(card.externalCursorReference?.url.host, "cursor.com")
     }
 
-    @Test(arguments: ["current", "receipt", "foreign", "current-short", "receipt-short"]) @MainActor
-    func directRepliesUseOnlySavedSameConversationTargets(mode: String) async throws {
+    @Test(arguments: ["current", "receipt", "foreign", "current-short", "receipt-short"], [false, true]) @MainActor
+    func directRepliesUseOnlySavedSameConversationTargets(mode: String, fileOnly: Bool) async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-direct-reply-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
         let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
@@ -226,7 +228,13 @@ struct DirectPublicationAppTests {
         model.conversations[ci].providerID = "direct-publication-test"
         model.conversations[ci].modelID = "test"
         await model.refreshModels()
-        model.draft = "Please work"
+        if fileOnly {
+            let storage = AttachmentStore(rootURL: root.appending(path: "attachments"))
+            let file = try await storage.ingest(data: Data("Report fixture".utf8),
+                filename: "report.txt", declaredMIMEType: "text/plain")
+            model.pendingAttachments = [file]
+        }
+        model.draft = fileOnly ? "" : "Please work"
         model.send()
         for _ in 0..<600 {
             if !model.running.contains(id) { break }

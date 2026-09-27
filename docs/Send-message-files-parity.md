@@ -260,3 +260,13 @@ AppModel 的信箱與 direct 委派 session 注入 mailboxFiles。每次讀取�
 此階段是 direct 委派，不是 direct 主回合自己發檔案；後者仍待補。未覆蓋程序被強制中止期間的 crash recovery，也未完成遠端 URL／媒體能力。所有操作只在測試建立的臨時資料根目錄，未重啟真實 App 或 Xcode。
 
 驗證：18 種定向案例及完整非平行 Swift 回歸 exit 0；原生 Debug build 與 deep strict 封裝／簽章通過。日誌 `.build/validation/direct-peer-file-recovery.log`、`direct-peer-file-final-full.log`、`direct-peer-file-native.log`。
+
+## 第二十階段：direct 純檔案訊息引用（2026-09-28）
+
+direct 主回合建立 SendMessage 的 replyHistory 時，除了圖片也帶入非圖片附件，讓只有檔案、没有文字的使用者訊息可用 UUID 或短地址引用。沒有放寬跨對話或不存在目標的驗證，也沒有把一般檔案當成圖片。
+
+依 pfw-testing 擴充 App 回歸為文字／純檔案兩種輸入，交叉 UUID、短地址、已保存回條及跨對話拒絕，共 10 案例。隔離 provider 明確宣告 document 輸入能力；檔案經 AttachmentStore 與正常 send 路徑處理。移除 production 修正後純檔案目標引用測試失敗，恢復後通過，確認測試能捕捉此缺口。
+
+這只補齊引用既有檔案訊息，不代表 direct 主回合已能透過 SendMessage 發布一般檔案；該核准與持久化交易仍待接線。
+
+驗證：10 種定向案例、完整非平行 Swift 回歸 exit 0；原生 Debug build 與 deep strict 封裝／簽章通過。日誌 `.build/validation/direct-file-reference-{target,full,native}.log`；負向對照為 `direct-file-reference-negative.log`。未啟動使用者 App／Xcode，未修改真實資料。

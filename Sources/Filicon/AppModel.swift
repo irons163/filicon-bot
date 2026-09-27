@@ -2098,6 +2098,7 @@ final class AppModel: ObservableObject {
                         var message = RoomMessage(id: $0.id, groupID: id, senderID: $0.role == .user ? nil : id,
                             text: $0.text, createdAt: $0.createdAt)
                         message.images = $0.attachments.filter { $0.kind == .image }
+                        message.files = $0.attachments.filter { $0.kind != .image }
                         message.shortAddress = $0.shortAddress
                         return message
                     }
