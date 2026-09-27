@@ -43,6 +43,7 @@ private final class GroupFileQuotaFault: @unchecked Sendable {
 private struct GroupFileAppProvider: AIProvider {
     let url: String
     var destinationID: UUID? = nil
+    var peerRecipientID: UUID? = nil
     let descriptor = ProviderDescriptor(id: "group-file-app", displayName: "Files fixture", requiresAPIKey: false)
     func models() async throws -> [AIModel] { [.init(id: "test")] }
     func stream(_ request: InferenceRequest) -> AsyncThrowingStream<InferenceEvent, Error> {
@@ -51,7 +52,10 @@ private struct GroupFileAppProvider: AIProvider {
                 if request.toolExchanges.isEmpty {
                     let name: ToolName
                     let arguments: [String: String]
-                    if let destinationID, request.messages.first?.text.contains("Your name is Designer,") != true {
+                    if let peerRecipientID, request.messages.first?.text.contains("You are Sender,") == true {
+                        name = "SendToAgent"
+                        arguments = ["recipientID": peerRecipientID.uuidString, "message": "Publish the reviewed report"]
+                    } else if let destinationID, request.messages.first?.text.contains("Your name is Designer,") != true {
                         name = "SendToAgent"
                         arguments = ["recipientID": destinationID.uuidString, "message": "Publish the reviewed report"]
                     } else {
@@ -75,8 +79,8 @@ private struct GroupFileAppProvider: AIProvider {
 
 @Suite("App group file publication", .timeLimit(.minutes(1)))
 @MainActor struct GroupFilePublicationAppTests {
-    @Test(arguments: ["approve", "deny", "stop", "account", "source-changed", "quota-reserve", "quota-blob", "quota-message", "message-write"])
-    func mailboxPublishesReviewedFileWithDurableOwner(mode: String) async throws {
+    @Test(arguments: ["approve", "deny", "stop", "account", "source-changed", "quota-reserve", "quota-blob", "quota-message", "message-write"], ["mailbox", "direct"])
+    func mailboxPublishesReviewedFileWithDurableOwner(mode: String, route: String) async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-mailbox-file-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }
         let workspace = root.appending(path: "workspace")
@@ -100,14 +104,30 @@ private struct GroupFileAppProvider: AIProvider {
         let senderValue = await model.createAgent(name: "Sender", summary: "", instructions: "", providerID: "group-file-app", modelID: "test")
         let recipientValue = await model.createAgent(name: "Recipient", summary: "", instructions: "", providerID: "group-file-app", modelID: "test")
         let sender = try #require(senderValue), recipient = try #require(recipientValue)
-        #expect(await model.sendAgentMessage(senderID: sender.id, recipientID: recipient.id, text: "Send report"))
-        let approval = try await pending(model)
+        var delegationID: String?
+        if route == "direct" {
+            _ = await model.addConversation(agentID: sender.id)
+            await model.refreshModels()
+            await model.registry.register(GroupFileAppProvider(url: source.absoluteString, peerRecipientID: recipient.id))
+            model.draft = "Send report"
+            model.send()
+            let delegation = try await pending(model)
+            delegationID = delegation.id
+            expectNoDifference(delegation.action.context.metadata["tool"], "SendToAgent")
+            model.handleTranscriptCardIntent(.approveReview(reviewID: delegation.id))
+        } else {
+            #expect(await model.sendAgentMessage(senderID: sender.id, recipientID: recipient.id, text: "Send report"))
+        }
+        let approval = try await pending(model, excluding: delegationID)
         let originID = approval.action.context.conversationID
         expectNoDifference(approval.action.context.metadata["agentFilePublication"], "true")
         #expect(approval.action.context.metadata["mailboxIncomingID"] != nil)
         #expect(approval.action.context.metadata["agentMessage"]?.contains("report.txt") == true)
         if mode == "source-changed" { try Data("Changed source".utf8).write(to: source) }
-        if mode == "stop" { await model.stopAgentMessages(scopeID: originID) }
+        if mode == "stop" {
+            if route == "direct" { model.cancel() }
+            else { await model.stopAgentMessages(scopeID: originID) }
+        }
         if mode == "account" { await model.cancelAutoReviewApprovals(nextAccountID: "other") }
         if mode.hasPrefix("quota-") { fault.arm(mode) }
         if mode == "message-write" {
@@ -116,10 +136,11 @@ private struct GroupFileAppProvider: AIProvider {
         }
         await model.resolveGroupApproval(approval, groupID: originID, approve: mode != "deny")
         let deadline = ContinuousClock.now + .seconds(10)
-        while model.runningAgentMessageScopes.contains(originID), ContinuousClock.now < deadline {
+        while model.runningAgentMessageScopes.contains(originID) || model.isConversationWorking(originID), ContinuousClock.now < deadline {
             try await Task.sleep(for: .milliseconds(10))
         }
         #expect(!model.runningAgentMessageScopes.contains(originID))
+        #expect(!model.isConversationWorking(originID))
         #expect(model.pendingAutoReviewApprovals.isEmpty)
         if mode.hasPrefix("quota-") { #expect(fault.didTrigger) }
         if mode == "message-write" {
@@ -142,6 +163,31 @@ private struct GroupFileAppProvider: AIProvider {
             let lifecycle = try AttachmentLifecycle.live(applicationSupportDirectory: root)
             let data = try await lifecycle.data(for: file, owner: .init(conversationID: originID, messageID: message.id))
             expectNoDifference(data, bytes)
+            if route == "direct" {
+                let destination = try #require(model.conversations.first(where: { $0.agentBinding?.agentID == recipient.id }))
+                let projected = try #require(destination.messages.first(where: { $0.id == message.id }))
+                expectNoDifference(projected.attachments, [file])
+                expectNoDifference(projected.agentMessageSource?.deliveryID, messages[0].id)
+                #expect(model.conversations.first(where: { $0.id == originID })?.messages.allSatisfy { $0.id != message.id } == true)
+                let mirroredBytes = try await lifecycle.data(for: file, owner: .init(conversationID: destination.id, messageID: message.id))
+                expectNoDifference(mirroredBytes, bytes)
+                #expect(await model.recoverDirectPeerMessages(conversationID: originID))
+                #expect(await model.recoverDirectPeerMessages(conversationID: originID))
+                let restored = try #require(model.conversations.first(where: { $0.id == destination.id }))
+                expectNoDifference(restored.messages.filter { $0.id == message.id }.count, 1)
+                let conversationStore = ConversationStore(fileURL: root.appending(path: "conversations.json"))
+                var missingProjection = restored
+                missingProjection.messages.removeAll { $0.id == message.id }
+                try await conversationStore.upsert(missingProjection, replacingLoadedMessageIDs: [message.id], historyComplete: true)
+                try await lifecycle.removeReferences(owner: .init(conversationID: destination.id, messageID: message.id))
+                let reopened = AppModel(applicationSupportRoot: root, bootstrapImmediately: false, localToolRuntime: runtime)
+                await reopened.bootstrap()
+                #expect(await reopened.recoverDirectPeerMessages(conversationID: originID))
+                let recovered = try #require(try await conversationStore.conversation(id: destination.id))
+                expectNoDifference(recovered.messages.filter { $0.id == message.id }.map(\.attachments), [[file]])
+                let recoveredBytes = try await lifecycle.data(for: file, owner: .init(conversationID: destination.id, messageID: message.id))
+                expectNoDifference(recoveredBytes, bytes)
+            }
             let directory = try await messenger.replyDirectory(replyingTo: messages[0].id)
             #expect(directory.contains(where: { $0.id == message.id && $0.shortAddress != nil }))
             model.openMailboxMessageFile(file, messageID: UUID(), incomingID: messages[0].id)

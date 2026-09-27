@@ -510,7 +510,8 @@ public actor AgentMessenger {
             func append(_ message: RoomMessage, kind: AgentMessageSource.Kind) throws {
                 guard counts[message.id] == 1, message.groupID == originID,
                       message.senderID == (kind == .incoming ? item.senderID : item.recipientID),
-                      !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                      (!message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        || !(message.images ?? []).isEmpty || !(message.files ?? []).isEmpty),
                       message.toolActivities.isEmpty,
                       message.memberOutcome == nil, message.questionReplyTo == nil else { return }
                 if let secret = message.secretRequest {

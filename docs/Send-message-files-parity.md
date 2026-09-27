@@ -248,3 +248,15 @@ AppModel 的信箱與 direct 委派 session 注入 mailboxFiles。每次讀取�
 本批信箱入口已接線；direct 委派使用同一工廠但其轉錄／恢復仍需專屬端到端案例，direct 主回合自身的一般檔案發布仍缺。遠端 URL／媒體、ABA／crash recovery 與外部服務驗收仍未完成，不能據此宣稱完整 parity。
 
 驗證：9 種 App 情境、七語系渲染與完整非平行 Swift 回歸 exit 0；原生 Debug build 及 deep strict 封裝／簽章通過。日誌 `.build/validation/mailbox-file-app-final-{full,native}.log`。未重啟使用者 App／Xcode，沒有修改真實帳號、聊天或 Keychain。
+
+## 第十九階段：direct 委派檔案的轉錄與恢復驗收（2026-09-28）
+
+把第十八階段的 9 種核准／取消／故障情境擴充為 mailbox、direct 兩條來源，共 18 種。direct 從綁定 Sender 的聊天實際呼叫 SendToAgent，先核准委派，再由 Recipient 呼叫 SendMessage 傳檔；不是直接呼叫保存 helper。
+
+成功案例檢查 canonical mailbox owner bytes、接收代理人專屬對話的附件與 AgentMessageSource.deliveryID、來源聊天沒有誤插入檔案，以及目的地 owner 可讀取相同 bytes。連續兩次 recoverDirectPeerMessages 後只有一份訊息；在隔離資料根目錄移除目的地檔案訊息及 owner，建立新 AppModel、bootstrap 並恢復，再直接讀取 ConversationStore 與 lifecycle，確認訊息 identity、metadata 和 bytes 真正重建。既有傳檔後預覽、失敗 owner 清理與 quota late-error 驗證也在 direct 路徑執行。
+
+檢查發現 directPeerTranscript 的文字非空條件會略過 file-only（以及 image-only）回條，已改為文字或附件存在即可；其來源／作者／delivery 身分驗證保持不變。初版重開測試讀取未載入的 UI 分頁，證據不足；改為上述真正移除投影、讀取持久層的恢復測試後 18 案例通過。
+
+此階段是 direct 委派，不是 direct 主回合自己發檔案；後者仍待補。未覆蓋程序被強制中止期間的 crash recovery，也未完成遠端 URL／媒體能力。所有操作只在測試建立的臨時資料根目錄，未重啟真實 App 或 Xcode。
+
+驗證：18 種定向案例及完整非平行 Swift 回歸 exit 0；原生 Debug build 與 deep strict 封裝／簽章通過。日誌 `.build/validation/direct-peer-file-recovery.log`、`direct-peer-file-final-full.log`、`direct-peer-file-native.log`。
