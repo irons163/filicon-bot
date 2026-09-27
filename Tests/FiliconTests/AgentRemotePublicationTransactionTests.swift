@@ -29,6 +29,52 @@ private actor RemotePublicationGate {
 
 @Suite("Remote locator publication transaction", .timeLimit(.minutes(1)))
 struct AgentRemotePublicationTransactionTests {
+    @Test(arguments: ["success", "unavailable", "wrong-scope", "deny", "missing-receipt", "http", "mixed"])
+    func userToolRequiresCanonicalPublication(mode: String) async throws {
+        let origin = UUID(), sender = UUID(), messageID = UUID(), probe = RemotePublicationProbe()
+        let transaction = AgentRemotePublicationTransaction(conversationID: mode == "wrong-scope" ? UUID() : origin,
+            senderID: sender, validateScope: {}, authorize: { _, _, _ in
+                await probe.record("review")
+                if mode == "deny" { throw AgentMessagingError.approvalRequired }
+            }, commit: { review, _, _ in
+                await probe.record("save")
+                let message = RoomMessage(id: messageID, groupID: origin, senderID: sender, text: "",
+                    createdAt: Date(timeIntervalSince1970: 0))
+                var json = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(message)) as? [String: Any])
+                json["remoteAttachment"] = ["url": review.reference.url]
+                let saved = try JSONDecoder().decode(RoomMessage.self, from: JSONSerialization.data(withJSONObject: json))
+                return .init(messageID: messageID, review: review, savedMessage: mode == "missing-receipt" ? nil : saved)
+            })
+        let tool = AgentUserMessageTool(conversationID: origin, senderID: sender, replyHistory: [], supportsQuestions: false,
+            remotePublication: mode == "unavailable" ? nil : transaction,
+            publishGroup: { text, _, reply, _ in
+                var message = RoomMessage(groupID: origin, senderID: sender, text: text)
+                message.replyToMessageID = reply
+                return message
+            })
+        var args: [String: String] = ["type": "attachment", "url": mode == "http" ? "http://example.com/media" : "https://example.com/media"]
+        if mode == "mixed" { args["content"] = "unexpected" }
+        let call = try NormalizedToolCall(id: "remote", name: "SendMessage", argumentsJSON: JSONSerialization.data(withJSONObject: args))
+        let context = ToolContext(conversationID: origin)
+        let result = try await tool.execute(call, context: context)
+        expectNoDifference(result.isError, mode != "success")
+        if mode == "success" {
+            let replay = try await tool.execute(call, context: context)
+            expectNoDifference(replay, result)
+            let changed = try NormalizedToolCall(id: "remote", name: "SendMessage", argumentsJSON: Data(#"{"text":"different"}"#.utf8))
+            let rejected = try await tool.execute(changed, context: context)
+            #expect(rejected.isError)
+            let reply = try NormalizedToolCall(id: "reply", name: "SendMessage", argumentsJSON: JSONSerialization.data(withJSONObject: ["text": "See attachment", "reply_to": messageID.uuidString]))
+            let replied = try await tool.execute(reply, context: context)
+            #expect(!replied.isError)
+            let third = try NormalizedToolCall(id: "third", name: "SendMessage", argumentsJSON: Data(#"{"text":"third"}"#.utf8))
+            let limited = try await tool.execute(third, context: context)
+            #expect(limited.isError)
+        }
+        let events = await probe.events
+        expectNoDifference(events, mode == "success" || mode == "missing-receipt" ? ["review", "save"] : mode == "deny" ? ["review"] : [])
+    }
+
     @Test(arguments: ["valid", "id", "group", "sender", "reference", "reply", "text", "missing-reference"])
     func canonicalMessageMustMatchReview(mode: String) async throws {
         let origin = UUID(), sender = UUID(), messageID = UUID(), reply = UUID()

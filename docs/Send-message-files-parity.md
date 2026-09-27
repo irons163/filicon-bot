@@ -320,3 +320,11 @@ RoomMessage 新增可選 remoteAttachment，舊訊息仍可解碼；外部不可
 交易的同回合重複判斷改為精確 URL，與群組保存層一致，避免改 alt 後再次發布；相同 call 的重播仍核對完整 review。新增 8 種 canonical message 案例，涵蓋成功重播、錯誤 ID／群組／作者／locator／回覆、混入文字、缺少 locator，並驗證改 alt 不重複保存。
 
 驗證：18 個定向交易案例 exit 0，日誌 `.build/validation/remote-canonical-receipt-target.log`。本批未重跑完整回歸或原生封裝。工具 schema、App 核准、信箱／單聊與媒體顯示仍待接線；沒有網路請求或使用者 App／Xcode 重啟。
+
+## 第二十六階段：SendMessage 的遠端 locator 能力入口（2026-09-28）
+
+AgentUserMessageTool 可接收 host-bound remotePublication，綁定來源、目的與作者不符時不提供能力。Schema 只在有能力時開放 HTTPS URL；runtime 說明核准、保存與下載是不同結果。HTTPS 使用獨立交易且必須帶 canonical savedMessage，驗證後才提供保存地址並加入當回合回覆目錄。一般文字／檔案回條也拒絕混入遠端附件。
+
+遠端呼叫與其他訊息共用 reserved／兩則預算；相同成功 call 重播不再次保存，變更輸入或跨型別重用 identity 拒絕。close 同時關閉遠端交易。此階段僅支持獨立 URL，尚未開放 alt、文字內遠端圖片或影片顯示；App host、群組 session、信箱和單聊持久化仍未全部接線，不代表使用者現在可以傳送 HTTPS 媒體。
+
+新增 7 種工具入口案例：成功重播及回覆／預算、無能力、錯誤綁定、拒絕核准、缺 canonical 回條、HTTP、混入內容。25 個定向案例與完整回歸 exit 0（remote-tool-target/full.log）；最後跨型別失敗 identity 防護再跑定向測試。原生 Debug build 與 deep strict 封裝／簽章通過（remote-tool-final-native.log）。未 push、啟動 App 或改真實資料。
