@@ -1515,7 +1515,8 @@ struct TranscriptMessageView: View {
                     }
                 } else {
                     if let approval = model.directManagementApproval(card: card, conversationID: conversation.id) {
-                        AgentManagementApprovalDetails(metadata: approval.action.context.metadata)
+                        AgentManagementApprovalDetails(metadata: approval.action.context.metadata,
+                            avatarPreview: model.avatarApprovalPreview(for: approval))
                             .padding(14).frame(maxWidth: .infinity, alignment: .leading)
                             .background(FiliconTheme.input, in: RoundedRectangle(cornerRadius: 12))
                     }

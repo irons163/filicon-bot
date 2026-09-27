@@ -1717,3 +1717,6 @@
 "Chat ID" = "聊天 ID";
 "Hiding affects only this direct chat in this account. History, group membership and tasks are preserved. Restore it from Hidden Chats." = "隱藏只影響此帳號的這個單獨聊天。歷史、群組成員資格與工作都會保留。可從「隱藏的聊天」恢復。";
 "Notification changes affect this local agent's system alerts across groups and accounts. Other conversation alerts and macOS notification permission are unchanged." = "通知變更會影響使用此本機代理人的各群組與帳號的系統通知。其他對話通知與 macOS 通知權限不變。";
+"Image avatar" = "圖片頭像";
+"Image preview unavailable. Reject this request and try again." = "無法顯示圖片預覽。請拒絕這次要求後重試。";
+"This exact image will be saved after approval. The source file is not changed." = "核准後將儲存這張圖片，來源檔案不會變更。";

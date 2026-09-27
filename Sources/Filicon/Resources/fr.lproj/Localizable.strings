@@ -1717,3 +1717,6 @@
 "Chat ID" = "ID de la conversation";
 "Hiding affects only this direct chat in this account. History, group membership and tasks are preserved. Restore it from Hidden Chats." = "Le masquage concerne uniquement cette conversation directe dans ce compte. L’historique, l’appartenance aux groupes et les tâches sont conservés. Restaurez-la depuis les conversations masquées.";
 "Notification changes affect this local agent's system alerts across groups and accounts. Other conversation alerts and macOS notification permission are unchanged." = "Les modifications concernent les alertes système de cet agent local dans tous les groupes et comptes. Les autres alertes de conversation et l’autorisation de notification macOS restent inchangées.";
+"Image avatar" = "Avatar image";
+"Image preview unavailable. Reject this request and try again." = "Aperçu indisponible. Refusez cette demande et réessayez.";
+"This exact image will be saved after approval. The source file is not changed." = "Cette image exacte sera enregistrée après approbation. Le fichier source reste inchangé.";

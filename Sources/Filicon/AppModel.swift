@@ -150,6 +150,7 @@ final class AppModel: ObservableObject {
     @Published var settings = FiliconSettings()
     @Published private(set) var autoReviewInstructions = AutoReviewInstructions()
     @Published private(set) var pendingAutoReviewApprovals: [PendingApproval] = []
+    @Published private var avatarApprovalPreviews: [String: AgentAvatarApprovalPreview] = [:]
     @Published var computerSnapshot = ComputerSessionSnapshot()
     @Published var teachStatus = TeachRecordingStatus()
     @Published private(set) var vncControlSnapshot: VNCControlSnapshot?
@@ -1817,6 +1818,9 @@ final class AppModel: ObservableObject {
             }
             let resolution: ApprovalResolution
             if case .approveReview = intent { resolution = .approve } else { resolution = .deny }
+            guard resolution != .approve || canApproveAvatarChange(pending) else {
+                throw TranscriptCardActionRoutingError.staleCard
+            }
             do {
                 try await autoReviewBroker.resolve(
                     reviewID: reviewID, resolution: resolution, fence: pending.fence
@@ -4617,6 +4621,45 @@ final class AppModel: ObservableObject {
         guard generation == autoReviewAccountGeneration, isAgentMessagingScopeActive(context.conversationID) else { throw CancellationError() }
     }
 
+    /// Separate from pet approval: a missing or mismatched image cannot be
+    /// approved through either the group panel or direct transcript action.
+    private func authorizeAgentImageAvatarChange(sender: AgentProfile, change: AgentAvatarChange,
+                                                 call: NormalizedToolCall, context: ToolContext) async throws {
+        guard let image = change.image, change.isValid,
+              isAgentMessagingScopeActive(context.conversationID) else { throw CancellationError() }
+        let generation = autoReviewAccountGeneration
+        let fence = ApprovalFence(accountID: settings.accountScope ?? "local", agentID: context.conversationID.uuidString.lowercased(),
+                                  runID: context.runID, generation: generation)
+        await autoReviewBroker.activate(fence)
+        let preview = AgentAvatarApprovalPreview(agentID: change.agentID, proposed: image,
+            previous: change.previousAvatar, previousPNG: change.previousAvatar.flatMap { agentAvatarStore.imageData(for: $0) })
+        guard generation == autoReviewAccountGeneration, isAgentMessagingScopeActive(context.conversationID) else { throw CancellationError() }
+        let metadata = ["tool": "update_state", "agentStateTarget": "avatar", "agentAvatarAction": "set",
+            "agentName": sender.name, "agentAvatarOwner": change.agentID.uuidString,
+            "agentAvatarImageHash": image.avatar.imageHash ?? "",
+            "previousAgentAvatarPet": change.previousAvatar?.kind == .pet ? change.previousAvatar?.petID ?? "" : ""]
+        guard preview.matches(metadata) else { throw AgentAvatarChangeError.invalid }
+        let action = AutoReviewAction(summary: "\(sender.name) → \(l10n("Image avatar"))",
+            target: .resource(kind: "agent", identifier: change.agentID.uuidString), risks: [.sensitive],
+            context: .init(fence: fence, conversationID: context.conversationID, toolCallID: call.id.rawValue, metadata: metadata))
+        let pending = PendingApproval(action: action, reason: "Approval required", expiresAt: Date().addingTimeInterval(300))
+        avatarApprovalPreviews[pending.id] = preview
+        defer { avatarApprovalPreviews.removeValue(forKey: pending.id) }
+        try await autoReviewBroker.waitForApprovalToExecute(pending) { [weak self] in await self?.registerAutoReviewApproval($0) }
+        try Task.checkCancellation()
+        guard generation == autoReviewAccountGeneration, isAgentMessagingScopeActive(context.conversationID) else { throw CancellationError() }
+    }
+
+    func avatarApprovalPreview(for pending: PendingApproval) -> AgentAvatarApprovalPreview? {
+        guard pendingAutoReviewByID[pending.id] == pending,
+              let preview = avatarApprovalPreviews[pending.id], preview.matches(pending.action.context.metadata) else { return nil }
+        return preview
+    }
+
+    func canApproveAvatarChange(_ pending: PendingApproval) -> Bool {
+        pending.action.context.metadata["agentAvatarImageHash"] == nil || avatarApprovalPreview(for: pending) != nil
+    }
+
     private func authorizeAgentProfileChange(sender: AgentProfile, change: AgentProfileChange,
                                              call: NormalizedToolCall, context: ToolContext) async throws {
         guard isAgentMessagingScopeActive(context.conversationID) else { throw CancellationError() }
@@ -6750,6 +6793,7 @@ final class AppModel: ObservableObject {
         guard pending.action.context.conversationID == groupID,
               pendingAutoReviewByID[pending.id] == pending,
               isAgentMessagingScopeActive(groupID) else { return }
+        guard !approve || canApproveAvatarChange(pending) else { return }
         do {
             try await autoReviewBroker.resolve(reviewID: pending.id, resolution: approve ? .approve : .deny, fence: pending.fence)
         } catch { errorMessage = error.localizedDescription }

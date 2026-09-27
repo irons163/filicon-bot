@@ -14,7 +14,7 @@
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "4B0AA4F459DAEAE546B46BB31BBC4E3E"
+               BlueprintIdentifier = "6B5637FF7B92F62752CA861A2D8D77D7"
                BuildableName = "Filicon.app"
                BlueprintName = "Filicon"
                ReferencedContainer = "container:Filicon.xcodeproj">
@@ -34,7 +34,7 @@
       <MacroExpansion>
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "4B0AA4F459DAEAE546B46BB31BBC4E3E"
+            BlueprintIdentifier = "6B5637FF7B92F62752CA861A2D8D77D7"
             BuildableName = "Filicon.app"
             BlueprintName = "Filicon"
             ReferencedContainer = "container:Filicon.xcodeproj">
@@ -75,7 +75,7 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "4B0AA4F459DAEAE546B46BB31BBC4E3E"
+            BlueprintIdentifier = "6B5637FF7B92F62752CA861A2D8D77D7"
             BuildableName = "Filicon.app"
             BlueprintName = "Filicon"
             ReferencedContainer = "container:Filicon.xcodeproj">
@@ -92,7 +92,7 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "4B0AA4F459DAEAE546B46BB31BBC4E3E"
+            BlueprintIdentifier = "6B5637FF7B92F62752CA861A2D8D77D7"
             BuildableName = "Filicon.app"
             BlueprintName = "Filicon"
             ReferencedContainer = "container:Filicon.xcodeproj">

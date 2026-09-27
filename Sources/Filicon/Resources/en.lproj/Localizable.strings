@@ -1717,3 +1717,6 @@
 "Chat ID" = "Chat ID";
 "Hiding affects only this direct chat in this account. History, group membership and tasks are preserved. Restore it from Hidden Chats." = "Hiding affects only this direct chat in this account. History, group membership and tasks are preserved. Restore it from Hidden Chats.";
 "Notification changes affect this local agent's system alerts across groups and accounts. Other conversation alerts and macOS notification permission are unchanged." = "Notification changes affect this local agent's system alerts across groups and accounts. Other conversation alerts and macOS notification permission are unchanged.";
+"Image avatar" = "Image avatar";
+"Image preview unavailable. Reject this request and try again." = "Image preview unavailable. Reject this request and try again.";
+"This exact image will be saved after approval. The source file is not changed." = "This exact image will be saved after approval. The source file is not changed.";

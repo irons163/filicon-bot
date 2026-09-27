@@ -64,3 +64,15 @@ CAS 已存在時必須與準備資料完全相同；讀取頭像也核對內容�
 仍未在 AppModel 注入這兩個讀取器，沒有開放使用者端 path schema。接下來須完成來源路由與帳號／remote profile revision fence、圖片專用 UI、quota 與保存整合、格式測試；真實遠端 HTTP 服務驗收另列。這些 reader 自身不會把 local 權限拒絕偷偷轉成 remote download。
 
 驗證：第三階段完整非平行 Swift 測試、原生 Debug 建置、封裝／簽章檢查通過。来源 suite 實際跑過 15 種本機情境及 5 種假遠端情境；沒有啟動 App 或重啟 Xcode。
+
+## 第四階段：不可變圖片核准預覽
+
+新增記憶體內的 `AgentAvatarApprovalPreview`，核對 owner、action、SHA-256、PNG 格式及 256×256 尺寸。核准畫面使用已捕捉的 bytes 顯示新舊圖片及裁切形狀，不在渲染時開啟來源路徑；圖片內容不放入聊天 metadata 或稽核資料。缺失／不相符的預覽顯示拒絕重試提示，群組核准按鈕停用，單獨對話核准動作也由 resolver 拒絕。拒絕入口保持可用。
+
+AppModel 圖片專用核准流程按 pending ID 保留預覽，結束時移除，並檢查帳號 generation 與對話 scope。這個 authorizer 尚未注入模型 session，因此仍未開放 path schema，不代表完整使用者流程已啟用。
+
+新增測試覆蓋 metadata 竄改／缺欄位、損壞舊圖片、沒有記憶體預覽不得核准，以及七語 × 深淺色 × 有／無預覽共 28 種渲染。抽查繁中與法文渲染未見文字裁切。原生專案清單也重新產生，納入來源讀取器及預覽檔案，避免 SwiftPM 測試通過卻漏入 Xcode target。
+
+下一階段仍須實接來源與核准、quota／帳號／remote profile fence、格式矩陣及 CAS 回收；不以 UI 測試取代這些執行流程驗收。
+
+本階段驗證：4 項專項測試（含 28 種圖片渲染）通過；重新產生 Xcode 專案後原生 Debug 建置及封裝簽章檢查通過。2026-09-27 完整測試重跑時系統處於鎖定狀態（CGSSessionScreenIsLocked=Yes），多項暫存資料讀取遭 Code 257／EPERM 拒絕；完整套件尚未通過，須解鎖後重跑，不把這次結果記成成功。

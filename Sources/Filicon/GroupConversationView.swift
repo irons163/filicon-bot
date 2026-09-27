@@ -827,10 +827,12 @@ struct GroupToolApprovalPanel: View {
                     // outgoing payload must be visible in full before approval.
                     Text(verbatim: text).font(.callout).textSelection(.enabled)
                 }
-                AgentManagementApprovalDetails(metadata: approval.action.context.metadata)
+                AgentManagementApprovalDetails(metadata: approval.action.context.metadata,
+                    avatarPreview: model.avatarApprovalPreview(for: approval))
                 Text(FiliconLocalization.string(approval.reason)).font(.caption).foregroundStyle(FiliconTheme.textSecondary)
                 HStack {
                     Button(l10n("Approve")) { Task { await resolve(approval, approve: true) } }
+                        .disabled(!model.canApproveAvatarChange(approval))
                         .accessibilityIdentifier("group-tool-approve")
                     Button(l10n("Reject"), role: .destructive) { Task { await resolve(approval, approve: false) } }
                         .accessibilityIdentifier("group-tool-reject")
@@ -848,13 +850,14 @@ struct GroupToolApprovalPanel: View {
 
 struct AgentManagementApprovalDetails: View {
     let metadata: [String: String]
+    var avatarPreview: AgentAvatarApprovalPreview? = nil
     var body: some View {
         switch metadata["agentStateTarget"] {
         case "memory": AgentMemoryApprovalDetails(metadata: metadata)
         case "project": AgentProjectApprovalDetails(metadata: metadata)
         case "channel": AgentChannelDisconnectionDetails(metadata: metadata)
         case "settings": AgentSettingsApprovalDetails(metadata: metadata)
-        case "avatar": AgentAvatarApprovalDetails(metadata: metadata)
+        case "avatar": AgentAvatarApprovalDetails(metadata: metadata, preview: avatarPreview)
         case "routine": AgentRoutineApprovalDetails(metadata: metadata)
         case "workflow": AgentWorkflowApprovalDetails(metadata: metadata)
         default:
@@ -1128,25 +1131,41 @@ struct AgentRoutineApprovalDetails: View {
 
 struct AgentAvatarApprovalDetails: View {
     let metadata: [String: String]
+    var preview: AgentAvatarApprovalPreview? = nil
+    private var verifiedPreview: AgentAvatarApprovalPreview? {
+        guard let preview, preview.matches(metadata) else { return nil }
+        return preview
+    }
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(l10n(metadata["agentAvatarAction"] == "clear" ? "Reset own avatar" : "Change own avatar"))
                 .font(.headline)
             Text(verbatim: metadata["agentName"] ?? "").font(.callout.weight(.semibold))
             HStack(alignment: .top, spacing: 16) {
-                avatarColumn("Current avatar", petID: metadata["previousAgentAvatarPet"])
+                avatarColumn("Current avatar", petID: metadata["previousAgentAvatarPet"],
+                    png: verifiedPreview?.previousPNG, shape: verifiedPreview?.previous?.shape ?? .circle)
                 Image(systemName: "arrow.right").padding(.top, 44).accessibilityHidden(true)
-                avatarColumn("New avatar", petID: metadata["agentAvatarPet"])
+                avatarColumn("New avatar", petID: metadata["agentAvatarPet"],
+                    png: verifiedPreview?.proposed.pngData, shape: verifiedPreview?.proposed.avatar.shape ?? .circle)
+            }
+            if metadata["agentAvatarImageHash"] != nil {
+                Text(l10n(verifiedPreview == nil ? "Image preview unavailable. Reject this request and try again." : "This exact image will be saved after approval. The source file is not changed."))
+                    .font(.caption).foregroundStyle(verifiedPreview == nil ? .red : FiliconTheme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             Text(l10n("Only this agent's avatar changes. Names, private instructions, models and permissions stay unchanged. Reset restores Codex; no image files are deleted."))
                 .font(.caption).foregroundStyle(FiliconTheme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
-    private func avatarColumn(_ title: String, petID: String?) -> some View {
+    private func avatarColumn(_ title: String, petID: String?, png: Data?, shape: AgentAvatarShape) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(FiliconLocalization.string(title)).font(.caption)
-            if let petID, let pet = AgentPetAvatar(rawValue: petID) {
+            if let png, let image = NSImage(data: png) {
+                Image(nsImage: image).resizable().scaledToFit().frame(width: 70, height: 70)
+                    .clipShape(AvatarClipShape(shape: shape)).accessibilityLabel(FiliconLocalization.string(title))
+                Text(l10n("Image avatar")).font(.caption)
+            } else if let petID, let pet = AgentPetAvatar(rawValue: petID) {
                 PetAvatarImage(pet: pet).frame(width: 64, height: 70)
                 Text(verbatim: pet.name).font(.callout)
             } else {

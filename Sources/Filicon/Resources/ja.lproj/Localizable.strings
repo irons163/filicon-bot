@@ -1717,3 +1717,6 @@
 "Chat ID" = "チャット ID";
 "Hiding affects only this direct chat in this account. History, group membership and tasks are preserved. Restore it from Hidden Chats." = "非表示にするのは、このアカウントのこの個別チャットのみです。履歴、グループへの参加、タスクは保持されます。「非表示のチャット」から復元できます。";
 "Notification changes affect this local agent's system alerts across groups and accounts. Other conversation alerts and macOS notification permission are unchanged." = "通知の変更は、各グループとアカウントでこのローカルエージェントのシステム通知に適用されます。他の会話通知と macOS の通知権限は変わりません。";
+"Image avatar" = "画像アバター";
+"Image preview unavailable. Reject this request and try again." = "画像をプレビューできません。このリクエストを拒否して再試行してください。";
+"This exact image will be saved after approval. The source file is not changed." = "承認後、この画像をそのまま保存します。元のファイルは変更されません。";

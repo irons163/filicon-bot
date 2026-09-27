@@ -571,7 +571,7 @@ struct AgentAvatarIcon: View {
     }
 }
 
-private struct AvatarClipShape: Shape {
+struct AvatarClipShape: Shape {
     let shape: AgentAvatarShape
     func path(in rect: CGRect) -> Path {
         switch shape {

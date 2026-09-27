@@ -142,6 +142,15 @@ public struct AgentAvatarStore: Sendable {
         return url
     }
 
+    /// A bounded snapshot for approval UI, which must not reopen the CAS path
+    /// during rendering. Recheck the hash after reading the captured bytes.
+    public func imageData(for avatar: AgentAvatar) -> Data? {
+        guard let url = imageURL(for: avatar), let hash = avatar.imageHash,
+              let data = try? readRegularFile(url, maximumBytes: 1_024 * 1_024),
+              SHA256.hash(data: data).map({ String(format: "%02x", $0) }).joined() == hash.lowercased() else { return nil }
+        return data
+    }
+
     private func readRegularFile(_ url: URL, maximumBytes: Int) throws -> Data {
         guard url.isFileURL else { throw AgentAvatarStoreError.unsafePath }
         let descriptor = open(url.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
