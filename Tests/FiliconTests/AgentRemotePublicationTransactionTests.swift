@@ -29,6 +29,51 @@ private actor RemotePublicationGate {
 
 @Suite("Remote locator publication transaction", .timeLimit(.minutes(1)))
 struct AgentRemotePublicationTransactionTests {
+    @Test(arguments: ["valid", "id", "group", "sender", "reference", "reply", "text", "missing-reference"])
+    func canonicalMessageMustMatchReview(mode: String) async throws {
+        let origin = UUID(), sender = UUID(), messageID = UUID(), reply = UUID()
+        let reference = try RemoteAttachmentReference(url: "https://example.com/media", alt: "Media")
+        let probe = RemotePublicationProbe()
+        let transaction = AgentRemotePublicationTransaction(conversationID: origin, senderID: sender,
+            validateScope: {}, authorize: { _, _, _ in }, commit: { review, _, _ in
+                await probe.record("save")
+                let message = RoomMessage(id: mode == "id" ? UUID() : messageID,
+                    groupID: mode == "group" ? UUID() : origin,
+                    senderID: mode == "sender" ? UUID() : sender,
+                    text: mode == "text" ? "Unexpected" : "",
+                    createdAt: Date(timeIntervalSince1970: 0))
+                var json = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(message)) as? [String: Any])
+                json["replyToMessageID"] = (mode == "reply" ? UUID() : reply).uuidString
+                if mode != "missing-reference" {
+                    json["remoteAttachment"] = ["url": mode == "reference" ? "https://example.com/other" : reference.url, "alt": "Media"]
+                }
+                let saved = try JSONDecoder().decode(RoomMessage.self, from: JSONSerialization.data(withJSONObject: json))
+                return .init(messageID: messageID, review: review, savedMessage: saved)
+            })
+        let context = ToolContext(conversationID: origin)
+        let call = try NormalizedToolCall(id: "canonical", name: "SendMessage", argumentsJSON: Data("{}".utf8))
+        if mode == "valid" {
+            let receipt = try await transaction.publish(reference: reference, replyTo: reply, call: call, context: context)
+            expectNoDifference(receipt.savedMessage?.remoteAttachment, reference)
+            let replay = try await transaction.publish(reference: reference, replyTo: reply, call: call, context: context)
+            expectNoDifference(replay, receipt)
+            let otherCall = try NormalizedToolCall(id: "other", name: "SendMessage", argumentsJSON: Data("{}".utf8))
+            let changedAlt = try RemoteAttachmentReference(url: reference.url, alt: "Different label")
+            await #expect(throws: AgentRemotePublicationTransaction.Failure.duplicateCall) {
+                try await transaction.publish(reference: changedAlt, replyTo: reply, call: otherCall, context: context)
+            }
+        } else {
+            await #expect(throws: AgentRemotePublicationTransaction.Failure.invalidReceipt) {
+                try await transaction.publish(reference: reference, replyTo: reply, call: call, context: context)
+            }
+            await #expect(throws: AgentRemotePublicationTransaction.Failure.uncertainCommit) {
+                try await transaction.publish(reference: reference, replyTo: reply, call: call, context: context)
+            }
+        }
+        let events = await probe.events
+        expectNoDifference(events, ["save"])
+    }
+
     @Test(arguments: ["wrong-context", "wrong-tool", "closed"])
     func invalidScopeNeverReachesApproval(mode: String) async throws {
         let origin = UUID(), probe = RemotePublicationProbe()

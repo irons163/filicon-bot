@@ -14,8 +14,9 @@ public actor AgentRemotePublicationTransaction {
     public struct Receipt: Sendable, Equatable {
         public let messageID: UUID
         public let review: Review
-        public init(messageID: UUID, review: Review) {
-            self.messageID = messageID; self.review = review
+        public let savedMessage: RoomMessage?
+        public init(messageID: UUID, review: Review, savedMessage: RoomMessage? = nil) {
+            self.messageID = messageID; self.review = review; self.savedMessage = savedMessage
         }
     }
     public enum Failure: Error, Equatable, Sendable {
@@ -33,7 +34,7 @@ public actor AgentRemotePublicationTransaction {
     private var completed: [Key: Receipt] = [:]
     private var attempted: Set<Key> = []
     private var messageIDs: Set<UUID> = []
-    private var published: Set<RemoteAttachmentReference> = []
+    private var published: Set<String> = []
     private var busy = false
     private var closed = false
 
@@ -60,15 +61,23 @@ public actor AgentRemotePublicationTransaction {
         busy = true
         defer { busy = false }
         try await checkScope()
-        guard !published.contains(reference) else { throw Failure.duplicateCall }
+        guard !published.contains(reference.url) else { throw Failure.duplicateCall }
         try await authorize(review, call, context)
         try await checkScope()
         attempted.insert(key)
         let receipt = try await commit(review, call, context)
         guard receipt.review == review, !messageIDs.contains(receipt.messageID) else { throw Failure.invalidReceipt }
+        if let saved = receipt.savedMessage {
+            guard saved.id == receipt.messageID, saved.groupID == review.conversationID,
+                  saved.senderID == review.senderID, saved.remoteAttachment == review.reference,
+                  saved.replyToMessageID == review.replyTo, saved.text.isEmpty,
+                  (saved.images ?? []).isEmpty, (saved.files ?? []).isEmpty, saved.question == nil,
+                  saved.secretRequest == nil, saved.cursorAgent == nil,
+                  saved.questionReplyTo == nil else { throw Failure.invalidReceipt }
+        }
         completed[key] = receipt
         messageIDs.insert(receipt.messageID)
-        published.insert(reference)
+        published.insert(reference.url)
         // Stop after a successful commit must not erase the durable outcome.
         return receipt
     }

@@ -312,3 +312,11 @@ RoomMessage 新增可選 remoteAttachment，舊訊息仍可解碼；外部不可
 依 pfw-testing 驗證核准、撤銷、錯誤群組／作者、混入文字／lifetime、不同 ID 重複 URL、舊訊息相容；成功後重開 store 檢查 exact URL、ID、短地址與 reply target。另以 JSON 注入 remoteAttachment，確認信箱一般發布與 finalPublication 拒絕且原 state 不變。這仍是保存層，工具 schema、App 核准與三種聊天的遠端媒體顯示尚未完成。
 
 驗證：群組定向測試、含信箱拒絕案例的完整非平行 Swift 回歸 exit 0；原生 Debug build 與 deep strict 封裝／簽章通過。日誌 `.build/validation/group-remote-publication-{target,full,native}.log`。沒有網路請求、使用者 App／Xcode 重啟或真實資料修改。
+
+## 第二十五階段：遠端附件 canonical receipt 驗證（2026-09-28）
+
+遠端交易回條新增可選 savedMessage，供後續工具接線使用；提供時必須精確匹配訊息 ID、目的群組、作者、locator（含 alt）、回覆目標，且不能混入文字、本機附件或互動卡片。錯誤保存回條進入 uncertainCommit，不再盲目保存。未提供 savedMessage 的底層回條仍維持相容，後續使用者工具入口必須另外要求 canonical message，不能將可選欄位當作完整保存證據。
+
+交易的同回合重複判斷改為精確 URL，與群組保存層一致，避免改 alt 後再次發布；相同 call 的重播仍核對完整 review。新增 8 種 canonical message 案例，涵蓋成功重播、錯誤 ID／群組／作者／locator／回覆、混入文字、缺少 locator，並驗證改 alt 不重複保存。
+
+驗證：18 個定向交易案例 exit 0，日誌 `.build/validation/remote-canonical-receipt-target.log`。本批未重跑完整回歸或原生封裝。工具 schema、App 核准、信箱／單聊與媒體顯示仍待接線；沒有網路請求或使用者 App／Xcode 重啟。
