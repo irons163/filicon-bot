@@ -3179,7 +3179,7 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func reconcileQuota() async {
+    func reconcileQuota() async {
         guard let quotaWriter else { return }
         let filenames = [
             "composer-drafts.json", "agents.json", "agent-messages.json", "groups.json", "automations.json",
@@ -3206,7 +3206,12 @@ final class AppModel: ObservableObject {
                 )
             }
         }
-        do { quotaUsage = try await quotaWriter.reconcile(records) }
+        do {
+            records += try agentAvatarStore.storageInventory().map {
+                StorageQuotaRecord(scope: "avatar-blob", key: $0.relativePath, byteCount: $0.byteCount, generation: 1)
+            }
+            quotaUsage = try await quotaWriter.reconcile(records)
+        }
         catch {
             startupBanner = Self.quotaMessage(error)
             errorMessage = startupBanner
@@ -4248,16 +4253,35 @@ final class AppModel: ObservableObject {
         guard generation == autoReviewAccountGeneration, isAgentMessagingScopeActive(context.conversationID) else { throw CancellationError() }
     }
 
-    private func commitAgentAvatarChange(_ change: AgentAvatarChange, lifetime: AgentAvatarChangeLifetime,
+    func commitAgentAvatarChange(_ change: AgentAvatarChange, lifetime: AgentAvatarChangeLifetime,
                                          originID: UUID, generation: UInt64) async throws -> AgentProfile {
         guard let agentService, isAgentMessagingScopeActive(originID), generation == autoReviewAccountGeneration,
               var proposed = await agentService.profile(id: change.agentID) else { throw CancellationError() }
+        guard generation == autoReviewAccountGeneration, isAgentMessagingScopeActive(originID) else { throw CancellationError() }
+        guard change.isValid else { throw AgentAvatarChangeError.invalid }
+        guard proposed.archivedAt == nil else { throw AgentProfileChangeError.unavailable }
+        guard proposed.avatar == change.previousAvatar else { throw AgentProfileChangeError.stale }
         proposed.avatar = change.avatar
         let payload = try JSONEncoder().encode(proposed)
+        let imageStore = agentAvatarStore
+        if let image = change.image {
+            guard quotaWriter != nil else { throw StorageQuotaError.corruptLedger }
+            guard change.isValid, let path = image.avatar.imageRelativePath else { throw AgentAvatarChangeError.invalid }
+            try lifetime.check()
+            // Charge the physical CAS blob separately from the profile. If the
+            // profile later fails, the orphan still occupies disk and stays
+            // charged. Reusing the same CAS path replaces, not duplicates, its row.
+            _ = try await quotaWrite(scope: "avatar-blob", key: path, data: image.pngData) { [weak self] in
+                guard let self else { throw CancellationError() }
+                return try await self.installAgentAvatarBytes(image, lifetime: lifetime, originID: originID, generation: generation)
+            }
+            try lifetime.check()
+            guard generation == autoReviewAccountGeneration, isAgentMessagingScopeActive(originID) else { throw CancellationError() }
+        }
         let profile: AgentProfile
         do {
             profile = try await quotaWrite(scope: "workflow", key: "agent-\(change.agentID)", data: payload) {
-                try await agentService.applyAvatarChange(change, lifetime: lifetime)
+                try await agentService.applyAvatarChange(change, lifetime: lifetime, imageStore: imageStore)
             }
         } catch {
             guard let saved = lifetime.committedProfile(for: change) else { throw error }
@@ -4268,6 +4292,15 @@ final class AppModel: ObservableObject {
         guard generation == autoReviewAccountGeneration else { return profile }
         agents = current
         return profile
+    }
+
+    private func installAgentAvatarBytes(_ image: PreparedAgentAvatar, lifetime: AgentAvatarChangeLifetime,
+                                         originID: UUID, generation: UInt64) throws -> AgentAvatar {
+        // Recheck after the quota reservation's actor hop. This synchronous
+        // main-actor section cannot interleave an account/scope transition.
+        try lifetime.check()
+        guard generation == autoReviewAccountGeneration, isAgentMessagingScopeActive(originID) else { throw CancellationError() }
+        return try agentAvatarStore.install(image)
     }
 
     private func commitAgentRoutineChange(_ change: AutomationStateChange, lifetime: AutomationStateChangeLifetime,

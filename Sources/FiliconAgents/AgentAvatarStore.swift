@@ -47,6 +47,11 @@ public struct PreparedAgentAvatar: Sendable, Equatable {
     }
 }
 
+public struct AgentAvatarStorageEntry: Equatable, Sendable {
+    public let relativePath: String
+    public let byteCount: Int64
+}
+
 /// Decodes through ImageIO, bounds the working image, and stores only a 256 px PNG in CAS.
 public struct AgentAvatarStore: Sendable {
     public static let maximumInputBytes = 25 * 1_024 * 1_024
@@ -57,6 +62,59 @@ public struct AgentAvatarStore: Sendable {
 
     public let rootURL: URL
     public init(rootURL: URL) { self.rootURL = rootURL.standardizedFileURL }
+
+    /// Physical inventory, including orphaned/corrupt blobs and abandoned temp
+    /// files. Profile references are not proof that the other bytes disappeared.
+    /// No contents are decoded or deleted, and no symbolic links are followed.
+    public func storageInventory() throws -> [AgentAvatarStorageEntry] {
+        let root = open(rootURL.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard root >= 0 else {
+            if errno == ENOENT { return [] }
+            throw AgentAvatarStoreError.unsafePath
+        }
+        defer { Darwin.close(root) }
+        var visited = 0
+        var entries: [AgentAvatarStorageEntry] = []
+        func scan(_ descriptor: Int32, prefix: String, depth: Int) throws {
+            guard depth <= 1 else { throw AgentAvatarStoreError.unsafePath }
+            let duplicate = dup(descriptor)
+            guard duplicate >= 0 else { throw AgentAvatarStoreError.unsafePath }
+            guard let directory = fdopendir(duplicate) else {
+                Darwin.close(duplicate); throw AgentAvatarStoreError.unsafePath
+            }
+            defer { closedir(directory) }
+            while true {
+                errno = 0
+                guard let entry = readdir(directory) else {
+                    guard errno == 0 else { throw AgentAvatarStoreError.unsafePath }
+                    break
+                }
+                guard let name = withUnsafePointer(to: &entry.pointee.d_name, {
+                    $0.withMemoryRebound(to: CChar.self, capacity: Int(MAXNAMLEN) + 1) { String(validatingCString: $0) }
+                }) else { throw AgentAvatarStoreError.unsafePath }
+                if name == "." || name == ".." { continue }
+                visited += 1
+                guard visited <= 10_000 else { throw AgentAvatarStoreError.unsafePath }
+                var info = stat()
+                guard fstatat(descriptor, name, &info, AT_SYMLINK_NOFOLLOW) == 0 else { throw AgentAvatarStoreError.unsafePath }
+                let relative = prefix + name
+                switch info.st_mode & S_IFMT {
+                case S_IFREG:
+                    guard info.st_size >= 0 else { throw AgentAvatarStoreError.unsafePath }
+                    entries.append(.init(relativePath: relative, byteCount: Int64(info.st_size)))
+                case S_IFDIR:
+                    let child = openat(descriptor, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+                    guard child >= 0 else { throw AgentAvatarStoreError.unsafePath }
+                    defer { Darwin.close(child) }
+                    try scan(child, prefix: relative + "/", depth: depth + 1)
+                default:
+                    throw AgentAvatarStoreError.unsafePath
+                }
+            }
+        }
+        try scan(root, prefix: "", depth: 0)
+        return entries.sorted { $0.relativePath < $1.relativePath }
+    }
 
     public func importImage(at sourceURL: URL, crop: AgentAvatarCrop, shape: AgentAvatarShape = .circle) throws -> AgentAvatar {
         let bytes = try readRegularFile(sourceURL, maximumBytes: Self.maximumInputBytes)

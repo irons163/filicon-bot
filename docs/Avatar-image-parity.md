@@ -94,3 +94,15 @@ AppModel 圖片專用核准流程按 pending ID 保留預覽，結束時移除�
 這是**受限的靜態 SVG 支援，不是完整 SVG 相容**。原版保存任意 sniff 通過的 SVG bytes，Filicon 則拒絕上述未支援功能，不會默默刪除它們後回報成功；差異仍保留，尤其既有圖檔若使用 style、文字、clip、mask 或 use，需後續擴充與驗收。三個有效向量案例確認中央像素非透明及 PNG 可重現，拒絕案例涵蓋外部／file／data URL、字元參照繞過、XML 實體、遞迴與過量結構；PNG／JPEG／GIF／WebP 測試一併回歸。
 
 本批最終驗證：鎖屏標記消失後，完整非平行 Swift 測試 exit 0，涵蓋最後加入的重複 ID 與 UTF-16 拒絕案例，也重新驗證前兩批圖片預覽／格式修改。原生 Debug 建置 exit 0，`verify-package.sh --xcode-debug` 的 deep strict 簽章與封裝檢查通過。日誌為 `.build/validation/avatar-svg-{full,native}.log`。未啟動使用者 App 或 Xcode、未改真實資料；最低支援 macOS 的原生 SVG 解碼仍未實機驗收，來源接線等其他缺口維持未完成。
+
+## 第六階段：圖片配額與磁碟用量
+
+`AgentAvatarStore.storageInventory` 使用 descriptor-relative `fstatat`／`openat` 掃描，不跟隨 root、子目錄或檔案的 symbolic link，不開啟 FIFO。計算實際檔案長度，不依賴 profile 引用或圖片解碼成功；因此孤立／損壞 blob、殘留 temp 都被計入，不刪任何檔案。最多掃描 10000 個項目、CAS root 與一層 shard；額外深層目錄／非 regular file／掃描錯誤會回報失敗，不當成空目錄。App 的 quota reconcile 納入 `avatar-blob` rows；掃描失敗時不以不完整資料取代 ledger。
+
+模型圖片 commit 先要求可用的 quota writer，再依 CAS 相對路徑保留圖片 bytes 配額、安裝並完成圖片記帳，之後才保存 profile。重用同一 CAS 路徑不重複計量；profile 後續保存失敗時，已寫入的圖片仍保留且有配額紀錄。保留 quota 後會回到 main actor 同步重驗 account generation／active origin／lifetime，再安裝圖片；profile 提交仍經原有 lifetime 與舊頭像衝突檢查。Stop 或過期提案不產生成功 receipt。
+
+測試直接呼叫 host commit（建立隔離 active scope，不代表模型 path 已啟用），覆蓋保存、重用、profile 磁碟失敗、closed lifetime、舊頭像不符、錯誤 generation、封存、配額不足與 quota authority 不可用；另驗證 orphan 重新掃描、重開 ledger、不安全掃描保持舊 row。實體用量測試涵蓋損壞／temp、缺 root、symlink、FIFO、深目錄及零刪除。
+
+仍未注入 session 的圖片 preparer／authorizer，故沒有對使用者開放模型 path。人工匯入的既有同步寫入路徑尚未改為配額保留；啟動掃描會計入其占用，但不宣稱人工匯入已具提交前配額控制。若 blob 安裝或 quota 持久化途中出錯，仍需要後續 authoritative reconcile；未實作孤立 CAS 自動回收，不能宣稱所有崩潰路徑已原子復原。這些是後續整合驗收項，不因本批測試而移除。
+
+驗證：完整非平行 Swift 測試 exit 0；最後補上無效 UTF-8 檔名拒絕後，圖片配額／inventory 定向重跑 exit 0，原生 Debug 建置與 deep strict 封裝／簽章檢查通過。日誌 `.build/validation/avatar-quota-{full,final-focused,native}.log`。沒有啟動 App、沒有刪除使用者圖片或更改真實群組／帳號。
