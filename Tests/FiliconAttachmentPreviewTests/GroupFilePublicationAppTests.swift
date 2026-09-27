@@ -44,8 +44,9 @@ private struct GroupFileAppProvider: AIProvider {
 
 @Suite("App group file publication", .timeLimit(.minutes(1)))
 @MainActor struct GroupFilePublicationAppTests {
-    @Test(arguments: ["approve", "deny", "stop", "destination-stop", "account", "members", "source-changed"], [false, true])
-    func requiresApprovalAndKeepsReviewedBytes(mode: String, background: Bool) async throws {
+    @Test(arguments: ["approve", "deny", "stop", "destination-stop", "account", "members", "source-changed"], ["foreground", "group", "direct", "mailbox"])
+    func requiresApprovalAndKeepsReviewedBytes(mode: String, route: String) async throws {
+        let background = route != "foreground"
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-file-app-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }
         let workspace = root.appending(path: "workspace")
@@ -75,26 +76,62 @@ private struct GroupFileAppProvider: AIProvider {
             destination = try #require(model.groups.first(where: { $0.name == "Destination" }))
             await model.registry.register(GroupFileAppProvider(url: source.absoluteString, destinationID: destination.id))
         }
-        let send = Task { await model.sendGroupMessage(groupID: group.id, text: "Send report") }
+        var originID: UUID
+        if route == "direct" {
+            let conversationID = await model.addConversation(agentID: sender.id)
+            originID = try #require(conversationID)
+            await model.refreshModels()
+        } else { originID = group.id }
+        var mailboxSenderID: UUID?
+        if route == "mailbox" {
+            let caller = await model.createAgent(name: "Caller", summary: "", instructions: "", providerID: "group-file-app", modelID: "test")
+            mailboxSenderID = try #require(caller).id
+        }
+        let send = Task {
+            if let mailboxSenderID {
+                let sent = await model.sendAgentMessage(senderID: mailboxSenderID, recipientID: sender.id, text: "Send report")
+                #expect(sent)
+            } else if route == "direct" {
+                model.draft = "Send report"
+                model.send()
+            } else { await model.sendGroupMessage(groupID: group.id, text: "Send report") }
+        }
         defer { send.cancel() }
+        var delegationID: String?
         if background {
             let delegation = try await pending(model)
+            delegationID = delegation.id
+            if route == "mailbox" { originID = delegation.action.context.conversationID }
             expectNoDifference(delegation.action.context.metadata["tool"], "SendToAgent")
-            await model.resolveGroupApproval(delegation, groupID: group.id, approve: true)
+            if route == "direct" {
+                model.handleTranscriptCardIntent(.approveReview(reviewID: delegation.id))
+            } else { await model.resolveGroupApproval(delegation, groupID: originID, approve: true) }
         }
-        let approval = try await pending(model)
+        let approval = try await pending(model, excluding: delegationID)
         expectNoDifference(approval.action.context.metadata["agentFilePublication"], "true")
-        expectNoDifference(approval.action.context.conversationID, group.id)
+        expectNoDifference(approval.action.context.conversationID, originID)
         expectNoDifference(approval.action.context.metadata["agentGroupName"], destination.name)
         #expect(approval.action.context.metadata["agentMessage"]?.contains("report.txt") == true)
         #expect(model.groupMessages[group.id]?.allSatisfy { $0.files == nil } == true)
         if mode == "source-changed" { try Data("Changed source".utf8).write(to: source) }
-        if mode == "stop" { await model.stopGroup(id: group.id) }
+        if mode == "stop" {
+            if route == "direct" { model.cancel() }
+            else if route == "mailbox" { await model.stopAgentMessages(scopeID: originID) }
+            else { await model.stopGroup(id: originID) }
+        }
         if mode == "destination-stop" { await model.stopGroup(id: destination.id) }
         if mode == "account" { await model.cancelAutoReviewApprovals(nextAccountID: "other") }
         if mode == "members" { await model.updateGroupMembers(groupID: destination.id, memberIDs: []) }
-        await model.resolveGroupApproval(approval, groupID: group.id, approve: mode != "deny")
+        await model.resolveGroupApproval(approval, groupID: originID, approve: mode != "deny")
         await send.value
+        let deadline = ContinuousClock.now + .seconds(10)
+        while model.isConversationWorking(originID) || model.runningGroups.contains(destination.id) || model.runningAgentMessageScopes.contains(originID), ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(!model.isConversationWorking(originID))
+        #expect(!model.runningGroups.contains(destination.id))
+        #expect(!model.runningAgentMessageScopes.contains(originID))
+        #expect(model.pendingAutoReviewApprovals.isEmpty)
         let agents = try AgentService(storeURL: root.appending(path: "agents.json"))
         let groups = try GroupService(agents: agents, storeURL: root.appending(path: "groups.json"))
         let messages = await groups.messages(groupID: destination.id)
@@ -116,11 +153,11 @@ private struct GroupFileAppProvider: AIProvider {
         }
     }
 
-    private func pending(_ model: AppModel) async throws -> PendingApproval {
+    private func pending(_ model: AppModel, excluding priorID: String? = nil) async throws -> PendingApproval {
         let deadline = ContinuousClock.now + .seconds(10)
-        while model.pendingAutoReviewApprovals.isEmpty && ContinuousClock.now < deadline {
+        while !model.pendingAutoReviewApprovals.contains(where: { $0.id != priorID }) && ContinuousClock.now < deadline {
             try await Task.sleep(for: .milliseconds(10))
         }
-        return try #require(model.pendingAutoReviewApprovals.first, "\(model.errorMessage ?? "No publication approval")")
+        return try #require(model.pendingAutoReviewApprovals.first(where: { $0.id != priorID }), "\(model.errorMessage ?? "No publication approval")")
     }
 }

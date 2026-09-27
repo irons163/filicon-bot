@@ -174,3 +174,13 @@ App 隔離 fixture 以不同來源／目的群組實際執行 SendToAgent → Se
 仍待獨立驗收：direct／mailbox 來源的 App 背景檔案流程、同一目的群組被下一次委派重用的 ABA 情境、配額／保存故障注入及 crash recovery。direct／mailbox 本身傳檔、遠端來源與媒體能力亦未完成；本階段不代表整體 parity 完成。
 
 驗證：14 種 App 定向案例與最終完整非平行 Swift 測試 exit 0；原生 Debug build、deep strict 封裝／簽章通過。日誌 `.build/validation/background-file-app-{target,final-full,native}.log`。整理測試 fixture 時曾把 ToolName 宣告為 String 導致編譯失敗，修正後重跑完整套件通過。未重啟使用者 App／Xcode。
+
+## 第十二階段：direct／mailbox 來源與停止修正（2026-09-28）
+
+隔離 App 測試擴充到綁定單獨聊天與代理人信箱作為委派來源，經由真實 App 的 SendToAgent 核准與背景群組 SendMessage 流程交付檔案。四條路徑（前景、群組來源、direct 來源、mailbox 來源）各驗證核准、拒絕、停止來源、停止目的、切帳號、改成員、核准期間替換來源檔案，共 28 種情境；核准必須等待不同的 review ID，不能將尚未完成的非同步委派核准誤當成送檔核准。
+
+新增測試重現 direct 來源的停止缺陷：stopGroup 原本只分 mailbox 或 group 來源，direct 來源被當作沒有執行中的群組而直接返回，晚到核准仍能送檔。現在辨識 directMessagingScopes，呼叫既有 cancelConversationWork(originID)，取消確切來源而非目前 UI 選取對話。重跑 28 種情境通過，包含晚到核准不落檔、來源／目的停止收尾、pending approvals 清空、目的群組重開後的附件 owner／bytes 驗證。
+
+這是 direct／mailbox **委派至群組**的傳檔驗收，不代表 direct／mailbox 本身已有一般檔案發布入口。同一目的群組的新委派取代舊委派（ABA）、配額／保存故障及 crash recovery 仍待驗證；遠端來源與媒體能力亦未完成。依 pfw-testing 使用隔離 helper／資料，不改真實聊天、不重啟 App。
+
+驗證：28 種定向案例及完整非平行 Swift 測試 exit 0；原生 Debug build、deep strict 封裝／簽章通過。日誌 `.build/validation/direct-background-files-{target-final,full,native}.log`。初版測試有 optional UUID／review ID 型別編譯錯誤及未等待非同步核准的時序問題，修正後才重現並修復上述 direct 停止缺陷。

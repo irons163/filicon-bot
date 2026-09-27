@@ -1,6 +1,6 @@
 # Filicon / Grok Bot 0.18 功能 parity matrix（current implementation）
 
-2026-09-28 背景傳檔增量：已接入群組來源 → 背景群組的本機檔案核准與保存，取代下方「背景群組完全待接線」描述。direct／mailbox 來源、委派重用及故障注入仍待獨立驗收；詳見 [傳檔第十一階段](Send-message-files-parity.md)。
+2026-09-28 背景傳檔增量：已接入群組／direct／mailbox 來源 → 背景群組的本機檔案核准與保存，取代下方「背景群組完全待接線」描述。28 種隔離情境另修正 direct 來源停止目的群組未取消的缺陷；委派重用及故障注入仍待驗收，direct／mailbox 本身傳檔尚未接線。詳見 [傳檔第十一至十二階段](Send-message-files-parity.md)。
 
 完成驗收入口：見 [Parity-completion-audit.md](Parity-completion-audit.md)。本表 43 個歷史 complete 並非今日逐項端到端驗證；尚未重驗者不構成整體完成證明。自身 `hidden_from_sidebar` 的核准／持久化／UI／模型接線已於 `a57e545` 完成隔離驗證，取代下方歷史拒絕描述。圖片頭像的模型來源、預覽、提交與人工配額已接線，剩餘邊界見 [Avatar-image-parity.md](Avatar-image-parity.md) 第七至十階段。下一個已核對缺口是模型交付新產生的檔案／媒體，見 [Send-message-files-parity.md](Send-message-files-parity.md)；前景群組的本機檔案來源、發佈核准／持久化／模型入口已完成隔離驗證；背景群組、direct／mailbox、遠端來源與媒體能力仍待完成。
 

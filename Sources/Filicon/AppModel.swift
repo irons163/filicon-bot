@@ -5792,6 +5792,7 @@ final class AppModel: ObservableObject {
         invalidateBackgroundMemorySynthesis(originID: id)
         if let originID = delegatedGroupOrigins[id] {
             if runningAgentMessageScopes.contains(originID) { await stopAgentMessages(scopeID: originID) }
+            else if directMessagingScopes.contains(originID) { cancelConversationWork(originID) }
             else { await stopGroup(id: originID) }
             return
         }
