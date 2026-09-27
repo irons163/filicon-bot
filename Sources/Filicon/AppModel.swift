@@ -7360,16 +7360,16 @@ final class AppModel: ObservableObject {
     }
 
     func clearRemoteComputer(removeCredential: Bool) async {
-        avatarRemoteRevision = UUID()
-        remoteOperationTask?.cancel(); remoteOperationTask = nil
-        remoteTerminalPollingTask?.cancel(); remoteTerminalPollingTask = nil
+        installRemoteComputerBackend(nil)
+        let clearedRevision = avatarRemoteRevision
         if removeCredential, !remoteComputerCredentialReference.isEmpty {
             try? await credentials.remove(Self.remoteComputerCredentialReference(remoteComputerCredentialReference))
         }
+        // A newer configuration may have arrived while credential removal waited.
+        guard clearedRevision == avatarRemoteRevision else { return }
         remoteComputerEndpoint = ""; remoteComputerStatus = nil; remoteComputerOperation = nil
         remoteIsolationRequiredIdentity = ""; remoteIsolationMinimumGeneration = 1
         remoteSecuritySnapshot = .init(state: .unverified)
-        remoteComputerBackend = nil; remoteComputerLifecycle = nil; remoteTerminalController = nil; remoteFileTransfer = nil
         rebuildSecurityKeyProxy()
         UserDefaults.standard.removeObject(forKey: "FiliconRemoteComputerEndpoint")
         UserDefaults.standard.removeObject(forKey: "FiliconRemoteIsolationIdentity")
@@ -8070,9 +8070,6 @@ final class AppModel: ObservableObject {
     }
 
     private func rebuildRemoteComputerClient() {
-        avatarRemoteRevision = UUID()
-        remoteOperationTask?.cancel(); remoteOperationTask = nil
-        remoteTerminalPollingTask?.cancel(); remoteTerminalPollingTask = nil
         guard let endpoint = URL(string: remoteComputerEndpoint),
               let profile = try? RemoteComputerProfile(
                   endpoint: endpoint,
@@ -8085,8 +8082,7 @@ final class AppModel: ObservableObject {
                       maximumResourceCaps: RemoteIsolationPolicy.conservative.maximumResourceCaps
                   )
               ) else {
-            remoteComputerBackend = nil; remoteComputerLifecycle = nil
-            remoteTerminalController = nil; remoteFileTransfer = nil
+            installRemoteComputerBackend(nil)
             return
         }
         let resolver = AppRemoteComputerCredentialResolver(
@@ -8095,10 +8091,19 @@ final class AppModel: ObservableObject {
             scheme: remoteComputerCredentialScheme
         )
         let backend = HTTPSRemoteComputerBackend(profile: profile, credentials: resolver)
+        installRemoteComputerBackend(backend)
+    }
+
+    /// One replacement boundary for all clients and in-flight avatar sources.
+    /// This changes only the live clients, not saved settings or credentials.
+    func installRemoteComputerBackend(_ backend: HTTPSRemoteComputerBackend?) {
+        avatarRemoteRevision = UUID()
+        remoteOperationTask?.cancel(); remoteOperationTask = nil
+        remoteTerminalPollingTask?.cancel(); remoteTerminalPollingTask = nil
         remoteComputerBackend = backend
-        remoteComputerLifecycle = RemoteComputerLifecycle(backend: backend)
-        remoteTerminalController = RemoteTerminalController(backend: backend)
-        remoteFileTransfer = RemoteFileTransfer(backend: backend)
+        remoteComputerLifecycle = backend.map { RemoteComputerLifecycle(backend: $0) }
+        remoteTerminalController = backend.map { RemoteTerminalController(backend: $0) }
+        remoteFileTransfer = backend.map { RemoteFileTransfer(backend: $0) }
         remoteSecuritySnapshot = .init(state: .unverified)
     }
 

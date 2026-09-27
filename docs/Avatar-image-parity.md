@@ -128,3 +128,15 @@ AppModel 圖片專用核准流程按 pending ID 保留預覽，結束時移除�
 以上補上前一階段列出的 direct／mailbox 基本整合缺口；不代替遠端 HTTP composition、remote revision 切換或外部服務驗收。也未完成人工匯入配額、CAS 復原／回收及 SVG 其餘範圍。
 
 驗證：8 種新情境定向執行通過，完整非平行 Swift 測試 exit 0；日誌 `.build/validation/avatar-routes-{focused,full}.log`。本批只有測試與驗收文件變更，正式功能程式與原生封裝未更動。依 pfw-testing 使用隔離 helper／workspace 與 CustomDump 驗證 owner、peer 及持久化狀態。
+
+## 第九階段：遠端 HTTP composition 與連線替換
+
+遠端 client 的安裝／移除統一經過 `installRemoteComputerBackend`：同步更換 avatar revision、取消既有遠端操作與 terminal polling、替換 lifecycle／terminal／file clients 並重置 security snapshot。不寫入設定或憑證；正常設定重建與清除流程均呼叫它。清除時先移除 live client，再等待可能的 credential 移除，避免等待期間仍能建立使用舊 backend 的請求。
+
+清除流程在憑證移除的 await 後也重驗 revision；若期間已安裝較新的 client，舊清除流程不再覆寫 endpoint／持久化設定。測試沒有操作真實 Keychain，這個 await 邊界的真實憑證服務交錯不在上述 HTTP fixture 的覆蓋範圍。
+
+App 整合測試經 mailbox 接收者的模型 `update_state`，使用真正 `HTTPSRemoteComputerBackend` 配隔離 HTTP transport。核對下載前的明示 read approval、接收者 UUID 的 HTTP URL、POST body 路徑與 5 MiB 上限；回應包含有效 isolation declaration 與檔案 hash，再進行獨立圖片預覽。核准、拒絕 read、拒絕 image、read 核准前替換連線、下載中替換連線、清除連線、hash 損壞、帳號切換共八種情境通過。失效請求不改讀 replacement backend；未核准／失效／損壞情境不寫 CAS，發送者頭像不變。下載中替換案例用 continuation 控制精確邊界，不靠延遲猜測。
+
+這補上 App 到 HTTP adapter 的 fixture 驗收，不是線上服務驗收：未連網、未驗證真實服務宣告的隔離能力、登入／憑證或遠端實際檔案。人工匯入配額、CAS 復原／回收、SVG 支援範圍及最低支援 macOS 仍未完成。
+
+驗證：八種情境定向測試與完整非平行 Swift 測試 exit 0；最後補入 clear 的 await 後 revision 檢查後，App management／RemoteComputer／RemoteIsolation 定向重跑 exit 0。最終原生 Debug 建置與 deep strict 封裝／簽章檢查通過。日誌 `.build/validation/avatar-remote-{focused,full,final-focused,native}.log`。pfw-testing 的隔離依賴方式讓 HTTP 與暫停邊界可控，未連線外部服務或修改使用者設定。

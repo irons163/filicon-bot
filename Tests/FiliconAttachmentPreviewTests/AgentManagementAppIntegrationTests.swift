@@ -12,6 +12,30 @@ import FiliconAutomations
 import FiliconChannels
 import FiliconAppServices
 import FiliconLocalTools
+import FiliconComputer
+
+private actor AvatarHTTPFixture: RemoteHTTPTransport {
+    private(set) var requests: [URLRequest] = []
+    let corrupt: Bool
+    let paused: Bool
+    private var release: CheckedContinuation<Void, Never>?
+    init(corrupt: Bool = false, paused: Bool = false) { self.corrupt = corrupt; self.paused = paused }
+    func resume() { release?.resume(); release = nil }
+    func data(for request: URLRequest, exactOrigin: String, maximumBytes: Int) async throws -> (Data, HTTPURLResponse) {
+        requests.append(request)
+        if paused { await withCheckedContinuation { release = $0 } }
+        let bytes = Data(#"<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"><rect width="20" height="20" fill="green"/></svg>"#.utf8)
+        struct Envelope: Encodable { let data: Data; let descriptor: RemoteFileDescriptor }
+        let data = try JSONEncoder().encode(Envelope(data: bytes,
+            descriptor: .init(size: bytes.count, sha256: corrupt ? String(repeating: "0", count: 64) : RemoteFileTransfer.sha256(bytes))))
+        let declaration = RemoteIsolationDeclaration(identity: "avatar-fixture", sessionGeneration: 1,
+            filesystem: .init(root: "/workspace", writableRoots: ["/workspace"]),
+            resourceCaps: RemoteIsolationPolicy.conservative.maximumResourceCaps)
+        let headers = [HTTPSRemoteComputerBackend.isolationDeclarationHeader: try JSONEncoder().encode(declaration).base64EncodedString()]
+        let url = try #require(request.url)
+        return (data, try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: headers)))
+    }
+}
 
 private struct ManagingAgentProvider: InteractiveToolProvider {
     let descriptor = ProviderDescriptor(id: "management-fixture", displayName: "Profile fixture", requiresAPIKey: false)
@@ -1358,6 +1382,72 @@ private actor ManagementWakeProbe {
         let restored = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
         await restored.reloadWorkspaceData()
         expectNoDifference(restored.agents.first { $0.id == owner.id }?.avatar, expected)
+    }
+
+    @Test(arguments: ["approve", "deny-read", "deny-image", "replace-before", "replace-during", "clear-before", "corrupt", "account"])
+    func remoteImageAvatarRequiresReadApprovalAndCurrentBackend(mode: String) async throws {
+        let (root, model, _, sender, owner) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let http = AvatarHTTPFixture(corrupt: mode == "corrupt", paused: mode == "replace-during")
+        let replacementHTTP = AvatarHTTPFixture()
+        let profile = try RemoteComputerProfile(endpoint: #require(URL(string: "https://avatar.invalid/api/")), capabilities: [.fileTransfer])
+        let backend = HTTPSRemoteComputerBackend(profile: profile, transport: http)
+        let replacement = HTTPSRemoteComputerBackend(profile: profile, transport: replacementHTTP)
+        model.installRemoteComputerBackend(backend)
+        await model.registry.register(ManagingAgentProvider { _, execute in
+            let result = try await execute(.init(id: "remote-image", name: "update_state", argumentsJSON:
+                Data(#"{"target":"avatar","action":"set","path":"/workspace/avatar.svg"}"#.utf8)))
+            expectNoDifference(result.isError, mode != "approve")
+            return "PASS"
+        })
+        #expect(await model.sendAgentMessage(senderID: sender.id, recipientID: owner.id, text: "Use your remote image as your avatar"))
+        let read = try await pending(model, tool: "avatar-source")
+        let beforeRead = await http.requests
+        expectNoDifference(beforeRead.count, 0)
+        expectNoDifference(read.action.context.metadata["remoteAgentID"], owner.id.uuidString)
+        expectNoDifference(read.action.target, .resource(kind: "remote-file", identifier: "\(owner.id.uuidString):/workspace/avatar.svg"))
+        if mode == "replace-before" { model.installRemoteComputerBackend(replacement) }
+        if mode == "clear-before" { model.installRemoteComputerBackend(nil) }
+        if mode == "account" { await model.cancelAutoReviewApprovals(nextAccountID: "other") }
+        await model.resolveGroupApproval(read, groupID: read.action.context.conversationID, approve: mode != "deny-read")
+        if mode == "replace-during" {
+            for _ in 0..<1_000 {
+                if await !http.requests.isEmpty { break }
+                try await Task.sleep(for: .milliseconds(5))
+            }
+            let inFlight = await http.requests
+            expectNoDifference(inFlight.count, 1)
+            model.installRemoteComputerBackend(replacement)
+            await http.resume()
+        }
+        var expected = owner.avatar
+        if ["approve", "deny-image"].contains(mode) {
+            let image = try await pending(model, tool: "update_state")
+            let preview = try #require(model.avatarApprovalPreview(for: image))
+            expectNoDifference(preview.agentID, owner.id)
+            expectNoDifference(model.agents.first { $0.id == owner.id }?.avatar, owner.avatar)
+            if mode == "approve" { expected = preview.proposed.avatar }
+            await model.resolveGroupApproval(image, groupID: image.action.context.conversationID, approve: mode == "approve")
+        }
+        try await waitForMailbox(model)
+        let requests = await http.requests
+        let downloaded = ["approve", "deny-image", "replace-during", "corrupt"].contains(mode)
+        expectNoDifference(requests.count, downloaded ? 1 : 0)
+        if let request = requests.first {
+            expectNoDifference(request.url?.path, "/api/agents/\(owner.id.uuidString)/files/download")
+            expectNoDifference(request.httpMethod, "POST")
+            let data = try #require(request.httpBody)
+            let body = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+            expectNoDifference(body["path"] as? String, "/workspace/avatar.svg")
+            expectNoDifference(body["maximumBytes"] as? Int, AgentAvatarChange.maximumImageSourceBytes)
+        }
+        let replacementRequests = await replacementHTTP.requests
+        expectNoDifference(replacementRequests.count, 0)
+        expectNoDifference(model.agents.first { $0.id == owner.id }?.avatar, expected)
+        expectNoDifference(model.agents.first { $0.id == sender.id }?.avatar, sender.avatar)
+        expectNoDifference(try AgentAvatarStore(rootURL: root.appending(path: "agent-avatars")).storageInventory().count,
+            mode == "approve" ? 1 : 0)
+        #expect(model.pendingAutoReviewApprovals.isEmpty && model.pendingWorkspaceFolders.isEmpty)
     }
 
     @Test func mailboxAvatarIsBoundToRecipientNotSender() async throws {
