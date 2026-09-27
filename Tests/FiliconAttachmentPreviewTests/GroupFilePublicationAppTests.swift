@@ -90,6 +90,37 @@ private struct GroupFileAppProvider: AIProvider {
 
 @Suite("App group file publication", .timeLimit(.minutes(1)))
 @MainActor struct GroupFilePublicationAppTests {
+    @Test(arguments: ["approve", "deny", "stop", "account", "members"])
+    func foregroundRemotePublicationRequiresHostReview(mode: String) async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "filicon-remote-host-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+        await model.bootstrap()
+        let url = "https://example.com/report?signature=a%2Bb"
+        await model.registry.register(GroupFileAppProvider(url: url))
+        let value = await model.createAgent(name: "Sender", summary: "", instructions: "", providerID: "group-file-app", modelID: "test")
+        let sender = try #require(value)
+        #expect(await model.createGroup(name: "Remote", summary: "", memberIDs: [sender.id]))
+        let group = try #require(model.groups.first)
+        let send = Task { await model.sendGroupMessage(groupID: group.id, text: "Share report") }
+        defer { send.cancel() }
+        let approval = try await pending(model)
+        expectNoDifference(approval.action.context.metadata["agentRemotePublication"], "true")
+        #expect(approval.action.context.metadata["agentMessage"]?.contains(url) == true)
+        #expect(approval.action.context.metadata["agentMessage"]?.contains("報表說明") == true)
+        #expect(model.groupMessages[group.id, default: []].allSatisfy { $0.remoteAttachment == nil })
+        if mode == "stop" { await model.stopGroup(id: group.id) }
+        if mode == "account" { await model.cancelAutoReviewApprovals(nextAccountID: "other") }
+        if mode == "members" { await model.updateGroupMembers(groupID: group.id, memberIDs: []) }
+        await model.resolveGroupApproval(approval, groupID: group.id, approve: mode != "deny")
+        await send.value
+        let agents = try AgentService(storeURL: root.appending(path: "agents.json"))
+        let groups = try GroupService(agents: agents, storeURL: root.appending(path: "groups.json"))
+        let history = await groups.messages(groupID: group.id)
+        let attachments = history.compactMap(\.remoteAttachment)
+        expectNoDifference(attachments, mode == "approve" ? [try RemoteAttachmentReference(url: url, alt: "報表說明")] : [])
+    }
+
     @Test(arguments: ["approve", "deny", "stop", "account", "source-changed", "quota-reserve", "quota-blob", "direct-message-reserve", "direct-message-late"])
     func directMainPublishesReviewedFile(mode: String) async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-direct-file-\(UUID())")

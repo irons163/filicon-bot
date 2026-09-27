@@ -384,3 +384,13 @@ AgentFilePublicationTransaction 的 input／review／receipt 加入可選 altTex
 群組對 remoteAttachment 顯示 RemoteAttachmentCard：描述、精確 URL 及未下載／驗證提示，點擊才交給既有 openURL 環境。沒有載入時網路請求，也沒有把 URL 猜成圖片／影片。七種語言提示已補齊，新檔案加入原生 Xcode target。
 
 14 個語言 × 深淺色 NSHostingView bitmap／尺寸案例通過，openURL spy 確認 rendering 不會開啟網址（remote-card-target.log）；原生 Debug build 與 deep strict 簽章通過（remote-card-native.log）。未重跑完整回歸，未啟動使用者 App。本卡片只是 locator 的可見呈現，不替代原版媒體預覽，亦未完成 App host 啟用、遠端信箱／單聊等差異。
+
+## 第三十四階段：App 前景群組遠端核准（2026-09-28）
+
+AppModel 為前景群組 session 提供 host authorizer，核准卡包含精確 URL、alt、群組與未下載／驗證提示。沿用帳號 generation、目前回合、作者／群組成員檢查，等待使用者核准後再次驗證；未核准不保存，沒有抓取遠端內容。成功保存由現有群組卡片呈現。
+
+五種隔離 AppModel 情境：同意、拒絕、停止、帳號切換、成員變更。核對 pending 卡內容與核准前未保存，結束後重開 GroupService store 確認只在同意時保存精確 URL／alt。定向測試通過（remote-host-target.log），原生 Debug build 與 deep strict 簽章通過（remote-host-native.log）。完整回歸結果另記。
+
+App 背景委派授權、信箱／單聊 HTTPS、真正媒體預覽仍未完成；這不是全功能 parity 完成。未啟動／重啟使用者 App、無遠端請求、未改真實帳號或群組。
+
+完整非平行 Swift 回歸 exit 0（remote-host-full.log）。

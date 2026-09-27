@@ -4251,6 +4251,7 @@ final class AppModel: ObservableObject {
                 try await self.authorizeAgentImagePublication(sender: sender, text: text, images: images, call: call, context: context)
             },
             groupFiles: makeGroupFileServices(originID: originID, generation: generation),
+            authorizeRemotePublication: makeGroupRemoteAuthorizer(originID: originID, generation: generation),
             mailboxFiles: makeMailboxFileFactory(originID: originID, generation: generation),
             authorize: { [weak self] sender, recipient, text, call, context in
                 guard let self else { throw CancellationError() }
@@ -4381,6 +4382,36 @@ final class AppModel: ObservableObject {
             try? await attachmentLifecycle.abort(upload)
             throw error
         }
+    }
+
+    private func makeGroupRemoteAuthorizer(originID: UUID, generation: UInt64) -> AgentMessagingSession.RemotePublicationAuthorizer? {
+        guard let audience = groups.first(where: { $0.id == originID }) else { return nil }
+        return { [weak self] sender, review, call, context in
+            guard let self else { throw CancellationError() }
+            try await self.authorizeGroupRemotePublication(sender: sender, review: review, call: call,
+                context: context, audience: audience, generation: generation)
+        }
+    }
+
+    private func authorizeGroupRemotePublication(sender: AgentProfile, review: AgentRemotePublicationTransaction.Review,
+        call: NormalizedToolCall, context: ToolContext, audience: AgentGroup, generation: UInt64) async throws {
+        let originID = audience.id
+        try checkGroupFileScope(senderID: sender.id, audience: audience, generation: generation, originID: originID, dispatchID: nil)
+        guard review.senderID == sender.id, review.conversationID == originID,
+              context.conversationID == originID else { throw AgentMessagingError.scopeMismatch }
+        let fence = ApprovalFence(accountID: settings.accountScope ?? "local", agentID: originID.uuidString.lowercased(),
+            runID: context.runID, generation: generation)
+        await autoReviewBroker.activate(fence)
+        let details = review.reference.url + (review.reference.alt.map { "\n\($0)" } ?? "")
+            + "\n" + l10n("Open external link. Content has not been downloaded or verified.")
+        let action = AutoReviewAction(summary: "\(sender.name) → \(audience.name): \(l10n("Remote attachment"))",
+            target: .resource(kind: "group", identifier: originID.uuidString), risks: [.sensitive],
+            context: .init(fence: fence, conversationID: originID, toolCallID: call.id.rawValue,
+                metadata: ["tool": "SendMessage", "agentRemotePublication": "true", "agentMessage": details,
+                    "agentGroupName": audience.name]))
+        let pending = PendingApproval(action: action, reason: "Approval required", expiresAt: Date().addingTimeInterval(300))
+        try await autoReviewBroker.waitForApprovalToExecute(pending) { [weak self] in await self?.registerAutoReviewApproval($0) }
+        try checkGroupFileScope(senderID: sender.id, audience: audience, generation: generation, originID: originID, dispatchID: nil)
     }
 
     private func makeGroupFileServices(originID: UUID, generation: UInt64, destinationID: UUID? = nil, dispatchID: UUID? = nil) -> AgentGroupFilePublicationServices? {
