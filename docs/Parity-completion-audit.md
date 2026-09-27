@@ -73,6 +73,16 @@ App 現在於啟動、重新載入及 agent snapshot 更新時讀取已保存的
 
 驗證：定向測試通過；含最終 revision 防護的完整 nonparallel Swift tests 與原生 Debug build 均 exit 0，verify-package deep/strict 通過。日誌 `.build/validation/sidebar-app-{focused,full,native}.log` 不提交。未啟動 App 或修改真實資料。
 
+### 唯一 binding 提交憑證（2026-09-27）
+
+新增短期 `ConversationBindingLease`。repository 在同一次無 suspension 的操作中查找唯一綁定並登記憑證；保存聊天集合前，若目標被刪除、重新綁定或新增第二個相同 account／agent 綁定，先同步撤銷。改名及新增訊息不撤銷。`AgentService.applyBoundSettingsChange` 檢查精確 account／agent／conversation，依「binding lease → settings lifetime → 同步磁碟保存」順序持鎖，讓撤銷和設定保存有明確先後；未保存不產生 receipt，通知與可見性仍同時提交。
+
+隔離測試涵蓋改名／訊息成功、刪除／重綁／重複／手動撤銷取消、錯誤目標拒絕及重開後兩欄位一致；模糊 binding 也不能取得憑證。此憑證只保護透過核發它的 repository 執行的寫入，**不是跨程序或不同 repository instance 的資料庫鎖**。
+
+App 尚未啟用模型 preparer；還要將憑證取得、finally 撤銷、來源生命週期、quota 及保存後畫面接線並完成 App 測試。來源查找確認目前 AppModel 建立一個 ConversationStore，該 store 快取一個 repository；若新增不同 repository instance 的寫入路徑，必須先統一或擴充 fence，不能直接宣稱端到端已完成。
+
+驗證：定向 13 項測試通過，含最終精確錯誤斷言的完整 nonparallel Swift tests／原生 Debug build 均 exit 0，verify-package deep/strict 通過。日誌 `.build/validation/sidebar-lease-{focused,full,native}.log` 不提交；未啟動使用者 App，未改真實資料。
+
 ## 必須保留的其他分類
 
 - 記憶：最新保存／搜尋／synthesis／episode／project recall 證據見 `Memory-archive-parity.md`；跨 epoch snapshot 是未接線參考設計，見 `Memory-snapshot-audit.md`，不能自行換成永久 cache。

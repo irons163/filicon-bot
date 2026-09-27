@@ -10,6 +10,7 @@ public enum BoundConversationLookupError: Error, Equatable, Sendable {
 public actor ConversationRepository {
     public static let currentSchemaVersion = 13
     private let database: SQLiteDatabase
+    private var bindingLeases: [ConversationBindingLease] = []
     public nonisolated let initialRecoveryReport: PersistenceRecoveryReport?
 
     public init(databaseURL: URL) throws {
@@ -62,6 +63,17 @@ public actor ConversationRepository {
             match = conversation
         }
         return match
+    }
+
+    /// Lookup and registration have no suspension between them. The lease only
+    /// protects mutations through this repository, not independent processes.
+    public func leaseUniqueBinding(accountID: String, agentID: UUID, conversationID: UUID) throws -> ConversationBindingLease {
+        guard let value = try uniqueBoundConversation(accountID: accountID, agentID: agentID),
+              value.id == conversationID, let binding = value.agentBinding else { throw CancellationError() }
+        bindingLeases.removeAll { !$0.isActive }
+        let lease = ConversationBindingLease(conversationID: conversationID, binding: binding)
+        bindingLeases.append(lease)
+        return lease
     }
 
     /// Loads one stable keyset page of conversation metadata. The canonical
@@ -142,6 +154,13 @@ public actor ConversationRepository {
     }
 
     public func save(_ values: [Conversation]) throws {
+        // Revoke before the transaction: a failed save may conservatively cancel
+        // a proposal, but must never leave a stale ownership permit usable.
+        for lease in bindingLeases {
+            let matches = values.filter { $0.agentBinding == lease.binding }
+            if matches.count != 1 || matches.first?.id != lease.conversationID { lease.close() }
+        }
+        bindingLeases.removeAll { !$0.isActive }
         try database.transaction("save conversations") {
             let keep = Set(values.map { $0.id.uuidString })
             let existing = try database.prepare("SELECT id FROM conversations", operation: "list conversations for pruning")

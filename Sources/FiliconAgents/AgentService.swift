@@ -796,6 +796,21 @@ public actor AgentService {
         try saveSettingsChange(change, lifetime: lifetime, at: at, allowArchived: false)
     }
 
+    /// Lock order is binding lease, then settings lifetime, then synchronous disk
+    /// save. No repository call or suspension is permitted inside these locks.
+    public func applyBoundSettingsChange(_ change: AgentSettingsChange, lifetime: AgentSettingsChangeLifetime,
+                                        bindingLease: ConversationBindingLease, at: Date = Date()) throws -> AgentProfile {
+        guard let visibility = change.visibility?.proposed,
+              visibility.agentID == change.agentID,
+              visibility.conversationID == bindingLease.conversationID,
+              bindingLease.binding == .init(accountID: visibility.accountID, agentID: visibility.agentID) else {
+            throw AgentSettingsChangeError.invalid
+        }
+        return try bindingLease.withValidBinding {
+            try saveSettingsChange(change, lifetime: lifetime, at: at, allowArchived: false)
+        }
+    }
+
     /// Explicit human sidebar controls may restore an archived agent's history.
     /// This cannot change notification preferences or unarchive the agent.
     public func applyManualSidebarVisibility(_ visibility: AgentSidebarVisibilityChange,

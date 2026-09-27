@@ -85,6 +85,12 @@ public actor ConversationStore {
         return try await repository.uniqueBoundConversation(accountID: accountID, agentID: agentID)
     }
 
+    public func leaseUniqueBinding(accountID: String, agentID: UUID, conversationID: UUID) async throws -> ConversationBindingLease {
+        let repository = try resolveRepository()
+        try await importLegacyIfNeeded(into: repository)
+        return try await repository.leaseUniqueBinding(accountID: accountID, agentID: agentID, conversationID: conversationID)
+    }
+
     /// Loads one backwards keyset page, returned in chronological order.
     public func messagePage(
         conversationID: UUID,
