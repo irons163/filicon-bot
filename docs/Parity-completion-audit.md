@@ -97,6 +97,8 @@ App fixture 覆蓋隱藏／恢復、合併修改及單改可見性保留通知�
 
 ## 必須保留的其他分類
 
+- 下一個已確認本機缺口：模型主機／box 圖片頭像；已核對 reference schema、state 實作及 composition 的 readBoxFile 接線，以及 Filicon 僅 pet 的模型入口與可重用基礎。來源、差異與完整驗收條件见 [Avatar-image-parity.md](Avatar-image-parity.md)，不能以人工圖片 UI 或當輪附件 ID 替代。
+
 - 記憶：最新保存／搜尋／synthesis／episode／project recall 證據見 `Memory-archive-parity.md`；跨 epoch snapshot 是未接線參考設計，見 `Memory-snapshot-audit.md`，不能自行換成永久 cache。
 - 協作／訊息：AGENT-02／04 的歷史缺項需與 `Agent-collaboration-parity.md` 後續進度及 current source 逐項對照；不能用舊行的「缺」覆蓋已完成的接線，也不能以有 UI 就宣稱工具／背景路徑完成。
 - 平台事件：AUTO-03 的 Teams 使用者驗證、GitHub checks 彙整、Slack 名稱／自身身分映射等仍需逐項來源核對和平台驗收；不因 generic matcher 通過而放寬驗證政策。
