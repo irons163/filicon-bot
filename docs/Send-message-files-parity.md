@@ -430,3 +430,13 @@ AgentPublishedResponses 對已保存的 remoteAttachment 顯示既有 RemoteAtta
 七種語言 × 深淺色共 14 案例，同時 render 獨立卡片與信箱容器，核對尺寸及 bitmap 產生；openURL spy 保證 render 不開啟網址（remote-mailbox-ui-target.log）。原生 Debug build、deep strict 簽章通過（remote-mailbox-ui-native.log）。本批未重跑完整回歸，未人工啟動 App；不代表所有實機視覺驗收已完成。
 
 App mailboxRemote 核准 factory 仍待接入，locator 卡片也不等同真正媒體預覽。未 push、重啟 App 或改真實資料。
+
+## 第三十九階段：App 信箱遠端附件核准（2026-09-28）
+
+三個 App session 建立入口提供 mailboxRemote factory，沿用信箱 chain ID／running delivery／帳號 generation／有效作者檢查。核准卡包含精確 URL、alt、incoming ID 與未下載提示；同意後再次驗證。一般檔案授權不是遠端發布授權，未自動開啟或下載連結。
+
+四種隔離 App 情境（同意、拒絕、停止、帳號切換）通過，核對卡片及重新開啟 mailbox store，只有同意保存精確 reference（remote-mailbox-host-target.log）。原生 Debug build、deep strict 簽章通過（remote-mailbox-host-native.log）。完整回歸結果另記。
+
+本批證明信箱入口核准／保存，不代表單聊 transcript 的 remote projection 或真正媒體預覽已完成；這些仍是明確差異。未啟動使用者 App、未 push、未改真實帳號／群組。
+
+完整非平行 Swift 回歸 exit 0（remote-mailbox-host-full.log）。
