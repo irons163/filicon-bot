@@ -73,6 +73,12 @@ public struct AgentAvatarStore: Sendable {
             throw AgentAvatarStoreError.invalidCrop
         }
         guard data.count < Self.maximumInputBytes else { throw AgentAvatarStoreError.fileTooLarge }
+        if StaticSVGAvatar.isXML(data) {
+            guard let output = render(try StaticSVGAvatar.normalizedImage(data), crop: crop) else {
+                throw AgentAvatarStoreError.invalidImage
+            }
+            return try preparedImage(output, sourceByteCount: data.count, shape: shape)
+        }
         guard !data.isEmpty, let source = CGImageSourceCreateWithData(data as CFData, nil),
               CGImageSourceGetCount(source) > 0 else { throw AgentAvatarStoreError.invalidImage }
         guard let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
@@ -90,13 +96,17 @@ public struct AgentAvatarStore: Sendable {
         ]
         guard let normalized = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary),
               let output = render(normalized, crop: crop) else { throw AgentAvatarStoreError.invalidImage }
+        return try preparedImage(output, sourceByteCount: data.count, shape: shape)
+    }
+
+    private func preparedImage(_ output: CGImage, sourceByteCount: Int, shape: AgentAvatarShape) throws -> PreparedAgentAvatar {
         let representation = NSBitmapImageRep(cgImage: output)
         guard let png = representation.representation(using: .png, properties: [:]) else {
             throw AgentAvatarStoreError.encodingFailed
         }
         let digest = SHA256.hash(data: png).map { String(format: "%02x", $0) }.joined()
         let relativePath = "\(digest.prefix(2))/\(digest).png"
-        return PreparedAgentAvatar(pngData: png, avatar: .image(hash: digest, relativePath: relativePath, shape: shape), sourceByteCount: data.count)
+        return PreparedAgentAvatar(pngData: png, avatar: .image(hash: digest, relativePath: relativePath, shape: shape), sourceByteCount: sourceByteCount)
     }
 
     /// Installs only the bytes shown during approval, never a mutable source URL.

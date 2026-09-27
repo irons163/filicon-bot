@@ -84,3 +84,13 @@ AppModel 圖片專用核准流程按 pending ID 保留預覽，結束時移除�
 後續 WebP 驗證：`bundledWebPDecodesToBoundedPNG` 使用 repo 內九個既有寵物素材，先確認 ImageIO 辨識為 `org.webmproject.webp`，再驗證 codec 輸出為小於 1 MiB 的單幀 256×256 PNG、保留原始 bytes 數量，且只有 12-byte header 的截斷資料不能通過。九個案例全部通過；PNG／JPEG／GIF 及 GIF 首幀測試一併重跑通過。此證據涵蓋目前主機的九個 WebP 素材，不宣稱涵蓋所有 WebP 編碼變體或最低支援 macOS 的解碼能力。
 
 再次核對 reference `sand-state-tool.ts:149` 與 `agent-state.ts:60`，五格式清單確實包含 SVG；Filicon 尚無 SVG 專用轉換器，因此這項仍未完成。不得為了顯示頭像載入含腳本或任意外部資源的 SVG；後續安全渲染與驗收需要另行實作。來源 adapter 與圖片核准尚未注入 AppModel session，模型 path 仍未對使用者開放。
+
+### 後續：受限靜態 SVG 轉換
+
+新增 `StaticSVGAvatar`，在交給 AppKit 前以 UTF-8 XML 預檢及 element／attribute allowlist 驗證。macOS 原生 AppKit 可以解碼測試 SVG，但 ImageIO 現有縮圖流程對同一資料沒有有效影格；因此向量走獨立、有界的 bitmap 繪製，再沿用既有裁切、256×256 PNG 與 CAS 指紋流程。不使用 WebView、網路、外部命令或來源 URL。
+
+支援形狀、路徑、群組變形與本地 linear／radial gradient；拒絕腳本、事件、DTD／entity declaration、處理指令、CSS、外部 image、foreignObject、動畫、use、clip／mask、文字節點元素等未列入功能。只允許指向已定義 gradient ID 的本地 paint reference，拒絕重複 ID 及 gradient 內資源引用。XML 上限為 5 MiB、64 層、4096 節點與單屬性 65536 bytes；根尺寸須有限且至多 20000，繪製 bitmap 最長邊至多 1024。UTF-16／32 XML 不得绕過 UTF-8 檢查。
+
+這是**受限的靜態 SVG 支援，不是完整 SVG 相容**。原版保存任意 sniff 通過的 SVG bytes，Filicon 則拒絕上述未支援功能，不會默默刪除它們後回報成功；差異仍保留，尤其既有圖檔若使用 style、文字、clip、mask 或 use，需後續擴充與驗收。三個有效向量案例確認中央像素非透明及 PNG 可重現，拒絕案例涵蓋外部／file／data URL、字元參照繞過、XML 實體、遞迴與過量結構；PNG／JPEG／GIF／WebP 測試一併回歸。
+
+本批最終驗證：鎖屏標記消失後，完整非平行 Swift 測試 exit 0，涵蓋最後加入的重複 ID 與 UTF-16 拒絕案例，也重新驗證前兩批圖片預覽／格式修改。原生 Debug 建置 exit 0，`verify-package.sh --xcode-debug` 的 deep strict 簽章與封裝檢查通過。日誌為 `.build/validation/avatar-svg-{full,native}.log`。未啟動使用者 App 或 Xcode、未改真實資料；最低支援 macOS 的原生 SVG 解碼仍未實機驗收，來源接線等其他缺口維持未完成。
