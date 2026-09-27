@@ -1,6 +1,6 @@
 # SendMessage 檔案與媒體交付核對
 
-2026-09-27；Filicon 基準 `549f96f`，reference `grok-bot-0.18-reconstructed` 基準 `a9f633e09d49a85829b8236331b9e21f7e612634`。狀態：**已確認差異，尚未實作**。本文件不代表全部 parity 已重驗。
+2026-09-27；來源核對 Filicon 基準 `549f96f`，reference `grok-bot-0.18-reconstructed` 基準 `a9f633e09d49a85829b8236331b9e21f7e612634`。狀態：**來源準備層已實作，發佈尚未接線**。本文件不代表全部 parity 已重驗。
 
 ## 來源證據
 
@@ -24,3 +24,15 @@
 5. 遠端與 HTTPS：另核對真實 production 路徑，再分開設計 backend revision／固定 agent fence、下載大小、redirect／網路目的地與凭證隔離；不繼承本機核准，不靜默跨來源 fallback，不因 reference 接受 URL 就自動联网。
 
 測試須包含成功、拒絕、取消、來源替換、帳號／對話失效、配額／保存失敗與重播。僅有 schema 或 store 單元測試不算 App 完成；真實外部服務驗收另列。此輪只做 read-only source audit 與文件修正，沒有 runtime 變更，沒有執行／重啟 App 或修改真實資料。
+
+## 第一階段：本機來源與不可變快照
+
+從既有 avatar adapter 抽出 `AuthorizedAgentFileReader`，保留工作區最長 component-boundary 配對、重新授權不更換目標、readFile policy／核准、grant 及 scope 重驗、helper 的 descriptor-relative regular-file 讀取。Avatar 現在也使用這個共用實作，不另開未授權的檔案讀取入口。
+
+新增 `AgentPublicationFileSource`：只接受無 host、query、fragment 的本機 file URL；明確 percent decode 後拒絕 NUL／控制字元、相對路徑、traversal 及非 canonical 路徑。直接使用 URL 的正規化 path 可能丟棄 NUL，因此不把正規化視為輸入驗證。結果只含不可變 bytes、basename 與 SHA-256，不保留原始 URL、不寫 CAS、不保存訊息，也不推測 MIME 或執行檔案內容。空檔案是合法檔案，不套用圖片的非空要求。
+
+目前受既有 helper 10 MiB transport 限制；這是尚未完成的大檔／媒體交付邊界，不是改寫原定需求。讀取完成後的發佈核准、配額、附件安裝、receipt、三種聊天畫面與更大媒體／遠端路徑都尚未接線；工具 schema 仍拒絕 URL。
+
+隔離測試涵蓋有效含空白／中文 URL、12 種不合法 URL、正常／空檔案、拒絕、never、撤銷、symlink、directory、超限；讀取後改寫來源仍保有原始 bytes／hash，並核對準備不建立附件目錄。既有 avatar 來源測試同跑以驗證抽取未破壞授權、scope、FIFO 與遠端行為。依 pfw-testing 使用隔離 helper／grant 與 CustomDump 狀態比對，不改真實資料。
+
+驗證：定向測試、完整非平行 Swift 測試、原生 Debug build 均 exit 0；封裝與 deep strict 簽章檢查通過。日誌 `.build/validation/publication-source-{focused,full,native}.log` 不提交。未啟動 App／Xcode，未連線外部服務。

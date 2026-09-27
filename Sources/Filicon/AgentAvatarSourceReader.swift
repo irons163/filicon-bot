@@ -19,6 +19,27 @@ struct AgentAvatarSourceReader: Sendable {
 
     func prepare(path: String, agentID: UUID, call: NormalizedToolCall,
                  context: ToolContext) async throws -> PreparedAgentAvatar {
+        let bytes = try await AuthorizedAgentFileReader(runtime: runtime, folders: folders, policy: policy,
+            validateScope: validateScope, authorizeRead: authorizeRead).read(path: path, agentID: agentID,
+                call: call, context: context, receiptPrefix: "avatar-source",
+                maximumBytes: AgentAvatarChange.maximumImageSourceBytes)
+        guard !bytes.isEmpty else { throw AgentAvatarChangeError.invalid }
+        return try imageStore.prepareImage(data: bytes)
+    }
+}
+
+/// Shared authorized byte acquisition. It neither installs a blob nor publishes
+/// it. Callers must separately review the captured bytes before sharing them.
+struct AuthorizedAgentFileReader: Sendable {
+    let runtime: LocalToolRuntime
+    let folders: WorkspaceFolderCoordinator
+    let policy: ToolPermissionPolicy
+    let validateScope: @Sendable () async throws -> Void
+    let authorizeRead: @Sendable (LocalOperation, ToolContext, ToolCallID) async throws -> Void
+
+    func read(path: String, agentID: UUID, call: NormalizedToolCall, context: ToolContext,
+              receiptPrefix: String, maximumBytes: Int) async throws -> Data {
+        guard maximumBytes > 0 else { throw LocalToolError.outputLimitExceeded }
         try Self.validatePath(path)
         try await checkScopeAndPolicy()
         let store = runtime.workspaceStore
@@ -50,16 +71,14 @@ struct AgentAvatarSourceReader: Sendable {
         try await checkScopeAndPolicy()
         try await validateGrant(grant)
         let result = try await runtime.perform(operation: operation, conversationID: context.conversationID,
-            agentID: agentID, runID: context.runID, toolCallID: "avatar-source:\(call.id.rawValue)")
+            agentID: agentID, runID: context.runID, toolCallID: "\(receiptPrefix):\(call.id.rawValue)")
         try await checkScopeAndPolicy()
         try await validateGrant(grant)
-        guard case .file(let bytes) = result else { throw AgentAvatarChangeError.invalid }
-        guard !bytes.isEmpty, bytes.count <= AgentAvatarChange.maximumImageSourceBytes else {
-            throw AgentAvatarChangeError.invalid
-        }
+        guard case .file(let bytes) = result else { throw LocalToolError.permissionMismatch }
+        guard bytes.count <= maximumBytes else { throw LocalToolError.outputLimitExceeded }
         // The helper has already read through its descriptor-relative safe filesystem.
         // Decode the captured bytes, never reopen the model's original pathname.
-        return try imageStore.prepareImage(data: bytes)
+        return bytes
     }
 
     private func checkScopeAndPolicy() async throws {
