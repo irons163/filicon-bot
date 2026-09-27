@@ -29,4 +29,12 @@ Filicon 基準 `a57e545`，reconstructed reference `a9f633e09d49a85829b8236331b9
 5. 沿用四次修改額度、嚴格重播、quota、durable receipt；preview 拒絕不捏造成功。清除恢復 Codex 是 Filicon 的既有預設，不要求改為 reference 圖示。
 6. 隔離測試覆蓋主機與假遠端兩路、格式／大小／權限／路徑／替換攻擊、核准生命周期、重開、七語圖片核准與原生建置。真實遠端帳號驗收另外列出；不登入或修改使用者真實資料。
 
-下一個實作切點是不可變 bytes 的圖片準備／CAS 介面，再接 host 來源解析與真正圖片核准。只新增 bytes helper 或 schema 都不算此功能完成。
+## 第一階段：不可變圖片準備
+
+`AgentAvatarStore.prepareImage(data:crop:shape:)` 現在產生只能由有界解碼器建立的 `PreparedAgentAvatar`，包含固定 PNG bytes 與內容指紋；準備本身不寫入磁碟。`install` 保存同一份 bytes，不重新開啟原始來源。人工匯入也改走此流程，使用同一個檔案 descriptor 檢查 regular file、限制讀取大小，拒絕最末層符號連結及非 file URL。
+
+CAS 已存在時必須與準備資料完全相同；讀取頭像也核對內容指紋。損壞的既有 blob 不會被默默採用或覆寫。`PreparedAgentAvatarTests` 覆蓋準備零寫入、來源 bytes 改變後仍保存原內容、重複安裝／重開、損壞 CAS、空資料、無效格式、大小上限、符號連結與非 regular file。
+
+驗證：完整非平行 Swift 測試、原生 `Filicon App` Debug 建置及 `verify-package.sh --xcode-debug` 均通過。未啟動 App、未操作真實群組／帳號資料。測試 target 明確加入既有 CustomDump product，避免隱含依賴導致連結失敗。
+
+這只是共享 codec 基礎，不是模型圖片功能完成：尚未接模型主機／box 來源授權、5 MiB 模型限制、圖片核准及其生命週期，也尚未逐項驗證五種參考格式。檔案路徑檢查不宣稱能抵禦所有父目錄並行替換；模型來源仍須走既有工作區授權，不能直接呼叫人工匯入繞過權限。下一個切點是來源解析與真正圖片核准。
