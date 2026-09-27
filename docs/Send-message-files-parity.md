@@ -36,3 +36,17 @@
 隔離測試涵蓋有效含空白／中文 URL、12 種不合法 URL、正常／空檔案、拒絕、never、撤銷、symlink、directory、超限；讀取後改寫來源仍保有原始 bytes／hash，並核對準備不建立附件目錄。既有 avatar 來源測試同跑以驗證抽取未破壞授權、scope、FIFO 與遠端行為。依 pfw-testing 使用隔離 helper／grant 與 CustomDump 狀態比對，不改真實資料。
 
 驗證：定向測試、完整非平行 Swift 測試、原生 Debug build 均 exit 0；封裝與 deep strict 簽章檢查通過。日誌 `.build/validation/publication-source-{focused,full,native}.log` 不提交。未啟動 App／Xcode，未連線外部服務。
+
+## 第二階段：核准與 durable receipt 交易層（2026-09-28）
+
+`PreparedAgentPublicationFile` 移至 AppServices 成為不可變共用型別，驗證 basename 與既有文件／影片大小上限，保留 bytes／SHA-256。來源 adapter 仍受 helper 10 MiB 限制，移動型別不代表大檔 transport 已完成。
+
+新增 host-bound `AgentFilePublicationTransaction`：固定 conversation／sender，準備來源後重新檢查 scope，再將精確快照與 reply target 交給獨立 authorize，核准後再次檢查才進入 commit。沒有預設放行的 callback；真正的 commit 必須由 App 執行 quota、精確 bytes 安裝、訊息保存及最終生命週期檢查。此層不自行讀取磁碟、不假造 RoomMessage，也尚未接入 `AgentUserMessageTool` schema。
+
+commit 回條須匹配對話、sender、reply、檔名、bytes 數、digest，且不能重用本交易已見的 message ID。成功回條按 run／call ID 保存；相同輸入重播不再讀取、核准或寫入，更換輸入拒絕。保存一旦嘗試但拋錯或回條不符，該 identity 標為結果不明，禁止盲目重試；未提供 crash recovery，也不能假設未知保存已回滾。成功保存期間到達的取消不抹除 durable receipt，close 後只允許查回既有精確回條，不允許新發佈。這是記憶體內 per-turn 保護，不是跨程序去重。
+
+測試用隔離 callback 驗證正常、拒絕、read／review 後撤銷、prepare／save 失敗、六種回條不符、錯誤 context、close、八種無效檔名；continuation 控制核准／保存等待，驗證並行重入拒絕，以及 Stop 在核准階段不保存、在保存成功後不遺失 receipt。沒有真實帳號或附件保存副作用。
+
+待完成：App quota／附件保存 callback、核准 UI、模型 schema、group／direct／mailbox 的附件欄位及顯示、持久化重開與完整整合測試；大檔、遠端／HTTPS 及復原邊界仍保留。
+
+驗證：定向測試通過；含最終 Stop／並行情境的完整非平行 Swift 測試及原生 Debug build exit 0，deep strict 封裝／簽章通過。日誌 `.build/validation/publication-transaction-{focused,full,native}.log`。`pfw-testing` 的可控依賴方式用於精確暫停邊界，沒有用真實帳號、App 重啟或外部服務測試代替。

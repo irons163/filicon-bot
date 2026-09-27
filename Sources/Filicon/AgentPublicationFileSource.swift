@@ -1,21 +1,7 @@
-import CryptoKit
 import Foundation
+import FiliconAppServices
 import FiliconDomain
 import FiliconLocalTools
-
-/// Immutable publication input. No source URL survives into the payload, and no
-/// storage side effects occur until the host separately authorizes publication.
-struct PreparedAgentPublicationFile: Sendable, Equatable {
-    let bytes: Data
-    let filename: String
-    let digest: String
-
-    fileprivate init(bytes: Data, filename: String) {
-        self.bytes = bytes
-        self.filename = filename
-        self.digest = SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
-    }
-}
 
 struct AgentPublicationFileSource: Sendable {
     let reader: AuthorizedAgentFileReader
@@ -33,7 +19,7 @@ struct AgentPublicationFileSource: Sendable {
         }
         let bytes = try await reader.read(path: path, agentID: agentID, call: call, context: context,
             receiptPrefix: "publication-source", maximumBytes: Self.maximumBytes)
-        return PreparedAgentPublicationFile(bytes: bytes, filename: filename)
+        return try PreparedAgentPublicationFile(bytes: bytes, filename: filename)
     }
 
     static func localPath(_ value: String) throws -> String {

@@ -1,0 +1,124 @@
+import CryptoKit
+import Foundation
+import FiliconDomain
+
+/// Captured bytes, not a promise to read a mutable path after approval.
+public struct PreparedAgentPublicationFile: Sendable, Equatable {
+    public let bytes: Data
+    public let filename: String
+    public let digest: String
+
+    public init(bytes: Data, filename: String) throws {
+        guard !filename.isEmpty, filename != ".", filename != "..", filename.utf8.count <= 255,
+              !filename.contains("/"), !filename.contains("\\"),
+              !filename.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else {
+            throw AttachmentStoreError.invalidFilename
+        }
+        let limit = AttachmentLimits.byteLimit(filename: filename)
+        guard bytes.count <= limit else { throw AttachmentStoreError.tooLarge(filename: filename, limitBytes: limit) }
+        self.bytes = bytes
+        self.filename = filename
+        digest = SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
+    }
+}
+
+public enum AgentFilePublicationError: Error, Sendable, Equatable {
+    case unavailable, invalidReceipt, duplicateCall, busy, uncertainCommit
+}
+
+/// One host-owned turn's file publication transaction. The source reader and
+/// publication approver are independent capabilities. The commit callback must
+/// reserve quota, install these exact bytes and durably save the message, using
+/// the supplied call identity for idempotence. No default permissive callbacks.
+public actor AgentFilePublicationTransaction {
+    public struct Review: Sendable, Equatable {
+        public let conversationID: UUID
+        public let senderID: UUID
+        public let replyTo: UUID?
+        public let file: PreparedAgentPublicationFile
+    }
+    public struct Receipt: Sendable, Equatable {
+        public let messageID: UUID
+        public let conversationID: UUID
+        public let senderID: UUID
+        public let replyTo: UUID?
+        public let digest: String
+        public let filename: String
+        public let byteCount: Int
+
+        public init(messageID: UUID, conversationID: UUID, senderID: UUID, replyTo: UUID?,
+                    digest: String, filename: String, byteCount: Int) {
+            self.messageID = messageID; self.conversationID = conversationID; self.senderID = senderID
+            self.replyTo = replyTo; self.digest = digest; self.filename = filename; self.byteCount = byteCount
+        }
+    }
+    public typealias Prepare = @Sendable (String, NormalizedToolCall, ToolContext) async throws -> PreparedAgentPublicationFile
+    public typealias Authorize = @Sendable (Review, NormalizedToolCall, ToolContext) async throws -> Void
+    public typealias Commit = @Sendable (Review, NormalizedToolCall, ToolContext) async throws -> Receipt
+    private struct Key: Hashable { let runID: UUID; let callID: ToolCallID }
+    private struct Input: Equatable { let url: String; let replyTo: UUID? }
+    private struct Completed { let input: Input; let receipt: Receipt }
+    private let conversationID: UUID
+    private let senderID: UUID
+    private let prepare: Prepare
+    private let authorize: Authorize
+    private let commit: Commit
+    private let validateScope: @Sendable () async throws -> Void
+    private var completed: [Key: Completed] = [:]
+    private var attempted: Set<Key> = []
+    private var messageIDs: Set<UUID> = []
+    private var busy = false
+    private var closed = false
+
+    public init(conversationID: UUID, senderID: UUID, validateScope: @escaping @Sendable () async throws -> Void,
+                prepare: @escaping Prepare, authorize: @escaping Authorize, commit: @escaping Commit) {
+        self.conversationID = conversationID; self.senderID = senderID
+        self.validateScope = validateScope; self.prepare = prepare; self.authorize = authorize; self.commit = commit
+    }
+
+    public func close() { closed = true }
+
+    public func publish(url: String, replyTo: UUID?, call: NormalizedToolCall, context: ToolContext) async throws -> Receipt {
+        guard context.conversationID == conversationID, call.name == "SendMessage",
+              !url.isEmpty, url.utf8.count <= 16_384 else {
+            throw AgentFilePublicationError.unavailable
+        }
+        let key = Key(runID: context.runID, callID: call.id), input = Input(url: url, replyTo: replyTo)
+        // A known durable result remains queryable after cancellation/close;
+        // retrieving it never reads or writes anything again.
+        if let previous = completed[key] {
+            guard previous.input == input else { throw AgentFilePublicationError.duplicateCall }
+            return previous.receipt
+        }
+        guard !attempted.contains(key) else { throw AgentFilePublicationError.uncertainCommit }
+        guard !busy else { throw AgentFilePublicationError.busy }
+        busy = true
+        defer { busy = false }
+        try await checkScope()
+        let file = try await prepare(url, call, context)
+        try await checkScope()
+        let review = Review(conversationID: conversationID, senderID: senderID, replyTo: replyTo, file: file)
+        try await authorize(review, call, context)
+        try await checkScope()
+        // A thrown save can be ambiguous. Never repeat the side effect under
+        // this identity; recovery must inspect durable state, not blindly retry.
+        attempted.insert(key)
+        let receipt = try await commit(review, call, context)
+        guard receipt.conversationID == conversationID, receipt.senderID == senderID,
+              receipt.replyTo == replyTo, receipt.digest == file.digest,
+              receipt.filename == file.filename, receipt.byteCount == file.bytes.count,
+              !messageIDs.contains(receipt.messageID) else { throw AgentFilePublicationError.invalidReceipt }
+        messageIDs.insert(receipt.messageID)
+        completed[key] = Completed(input: input, receipt: receipt)
+        // Do not erase or misreport a durable save if Stop arrived during it.
+        return receipt
+    }
+
+    private func checkScope() async throws {
+        try Task.checkCancellation()
+        guard !closed else { throw AgentFilePublicationError.unavailable }
+        try await validateScope()
+        try Task.checkCancellation()
+        guard !closed else { throw AgentFilePublicationError.unavailable }
+    }
+}
