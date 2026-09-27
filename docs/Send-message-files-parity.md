@@ -1,6 +1,6 @@
 # SendMessage 檔案與媒體交付核對
 
-2026-09-27；來源核對 Filicon 基準 `549f96f`，reference `grok-bot-0.18-reconstructed` 基準 `a9f633e09d49a85829b8236331b9e21f7e612634`。狀態：**來源準備層已實作，發佈尚未接線**。本文件不代表全部 parity 已重驗。
+2026-09-27；來源核對 Filicon 基準 `549f96f`，reference `grok-bot-0.18-reconstructed` 基準 `a9f633e09d49a85829b8236331b9e21f7e612634`。狀態：**來源、交易與快照儲存元件已實作，App 發佈尚未接線**。本文件不代表全部 parity 已重驗。
 
 ## 來源證據
 
@@ -50,3 +50,19 @@ commit 回條須匹配對話、sender、reply、檔名、bytes 數、digest，�
 待完成：App quota／附件保存 callback、核准 UI、模型 schema、group／direct／mailbox 的附件欄位及顯示、持久化重開與完整整合測試；大檔、遠端／HTTPS 及復原邊界仍保留。
 
 驗證：定向測試通過；含最終 Stop／並行情境的完整非平行 Swift 測試及原生 Debug build exit 0，deep strict 封裝／簽章通過。日誌 `.build/validation/publication-transaction-{focused,full,native}.log`。`pfw-testing` 的可控依賴方式用於精確暫停邊界，沒有用真實帳號、App 重啟或外部服務測試代替。
+
+## 第三階段：快照附件儲存（2026-09-28）
+
+`AttachmentStore.ingest(prepared:createdAt:)` 安裝已擷取 bytes，不重讀來源。固定 root descriptor 與 shard descriptor，以 `O_NOFOLLOW` 拒絕符號連結；blob 也拒絕 directory／FIFO。獨占 temporary file、同步內容後以不覆寫的 `linkat` 建立 CAS 名稱，既有或競爭勝出的 blob 必須大小與完整 bytes 都一致，不覆寫損壞內容。root 的祖先仍由 host 選定並信任，這不是對任意模型目的路徑的寫入 API。
+
+暫存檔沿用根目錄 `.ingest-` 命名，能被既有 inventory／reconcile 辨識。注入 blob 已写入、upload index 尚未保存的中斷後，隔離復原會將未索引內容移到可回復 quarantine，重新 stage／commit 後可讀；沒有對真實資料執行 reconcile 或自動清理。這不等於交易 receipt 跨程序復原或全部 crash 邊界完成。
+
+新增 `AttachmentLifecycle.stage(prepared:)`，quota check 在 blob 安裝前，並沿用 staged upload／reference repository。這個既有 quota check 是政策檢查，**不是 AppQuotaWriter 的原子 reservation**；App 仍須在此操作外保留配額及檢查最終 scope，不能以本輪測試宣稱該接線完成。
+
+檔名保留精確 basename；MIME 由 host 推斷，不接收模型指定值。HTML／XHTML 降為一般二進位附件；圖片只有通過現有 PNG／JPEG 驗證才標為可顯示圖片，SVG 或假圖片降為二進位。其他型別依副檔名推斷，尚非完整媒體內容驗證，也未新增自動執行或 HTML renderer。
+
+隔離測試涵蓋文字／空檔案／HTML／SVG／假圖片、重開、reference commit、重用去重、兩個 store 並行、內容損壞、shard／blob symlink、FIFO、directory、quota 拒絕及 staging 中斷復原。依 pfw-testing 注入固定時間與故障點，驗證 bytes、metadata、索引與外部目錄未被改寫。
+
+仍待 App 發佈核准 UI、原子配額、模型入口、三種聊天附件接線，以及大檔／远端來源與整體端到端驗收。
+
+驗證：定向測試通過；含最終並行及中斷復原測試的完整非平行 Swift 測試、原生 Debug build 均 exit 0，deep strict 封裝／簽章通過。日誌 `.build/validation/publication-storage-{focused,full,native}.log` 不提交，未啟動 App／Xcode。

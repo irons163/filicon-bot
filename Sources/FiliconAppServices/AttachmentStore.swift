@@ -1,4 +1,5 @@
 import CryptoKit
+import Darwin
 import Foundation
 import UniformTypeIdentifiers
 import FiliconDomain
@@ -181,6 +182,68 @@ public actor AttachmentStore {
             throw AttachmentStoreError.corrupt(metadata.id)
         }
         return data
+    }
+
+    /// Installs the exact reviewed snapshot. Descriptor-relative creation never
+    /// follows a shard/blob symlink and never overwrites an existing CAS entry.
+    /// The caller must reserve quota before entering this synchronous operation.
+    public func ingest(prepared: PreparedAgentPublicationFile, createdAt: Date) throws -> AttachmentMetadata {
+        try Task.checkCancellation()
+        try fileManager.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        let root = open(rootURL.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard root >= 0 else { throw AttachmentStoreError.corrupt("unsafe-root-directory") }
+        defer { Darwin.close(root) }
+        let shard = String(prepared.digest.prefix(2))
+        guard mkdirat(root, shard, 0o700) == 0 || errno == EEXIST else {
+            throw AttachmentStoreError.corrupt("cannot-create-shard")
+        }
+        let directory = openat(root, shard, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard directory >= 0 else { throw AttachmentStoreError.corrupt("unsafe-prefix-directory") }
+        defer { Darwin.close(directory) }
+
+        func verifyExisting() throws {
+            let descriptor = openat(directory, prepared.digest, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+            guard descriptor >= 0 else { throw AttachmentStoreError.corrupt(prepared.digest) }
+            let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+            defer { try? handle.close() }
+            var info = stat()
+            guard fstat(descriptor, &info) == 0, (info.st_mode & S_IFMT) == S_IFREG,
+                  info.st_size == prepared.bytes.count else { throw AttachmentStoreError.corrupt(prepared.digest) }
+            let bytes = try handle.read(upToCount: prepared.bytes.count + 1) ?? Data()
+            guard bytes == prepared.bytes else { throw AttachmentStoreError.corrupt(prepared.digest) }
+        }
+        var info = stat()
+        if fstatat(directory, prepared.digest, &info, AT_SYMLINK_NOFOLLOW) == 0 {
+            try verifyExisting()
+        } else {
+            guard errno == ENOENT else { throw AttachmentStoreError.corrupt(prepared.digest) }
+            let name = ".ingest-publication-\(UUID().uuidString)"
+            let descriptor = openat(root, name, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
+            guard descriptor >= 0 else { throw AttachmentStoreError.corrupt("cannot-create-temporary") }
+            let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+            defer { try? handle.close(); unlinkat(root, name, 0) }
+            try handle.write(contentsOf: prepared.bytes)
+            try handle.synchronize()
+            try Task.checkCancellation()
+            // linkat is exclusive, unlike rename which could replace a winner.
+            if linkat(root, name, directory, prepared.digest, 0) != 0 {
+                guard errno == EEXIST else { throw AttachmentStoreError.corrupt("cannot-install-blob") }
+                try verifyExisting()
+            }
+            guard fsync(directory) == 0, fsync(root) == 0 else { throw AttachmentStoreError.corrupt("cannot-sync-shard") }
+        }
+        let inferred = UTType(filenameExtension: (prepared.filename as NSString).pathExtension)?.preferredMIMEType
+            ?? "application/octet-stream"
+        // Never promote active document formats or unverified image bytes into
+        // an inline renderer merely because their filename has an extension.
+        let mime: String
+        if inferred.hasPrefix("image/") {
+            mime = (try? AgentImageStore.validate(prepared.bytes)) ?? "application/octet-stream"
+        } else if ["text/html", "application/xhtml+xml"].contains(inferred) {
+            mime = "application/octet-stream"
+        } else { mime = inferred }
+        return .init(id: prepared.digest, filename: prepared.filename, mimeType: mime,
+            byteCount: Int64(prepared.bytes.count), kind: Self.kind(for: mime), createdAt: createdAt)
     }
 
     public func remove(id: String) throws {

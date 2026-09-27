@@ -98,6 +98,20 @@ public actor AttachmentLifecycle {
         return upload
     }
 
+    /// Stages only the captured reviewed bytes; never reopens a source URL.
+    /// App-level quota reservation must encompass this operation as well.
+    public func stage(prepared: PreparedAgentPublicationFile) async throws -> StagedAttachment {
+        try Task.checkCancellation()
+        try await checkQuota(requestedBytes: Int64(prepared.bytes.count))
+        try Task.checkCancellation()
+        let metadata = try await store.ingest(prepared: prepared, createdAt: clock())
+        try injectFault(.afterBlobWriteBeforeUploadIndex)
+        let upload = StagedAttachment(id: UUID(), metadata: metadata)
+        try await references.registerUpload(upload, stagedAt: clock())
+        try injectFault(.afterUploadIndex)
+        return upload
+    }
+
     /// DB-first makes a committed message durable even if restoring a file is
     /// interrupted; startup reconciliation can replay the restore.
     public func commit(_ upload: StagedAttachment, to owner: AttachmentReferenceOwner) async throws -> AttachmentMetadata {
