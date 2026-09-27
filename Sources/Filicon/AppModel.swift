@@ -2215,6 +2215,7 @@ final class AppModel: ObservableObject {
                             try await self.authorizeAgentImagePublication(sender: sender, text: text,
                                 images: images, call: call, context: context)
                         },
+                        mailboxFiles: makeMailboxFileFactory(originID: id, generation: publicationGeneration),
                         authorize: { [weak self] sender, recipient, text, call, context in
                             guard let self else { throw CancellationError() }
                             try await self.validateDirectDelegation(conversationID: id, binding: agentBinding,
@@ -2696,6 +2697,29 @@ final class AppModel: ObservableObject {
         openAttachmentGallery(metadata, gallery: gallery) { candidate in
             guard accountGeneration == self.autoReviewAccountGeneration else { throw CancellationError() }
             return try await self.agentMessageImageData(candidate)
+        }
+    }
+
+    func openMailboxMessageFile(_ metadata: AttachmentMetadata, messageID: UUID, incomingID: UUID) {
+        guard !agentMessagingAccountTransition, let messenger = agentMessenger, let attachmentLifecycle,
+              let incoming = agentMessages.first(where: { $0.id == incomingID }),
+              let origin = incoming.delivery?.originConversationID,
+              incoming.delivery?.publications?.contains(where: { $0.id == messageID && $0.files?.contains(metadata) == true }) == true else { return }
+        let generation = autoReviewAccountGeneration
+        openAttachmentGallery(metadata, gallery: [metadata]) { candidate in
+            @MainActor func check() throws {
+                guard generation == self.autoReviewAccountGeneration, !self.agentMessagingAccountTransition else { throw CancellationError() }
+            }
+            try check()
+            let current = await messenger.allMessages().first(where: { $0.id == incomingID })
+            guard current?.delivery?.originConversationID == origin,
+                  current?.delivery?.publications?.contains(where: { $0.id == messageID && $0.files?.contains(candidate) == true }) == true else {
+                throw AttachmentPreviewError.previewFileUnavailable
+            }
+            try check()
+            let data = try await attachmentLifecycle.data(for: candidate, owner: .init(conversationID: origin, messageID: messageID))
+            try check()
+            return data
         }
     }
 
@@ -4050,6 +4074,7 @@ final class AppModel: ObservableObject {
                     try await self.authorizeAgentImagePublication(sender: sender, text: text,
                         images: images, call: call, context: context)
                 },
+                mailboxFiles: makeMailboxFileFactory(originID: originID, generation: generation),
                 authorize: { [weak self] sender, recipient, text, call, context in
                     guard let self else { throw CancellationError() }
                     try await MainActor.run {
@@ -4100,6 +4125,7 @@ final class AppModel: ObservableObject {
                 try await self.authorizeAgentImagePublication(sender: sender, text: text, images: images, call: call, context: context)
             },
             groupFiles: makeGroupFileServices(originID: originID, generation: generation),
+            mailboxFiles: makeMailboxFileFactory(originID: originID, generation: generation),
             authorize: { [weak self] sender, recipient, text, call, context in
                 guard let self else { throw CancellationError() }
                 try await self.authorizeAgentDelegation(sender: sender, recipient: recipient, text: text, call: call, context: context)
@@ -4108,6 +4134,126 @@ final class AppModel: ObservableObject {
     }
 
     func groupApprovalScope(_ groupID: UUID) -> UUID { delegatedGroupOrigins[groupID] ?? groupID }
+
+    private func makeMailboxFileFactory(originID: UUID, generation: UInt64) -> (@Sendable (AgentMessage) -> AgentMailboxFileServices?)? {
+        guard quotaWriter != nil, attachmentLifecycle != nil else { return nil }
+        return { [weak self] incoming in
+            guard let self else { return nil }
+            let services = AgentFilePublicationServices(prepare: { [weak self] sender, url, call, context in
+                guard let self else { throw CancellationError() }
+                return try await self.prepareMailboxFile(incoming, sender: sender, url: url, call: call,
+                    context: context, originID: originID, generation: generation)
+            }, authorize: { [weak self] sender, review, call, context in
+                guard let self else { throw CancellationError() }
+                try await self.authorizeMailboxFile(incoming, sender: sender, review: review, call: call,
+                    context: context, originID: originID, generation: generation)
+            }, commit: { [weak self] review, _, _, save in
+                guard let self else { throw CancellationError() }
+                return try await self.commitMailboxFile(incoming, review: review,
+                    originID: originID, generation: generation, save: save)
+            })
+            return .init(incomingID: incoming.id, originID: originID, senderID: incoming.recipientID,
+                services: services, validate: { [weak self] in
+                    guard let self else { throw CancellationError() }
+                    try await self.checkMailboxFileScope(incoming, originID: originID, generation: generation)
+                })
+        }
+    }
+
+    private func checkMailboxFileScope(_ incoming: AgentMessage, originID: UUID, generation: UInt64) async throws {
+        func check() throws {
+            try Task.checkCancellation()
+            guard generation == autoReviewAccountGeneration, !agentMessagingAccountTransition,
+                  isAgentMessagingScopeActive(originID), incoming.delivery?.originConversationID == originID,
+                  agentMessagingSessions[originID]?.id == incoming.delivery?.chainID,
+                  agents.contains(where: { $0.id == incoming.senderID && $0.archivedAt == nil }),
+                  agents.contains(where: { $0.id == incoming.recipientID && $0.archivedAt == nil }) else { throw CancellationError() }
+        }
+        try check()
+        guard let messenger = agentMessenger,
+              let current = await messenger.allMessages().first(where: { $0.id == incoming.id }),
+              current.senderID == incoming.senderID, current.recipientID == incoming.recipientID,
+              current.delivery?.chainID == incoming.delivery?.chainID,
+              current.delivery?.originConversationID == originID, current.delivery?.state == .running else { throw CancellationError() }
+        try check()
+    }
+
+    private func prepareMailboxFile(_ incoming: AgentMessage, sender: AgentProfile, url: String,
+        call: NormalizedToolCall, context: ToolContext, originID: UUID, generation: UInt64) async throws -> PreparedAgentPublicationFile {
+        guard context.conversationID == originID, sender.id == incoming.recipientID else { throw AgentMessagingError.scopeMismatch }
+        let reader = AuthorizedAgentFileReader(runtime: localToolRuntime, folders: workspaceFolders,
+            policy: localToolPermissionPolicy, validateScope: { [weak self] in
+                guard let self else { throw CancellationError() }
+                try await self.checkMailboxFileScope(incoming, originID: originID, generation: generation)
+            }, authorizeRead: { [weak self] operation, context, callID in
+                guard let self else { throw CancellationError() }
+                let target = try await self.localToolRuntime.authorizationTarget(for: operation)
+                let decision = await self.localToolPermissionPolicy.evaluate(action: .readFile,
+                    conversationID: context.conversationID, toolCallID: "publication-source:\(callID.rawValue)", title: target, reason: "SendMessage")
+                switch decision {
+                case .denied: throw LocalToolError.permissionMismatch
+                case .requiresApproval(let request):
+                    guard await self.localToolApprovalBroker.requestApproval(request) else { throw CancellationError() }
+                case .allowed: break
+                }
+            })
+        return try await AgentPublicationFileSource(reader: reader).prepare(url: url, agentID: sender.id, call: call, context: context)
+    }
+
+    private func authorizeMailboxFile(_ incoming: AgentMessage, sender: AgentProfile,
+        review: AgentFilePublicationTransaction.Review, call: NormalizedToolCall, context: ToolContext,
+        originID: UUID, generation: UInt64) async throws {
+        try await checkMailboxFileScope(incoming, originID: originID, generation: generation)
+        guard review.senderID == sender.id, sender.id == incoming.recipientID,
+              review.conversationID == originID, context.conversationID == originID else { throw AgentMessagingError.scopeMismatch }
+        let fence = ApprovalFence(accountID: settings.accountScope ?? "local", agentID: originID.uuidString.lowercased(),
+            runID: context.runID, generation: generation)
+        await autoReviewBroker.activate(fence)
+        let details = "\(review.file.filename)\n\(ByteCountFormatter.string(fromByteCount: Int64(review.file.bytes.count), countStyle: .file))\nSHA-256: \(review.file.digest)"
+        let action = AutoReviewAction(summary: "\(sender.name) → \(l10n("User in this conversation")): \(review.file.filename)",
+            target: .resource(kind: "conversation", identifier: originID.uuidString), risks: [.sensitive],
+            context: .init(fence: fence, conversationID: originID, toolCallID: call.id.rawValue,
+                metadata: ["tool": "SendMessage", "agentFilePublication": "true", "agentMessage": details,
+                    "mailboxIncomingID": incoming.id.uuidString]))
+        let pending = PendingApproval(action: action, reason: "Approval required", expiresAt: Date().addingTimeInterval(300))
+        try await autoReviewBroker.waitForApprovalToExecute(pending) { [weak self] in await self?.registerAutoReviewApproval($0) }
+        try await checkMailboxFileScope(incoming, originID: originID, generation: generation)
+    }
+
+    private func commitMailboxFile(_ incoming: AgentMessage, review: AgentFilePublicationTransaction.Review,
+        originID: UUID, generation: UInt64, save: @escaping AgentFilePublicationServices.Save) async throws -> RoomMessage {
+        try await checkMailboxFileScope(incoming, originID: originID, generation: generation)
+        guard let attachmentLifecycle, let agentMessenger, review.senderID == incoming.recipientID,
+              review.conversationID == originID else { throw AgentFilePublicationError.unavailable }
+        let upload = try await quotaWrite(scope: "attachment-blob", key: review.file.digest, data: review.file.bytes) { [weak self] in
+            guard let self else { throw CancellationError() }
+            try await self.checkMailboxFileScope(incoming, originID: originID, generation: generation)
+            return try await attachmentLifecycle.stage(prepared: review.file)
+        }
+        let messageID = UUID()
+        let fileOwner = AttachmentReferenceOwner(conversationID: originID, messageID: messageID)
+        var committedMetadata: AttachmentMetadata?
+        do {
+            try await checkMailboxFileScope(incoming, originID: originID, generation: generation)
+            let metadata = try await attachmentLifecycle.commit(upload, to: fileOwner)
+            committedMetadata = metadata
+            let record = RoomMessage(id: messageID, groupID: originID, senderID: review.senderID, text: "", files: [metadata])
+            return try await quotaWrite(scope: "mailbox-file-message", key: messageID.uuidString, data: JSONEncoder().encode(record)) { [weak self] in
+                guard let self else { throw CancellationError() }
+                try await self.checkMailboxFileScope(incoming, originID: originID, generation: generation)
+                return try await save(metadata, messageID)
+            }
+        } catch {
+            if let committedMetadata,
+               let saved = await agentMessenger.allMessages().first(where: { $0.id == incoming.id })?.delivery?.publications?.first(where: { $0.id == messageID }),
+               saved.senderID == review.senderID, saved.files == [committedMetadata] {
+                return (try? await agentMessenger.replyDirectory(replyingTo: incoming.id))?.first(where: { $0.id == messageID }) ?? saved
+            }
+            try? await attachmentLifecycle.removeReferences(owner: fileOwner)
+            try? await attachmentLifecycle.abort(upload)
+            throw error
+        }
+    }
 
     private func makeGroupFileServices(originID: UUID, generation: UInt64, destinationID: UUID? = nil, dispatchID: UUID? = nil) -> AgentGroupFilePublicationServices? {
         guard quotaWriter != nil, attachmentLifecycle != nil,

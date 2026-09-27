@@ -244,7 +244,8 @@ struct AgentMessagingView: View {
             onAnswer: { message, answer in
                 Task { await model.answerMailboxQuestion(incomingID: incoming.id, publicationID: message.id, answer: answer) }
             }, secretModel: { model.mailboxSecretCards[$0.id] },
-            secretEnabled: { model.canUseMailboxSecret(incoming, publication: $0) })
+            secretEnabled: { model.canUseMailboxSecret(incoming, publication: $0) },
+            onOpenFile: { message, file in model.openMailboxMessageFile(file, messageID: message.id, incomingID: incoming.id) })
     }
 
     private func referenceLinkTapped(target: UUID, publication: RoomMessage, incoming: AgentMessage) {
@@ -353,6 +354,7 @@ struct AgentPublishedResponses: View {
     var onAnswer: (RoomMessage, AgentQuestionAnswer) -> Void = { _, _ in }
     var secretModel: (RoomMessage) -> AgentSecretRequestCardModel? = { _ in nil }
     var secretEnabled: (RoomMessage) -> Bool = { _ in false }
+    var onOpenFile: ((RoomMessage, AttachmentMetadata) -> Void)?
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Label(l10n("Published response"), systemImage: "bubble.left.and.text.bubble.right").font(.caption).foregroundStyle(.secondary)
@@ -383,6 +385,19 @@ struct AgentPublishedResponses: View {
                         RichMarkdownView(source: publication.text, messageReferences: references(publication))
                     }
                     if let images = publication.images, !images.isEmpty { AgentMessageImagePreviews(images: images) }
+                    ForEach(publication.files ?? []) { file in
+                        Button { onOpenFile?(publication, file) } label: {
+                            HStack {
+                                Image(systemName: "doc")
+                                Text(verbatim: file.filename).lineLimit(2)
+                                Text(ByteCountFormatter.string(fromByteCount: file.byteCount, countStyle: .file))
+                                    .font(.caption).foregroundStyle(.secondary)
+                                Image(systemName: "eye")
+                            }
+                        }
+                        .buttonStyle(.borderless).disabled(onOpenFile == nil)
+                        .accessibilityIdentifier("mailbox-file-\(file.id)")
+                    }
                 }
             }
         }
@@ -405,12 +420,16 @@ struct MailboxReplyPreview: View {
                     Text(verbatim: original.text).font(.callout).textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
                     if let images = original.images, !images.isEmpty { AgentMessageImagePreviews(images: images) }
+                    ForEach(original.files ?? []) { file in
+                        Label(file.filename, systemImage: "doc").font(.caption)
+                    }
                 } label: {
                     VStack(alignment: .leading, spacing: 3) {
                         Label(l10n("Replying to"), systemImage: "arrowshape.turn.up.left").font(.caption2)
                         Text(verbatim: author).font(.caption.weight(.semibold)).lineLimit(1)
-                        Text(verbatim: original.text.isEmpty && !(original.images ?? []).isEmpty
-                            ? l10n("Image") : String(original.text.prefix(240)))
+                        Text(verbatim: original.text.isEmpty
+                            ? original.files?.first?.filename ?? (!(original.images ?? []).isEmpty ? l10n("Image") : "")
+                            : String(original.text.prefix(240)))
                             .font(.caption).lineLimit(3)
                     }
                 }

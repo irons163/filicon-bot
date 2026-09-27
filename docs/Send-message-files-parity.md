@@ -236,3 +236,15 @@ AgentMessagingSession 可由 host 為每次 incoming 提供 AgentMailboxFileServ
 此階段隔離測試注入 AttachmentStore，尚非 App quota／owner 的端到端證據。AppModel 尚未注入 mailboxFiles；主程式的核准、附件 lifecycle、direct mirror／preview 仍待完成，不能宣稱真實信箱傳檔可用。
 
 驗證：10 種信箱情境與完整非平行 Swift 回歸通過（exit 0），原生 Debug build、deep strict 封裝／簽章通過。日誌 `.build/validation/mailbox-file-session-final-full.log`、`mailbox-file-session-native.log`。初版測試把重複 tool ID 當成正常回合、並假定短地址前綴，已分離防重送情境並改為比對實際 canonical 地址；沒有放寬 production 防重送規則。未啟動 App 或改真實資料。
+
+## 第十八階段：App 信箱檔案核准、owner 與預覽（2026-09-28）
+
+AppModel 的信箱與 direct 委派 session 注入 mailboxFiles。每次讀取／核准／保存核對帳號 generation、當前 session chain ID、確切 incoming ID、running delivery 與存活的雙方代理人。來源只經 AuthorizedAgentFileReader 的工作區授權與 readFile gate；檔案發布另顯示檔名、byte count、digest 的人工核准。
+
+主程式以 quotaWrite 保存 immutable bytes，建立 `(originID, messageID)` 附件 owner 後才保存信箱訊息。保存失敗移除 owner 並 abort；晚到的 quota ledger 失敗則核對已保存 canonical metadata，保留 owner 並回傳具短地址回條。metadata 比對使用 lifecycle.commit 的結果，避免 SQLite 日期精度差異造成誤判。
+
+信箱發布列加入檔名／大小／預覽按鈕，引用預覽顯示 file-only 檔名。開啟前核對 incoming 的正式 publication、帳號 generation 與 lifecycle owner。依 pfw-modern-swiftui 沿用既有預覽機制；依 pfw-testing 加入 9 種 App 隔離情境：核准、拒絕、停止、換帳號、核准後來源變更、quota reserve／blob／message 故障、真正 atomic write 失敗；成功案例驗證 durable bytes、回條與預覽，失敗寫入驗證無 owner 且 blob quarantined。另驗證七語系檔案列渲染。
+
+本批信箱入口已接線；direct 委派使用同一工廠但其轉錄／恢復仍需專屬端到端案例，direct 主回合自身的一般檔案發布仍缺。遠端 URL／媒體、ABA／crash recovery 與外部服務驗收仍未完成，不能據此宣稱完整 parity。
+
+驗證：9 種 App 情境、七語系渲染與完整非平行 Swift 回歸 exit 0；原生 Debug build 及 deep strict 封裝／簽章通過。日誌 `.build/validation/mailbox-file-app-final-{full,native}.log`。未重啟使用者 App／Xcode，沒有修改真實帳號、聊天或 Keychain。

@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 import Testing
 import CustomDump
 import FiliconAgents
@@ -28,7 +29,9 @@ private final class GroupFileQuotaFault: @unchecked Sendable {
             if mode == "quota-message" {
                 let state = try JSONSerialization.jsonObject(with: Data(contentsOf: groupsURL)) as? [String: Any]
                 let messages = state?["roomMessages"] as? [[String: Any]] ?? []
-                guard messages.contains(where: { ($0["files"] as? [Any])?.isEmpty == false }) else { return }
+                let mailbox = state?["messages"] as? [[String: Any]] ?? []
+                let publications = mailbox.flatMap { (($0["delivery"] as? [String: Any])?["publications"] as? [[String: Any]]) ?? [] }
+                guard (messages + publications).contains(where: { ($0["files"] as? [Any])?.isEmpty == false }) else { return }
             }
         }
         self.mode = nil
@@ -72,6 +75,107 @@ private struct GroupFileAppProvider: AIProvider {
 
 @Suite("App group file publication", .timeLimit(.minutes(1)))
 @MainActor struct GroupFilePublicationAppTests {
+    @Test(arguments: ["approve", "deny", "stop", "account", "source-changed", "quota-reserve", "quota-blob", "quota-message", "message-write"])
+    func mailboxPublishesReviewedFileWithDurableOwner(mode: String) async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "filicon-mailbox-file-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let workspace = root.appending(path: "workspace")
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        let source = workspace.appending(path: "report.txt"), bytes = Data("Reviewed mailbox artifact".utf8)
+        try bytes.write(to: source)
+        let grants = WorkspaceAuthorizationStore(fileURL: root.appending(path: "grants.json"))
+        try await grants.authorize(workspace)
+        let generation = UUID(), key = Data(repeating: 13, count: 32)
+        let authenticator = LocalSessionAuthenticator(sessionKey: key)
+        let helper = LocalToolProcessHost(generation: generation, requiresPermissionReceipts: true,
+            authenticate: { _ in true }, verifyReceipt: { authenticator.verify($0) })
+        let runtime = LocalToolRuntime(workspaceStore: grants, generation: generation, sessionKey: key, helper: helper)
+        let mailboxURL = root.appending(path: "agent-messages.json"), backupURL = root.appending(path: "mailbox.backup")
+        let fault = GroupFileQuotaFault(groupsURL: mailboxURL)
+        let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false, localToolRuntime: runtime,
+            quotaFaultInjector: { try fault.inject($0) })
+        await model.bootstrap()
+        try await model.localToolPermissionPolicy.setChoice(.always, for: .readFile)
+        await model.registry.register(GroupFileAppProvider(url: source.absoluteString))
+        let senderValue = await model.createAgent(name: "Sender", summary: "", instructions: "", providerID: "group-file-app", modelID: "test")
+        let recipientValue = await model.createAgent(name: "Recipient", summary: "", instructions: "", providerID: "group-file-app", modelID: "test")
+        let sender = try #require(senderValue), recipient = try #require(recipientValue)
+        #expect(await model.sendAgentMessage(senderID: sender.id, recipientID: recipient.id, text: "Send report"))
+        let approval = try await pending(model)
+        let originID = approval.action.context.conversationID
+        expectNoDifference(approval.action.context.metadata["agentFilePublication"], "true")
+        #expect(approval.action.context.metadata["mailboxIncomingID"] != nil)
+        #expect(approval.action.context.metadata["agentMessage"]?.contains("report.txt") == true)
+        if mode == "source-changed" { try Data("Changed source".utf8).write(to: source) }
+        if mode == "stop" { await model.stopAgentMessages(scopeID: originID) }
+        if mode == "account" { await model.cancelAutoReviewApprovals(nextAccountID: "other") }
+        if mode.hasPrefix("quota-") { fault.arm(mode) }
+        if mode == "message-write" {
+            try FileManager.default.moveItem(at: mailboxURL, to: backupURL)
+            try FileManager.default.createDirectory(at: mailboxURL, withIntermediateDirectories: false)
+        }
+        await model.resolveGroupApproval(approval, groupID: originID, approve: mode != "deny")
+        let deadline = ContinuousClock.now + .seconds(10)
+        while model.runningAgentMessageScopes.contains(originID), ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(!model.runningAgentMessageScopes.contains(originID))
+        #expect(model.pendingAutoReviewApprovals.isEmpty)
+        if mode.hasPrefix("quota-") { #expect(fault.didTrigger) }
+        if mode == "message-write" {
+            let prepared = try PreparedAgentPublicationFile(bytes: bytes, filename: "report.txt")
+            let index = try AttachmentReferenceRepository(databaseURL: root.appending(path: "attachment-index.sqlite"))
+            let count = try await index.referenceCount(blobID: prepared.digest)
+            expectNoDifference(count, 0)
+            let blob = try await index.blob(id: prepared.digest)
+            expectNoDifference(blob?.state, .quarantined)
+            try FileManager.default.removeItem(at: mailboxURL)
+            try FileManager.default.moveItem(at: backupURL, to: mailboxURL)
+        }
+        let agents = try AgentService(storeURL: root.appending(path: "agents.json"))
+        let messenger = try AgentMessenger(service: agents, storeURL: root.appending(path: "agent-messages.json"))
+        let messages = await messenger.allMessages()
+        let files = messages.flatMap { $0.delivery?.publications ?? [] }.filter { $0.files?.isEmpty == false }
+        expectNoDifference(files.count, ["approve", "source-changed", "quota-message"].contains(mode) ? 1 : 0)
+        if let message = files.first, let file = message.files?.first {
+            expectNoDifference(messages.first?.delivery?.state, .completed)
+            let lifecycle = try AttachmentLifecycle.live(applicationSupportDirectory: root)
+            let data = try await lifecycle.data(for: file, owner: .init(conversationID: originID, messageID: message.id))
+            expectNoDifference(data, bytes)
+            let directory = try await messenger.replyDirectory(replyingTo: messages[0].id)
+            #expect(directory.contains(where: { $0.id == message.id && $0.shortAddress != nil }))
+            model.openMailboxMessageFile(file, messageID: UUID(), incomingID: messages[0].id)
+            #expect(model.attachmentPreview == nil)
+            model.openMailboxMessageFile(file, messageID: message.id, incomingID: messages[0].id)
+            let previewDeadline = ContinuousClock.now + .seconds(5)
+            while model.attachmentPreview == nil && ContinuousClock.now < previewDeadline {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            let preview = try #require(model.attachmentPreview)
+            expectNoDifference(try Data(contentsOf: preview.fileURL), bytes)
+            model.dismissAttachmentPreview()
+        }
+    }
+
+    @Test(arguments: ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"])
+    func mailboxFileRowRenders(language: String) throws {
+        try FiliconLocalization.$languageOverride.withValue(language) {
+            let file = AttachmentMetadata(id: String(repeating: "a", count: 64), filename: "產品報告-report.txt",
+                mimeType: "text/plain", byteCount: 512, kind: .document)
+            let publication = RoomMessage(groupID: UUID(), senderID: UUID(), text: "", files: [file])
+            let host = NSHostingView(rootView: AgentPublishedResponses(publications: [publication],
+                onOpenFile: { _, _ in Issue.record("Rendering must not open files") })
+                .padding(16).frame(width: 420).environment(\.locale, Locale(identifier: language)))
+            let size = host.fittingSize
+            expectNoDifference(size.width, 420)
+            #expect(size.height > 40 && size.height < 250)
+            host.frame = .init(origin: .zero, size: size)
+            host.layoutSubtreeIfNeeded()
+            let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+        }
+    }
+
     @Test(arguments: ["approve", "deny", "stop", "destination-stop", "account", "members", "source-changed", "quota-reserve", "quota-blob", "quota-message", "message-write"], ["foreground", "group", "direct", "mailbox"])
     func requiresApprovalAndKeepsReviewedBytes(mode: String, route: String) async throws {
         let background = route != "foreground"
