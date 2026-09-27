@@ -184,3 +184,15 @@ App 隔離 fixture 以不同來源／目的群組實際執行 SendToAgent → Se
 這是 direct／mailbox **委派至群組**的傳檔驗收，不代表 direct／mailbox 本身已有一般檔案發布入口。同一目的群組的新委派取代舊委派（ABA）、配額／保存故障及 crash recovery 仍待驗證；遠端來源與媒體能力亦未完成。依 pfw-testing 使用隔離 helper／資料，不改真實聊天、不重啟 App。
 
 驗證：28 種定向案例及完整非平行 Swift 測試 exit 0；原生 Debug build、deep strict 封裝／簽章通過。日誌 `.build/validation/direct-background-files-{target-final,full,native}.log`。初版測試有 optional UUID／review ID 型別編譯錯誤及未等待非同步核准的時序問題，修正後才重現並修復上述 direct 停止缺陷。
+
+## 第十三階段：配額失敗與已保存附件的復原（2026-09-28）
+
+四條 App 路徑各增加保存前 reservation 失敗、blob 記帳後失敗、訊息已保存後 quota commit 失敗，共 12 種故障案例（總計 40 種）。故障僅在傳檔核准時啟用；訊息後故障會先讀取隔離 groups.json 確認檔案訊息已落盤。檢查實際觸發故障、目的訊息數、重開附件 owner／bytes、成功工具活動及配額 reconcile，不只核對文字回覆。
+
+測試重現晚到 quota 錯誤造成已保存附件引用被刪除：commitGroupPublicationFile 的復原比較用了 stage 回傳的 metadata，但 attachmentLifecycle.commit 回傳的是 SQLite timestamp round-trip 後的 metadata，Date 浮點精度可能不同。原本完整相等比較因此失敗，進入清理分支。修正為保留 commit 回傳、實際交給 save 的 metadata，復原時仍完整比較已保存訊息 ID／作者／附件，而非放寬成只比較 digest。
+
+最初 40 案例跑法在 direct 來源失敗；不改程式重跑又在 foreground／mailbox 重現。修正後定向案例全部通過。保存前或 blob 階段錯誤沒有附件訊息；訊息保存後錯誤仍取得成功工具活動，附件可透過目的 owner 讀取。依 pfw-testing 使用隔離 quota fault injector，未改真實資料或重啟 App。
+
+此階段不是所有儲存故障驗收：GroupService 實際保存失敗、程序中止／crash recovery、委派重用（ABA）仍待補驗。direct／mailbox 本身一般檔案發布、遠端 URL／媒體能力缺口也仍存在。
+
+驗證：40 種定向情境與完整非平行 Swift 測試 exit 0；原生 Debug build、deep strict 封裝／簽章通過。故障重現日誌 `.build/validation/group-file-quota-{target,repeat}.log`；修正後 `.build/validation/group-file-quota-{fixed,full,native}.log`。完整回歸亦包含成功工具活動斷言。

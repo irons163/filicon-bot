@@ -9,6 +9,33 @@ import FiliconLocalTools
 import FiliconProviderKit
 @testable import Filicon
 
+private final class GroupFileQuotaFault: @unchecked Sendable {
+    private let lock = NSLock()
+    private let groupsURL: URL
+    private var mode: String?
+    private var triggered = false
+    init(groupsURL: URL) { self.groupsURL = groupsURL }
+    func arm(_ mode: String) { lock.lock(); defer { lock.unlock() }; self.mode = mode }
+    var didTrigger: Bool { lock.lock(); defer { lock.unlock() }; return triggered }
+    func inject(_ point: StorageQuotaFaultPoint) throws {
+        lock.lock(); defer { lock.unlock() }
+        guard let mode else { return }
+        if mode == "quota-reserve" {
+            guard point == .afterReservationPersist else { return }
+        } else {
+            guard point == .afterCommitPersist else { return }
+            if mode == "quota-message" {
+                let state = try JSONSerialization.jsonObject(with: Data(contentsOf: groupsURL)) as? [String: Any]
+                let messages = state?["roomMessages"] as? [[String: Any]] ?? []
+                guard messages.contains(where: { ($0["files"] as? [Any])?.isEmpty == false }) else { return }
+            }
+        }
+        self.mode = nil
+        triggered = true
+        throw CocoaError(.fileWriteUnknown)
+    }
+}
+
 private struct GroupFileAppProvider: AIProvider {
     let url: String
     var destinationID: UUID? = nil
@@ -44,7 +71,7 @@ private struct GroupFileAppProvider: AIProvider {
 
 @Suite("App group file publication", .timeLimit(.minutes(1)))
 @MainActor struct GroupFilePublicationAppTests {
-    @Test(arguments: ["approve", "deny", "stop", "destination-stop", "account", "members", "source-changed"], ["foreground", "group", "direct", "mailbox"])
+    @Test(arguments: ["approve", "deny", "stop", "destination-stop", "account", "members", "source-changed", "quota-reserve", "quota-blob", "quota-message"], ["foreground", "group", "direct", "mailbox"])
     func requiresApprovalAndKeepsReviewedBytes(mode: String, route: String) async throws {
         let background = route != "foreground"
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-file-app-\(UUID())")
@@ -60,7 +87,9 @@ private struct GroupFileAppProvider: AIProvider {
         let helper = LocalToolProcessHost(generation: generation, requiresPermissionReceipts: true,
             authenticate: { _ in true }, verifyReceipt: { authenticator.verify($0) })
         let runtime = LocalToolRuntime(workspaceStore: grants, generation: generation, sessionKey: key, helper: helper)
-        let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false, localToolRuntime: runtime)
+        let fault = GroupFileQuotaFault(groupsURL: root.appending(path: "groups.json"))
+        let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false, localToolRuntime: runtime,
+            quotaFaultInjector: { try fault.inject($0) })
         await model.bootstrap()
         try await model.localToolPermissionPolicy.setChoice(.always, for: .readFile)
         await model.registry.register(GroupFileAppProvider(url: source.absoluteString))
@@ -122,6 +151,7 @@ private struct GroupFileAppProvider: AIProvider {
         if mode == "destination-stop" { await model.stopGroup(id: destination.id) }
         if mode == "account" { await model.cancelAutoReviewApprovals(nextAccountID: "other") }
         if mode == "members" { await model.updateGroupMembers(groupID: destination.id, memberIDs: []) }
+        if mode.hasPrefix("quota-") { fault.arm(mode) }
         await model.resolveGroupApproval(approval, groupID: originID, approve: mode != "deny")
         await send.value
         let deadline = ContinuousClock.now + .seconds(10)
@@ -132,12 +162,15 @@ private struct GroupFileAppProvider: AIProvider {
         #expect(!model.runningGroups.contains(destination.id))
         #expect(!model.runningAgentMessageScopes.contains(originID))
         #expect(model.pendingAutoReviewApprovals.isEmpty)
+        if mode.hasPrefix("quota-") { #expect(fault.didTrigger) }
         let agents = try AgentService(storeURL: root.appending(path: "agents.json"))
         let groups = try GroupService(agents: agents, storeURL: root.appending(path: "groups.json"))
         let messages = await groups.messages(groupID: destination.id)
         let publications = messages.filter { $0.files?.isEmpty == false }
-        expectNoDifference(publications.count, ["approve", "source-changed"].contains(mode) ? 1 : 0)
+        expectNoDifference(publications.count, ["approve", "source-changed", "quota-message"].contains(mode) ? 1 : 0)
         if let message = publications.first, let file = message.files?.first {
+            let activity = try #require(messages.flatMap(\.toolActivities).first(where: { $0.name == "SendMessage" }))
+            expectNoDifference(activity.status, .succeeded)
             let lifecycle = try AttachmentLifecycle.live(applicationSupportDirectory: root)
             let data = try await lifecycle.data(for: file, owner: .init(conversationID: destination.id, messageID: message.id))
             expectNoDifference(data, bytes)

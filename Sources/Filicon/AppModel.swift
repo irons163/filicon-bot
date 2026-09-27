@@ -4198,9 +4198,11 @@ final class AppModel: ObservableObject {
         }
         let messageID = UUID()
         let owner = AttachmentReferenceOwner(conversationID: audience.id, messageID: messageID)
+        var committedMetadata: AttachmentMetadata?
         do {
             try checkGroupFileScope(senderID: review.senderID, audience: audience, generation: generation, originID: originID, dispatchID: dispatchID)
             let metadata = try await attachmentLifecycle.commit(upload, to: owner)
+            committedMetadata = metadata
             let record = RoomMessage(id: messageID, groupID: audience.id, senderID: review.senderID, text: "", files: [metadata])
             return try await quotaWrite(scope: "group-file-message", key: messageID.uuidString,
                 data: JSONEncoder().encode(record)) { [weak self] in
@@ -4211,8 +4213,11 @@ final class AppModel: ObservableObject {
         } catch {
             // A late quota-ledger error must not erase a durable message or its
             // blob owner. Return its actual identity rather than retrying send.
-            if let saved = await groupService.messages(groupID: audience.id).first(where: { $0.id == messageID }),
-               saved.senderID == review.senderID, saved.files == [upload.metadata] {
+            // Compare the exact metadata passed to save, not the pre-index
+            // upload: SQLite's Unix timestamp round-trip can change Date bits.
+            if let committedMetadata,
+               let saved = await groupService.messages(groupID: audience.id).first(where: { $0.id == messageID }),
+               saved.senderID == review.senderID, saved.files == [committedMetadata] {
                 return saved
             }
             try? await attachmentLifecycle.removeReferences(owner: owner)
