@@ -120,3 +120,11 @@ AppModel 圖片專用核准流程按 pending ID 保留預覽，結束時移除�
 剩餘驗收：遠端 App composition 的 HTTP fixture／revision 切換整合測試及真實服務驗收；單獨聊天與 mailbox 圖片流程的直接整合覆蓋；人工匯入提交前配額與孤立 CAS 復原／回收策略；SVG 子集與最低支援系統驗收。現有底層遠端 reader 測試不能替代以上端到端證據。
 
 驗證：完整非平行 Swift 測試 exit 0（`avatar-app-full.log`）；最後補上遠端 approval activate 後的 scope／revision 重驗後，App management 與來源 adapter 的 43 個測試定向重跑 exit 0（`avatar-app-final-focused.log`，含 9 種新模型圖片情境）。最終原生 Debug 建置與 `verify-package.sh --xcode-debug` deep strict 簽章檢查通過。測試依 pfw-testing 的隔離依賴與 CustomDump 差異斷言方式實作。
+
+## 第八階段：單獨聊天與 mailbox 圖片驗收
+
+`imageAvatarKeepsExecutingOwnerAcrossConversationRoutes` 以 direct／mailbox 各四種情境測試圖片模型工具的完整來源、預覽及保存路徑：核准、拒絕、帳號切換、封存。Direct 透過綁定成員的正常 send 與 transcript card resolver；mailbox 透過 `sendAgentMessage` 的接收者執行流程。驗證 pending 的 owner、來源讀取後仍未改 profile、直接對話卡片不可用於另一對話、完成後的 CAS 數量、peer 頭像不變、預覽清除，以及重開的持久化結果。來源與 helper 仍是隔離 fixture，不碰真實資料。
+
+以上補上前一階段列出的 direct／mailbox 基本整合缺口；不代替遠端 HTTP composition、remote revision 切換或外部服務驗收。也未完成人工匯入配額、CAS 復原／回收及 SVG 其餘範圍。
+
+驗證：8 種新情境定向執行通過，完整非平行 Swift 測試 exit 0；日誌 `.build/validation/avatar-routes-{focused,full}.log`。本批只有測試與驗收文件變更，正式功能程式與原生封裝未更動。依 pfw-testing 使用隔離 helper／workspace 與 CustomDump 驗證 owner、peer 及持久化狀態。

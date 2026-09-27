@@ -1292,6 +1292,74 @@ private actor ManagementWakeProbe {
         expectNoDifference(restored.agents.first { $0.id == owner.id }?.avatar, expected)
     }
 
+    @Test(arguments: ["direct", "mailbox"], ["approve", "deny", "account", "archive"])
+    func imageAvatarKeepsExecutingOwnerAcrossConversationRoutes(route: String, mode: String) async throws {
+        let workspace = FileManager.default.temporaryDirectory.appending(path: "avatar-route-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: workspace) }
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        let source = workspace.appending(path: "avatar.svg")
+        try Data(#"<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"><rect width="20" height="20" fill="blue"/></svg>"#.utf8).write(to: source)
+        let store = WorkspaceAuthorizationStore(fileURL: workspace.appending(path: "grants.json"))
+        try await store.authorize(workspace)
+        let generation = UUID(), key = Data(repeating: 31, count: 32)
+        let authenticator = LocalSessionAuthenticator(sessionKey: key)
+        let host = LocalToolProcessHost(generation: generation, requiresPermissionReceipts: true,
+            authenticate: { _ in true }, verifyReceipt: { authenticator.verify($0) })
+        let runtime = LocalToolRuntime(workspaceStore: store, generation: generation, sessionKey: key, helper: host)
+        let (root, model, _, sender, recipient) = try await fixture(runtime: runtime)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let owner = route == "direct" ? sender : recipient
+        let peer = route == "direct" ? recipient : sender
+        await model.setLocalToolPermission(.always, for: .readFile)
+        await model.registry.register(ManagingAgentProvider { _, execute in
+            let result = try await execute(.init(id: "route-image", name: "update_state", argumentsJSON:
+                JSONEncoder().encode(["target": "avatar", "action": "set", "path": source.path])))
+            expectNoDifference(result.isError, mode != "approve")
+            return "PASS"
+        })
+        var directID: UUID?
+        if route == "direct" {
+            await model.bootstrap()
+            directID = await model.addConversation(agentID: owner.id)
+            model.draft = "Use the supplied image for your avatar"
+            model.send()
+        } else {
+            #expect(await model.sendAgentMessage(senderID: sender.id, recipientID: recipient.id,
+                text: "Use the supplied image for your avatar"))
+        }
+        let approval = try await pending(model, tool: "update_state")
+        let preview = try #require(model.avatarApprovalPreview(for: approval))
+        expectNoDifference(preview.agentID, owner.id)
+        expectNoDifference(approval.action.target, .resource(kind: "agent", identifier: owner.id.uuidString))
+        expectNoDifference(model.agents.first { $0.id == owner.id }?.avatar, owner.avatar)
+        if let directID {
+            let card = try #require(model.conversations.first { $0.id == directID }?.messages.flatMap(\.transcriptCards)
+                .first { if case .autoReview(let value) = $0.payload { return value.reviewID == approval.id }; return false })
+            #expect(model.directManagementApproval(card: card, conversationID: directID) != nil)
+            #expect(model.directManagementApproval(card: card, conversationID: UUID()) == nil)
+        }
+        if mode == "account" { await model.cancelAutoReviewApprovals(nextAccountID: "other") }
+        if mode == "archive" { await model.archiveAgent(id: owner.id) }
+        if let directID {
+            model.handleTranscriptCardIntent(mode == "deny" ? .rejectReview(reviewID: approval.id) : .approveReview(reviewID: approval.id))
+            let deadline = ContinuousClock.now + .seconds(10)
+            while model.running.contains(directID), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+            #expect(!model.running.contains(directID))
+        } else {
+            await model.resolveGroupApproval(approval, groupID: approval.action.context.conversationID, approve: mode != "deny")
+            try await waitForMailbox(model)
+        }
+        let expected = mode == "approve" ? preview.proposed.avatar : owner.avatar
+        expectNoDifference(model.agents.first { $0.id == owner.id }?.avatar, expected)
+        expectNoDifference(model.agents.first { $0.id == peer.id }?.avatar, peer.avatar)
+        expectNoDifference(try AgentAvatarStore(rootURL: root.appending(path: "agent-avatars")).storageInventory().count,
+            mode == "approve" ? 1 : 0)
+        #expect(model.avatarApprovalPreview(for: approval) == nil)
+        let restored = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+        await restored.reloadWorkspaceData()
+        expectNoDifference(restored.agents.first { $0.id == owner.id }?.avatar, expected)
+    }
+
     @Test func mailboxAvatarIsBoundToRecipientNotSender() async throws {
         let (root, model, _, sender, recipient) = try await fixture()
         defer { try? FileManager.default.removeItem(at: root) }
