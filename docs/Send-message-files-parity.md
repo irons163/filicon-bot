@@ -372,3 +372,9 @@ AgentFilePublicationTransaction 的 input／review／receipt 加入可選 altTex
 本機描述已接通核准與保存，不代表所有媒體展示已完成；遠端 App 核准、信箱／單聊 HTTPS 保存及媒體 UI 等差異仍在。未 push、重啟 App 或改真實資料。
 
 完整非平行 Swift 回歸 exit 0（local-alt-host-full.log），包含上述 App 描述保存案例。
+
+## 第三十二階段：本機附件卡片描述呈現（2026-09-28）
+
+單聊 AttachmentCard、群組 file row、信箱 file row 顯示已保存 altText，採兩行純文字副標，懸停可查看完整描述。保留檔名、大小與既有預覽動作；描述不解析 Markdown、不建立連結。既有 AttachmentMediaViewer 已顯示完整描述，沿用而不另建預覽。
+
+依 pfw-modern-swiftui 沿用既有視圖與單行 action。信箱卡片以七種語言 × 有／無長描述進行 14 個 NSHostingView bitmap render／尺寸測試，全部通過（local-alt-ui-target.log）；原生 Debug build 與 deep strict 簽章通過（local-alt-ui-native.log）。未人工啟動 App，未重跑完整回歸；此證據不代表所有視覺場景已人工驗收。遠端媒體 UI、App 核准與其他已列差異仍未完成。

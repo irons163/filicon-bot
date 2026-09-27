@@ -618,6 +618,9 @@ struct GroupMessageBubble: View {
                             Image(systemName: "doc")
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(file.filename).lineLimit(2)
+                                if let alt = file.altText {
+                                    Text(verbatim: alt).font(.caption).foregroundStyle(FiliconTheme.textSecondary).lineLimit(2)
+                                }
                                 Text(ByteCountFormatter.string(fromByteCount: file.byteCount, countStyle: .file))
                                     .font(.caption).foregroundStyle(FiliconTheme.textSecondary)
                             }
@@ -629,6 +632,7 @@ struct GroupMessageBubble: View {
                     }
                     .buttonStyle(.plain).disabled(onOpenFile == nil)
                     .accessibilityIdentifier("group-file-\(file.id)")
+                    .help(file.altText ?? file.filename)
                 }
                 ForEach(message.toolActivities) { tool in
                     let waitingForFolder = tool.status == .pending && waitingForFolderCallIDs.contains(tool.id)

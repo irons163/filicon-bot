@@ -1748,10 +1748,13 @@ private struct AttachmentCard: View {
                 Image(systemName: icon)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(attachment.filename).lineLimit(1)
+                    if let alt = attachment.altText {
+                        Text(verbatim: alt).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                    }
                     Text(ByteCountFormatter.string(fromByteCount: attachment.byteCount, countStyle: .file)).font(.caption).foregroundStyle(.secondary)
                 }
             }.padding(8).background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
-        }.buttonStyle(.plain).help(l10n("Preview attachment"))
+        }.buttonStyle(.plain).help(attachment.altText ?? l10n("Preview attachment"))
     }
     private var icon: String { switch attachment.kind { case .image: "photo"; case .video: "film"; case .audio: "waveform"; case .document: "doc"; case .other: "paperclip" } }
 }

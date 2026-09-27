@@ -285,11 +285,12 @@ private struct GroupFileAppProvider: AIProvider {
         }
     }
 
-    @Test(arguments: ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"])
-    func mailboxFileRowRenders(language: String) throws {
+    @Test(arguments: ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"], [false, true])
+    func mailboxFileRowRenders(language: String, hasDescription: Bool) throws {
         try FiliconLocalization.$languageOverride.withValue(language) {
             let file = AttachmentMetadata(id: String(repeating: "a", count: 64), filename: "產品報告-report.txt",
-                mimeType: "text/plain", byteCount: 512, kind: .document)
+                mimeType: "text/plain", byteCount: 512, kind: .document,
+                altText: hasDescription ? String(repeating: "產品報告 **plain text** ", count: 12) : nil)
             let publication = RoomMessage(groupID: UUID(), senderID: UUID(), text: "", files: [file])
             let host = NSHostingView(rootView: AgentPublishedResponses(publications: [publication],
                 onOpenFile: { _, _ in Issue.record("Rendering must not open files") })

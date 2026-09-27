@@ -389,7 +389,12 @@ struct AgentPublishedResponses: View {
                         Button { onOpenFile?(publication, file) } label: {
                             HStack {
                                 Image(systemName: "doc")
-                                Text(verbatim: file.filename).lineLimit(2)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(verbatim: file.filename).lineLimit(2)
+                                    if let alt = file.altText {
+                                        Text(verbatim: alt).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                                    }
+                                }
                                 Text(ByteCountFormatter.string(fromByteCount: file.byteCount, countStyle: .file))
                                     .font(.caption).foregroundStyle(.secondary)
                                 Image(systemName: "eye")
@@ -397,6 +402,7 @@ struct AgentPublishedResponses: View {
                         }
                         .buttonStyle(.borderless).disabled(onOpenFile == nil)
                         .accessibilityIdentifier("mailbox-file-\(file.id)")
+                        .help(file.altText ?? file.filename)
                     }
                 }
             }
