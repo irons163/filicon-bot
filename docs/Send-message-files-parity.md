@@ -124,3 +124,13 @@ AppModel 已加入來源讀取、群組內核准與 quota／附件保存服務�
 Xcode 專案補列 AgentPublicationFileSource.swift，最終原生 Debug build 與 deep strict 封裝／簽章通過。第一次完整測試因鎖定時受保護的 agents.json 回報 EPERM 而停止；解鎖後重跑，未降低檔案保護。最終日誌 `.build/validation/group-file-app-{full,native,compile}.log`。依 pfw-testing 使用隔離 fixture 驗證保存 bytes 及撤銷，不重啟使用者 App，不改真實資料。
 
 後續仍包含 direct／mailbox／背景群組接線、檔案回條引用、遠端來源、媒體能力與故障復原驗收；前景接線不能代表上述差異已完成。
+
+## 第九階段：檔案回條與引用清單（2026-09-28）
+
+群組 session 把實際保存的 RoomMessage 帶入檔案交易回條；SendMessage 僅在訊息 ID、群組、作者、reply target、附件 digest／檔名／大小及訊息形態相符時，加入本輪引用清單。只有交付摘要而沒有保存訊息的舊 host callback 仍可回報交付成功，但不宣告可引用地址。短地址沿用既有衝突檢查，不自行生成。
+
+歷史引用清單納入 file-only 訊息，不把檔案 bytes 或來源 URL 提供給模型。隔離測試涵蓋送檔後第二則訊息引用、精確重播、重開後的檔案地址，以及缺少保存訊息、錯誤群組／作者／digest／訊息 ID 不得成為引用目標。引用不構成附件讀取或轉寄授權。依 pfw-testing 使用 host fixture 與保存回條比較。
+
+此階段不新增 direct／mailbox／背景群組的傳檔入口，遠端來源、媒體能力與故障復原驗收仍待完成。
+
+驗證：定向與最終完整非平行 Swift 測試 exit 0；原生 Debug build、deep strict 封裝／簽章通過。日誌 `.build/validation/file-receipt-{focused,full,native}.log`。未重啟使用者 App、未修改真實帳號／群組資料。

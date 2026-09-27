@@ -62,11 +62,13 @@ public actor AgentFilePublicationTransaction {
         public let digest: String
         public let filename: String
         public let byteCount: Int
+        public let savedMessage: RoomMessage?
 
         public init(messageID: UUID, conversationID: UUID, senderID: UUID, replyTo: UUID?,
-                    digest: String, filename: String, byteCount: Int) {
+                    digest: String, filename: String, byteCount: Int, savedMessage: RoomMessage? = nil) {
             self.messageID = messageID; self.conversationID = conversationID; self.senderID = senderID
             self.replyTo = replyTo; self.digest = digest; self.filename = filename; self.byteCount = byteCount
+            self.savedMessage = savedMessage
         }
     }
     public typealias Prepare = @Sendable (String, NormalizedToolCall, ToolContext) async throws -> PreparedAgentPublicationFile

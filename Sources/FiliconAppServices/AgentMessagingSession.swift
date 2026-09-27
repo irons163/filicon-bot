@@ -242,7 +242,7 @@ public actor AgentMessagingSession {
                     throw AgentFilePublicationError.invalidReceipt
                 }
                 return .init(messageID: saved.id, conversationID: saved.groupID, senderID: sender.id,
-                    replyTo: saved.replyToMessageID, digest: file.id, filename: file.filename, byteCount: Int(file.byteCount))
+                    replyTo: saved.replyToMessageID, digest: file.id, filename: file.filename, byteCount: Int(file.byteCount), savedMessage: saved)
             })
     }
 

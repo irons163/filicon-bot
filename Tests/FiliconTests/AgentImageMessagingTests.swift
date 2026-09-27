@@ -142,6 +142,11 @@ struct AgentImageMessagingTests {
                 if mode == "valid" {
                     let replay = try await tool.execute(call, context: context)
                     expectNoDifference(replay.wireText, result.wireText)
+                    #expect(result.wireText.contains("t0s0"))
+                    let followup = try NormalizedToolCall(id: "report-followup", name: "SendMessage",
+                        argumentsJSON: Data(#"{"type":"text","content":"Report notes","reply_to":"t0s0"}"#.utf8))
+                    let followupResult = try await tool.execute(followup, context: context)
+                    #expect(!followupResult.isError)
                 }
             } catch {
                 #expect(mode != "valid")
@@ -159,6 +164,11 @@ struct AgentImageMessagingTests {
             let reopened = try GroupService(agents: f.agents, storeURL: f.root.appending(path: "groups.json"))
             let restored = await reopened.messages(groupID: group.id).filter { $0.files?.isEmpty == false }
             expectNoDifference(restored.first?.files, files.first?.files)
+            expectNoDifference(history.first(where: { $0.text == "Report notes" })?.replyToMessageID, files.first?.id)
+            let resumed = try await session.savedGroupPublisher(for: f.sender.id, userMessageID: user.id,
+                replyHistory: restored, questionAccountID: nil, memberIDs: [f.sender.id], publish: { _ in nil })
+            let directory = try await resumed.runtimeContext(for: .init(conversationID: group.id))
+            #expect(directory.contains("t0s0"))
         }
         try await session.close()
     }

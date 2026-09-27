@@ -12,6 +12,34 @@ private actor UserFileProbe {
 
 @Suite("SendMessage host-bound file capability", .timeLimit(.minutes(1)))
 struct AgentUserFilePublicationTests {
+    @Test(arguments: ["valid", "missing", "room", "sender", "digest", "identity"])
+    func onlyMatchingSavedFilesBecomeReplyTargets(mode: String) async throws {
+        let origin = UUID(), sender = UUID(), messageID = UUID()
+        let transaction = AgentFilePublicationTransaction(conversationID: origin, senderID: sender, validateScope: {},
+            prepare: { _, _, _ in try .init(bytes: Data([1]), filename: "report.txt") }, authorize: { _, _, _ in },
+            commit: { review, _, _ in
+                let file = AttachmentMetadata(id: mode == "digest" ? String(repeating: "0", count: 64) : review.file.digest,
+                    filename: review.file.filename, mimeType: "text/plain", byteCount: 1, kind: .document,
+                    createdAt: Date(timeIntervalSince1970: 123))
+                let saved = RoomMessage(id: mode == "identity" ? UUID() : messageID,
+                    groupID: mode == "room" ? UUID() : origin, senderID: mode == "sender" ? UUID() : sender,
+                    text: "", files: [file])
+                return .init(messageID: messageID, conversationID: origin, senderID: sender, replyTo: nil,
+                    digest: review.file.digest, filename: review.file.filename, byteCount: 1,
+                    savedMessage: mode == "missing" ? nil : saved)
+            })
+        let tool = AgentUserMessageTool(conversationID: origin, senderID: sender, replyHistory: [], supportsQuestions: false,
+            filePublication: transaction, publishGroup: { _, _, reply, _ in
+                expectNoDifference(reply, messageID)
+                return nil
+            })
+        let context = ToolContext(conversationID: origin)
+        let result = try await tool.execute(call("file", #"{"type":"attachment","url":"file:///report.txt"}"#), context: context)
+        #expect(!result.isError)
+        let reply = try await tool.execute(call("reply", "{\"text\":\"Notes\",\"reply_to\":\"\(messageID.uuidString)\"}"), context: context)
+        expectNoDifference(reply.isError, mode != "valid")
+    }
+
     @Test(arguments: [false, true])
     func resolvesHostSelectedAndExplicitReply(defaultReply: Bool) async throws {
         let origin = UUID(), sender = UUID(), probe = UserFileProbe()

@@ -188,7 +188,7 @@ public actor AgentUserMessageTool: ToolExecutor, ToolRuntimeContextProviding {
         let idCounts = Dictionary(grouping: group, by: \.id).mapValues(\.count)
         let addressCounts = Dictionary(grouping: group.compactMap(\.shortAddress), by: { $0 }).mapValues(\.count)
         return group.suffix(40).filter { message in
-            message.memberOutcome == nil && (!message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !(message.images ?? []).isEmpty)
+            message.memberOutcome == nil && (!message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !(message.images ?? []).isEmpty || !(message.files ?? []).isEmpty)
                 && idCounts[message.id] == 1
         }.map { message in
             var target = message
@@ -209,9 +209,10 @@ public actor AgentUserMessageTool: ToolExecutor, ToolRuntimeContextProviding {
     }
 
     private func registerReceipt(_ message: RoomMessage?, text: String, images: [AttachmentMetadata],
-                                 replyTo: UUID?, question: AgentQuestion? = nil, cursorAgent: CursorAgentReference? = nil) -> String {
+                                 replyTo: UUID?, question: AgentQuestion? = nil, cursorAgent: CursorAgentReference? = nil,
+                                 files: [AttachmentMetadata] = []) -> String {
         guard var saved = message, saved.groupID == replyGroupID, let senderID, saved.senderID == senderID,
-              saved.text == text, saved.images ?? [] == images, saved.memberOutcome == nil,
+              saved.text == text, saved.images ?? [] == images, saved.files ?? [] == files, saved.memberOutcome == nil,
               saved.replyToMessageID == replyTo, saved.question?.question == question,
               saved.questionReplyTo == nil, saved.secretRequest == nil, saved.cursorAgent == cursorAgent,
               !knownMessageIDs.contains(saved.id) else { return "" }
@@ -281,7 +282,7 @@ public actor AgentUserMessageTool: ToolExecutor, ToolRuntimeContextProviding {
             inputSchema: Data("{\"type\":\"object\",\"properties\":{\"text\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":8000,\"description\":\"Legacy shorthand. Prefer type:text with content; never mix both forms.\"}\(images)\(attachment)\(file)\(messageTypes)\(question)\(secret)\(cloud)\(reply)},\"anyOf\":[\(variants.joined(separator: ","))],\"additionalProperties\":false}".utf8), parallelSafe: false)
     }
 
-    private static let fileInstructions = " Host-authorized local files may be published with {type:'attachment',url:'file:///absolute/path'} and optional reply_to from the current directory. No content, images, image_id, alt, channel or HTTPS fields. Source-read consent and publication approval are separate; approval covers the captured bytes. Never claim delivery until the tool returns a saved receipt. File receipts are delivery acknowledgements, not new reply-directory entries in this turn. Files share the two-message budget with text, images and cards."
+    private static let fileInstructions = " Host-authorized local files may be published with {type:'attachment',url:'file:///absolute/path'} and optional reply_to from the current directory. No content, images, image_id, alt, channel or HTTPS fields. Source-read consent and publication approval are separate; approval covers the captured bytes. Never claim delivery until the tool returns a saved receipt. Use a file as reply_to only when the host receipt explicitly grants a reply-directory entry; delivery alone grants no attachment access. Files share the two-message budget with text, images and cards."
 
     private static let questionInstructions = " Alternatively use {type:'widget',widget:{prompt,options:[{label,value?,description?,style?}],helpText?,allowCustom?,dismissOnMoveOn?}} without text/images to ask one necessary question with 1-6 real choices. This ends the current turn until a human responds in a new host-controlled turn; never ask for passwords, API keys or other secrets here. All choices and values are visible to the user. A choice is not tool permission: sensitive operations still require their normal approval. Default flags are false. dismissOnMoveOn retires this question when the user sends a newer ordinary message. Widgets are available only where this host tool explicitly advertises them."
 
@@ -413,7 +414,13 @@ public actor AgentUserMessageTool: ToolExecutor, ToolRuntimeContextProviding {
                 defer { reserved = false }
                 fileAttemptKeys.insert(key)
                 let receipt = try await filePublication.publish(url: url, replyTo: reply, call: call, context: context)
-                let result = NormalizedToolResult(callID: call.id, content: [.text("File saved to this conversation. messageID: \(receipt.messageID.uuidString). This receipt is not a reply-directory entry in this turn. Do not repeat the publication.")])
+                var replyReceipt = ""
+                if let saved = receipt.savedMessage, saved.id == receipt.messageID,
+                   let file = saved.files?.first, saved.files?.count == 1,
+                   file.id == receipt.digest, file.filename == receipt.filename, file.byteCount == receipt.byteCount {
+                    replyReceipt = registerReceipt(saved, text: "", images: [], replyTo: reply, files: [file])
+                }
+                let result = NormalizedToolResult(callID: call.id, content: [.text("File saved to this conversation. messageID: \(receipt.messageID.uuidString). Do not repeat the publication." + (replyReceipt.isEmpty ? " No reply-directory entry was supplied by the host." : replyReceipt))])
                 fileCalls[key] = (input, result)
                 texts.append("Attachment: \(receipt.filename)")
                 return result
