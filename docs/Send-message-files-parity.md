@@ -66,3 +66,17 @@ commit 回條須匹配對話、sender、reply、檔名、bytes 數、digest，�
 仍待 App 發佈核准 UI、原子配額、模型入口、三種聊天附件接線，以及大檔／远端來源與整體端到端驗收。
 
 驗證：定向測試通過；含最終並行及中斷復原測試的完整非平行 Swift 測試、原生 Debug build 均 exit 0，deep strict 封裝／簽章通過。日誌 `.build/validation/publication-storage-{focused,full,native}.log` 不提交，未啟動 App／Xcode。
+
+## 第四階段：可選模型工具入口（2026-09-28）
+
+`AgentUserMessageTool` 可由 host 注入 `AgentFilePublicationTransaction`。origin tool scope、實際 destination 與 sender 都必須精確符合，否則不注入、不宣告 `url`，執行也拒絕。交易新增獨立 destination ID，以支援群組的 virtual tool scope，不把模型傳入值當收件人。
+
+有完整交易能力才宣告 `type:attachment,url:file:///...`；暫不接受 HTTPS、混用文字／圖片欄位、alt 或 channel。reply_to 由既有 host directory 解析，支援明確引用及 host 選定的預設 thread。與文字／圖片／卡片共用兩次發佈額度；call ID 不能跨類型重用。相同 call 精確重播不再發佈，不同 call 的相同 digest 也不再發佈；同一路徑產生不同 bytes 則不被 URL 字串去重誤擋。
+
+工具 close 會關閉交易，停止等待核准後的提交。保存成功才回傳 message ID，並保留晚到取消時的成功回條。檔案回條暫不加入這一輪的 reply directory，runtime instructions 明示此邊界，不能將它誤當已完成所有引用功能。`publishedTexts` 中的附件摘要僅供當輪發佈／額度追蹤，不代表另存了一則文字訊息。
+
+隔離工具測試覆蓋正確／錯誤 origin、sender、destination、缺少 capability、文字共用額度、跨類型 ID、重播／重複內容、拒絕、close、無效欄位，以及明確／預設 reply。交易 callback 仍是 fixture，不宣稱 App 已端到端接線。
+
+App 目前未注入檔案交易，因此真實對話仍維持原先權限。下一步仍是 App 核准 UI、原子 quota、訊息附件欄位與保存 callback，以及 group／direct／mailbox 整合驗收。文字搭配新圖片、檔案 alt、檔案回條引用、大檔／遠端／HTTPS 也仍待完成。
+
+驗證：定向測試通過，補齊引用測試的模組匯入後，最終完整非平行 Swift 測試 exit 0；原生 Debug build 及 deep strict 封裝／簽章通過。日誌 `.build/validation/publication-tool-{focused,full,native}.log`。依 pfw-testing 使用可控 prepare／authorize／commit fixture，未啟動 App、未改真實資料。

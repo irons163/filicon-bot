@@ -58,8 +58,9 @@ public actor AgentFilePublicationTransaction {
     private struct Key: Hashable { let runID: UUID; let callID: ToolCallID }
     private struct Input: Equatable { let url: String; let replyTo: UUID? }
     private struct Completed { let input: Input; let receipt: Receipt }
-    private let conversationID: UUID
-    private let senderID: UUID
+    public nonisolated let conversationID: UUID
+    public nonisolated let destinationConversationID: UUID
+    public nonisolated let senderID: UUID
     private let prepare: Prepare
     private let authorize: Authorize
     private let commit: Commit
@@ -67,12 +68,15 @@ public actor AgentFilePublicationTransaction {
     private var completed: [Key: Completed] = [:]
     private var attempted: Set<Key> = []
     private var messageIDs: Set<UUID> = []
+    private var publishedDigests: Set<String> = []
     private var busy = false
     private var closed = false
 
-    public init(conversationID: UUID, senderID: UUID, validateScope: @escaping @Sendable () async throws -> Void,
+    public init(conversationID: UUID, senderID: UUID, destinationConversationID: UUID? = nil,
+                validateScope: @escaping @Sendable () async throws -> Void,
                 prepare: @escaping Prepare, authorize: @escaping Authorize, commit: @escaping Commit) {
         self.conversationID = conversationID; self.senderID = senderID
+        self.destinationConversationID = destinationConversationID ?? conversationID
         self.validateScope = validateScope; self.prepare = prepare; self.authorize = authorize; self.commit = commit
     }
 
@@ -97,18 +101,20 @@ public actor AgentFilePublicationTransaction {
         try await checkScope()
         let file = try await prepare(url, call, context)
         try await checkScope()
-        let review = Review(conversationID: conversationID, senderID: senderID, replyTo: replyTo, file: file)
+        guard !publishedDigests.contains(file.digest) else { throw AgentFilePublicationError.duplicateCall }
+        let review = Review(conversationID: destinationConversationID, senderID: senderID, replyTo: replyTo, file: file)
         try await authorize(review, call, context)
         try await checkScope()
         // A thrown save can be ambiguous. Never repeat the side effect under
         // this identity; recovery must inspect durable state, not blindly retry.
         attempted.insert(key)
         let receipt = try await commit(review, call, context)
-        guard receipt.conversationID == conversationID, receipt.senderID == senderID,
+        guard receipt.conversationID == destinationConversationID, receipt.senderID == senderID,
               receipt.replyTo == replyTo, receipt.digest == file.digest,
               receipt.filename == file.filename, receipt.byteCount == file.bytes.count,
               !messageIDs.contains(receipt.messageID) else { throw AgentFilePublicationError.invalidReceipt }
         messageIDs.insert(receipt.messageID)
+        publishedDigests.insert(file.digest)
         completed[key] = Completed(input: input, receipt: receipt)
         // Do not erase or misreport a durable save if Stop arrived during it.
         return receipt
