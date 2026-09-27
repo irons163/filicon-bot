@@ -26,6 +26,23 @@ import FiliconAgents
             host.layoutSubtreeIfNeeded()
             let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
             host.cacheDisplay(in: host.bounds, to: bitmap)
+
+            let publication = ReviewedMailboxRemoteAttachment(reference: reference, incomingID: UUID(),
+                originID: UUID(), senderID: UUID(), messageID: UUID(), lifetime: AgentPublicationLifetime()).publication
+            let mailbox = NSHostingView(rootView: AgentPublishedResponses(publications: [publication])
+                .padding(16).frame(width: 360)
+                .environment(\.openURL, OpenURLAction { _ in
+                    Issue.record("Mailbox rendering must not open remote content"); return .handled
+                }).environment(\.locale, Locale(identifier: language))
+                .environment(\.colorScheme, dark ? .dark : .light))
+            mailbox.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+            let mailboxSize = mailbox.fittingSize
+            expectNoDifference(mailboxSize.width, 360)
+            #expect(mailboxSize.height > 100 && mailboxSize.height < 450)
+            mailbox.frame = .init(origin: .zero, size: mailboxSize)
+            mailbox.layoutSubtreeIfNeeded()
+            let mailboxBitmap = try #require(mailbox.bitmapImageRepForCachingDisplay(in: mailbox.bounds))
+            mailbox.cacheDisplay(in: mailbox.bounds, to: mailboxBitmap)
         }
     }
 }

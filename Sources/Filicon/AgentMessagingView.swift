@@ -385,6 +385,9 @@ struct AgentPublishedResponses: View {
                         RichMarkdownView(source: publication.text, messageReferences: references(publication))
                     }
                     if let images = publication.images, !images.isEmpty { AgentMessageImagePreviews(images: images) }
+                    if let reference = publication.remoteAttachment {
+                        RemoteAttachmentCard(reference: reference)
+                    }
                     ForEach(publication.files ?? []) { file in
                         Button { onOpenFile?(publication, file) } label: {
                             HStack {

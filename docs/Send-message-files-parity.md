@@ -422,3 +422,11 @@ AgentMessagingSession 新增逐筆 incoming 綁定的 AgentMailboxRemoteServices
 App 尚未提供 mailboxRemote factory，因此未宣稱使用者端已可用；App 核准、信箱 UI、單聊及媒體預覽仍待補齊。無遠端網路請求、無使用者 App 重啟或真實資料修改。
 
 完整非平行 Swift 回歸 exit 0（remote-mailbox-session-full.log）。
+
+## 第三十八階段：信箱遠端附件卡片（2026-09-28）
+
+AgentPublishedResponses 對已保存的 remoteAttachment 顯示既有 RemoteAttachmentCard，保留精確 URL、純文字描述及未下載／驗證提示。依 pfw-modern-swiftui 沿用共同元件，不另造連結開啟或媒體推測流程。
+
+七種語言 × 深淺色共 14 案例，同時 render 獨立卡片與信箱容器，核對尺寸及 bitmap 產生；openURL spy 保證 render 不開啟網址（remote-mailbox-ui-target.log）。原生 Debug build、deep strict 簽章通過（remote-mailbox-ui-native.log）。本批未重跑完整回歸，未人工啟動 App；不代表所有實機視覺驗收已完成。
+
+App mailboxRemote 核准 factory 仍待接入，locator 卡片也不等同真正媒體預覽。未 push、重啟 App 或改真實資料。
