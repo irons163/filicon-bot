@@ -1720,3 +1720,4 @@
 "Image avatar" = "图片头像";
 "Image preview unavailable. Reject this request and try again." = "无法显示图片预览。请拒绝此次请求后重试。";
 "This exact image will be saved after approval. The source file is not changed." = "批准后将保存这张图片，源文件不会更改。";
+"This saves the reviewed file in this group. It does not add responders or automatically send the file to other models." = "这会将已批准的文件保存在此群组，不会新增回复者或自动将文件发送给其他模型。";

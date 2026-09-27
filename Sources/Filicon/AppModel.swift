@@ -3230,6 +3230,9 @@ final class AppModel: ObservableObject {
             }
         }
         do {
+            let attachmentInventory = try await attachmentStore.inventory()
+            let attachmentSizes = attachmentInventory.active.merging(attachmentInventory.quarantined) { max($0, $1) }
+            records += attachmentSizes.map { StorageQuotaRecord(scope: "attachment-blob", key: $0.key, byteCount: $0.value, generation: 1) }
             records += try agentAvatarStore.storageInventory().map {
                 StorageQuotaRecord(scope: "avatar-blob", key: $0.relativePath, byteCount: $0.byteCount, generation: 1)
             }
@@ -4096,6 +4099,7 @@ final class AppModel: ObservableObject {
                 guard let self else { throw CancellationError() }
                 try await self.authorizeAgentImagePublication(sender: sender, text: text, images: images, call: call, context: context)
             },
+            groupFiles: makeGroupFileServices(originID: originID, generation: generation),
             authorize: { [weak self] sender, recipient, text, call, context in
                 guard let self else { throw CancellationError() }
                 try await self.authorizeAgentDelegation(sender: sender, recipient: recipient, text: text, call: call, context: context)
@@ -4104,6 +4108,111 @@ final class AppModel: ObservableObject {
     }
 
     func groupApprovalScope(_ groupID: UUID) -> UUID { delegatedGroupOrigins[groupID] ?? groupID }
+
+    private func makeGroupFileServices(originID: UUID, generation: UInt64) -> AgentGroupFilePublicationServices? {
+        guard quotaWriter != nil, attachmentLifecycle != nil,
+              let audience = groups.first(where: { $0.id == originID }) else { return nil }
+        return .init(prepare: { [weak self] sender, url, call, context in
+            guard let self else { throw CancellationError() }
+            return try await self.prepareGroupPublicationFile(sender: sender, url: url, call: call, context: context,
+                audience: audience, generation: generation)
+        }, authorize: { [weak self] sender, review, call, context in
+            guard let self else { throw CancellationError() }
+            try await self.authorizeGroupPublicationFile(sender: sender, review: review, call: call, context: context,
+                audience: audience, generation: generation)
+        }, commit: { [weak self] review, _, _, save in
+            guard let self else { throw CancellationError() }
+            return try await self.commitGroupPublicationFile(review, audience: audience, generation: generation, save: save)
+        })
+    }
+
+    private func checkGroupFileScope(senderID: UUID, audience: AgentGroup, generation: UInt64) throws {
+        try Task.checkCancellation()
+        guard generation == autoReviewAccountGeneration, !agentMessagingAccountTransition,
+              isAgentMessagingScopeActive(audience.id),
+              groups.first(where: { $0.id == audience.id })?.memberIDs == audience.memberIDs,
+              audience.memberIDs.contains(senderID),
+              agents.contains(where: { $0.id == senderID && $0.archivedAt == nil }) else { throw CancellationError() }
+    }
+
+    private func prepareGroupPublicationFile(sender: AgentProfile, url: String, call: NormalizedToolCall,
+        context: ToolContext, audience: AgentGroup, generation: UInt64) async throws -> PreparedAgentPublicationFile {
+        guard context.conversationID == audience.id else { throw AgentMessagingError.scopeMismatch }
+        let reader = AuthorizedAgentFileReader(runtime: localToolRuntime, folders: workspaceFolders,
+            policy: localToolPermissionPolicy, validateScope: { [weak self] in
+                guard let self else { throw CancellationError() }
+                try await self.checkGroupFileScope(senderID: sender.id, audience: audience, generation: generation)
+            }, authorizeRead: { [weak self] operation, context, callID in
+                guard let self else { throw CancellationError() }
+                let target = try await self.localToolRuntime.authorizationTarget(for: operation)
+                let decision = await self.localToolPermissionPolicy.evaluate(action: .readFile,
+                    conversationID: context.conversationID, toolCallID: "publication-source:\(callID.rawValue)",
+                    title: target, reason: "SendMessage")
+                switch decision {
+                case .denied: throw LocalToolError.permissionMismatch
+                case .requiresApproval(let request):
+                    guard await self.localToolApprovalBroker.requestApproval(request) else { throw CancellationError() }
+                case .allowed: break
+                }
+            })
+        return try await AgentPublicationFileSource(reader: reader).prepare(url: url, agentID: sender.id, call: call, context: context)
+    }
+
+    private func authorizeGroupPublicationFile(sender: AgentProfile, review: AgentFilePublicationTransaction.Review,
+        call: NormalizedToolCall, context: ToolContext, audience: AgentGroup, generation: UInt64) async throws {
+        try checkGroupFileScope(senderID: sender.id, audience: audience, generation: generation)
+        guard review.senderID == sender.id, review.conversationID == audience.id,
+              context.conversationID == audience.id else { throw AgentMessagingError.scopeMismatch }
+        let fence = ApprovalFence(accountID: settings.accountScope ?? "local", agentID: audience.id.uuidString.lowercased(),
+            runID: context.runID, generation: generation)
+        await autoReviewBroker.activate(fence)
+        let details = "\(review.file.filename)\n\(ByteCountFormatter.string(fromByteCount: Int64(review.file.bytes.count), countStyle: .file))\nSHA-256: \(review.file.digest)"
+        let action = AutoReviewAction(summary: "\(sender.name) → \(audience.name): \(review.file.filename)",
+            target: .resource(kind: "group", identifier: audience.id.uuidString), risks: [.sensitive],
+            context: .init(fence: fence, conversationID: audience.id, toolCallID: call.id.rawValue,
+                metadata: ["tool": "SendMessage", "agentFilePublication": "true", "agentMessage": details,
+                    "agentGroupName": audience.name, "agentGroupMembers": audience.memberIDs.map { id in
+                        "\(agents.first(where: { $0.id == id })?.name ?? id.uuidString) (\(id.uuidString))"
+                    }.joined(separator: "\n")]))
+        let pending = PendingApproval(action: action, reason: "Approval required", expiresAt: Date().addingTimeInterval(300))
+        try await autoReviewBroker.waitForApprovalToExecute(pending) { [weak self] in await self?.registerAutoReviewApproval($0) }
+        try checkGroupFileScope(senderID: sender.id, audience: audience, generation: generation)
+    }
+
+    private func commitGroupPublicationFile(_ review: AgentFilePublicationTransaction.Review,
+        audience: AgentGroup, generation: UInt64, save: @escaping AgentGroupFilePublicationServices.Save) async throws -> RoomMessage {
+        try checkGroupFileScope(senderID: review.senderID, audience: audience, generation: generation)
+        guard let attachmentLifecycle, let groupService, quotaWriter != nil,
+              review.conversationID == audience.id else { throw AgentFilePublicationError.unavailable }
+        let upload = try await quotaWrite(scope: "attachment-blob", key: review.file.digest, data: review.file.bytes) { [weak self] in
+            guard let self else { throw CancellationError() }
+            try await self.checkGroupFileScope(senderID: review.senderID, audience: audience, generation: generation)
+            return try await attachmentLifecycle.stage(prepared: review.file)
+        }
+        let messageID = UUID()
+        let owner = AttachmentReferenceOwner(conversationID: audience.id, messageID: messageID)
+        do {
+            try checkGroupFileScope(senderID: review.senderID, audience: audience, generation: generation)
+            let metadata = try await attachmentLifecycle.commit(upload, to: owner)
+            let record = RoomMessage(id: messageID, groupID: audience.id, senderID: review.senderID, text: "", files: [metadata])
+            return try await quotaWrite(scope: "group-file-message", key: messageID.uuidString,
+                data: JSONEncoder().encode(record)) { [weak self] in
+                guard let self else { throw CancellationError() }
+                try await self.checkGroupFileScope(senderID: review.senderID, audience: audience, generation: generation)
+                return try await save(metadata, messageID)
+            }
+        } catch {
+            // A late quota-ledger error must not erase a durable message or its
+            // blob owner. Return its actual identity rather than retrying send.
+            if let saved = await groupService.messages(groupID: audience.id).first(where: { $0.id == messageID }),
+               saved.senderID == review.senderID, saved.files == [upload.metadata] {
+                return saved
+            }
+            try? await attachmentLifecycle.removeReferences(owner: owner)
+            try? await attachmentLifecycle.abort(upload)
+            throw error
+        }
+    }
 
     private func authorizeGroupDelegation(sender: AgentProfile, audience: AgentGroupAudience, text: String,
                                           call: NormalizedToolCall, context: ToolContext) async throws {

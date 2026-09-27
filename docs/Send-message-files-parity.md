@@ -112,3 +112,15 @@ AgentMessagingSession.savedGroupPublisher 可接收 host 的 AgentGroupFilePubli
 隔離 session→tool→transaction→AttachmentStore→GroupService 測試涵蓋成功、精確重播、重開、拒絕、核准後換輪、保存前換輪、錯誤 metadata、close 與未注入服務。依 pfw-testing 使用固定快照與注入 callback；未改真實資料。測試 host commit 尚不代表 App 的核准／quota 接線完成；AppModel 目前仍未注入 services，此缺口保留供下一步實作，不宣稱使用者端已能傳檔。
 
 驗證：定向與完整非平行 Swift 測試 exit 0；原生 Debug build 與 deep strict 封裝／簽章通過。日誌 `.build/validation/group-file-session-{focused,full,native}.log`。未啟動 App 或 Xcode。
+
+## 第八階段：App 前景群組傳檔接線（2026-09-28）
+
+AppModel 已加入來源讀取、群組內核准與 quota／附件保存服務。核准資料固定檔名、大小、digest 及成員範圍；來源 bytes 在核准前形成快照。保存前建立附件 owner，使用同一預先配置的訊息 ID 保存群組訊息；若保存後發生 ledger 錯誤，查回已保存訊息，不刪除其附件。quota 重算納入 active／quarantined blobs。純文字使用者請求也會取得 session publisher，圖片轉貼仍受原本來源限制。
+
+檢查確認 GroupService.updateMembers 會停止舊 epoch，recordExplicitReply 在不讓出 actor 的保存區段檢查 epoch；App 更新成員也先取消執行。隔離 App fixture 涵蓋核准、拒絕、停止、帳號切換、成員變更及核准後來源內容變更，六種情境均通過。
+
+完整套件另抓到 choice answer 的自訂文字含 @名字時，session 來源驗證與 GroupService 的 asker-only 路由不一致；來源驗證改以已保存問題的 responseMessageID／senderID 決定收件者，維持問題回答不構成重新指派成員。修正後完整非平行 Swift 測試 exit 0。
+
+Xcode 專案補列 AgentPublicationFileSource.swift，最終原生 Debug build 與 deep strict 封裝／簽章通過。第一次完整測試因鎖定時受保護的 agents.json 回報 EPERM 而停止；解鎖後重跑，未降低檔案保護。最終日誌 `.build/validation/group-file-app-{full,native,compile}.log`。依 pfw-testing 使用隔離 fixture 驗證保存 bytes 及撤銷，不重啟使用者 App，不改真實資料。
+
+後續仍包含 direct／mailbox／背景群組接線、檔案回條引用、遠端來源、媒體能力與故障復原驗收；前景接線不能代表上述差異已完成。

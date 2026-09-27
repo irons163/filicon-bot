@@ -9,7 +9,7 @@ import FiliconAgents
 public struct AgentGroupFilePublicationServices: Sendable {
     public typealias Prepare = @Sendable (AgentProfile, String, NormalizedToolCall, ToolContext) async throws -> PreparedAgentPublicationFile
     public typealias Authorize = @Sendable (AgentProfile, AgentFilePublicationTransaction.Review, NormalizedToolCall, ToolContext) async throws -> Void
-    public typealias Save = @Sendable (AttachmentMetadata) async throws -> RoomMessage
+    public typealias Save = @Sendable (AttachmentMetadata, UUID) async throws -> RoomMessage
     public typealias Commit = @Sendable (AgentFilePublicationTransaction.Review, NormalizedToolCall, ToolContext, @escaping Save) async throws -> RoomMessage
     public let prepare: Prepare
     public let authorize: Authorize

@@ -829,7 +829,8 @@ struct GroupToolApprovalPanel: View {
                     .font(.headline)
                 Text(approval.action.summary).font(.callout).textSelection(.enabled)
                 if let members = approval.action.context.metadata["agentGroupMembers"] {
-                    AgentGroupApprovalDetails(members: members, isImagePublication: approval.action.context.metadata["agentImagePublication"] == "true")
+                    AgentGroupApprovalDetails(members: members, isImagePublication: approval.action.context.metadata["agentImagePublication"] == "true",
+                        isFilePublication: approval.action.context.metadata["agentFilePublication"] == "true")
                 }
                 if approval.action.context.metadata["agentMessagePriority"] == "priority" {
                     AgentPriorityMessageNotice()
@@ -998,12 +999,15 @@ struct AgentPriorityMessageNotice: View {
 struct AgentGroupApprovalDetails: View {
     let members: String
     var isImagePublication = false
+    var isFilePublication = false
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(l10n("Group audience")).font(.callout.weight(.semibold))
             Text(verbatim: members).font(.caption).textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
-            Text(l10n(isImagePublication
+            Text(l10n(isFilePublication
+                      ? "This saves the reviewed file in this group. It does not add responders or automatically send the file to other models."
+                      : isImagePublication
                       ? "This saves the reply and images in this group. It does not add responders or automatically resend images to other models."
                       : "This posts to the shared room and wakes its other active members. Replies appear there. Tool actions still need approval."))
                 .font(.caption).foregroundStyle(FiliconTheme.textSecondary)

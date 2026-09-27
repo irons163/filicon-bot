@@ -122,9 +122,9 @@ struct AgentImageMessagingTests {
             if mode == "stale-save" { _ = try await groups.postUserMessage("New request", groupID: group.id) }
             if mode == "bad-metadata" {
                 return try await save(.init(id: metadata.id, filename: "different.txt", mimeType: metadata.mimeType,
-                    byteCount: metadata.byteCount, kind: metadata.kind, createdAt: metadata.createdAt))
+                    byteCount: metadata.byteCount, kind: metadata.kind, createdAt: metadata.createdAt), UUID())
             }
-            return try await save(metadata)
+            return try await save(metadata, UUID())
         })
         let session = AgentMessagingSession(originConversationID: group.id, agents: f.agents, messenger: f.messenger,
             registry: f.registry, coordinator: TurnCoordinator(registry: f.registry, toolCatalog: ToolCatalog()),

@@ -175,8 +175,10 @@ public struct GroupConversationResponder: GroupAgentResponder {
             publisher = try await messaging.savedBackgroundGroupPublisher(for: agent.id, groupID: groupID,
                 memberIDs: roomContext.group.memberIDs, replyHistory: replyHistory, publish: onSavedPublication)
         } else if delegatedMessage == nil, let onSavedPublication, let roomContext, let questionLifetime {
-            if let messaging, let forwardingMessageID {
-                publisher = try await messaging.savedGroupPublisher(for: agent.id, userMessageID: forwardingMessageID,
+            if let messaging, let publicationRequestID = latestUser?.id {
+                // File publication can start from a text-only request. Image
+                // forwarding handles remain separately bounded above.
+                publisher = try await messaging.savedGroupPublisher(for: agent.id, userMessageID: publicationRequestID,
                     replyHistory: replyHistory, questionAccountID: questionAccountID,
                     memberIDs: roomContext.group.memberIDs, defaultReplyToMessageID: threadProjection.defaultReplyTargetID,
                     publish: onSavedPublication)

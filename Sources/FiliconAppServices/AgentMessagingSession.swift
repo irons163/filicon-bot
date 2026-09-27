@@ -224,12 +224,12 @@ public actor AgentMessagingSession {
             }, authorize: { review, call, context in
                 try await groupFiles.authorize(sender, review, call, context)
             }, commit: { [self] review, call, context in
-                let saved = try await groupFiles.commit(review, call, context) { [self] metadata in
+                let saved = try await groupFiles.commit(review, call, context) { [self] metadata, messageID in
                     guard metadata.id == review.file.digest, metadata.filename == review.file.filename,
                           metadata.byteCount == review.file.bytes.count else { throw AgentFilePublicationError.invalidReceipt }
                     _ = try await availableImages(senderID: sender.id, replyTo: nil, groupUserMessageID: userMessageID)
                     let file = try ReviewedGroupFile(metadata: metadata, groupID: review.conversationID,
-                        senderID: sender.id, lifetime: publicationLifetime)
+                        senderID: sender.id, lifetime: publicationLifetime, messageID: messageID)
                     guard let saved = try await publish(.init(text: "", replyToMessageID: review.replyTo, file: file)) else {
                         throw AgentFilePublicationError.invalidReceipt
                     }

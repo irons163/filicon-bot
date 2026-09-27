@@ -31,12 +31,13 @@ public struct GroupTurnContext: Sendable {
 /// recipient. Not Codable: model arguments must never construct this envelope.
 /// The host remains responsible for blob ownership and quota before publishing.
 public struct ReviewedGroupFile: Sendable {
+    public let messageID: UUID
     public let metadata: AttachmentMetadata
     public let groupID: UUID
     public let senderID: UUID
     public let lifetime: AgentPublicationLifetime
 
-    public init(metadata: AttachmentMetadata, groupID: UUID, senderID: UUID, lifetime: AgentPublicationLifetime) throws {
+    public init(metadata: AttachmentMetadata, groupID: UUID, senderID: UUID, lifetime: AgentPublicationLifetime, messageID: UUID = UUID()) throws {
         guard metadata.id.utf8.count == 64,
               metadata.id.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }),
               !metadata.filename.isEmpty, metadata.filename != ".", metadata.filename != "..",
@@ -48,6 +49,7 @@ public struct ReviewedGroupFile: Sendable {
               !metadata.mimeType.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }),
               metadata.hasValidAltText else { throw AgentPublicationError.invalid }
         self.metadata = metadata; self.groupID = groupID; self.senderID = senderID; self.lifetime = lifetime
+        self.messageID = messageID
     }
 }
 
@@ -172,11 +174,20 @@ public actor GroupService {
               message.id == messageID else { throw AgentGroupPostError.changed }
         let epoch = epochs[groupID]
         let members = await resolveMembers(group.memberIDs)
+        // A choice answer resumes its authenticated asker, not a name typed
+        // inside the answer. Match the routing used by run(groupID:...).
+        let questionRecipient = message.questionReplyTo.flatMap { questionID in
+            state.roomMessages.first(where: {
+                $0.groupID == groupID && $0.id == questionID && $0.question?.responseMessageID == message.id
+            })?.senderID
+        }
+        let addressed = questionRecipient.map { $0 == memberID }
+            ?? Self.resolveResponderIDs(members: members, history: [message]).contains(memberID)
         try Task.checkCancellation()
         guard epochs[groupID] == epoch,
               state.groups.first(where: { $0.id == groupID })?.memberIDs == group.memberIDs,
               state.roomMessages.last(where: { $0.groupID == groupID && $0.senderID == nil }) == message,
-              Self.resolveResponderIDs(members: members, history: [message]).contains(memberID) else {
+              addressed else {
             throw AgentGroupPostError.changed
         }
         return message.images ?? []
@@ -523,6 +534,7 @@ public actor GroupService {
         let files = publication.file.map { [$0.metadata] } ?? []
         if let file = publication.file {
             guard file.groupID == activity.groupID, file.senderID == activity.senderID,
+                  !state.roomMessages.contains(where: { $0.id == file.messageID }),
                   state.groups.first(where: { $0.id == activity.groupID })?.memberIDs.contains(file.senderID) == true,
                   images.isEmpty, publication.question == nil, publication.cursorAgent == nil,
                   publication.lifetime == nil, publication.sourceUserMessageID == nil else {
@@ -564,7 +576,7 @@ public actor GroupService {
               !previousTexts.contains(fingerprint), !replies.contains(where: { Self.replyFingerprint($0.text, images: $0.images ?? [], files: $0.files ?? []) == fingerprint }) else {
             throw AgentServiceError.invalidName
         }
-        var draft = RoomMessage(groupID: activity.groupID, senderID: activity.senderID, text: text, images: images, files: files)
+        var draft = RoomMessage(id: publication.file?.messageID ?? UUID(), groupID: activity.groupID, senderID: activity.senderID, text: text, images: images, files: files)
         draft.question = publication.question
         draft.cursorAgent = publication.cursorAgent
         draft.replyToMessageID = publication.replyToMessageID ?? activity.replyToMessageID

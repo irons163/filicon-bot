@@ -1720,3 +1720,4 @@
 "Image avatar" = "Image avatar";
 "Image preview unavailable. Reject this request and try again." = "Image preview unavailable. Reject this request and try again.";
 "This exact image will be saved after approval. The source file is not changed." = "This exact image will be saved after approval. The source file is not changed.";
+"This saves the reviewed file in this group. It does not add responders or automatically send the file to other models." = "This saves the reviewed file in this group. It does not add responders or automatically send the file to other models.";

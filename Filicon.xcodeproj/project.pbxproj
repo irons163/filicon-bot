@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		CAFDE57372FB3AEA67170E53995C76C0 /* AgentPublicationFileSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBC5029479EEB32218E8FD369D6EB440 /* AgentPublicationFileSource.swift */; };
 		004C5F6A717FE0B25C7A878B5E83AC37 /* AgentAvatarSourceReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDD4117D0531835C5E1561DDBE51E9DF /* AgentAvatarSourceReader.swift */; };
 		00AFA8675B81DA922D261CF12D456CD0 /* FiliconDomain in Frameworks */ = {isa = PBXBuildFile; productRef = 889DB3448F887D3A6CE11FE077D1E910 /* FiliconDomain */; };
 		0AD6422182B72EE3BB88E6961685A6D8 /* TranscriptCardPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3EDA54C87527C5C84B9A1B6D0F576BBF /* TranscriptCardPresentation.swift */; };
@@ -158,6 +159,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		FBC5029479EEB32218E8FD369D6EB440 /* AgentPublicationFileSource.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AgentPublicationFileSource.swift; sourceTree = "<group>"; };
 		052C4C896FED416ABDF0BEA4265EA2C1 /* FiliconLocalToolService.xpc */ = {isa = PBXFileReference; includeInIndex = 0; path = FiliconLocalToolService.xpc; sourceTree = BUILT_PRODUCTS_DIR; };
 		0578528F9374AE3D4F122F6EF7873AF1 /* PrivateSkillsView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PrivateSkillsView.swift; sourceTree = "<group>"; };
 		078C177EB3448DB5B70C38FB31426054 /* UpdateIdleMonitor.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = UpdateIdleMonitor.swift; sourceTree = "<group>"; };
@@ -381,6 +383,7 @@
 				57A224B1C756F2B3542753D576C5804B /* AccountExperienceView.swift */,
 				E7131F4671191E9B548BE61FAE5243E5 /* AgentAvatarApprovalPreview.swift */,
 				DDD4117D0531835C5E1561DDBE51E9DF /* AgentAvatarSourceReader.swift */,
+				FBC5029479EEB32218E8FD369D6EB440 /* AgentPublicationFileSource.swift */,
 				EA9A27EED6559AA419EEF567223DE283 /* AgentMemorySuggestionsSection.swift */,
 				6C6DD3B18A3D9DA8A0AAF49D38C99DCB /* AgentMessagingView.swift */,
 				EAE08D2666248EAD0C74396858EBFBA1 /* AgentNotificationProjection.swift */,
@@ -710,6 +713,7 @@
 				A2672EF4804A7EF06E9D0A27DE1D1739 /* AccountExperienceView.swift in Sources */,
 				1E23A76273EA841785F0081863FEF47B /* AgentAvatarApprovalPreview.swift in Sources */,
 				004C5F6A717FE0B25C7A878B5E83AC37 /* AgentAvatarSourceReader.swift in Sources */,
+				CAFDE57372FB3AEA67170E53995C76C0 /* AgentPublicationFileSource.swift in Sources */,
 				C1FB42A59247D47CAACFEBB0A7FE851B /* AgentMemorySuggestionsSection.swift in Sources */,
 				C456029E70A2574199E7267404E5D6E9 /* AgentMessagingView.swift in Sources */,
 				9BB5ACAD4A2AD8DE1B1BF4A701D5494A /* AgentNotificationProjection.swift in Sources */,
