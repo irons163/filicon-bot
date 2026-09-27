@@ -210,8 +210,8 @@ private struct GroupFileAppProvider: AIProvider {
         if mode.hasPrefix("quota-") || mode.hasPrefix("direct-message-") { #expect(fault.didTrigger) }
     }
 
-    @Test(arguments: ["approve", "deny", "stop", "account"])
-    func mailboxRemoteRequiresAppApproval(mode: String) async throws {
+    @Test(arguments: ["approve", "deny", "stop", "account"], [false, true])
+    func mailboxRemoteRequiresAppApproval(mode: String, direct: Bool) async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-mailbox-remote-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }
         let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
@@ -221,18 +221,33 @@ private struct GroupFileAppProvider: AIProvider {
         let senderValue = await model.createAgent(name: "Sender", summary: "", instructions: "", providerID: "group-file-app", modelID: "test")
         let recipientValue = await model.createAgent(name: "Recipient", summary: "", instructions: "", providerID: "group-file-app", modelID: "test")
         let sender = try #require(senderValue), recipient = try #require(recipientValue)
-        #expect(await model.sendAgentMessage(senderID: sender.id, recipientID: recipient.id, text: "Share report"))
-        let approval = try await pending(model)
+        var delegationID: String?
+        if direct {
+            _ = await model.addConversation(agentID: sender.id)
+            await model.refreshModels()
+            await model.registry.register(GroupFileAppProvider(url: reference.url, peerRecipientID: recipient.id))
+            model.draft = "Share report"
+            model.send()
+            let delegation = try await pending(model)
+            delegationID = delegation.id
+            model.handleTranscriptCardIntent(.approveReview(reviewID: delegation.id))
+        } else {
+            #expect(await model.sendAgentMessage(senderID: sender.id, recipientID: recipient.id, text: "Share report"))
+        }
+        let approval = try await pending(model, excluding: delegationID)
         let originID = approval.action.context.conversationID
         expectNoDifference(approval.action.context.metadata["agentRemotePublication"], "true")
         #expect(approval.action.context.metadata["mailboxIncomingID"] != nil)
         #expect(approval.action.context.metadata["agentMessage"]?.contains(reference.url) == true)
         #expect(approval.action.context.metadata["agentMessage"]?.contains("報表說明") == true)
-        if mode == "stop" { await model.stopAgentMessages(scopeID: originID) }
+        if mode == "stop" {
+            if direct { model.cancel() }
+            else { await model.stopAgentMessages(scopeID: originID) }
+        }
         if mode == "account" { await model.cancelAutoReviewApprovals(nextAccountID: "other") }
         await model.resolveGroupApproval(approval, groupID: originID, approve: mode != "deny")
         let deadline = ContinuousClock.now + .seconds(10)
-        while model.runningAgentMessageScopes.contains(originID), ContinuousClock.now < deadline {
+        while model.runningAgentMessageScopes.contains(originID) || model.isConversationWorking(originID), ContinuousClock.now < deadline {
             try await Task.sleep(for: .milliseconds(10))
         }
         #expect(!model.runningAgentMessageScopes.contains(originID))
@@ -242,6 +257,13 @@ private struct GroupFileAppProvider: AIProvider {
         let messages = await messenger.allMessages()
         let references = messages.flatMap { $0.delivery?.publications ?? [] }.compactMap(\.remoteAttachment)
         expectNoDifference(references, mode == "approve" ? [reference] : [])
+        if direct && mode == "approve" {
+            let projected = model.conversations.flatMap(\.messages).filter { $0.remoteAttachment != nil }
+            expectNoDifference(projected.compactMap(\.remoteAttachment), [reference])
+            let binding = DirectConversationAgentBinding(accountID: "local", agentID: sender.id)
+            let recovered = try await messenger.directPeerTranscript(originID: originID, binding: binding)
+            expectNoDifference(recovered.compactMap { $0.message.remoteAttachment }, [reference])
+        }
     }
 
     @Test(arguments: ["approve", "deny", "stop", "account", "source-changed", "quota-reserve", "quota-blob", "quota-message", "message-write"], ["mailbox", "direct"])

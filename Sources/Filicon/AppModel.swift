@@ -5376,6 +5376,7 @@ final class AppModel: ObservableObject {
             guard canonical.questionResponse == nil, canonical.secretResponse == nil,
                   message.secretRequest == nil, message.question == nil, message.cursorAgent == nil,
                   message.files?.isEmpty != false,
+                  message.remoteAttachment == nil,
                   delivery.state == .running, message.id == canonical.id,
                   message.text == canonical.text,
                   message.images ?? [] == canonical.images ?? [] else { throw AgentMessagingError.scopeMismatch }
@@ -5489,6 +5490,12 @@ final class AppModel: ObservableObject {
         let images = message.images ?? []
         let files = message.files ?? []
         let attachments = images + files
+        if message.remoteAttachment != nil {
+            guard source.kind == .publication, message.text.isEmpty, attachments.isEmpty,
+                  message.question == nil, message.secretRequest == nil, message.cursorAgent == nil else {
+                throw AgentMessagingError.scopeMismatch
+            }
+        }
         guard Set(attachments.map(\.id)).count == attachments.count else { throw AgentMessagingError.scopeMismatch }
         var cards: [TranscriptCard] = []
         if let reference = message.cursorAgent {
@@ -5500,6 +5507,7 @@ final class AppModel: ObservableObject {
         }
         if let saved = stored?.messages.first(where: { $0.id == message.id }) {
             guard saved.agentMessageSource == source, saved.text == message.text,
+                  saved.remoteAttachment == message.remoteAttachment,
                   saved.attachments == attachments,
                   saved.transcriptCards.map(\.payload) == cards.map(\.payload),
                   saved.transcriptCards.map(\.id) == cards.map(\.id),
@@ -5563,6 +5571,7 @@ final class AppModel: ObservableObject {
         var projected = ChatMessage(id: message.id, role: .assistant, text: message.text,
             createdAt: message.createdAt, agentMessageSource: source)
         projected.attachments = attachments
+        projected.remoteAttachment = message.remoteAttachment
         projected.transcriptCards = cards
         let position = conversations[index].messages.firstIndex { $0.createdAt > projected.createdAt }
             ?? conversations[index].messages.endIndex

@@ -541,9 +541,14 @@ public actor AgentMessenger {
                 guard counts[message.id] == 1, message.groupID == originID,
                       message.senderID == (kind == .incoming ? item.senderID : item.recipientID),
                       (!message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                        || !(message.images ?? []).isEmpty || !(message.files ?? []).isEmpty),
+                        || !(message.images ?? []).isEmpty || !(message.files ?? []).isEmpty || message.remoteAttachment != nil),
                       message.toolActivities.isEmpty,
-                      message.memberOutcome == nil, message.questionReplyTo == nil, message.remoteAttachment == nil else { return }
+                      message.memberOutcome == nil, message.questionReplyTo == nil else { return }
+                if message.remoteAttachment != nil {
+                    guard kind == .publication, message.text.isEmpty,
+                          (message.images ?? []).isEmpty, (message.files ?? []).isEmpty,
+                          message.question == nil, message.secretRequest == nil, message.cursorAgent == nil else { return }
+                }
                 if let secret = message.secretRequest {
                     guard kind == .publication, secret.accountID == binding.accountID,
                           message.text == "Requested a credential securely: \(secret.request.label)",

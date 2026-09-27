@@ -468,3 +468,13 @@ TranscriptMessageView 顯示共用 RemoteAttachmentCard；無文字但有本機�
 七種語言 × 深淺色 14 案例同時驗證獨立卡片、信箱、完整單聊訊息列的尺寸與 bitmap render（remote-direct-ui-target.log）。原生 Debug build、deep strict 簽章通過（remote-direct-ui-native.log）。未重跑完整回歸、未人工啟動 App，故不宣稱實機視覺驗收完成。
 
 單聊工具發布與 peer projection 仍待補；遠端 locator 卡片不是媒體內容預覽。未 push、重啟 App 或改真實資料。
+
+## 第四十三階段：代理人遠端附件同步到單聊（2026-09-28）
+
+App peer projection 保存 remoteAttachment 並在 replay 核對精確 reference。incoming 仍禁止冒充遠端發布；remote publication 必須無混合文字、圖片、檔案、問題或特殊卡片。AgentMessenger 的終止回合恢復目錄採同樣條件納入遠端附件，不再因文字為空而丟棄。
+
+App 核准測試擴為信箱／單聊 × 同意、拒絕、停止、帳號切換，共 8 案例，成功單聊委派另核對畫面資料與重新開啟信箱的 directPeerTranscript reference（remote-peer-projection-target.log）。原生 Debug build、deep strict 簽章通過（remote-peer-projection-native.log）。完整回歸另記。
+
+這是 peer 發布同步，不是單聊主代理人直接 SendMessage 遠端發布；後者與真正媒體預覽仍待補。未 push、重啟使用者 App 或改真實資料。
+
+完整非平行 Swift 回歸 exit 0（remote-peer-projection-full.log）。
