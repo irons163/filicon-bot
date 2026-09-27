@@ -97,7 +97,8 @@ App fixture 覆蓋隱藏／恢復、合併修改及單改可見性保留通知�
 
 ## 必須保留的其他分類
 
-- 下一個已確認本機缺口：模型主機／box 圖片頭像；已核對 reference schema、state 實作及 composition 的 readBoxFile 接線，以及 Filicon 僅 pet 的模型入口與可重用基礎。來源、差異與完整驗收條件见 [Avatar-image-parity.md](Avatar-image-parity.md)，不能以人工圖片 UI 或當輪附件 ID 替代。
+- 圖片頭像：模型主機／box 來源、獨立讀取與圖片預覽核准、提交、direct／mailbox／remote fixture，以及人工匯入前配額已接線（截至 `549f96f`）。見 [Avatar-image-parity.md](Avatar-image-parity.md) 第七至十階段；CAS 回收／崩潰復原、完整 SVG 範圍、最低 macOS 與真實遠端服務驗收仍保留，不能標為整體完成。
+- 下一個已確認缺口：`SendMessage` 交付新產生的檔案／媒體。Filicon 目前只接受當轮既有圖片 ID，reference schema 與 builder 接受 file／HTTPS URL；composition 的本機 ingest 已接線，但該處未注入 box resolver，不能把可選介面當成遠端端到端證據。來源與分階段驗收見 [Send-message-files-parity.md](Send-message-files-parity.md)。本輪為來源核對，未開放新路徑或網路存取。
 
 - 記憶：最新保存／搜尋／synthesis／episode／project recall 證據見 `Memory-archive-parity.md`；跨 epoch snapshot 是未接線參考設計，見 `Memory-snapshot-audit.md`，不能自行換成永久 cache。
 - 協作／訊息：AGENT-02／04 的歷史缺項需與 `Agent-collaboration-parity.md` 後續進度及 current source 逐項對照；不能用舊行的「缺」覆蓋已完成的接線，也不能以有 UI 就宣稱工具／背景路徑完成。
