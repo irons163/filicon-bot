@@ -134,3 +134,19 @@ Xcode 專案補列 AgentPublicationFileSource.swift，最終原生 Debug build �
 此階段不新增 direct／mailbox／背景群組的傳檔入口，遠端來源、媒體能力與故障復原驗收仍待完成。
 
 驗證：定向與最終完整非平行 Swift 測試 exit 0；原生 Debug build、deep strict 封裝／簽章通過。日誌 `.build/validation/file-receipt-{focused,full,native}.log`。未重啟使用者 App、未修改真實帳號／群組資料。
+
+## 背景群組接線前的 scope 審查（2026-09-28）
+
+目前不可直接將前景 groupFiles 注入背景 publisher。核對現行程式得到以下具體差異：
+
+- AppModel.runGroupDelegation 以目的 groupID 建立 responder，但 toolScopeID 保留 originID；delegatedGroupOrigins 是目的群組到來源對話的對應，finishGroupDelegation 會移除該對應。
+- AgentMessagingSession.savedBackgroundGroupPublisher 的 conversationID 為 originConversationID，而 replyGroupID 為目的 groupID；背景沒有當輪人類訊息或可轉貼圖片，不能套用 availableImages 的 groupUserMessageID 檢查。
+- makeGroupFileServices 目前在 session 建立時擷取來源群組；prepareGroupPublicationFile 又要求 context.conversationID 等於該群組。背景來源可能是 direct／mailbox，不一定是群組。
+- authorizeGroupPublicationFile 的 ApprovalFence、核准所在 conversationID，目前也使用同一群組 ID。背景必須把執行／核准的來源 scope 與核准摘要中的目的群組分開。
+- commitGroupPublicationFile 的附件 owner 與保存 RoomMessage 必須使用目的群組；但取消檢查必須同時驗證來源仍執行、delegatedGroupOrigins 未改、帳號 generation、目的成員快照以及 session lifetime。僅檢查某個群組正在執行不足以排除後來的新委派。
+
+下一步應由 host 在已成立的委派中提供目的群組專屬服務，固定來源、目的與該次委派身分，不由模型傳入目的地。保存 callback 繼續走目的 GroupService 的 epoch／lifetime 檢查；成功後回條可引用目的群組訊息，不能把地址註冊到來源對話。
+
+最低整合驗收：來源與目的不同的成功保存及重開；來源停止／切帳號；目的成員變更；原委派結束後同一群組的新委派；錯誤來源 context；拒絕核准；配額或保存失敗；核准後來源檔案變更；背景仍不能取得人類圖片轉貼權限。必須檢查目的附件 owner 與來源沒有多出訊息，不能只看成功字串。
+
+此節是程式路徑審查，不是背景傳檔完成證據；未放寬 runtime 權限或新增對外連線。
