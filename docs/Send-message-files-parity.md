@@ -394,3 +394,13 @@ AppModel 為前景群組 session 提供 host authorizer，核准卡包含精確 
 App 背景委派授權、信箱／單聊 HTTPS、真正媒體預覽仍未完成；這不是全功能 parity 完成。未啟動／重啟使用者 App、無遠端請求、未改真實帳號或群組。
 
 完整非平行 Swift 回歸 exit 0（remote-host-full.log）。
+
+## 第三十五階段：App 背景群組遠端核准（2026-09-28）
+
+背景委派現在把 dispatch-bound remote services 經 GroupConversationResponder 傳入 session。核准沿用來源對話的 fence／回合，目的資源則指向實際收件群組；等待前後核對原始 dispatch、帳號 generation、目的群組成員與作者狀態。不因兩邊對話仍存在就接受過期委派。
+
+隔離 AppModel 測試涵蓋前景／背景 × 同意、拒絕、停止來源、停止目的、帳號切換、成員變更，共 12 案例，核准前無遠端附件，只有同意時能重開 store 讀到精確 URL／alt。定向測試通過（remote-background-host-target.log），原生 Debug build、deep strict 封裝／簽章通過（remote-background-host-native.log）。完整回歸結果另記。
+
+依 pfw-testing 使用隔離 fixture 與結構化斷言，未下載遠端內容、未啟動使用者 App、未改真實資料。HTTPS 信箱／單聊保存及真正媒體預覽等仍未完成，不能把這批視為全功能 parity。
+
+完整非平行 Swift 回歸 exit 0（remote-background-host-full.log）。

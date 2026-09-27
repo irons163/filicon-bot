@@ -4384,20 +4384,20 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func makeGroupRemoteAuthorizer(originID: UUID, generation: UInt64) -> AgentMessagingSession.RemotePublicationAuthorizer? {
-        guard let audience = groups.first(where: { $0.id == originID }) else { return nil }
+    private func makeGroupRemoteAuthorizer(originID: UUID, generation: UInt64, destinationID: UUID? = nil, dispatchID: UUID? = nil) -> AgentMessagingSession.RemotePublicationAuthorizer? {
+        guard let audience = groups.first(where: { $0.id == (destinationID ?? originID) }) else { return nil }
         return { [weak self] sender, review, call, context in
             guard let self else { throw CancellationError() }
             try await self.authorizeGroupRemotePublication(sender: sender, review: review, call: call,
-                context: context, audience: audience, generation: generation)
+                context: context, audience: audience, generation: generation, originID: originID, dispatchID: dispatchID)
         }
     }
 
     private func authorizeGroupRemotePublication(sender: AgentProfile, review: AgentRemotePublicationTransaction.Review,
-        call: NormalizedToolCall, context: ToolContext, audience: AgentGroup, generation: UInt64) async throws {
-        let originID = audience.id
-        try checkGroupFileScope(senderID: sender.id, audience: audience, generation: generation, originID: originID, dispatchID: nil)
-        guard review.senderID == sender.id, review.conversationID == originID,
+        call: NormalizedToolCall, context: ToolContext, audience: AgentGroup, generation: UInt64,
+        originID: UUID, dispatchID: UUID?) async throws {
+        try checkGroupFileScope(senderID: sender.id, audience: audience, generation: generation, originID: originID, dispatchID: dispatchID)
+        guard review.senderID == sender.id, review.conversationID == audience.id,
               context.conversationID == originID else { throw AgentMessagingError.scopeMismatch }
         let fence = ApprovalFence(accountID: settings.accountScope ?? "local", agentID: originID.uuidString.lowercased(),
             runID: context.runID, generation: generation)
@@ -4405,13 +4405,13 @@ final class AppModel: ObservableObject {
         let details = review.reference.url + (review.reference.alt.map { "\n\($0)" } ?? "")
             + "\n" + l10n("Open external link. Content has not been downloaded or verified.")
         let action = AutoReviewAction(summary: "\(sender.name) → \(audience.name): \(l10n("Remote attachment"))",
-            target: .resource(kind: "group", identifier: originID.uuidString), risks: [.sensitive],
+            target: .resource(kind: "group", identifier: audience.id.uuidString), risks: [.sensitive],
             context: .init(fence: fence, conversationID: originID, toolCallID: call.id.rawValue,
                 metadata: ["tool": "SendMessage", "agentRemotePublication": "true", "agentMessage": details,
                     "agentGroupName": audience.name]))
         let pending = PendingApproval(action: action, reason: "Approval required", expiresAt: Date().addingTimeInterval(300))
         try await autoReviewBroker.waitForApprovalToExecute(pending) { [weak self] in await self?.registerAutoReviewApproval($0) }
-        try checkGroupFileScope(senderID: sender.id, audience: audience, generation: generation, originID: originID, dispatchID: nil)
+        try checkGroupFileScope(senderID: sender.id, audience: audience, generation: generation, originID: originID, dispatchID: dispatchID)
     }
 
     private func makeGroupFileServices(originID: UUID, generation: UInt64, destinationID: UUID? = nil, dispatchID: UUID? = nil) -> AgentGroupFilePublicationServices? {
@@ -4583,10 +4583,18 @@ final class AppModel: ObservableObject {
                     try await self.validateBackgroundFileDispatch(dispatch, originID: originID, generation: generation)
                 })
         }
+        let backgroundRemote = makeGroupRemoteAuthorizer(originID: originID, generation: generation,
+            destinationID: groupID, dispatchID: dispatch.message.id).map { authorize in
+            AgentBackgroundGroupRemoteServices(originID: originID, groupID: groupID,
+                validate: { [weak self] in
+                    guard let self else { throw CancellationError() }
+                    try await self.validateBackgroundFileDispatch(dispatch, originID: originID, generation: generation)
+                }, authorize: authorize)
+        }
         _ = try await groupService.run(groupID: groupID,
             responder: GroupConversationResponder(groupID: groupID, registry: registry, coordinator: coordinator,
                 messaging: session, delegatedMessage: dispatch.message, toolScopeID: originID,
-                backgroundFileServices: backgroundFiles),
+                backgroundFileServices: backgroundFiles, backgroundRemoteServices: backgroundRemote),
             delegatedAudience: dispatch.audience, delegatedSenderID: dispatch.message.senderID,
             onAgentChange: { [weak self] agentID in
                 await MainActor.run { self?.thinkingGroupMembers[groupID] = agentID }
