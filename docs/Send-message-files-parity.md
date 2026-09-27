@@ -328,3 +328,11 @@ AgentUserMessageTool 可接收 host-bound remotePublication，綁定來源、目
 遠端呼叫與其他訊息共用 reserved／兩則預算；相同成功 call 重播不再次保存，變更輸入或跨型別重用 identity 拒絕。close 同時關閉遠端交易。此階段僅支持獨立 URL，尚未開放 alt、文字內遠端圖片或影片顯示；App host、群組 session、信箱和單聊持久化仍未全部接線，不代表使用者現在可以傳送 HTTPS 媒體。
 
 新增 7 種工具入口案例：成功重播及回覆／預算、無能力、錯誤綁定、拒絕核准、缺 canonical 回條、HTTP、混入內容。25 個定向案例與完整回歸 exit 0（remote-tool-target/full.log）；最後跨型別失敗 identity 防護再跑定向測試。原生 Debug build 與 deep strict 封裝／簽章通過（remote-tool-final-native.log）。未 push、啟動 App 或改真實資料。
+
+## 第二十七階段：前景群組 session 接線（2026-09-28）
+
+AgentMessagingSession 新增可選的 host 遠端發布核准回呼；未配置時不提供能力。前景 savedGroupPublisher 將交易串至 ReviewedGroupRemoteAttachment 與實際 durable group callback。核准前後及保存前驗證目前 human request、成員／作者與 session；發布使用 session lifetime，Stop／撤銷後不得保存。回條帶回原 envelope ID 與保存訊息，由交易及工具再核對。
+
+新增 5 種經 GroupService.run 的整合情境：核准、拒絕、未配置、核准時新 human request、撤銷。成功後重開群組 store 核對 locator、回覆目標、短地址；負向情境確認沒有保存附件。撤銷遵循既有 CancellationError 路徑，不當成成功或一般工具錯誤。
+
+驗證：13 個群組定向案例 exit 0（remote-session-target.log），原生 Debug build 與 deep strict 封裝／簽章通過（remote-session-native.log）。本批未重跑完整套件。背景群組、App 核准 UI、信箱／單聊遠端保存、alt 與媒體顯示仍未完成；不預設啟用、無網路請求、未重啟 App 或改真實資料。

@@ -2,6 +2,9 @@ import Foundation
 import Testing
 import CustomDump
 import FiliconAgents
+import FiliconAppServices
+import FiliconDomain
+import FiliconProviderKit
 
 private struct RemoteGroupResponder: GroupAgentResponder {
     let run: @Sendable (@escaping @Sendable (GroupAgentPublication) async throws -> RoomMessage?) async throws -> [String]
@@ -17,6 +20,55 @@ private struct RemoteGroupResponder: GroupAgentResponder {
 
 @Suite("Reviewed group remote attachment persistence")
 struct GroupRemotePublicationTests {
+    @Test(arguments: ["approve", "deny", "unavailable", "new-user", "revoked"])
+    func sessionPublishesThroughDurableGroupCallback(mode: String) async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "filicon-session-remote-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let agents = try AgentService(storeURL: root.appending(path: "agents.json"))
+        let sender = try await agents.create(name: "Sender", providerID: "fixture", modelID: "test")
+        let store = root.appending(path: "groups.json")
+        let groups = try GroupService(agents: agents, storeURL: store)
+        let group = try await groups.create(name: "Remote", memberIDs: [sender.id])
+        let user = try await groups.postUserMessage("Share", groupID: group.id)
+        let messenger = try AgentMessenger(service: agents, storeURL: root.appending(path: "messages.json"))
+        let registry = ProviderRegistry()
+        let authorizer: AgentMessagingSession.RemotePublicationAuthorizer = { profile, review, _, _ in
+            expectNoDifference(profile.id, sender.id)
+            expectNoDifference(review.conversationID, group.id)
+            expectNoDifference(review.replyTo, user.id)
+            if mode == "deny" { throw AgentMessagingError.approvalRequired }
+            if mode == "new-user" { _ = try await groups.postUserMessage("Changed request", groupID: group.id) }
+        }
+        let session = AgentMessagingSession(originConversationID: group.id, agents: agents, messenger: messenger,
+            registry: registry, coordinator: TurnCoordinator(registry: registry), groups: groups,
+            authorizeRemotePublication: mode == "unavailable" ? nil : authorizer)
+        let responder = RemoteGroupResponder { publish in
+            let tool = try await session.savedGroupPublisher(for: sender.id, userMessageID: user.id,
+                replyHistory: [user], questionAccountID: nil, memberIDs: [sender.id], publish: publish)
+            if mode == "revoked" { session.revokeProfileChanges() }
+            let call = try NormalizedToolCall(id: "remote", name: "SendMessage", argumentsJSON:
+                JSONEncoder().encode(["type": "attachment", "url": "https://example.com/media", "reply_to": user.id.uuidString]))
+            do {
+                let result = try await tool.execute(call, context: .init(conversationID: group.id))
+                expectNoDifference(result.isError, mode != "approve")
+            } catch is CancellationError {
+                expectNoDifference(mode, "revoked")
+            }
+            return ["PASS"]
+        }
+        _ = try await groups.run(groupID: group.id, responder: responder)
+        try await session.close()
+        let reopened = try GroupService(agents: agents, storeURL: store)
+        let history = await reopened.messages(groupID: group.id)
+        let saved = history.filter { $0.remoteAttachment != nil }
+        expectNoDifference(saved.count, mode == "approve" ? 1 : 0)
+        if let message = saved.first {
+            expectNoDifference(message.remoteAttachment?.url, "https://example.com/media")
+            expectNoDifference(message.shortAddress, "t0s0")
+            expectNoDifference(message.replyToMessageID, user.id)
+        }
+    }
+
     @Test(arguments: ["approved", "revoked", "wrong-group", "wrong-sender", "mixed-text", "mixed-lifetime", "duplicate"])
     func persistsOnlyReviewedScopedReference(mode: String) async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-group-remote-\(UUID())")
