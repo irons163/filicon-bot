@@ -38,6 +38,12 @@ public struct ReviewedGroupFile: Sendable {
     public let lifetime: AgentPublicationLifetime
 
     public init(metadata: AttachmentMetadata, groupID: UUID, senderID: UUID, lifetime: AgentPublicationLifetime, messageID: UUID = UUID()) throws {
+        try Self.validate(metadata)
+        self.metadata = metadata; self.groupID = groupID; self.senderID = senderID; self.lifetime = lifetime
+        self.messageID = messageID
+    }
+
+    static func validate(_ metadata: AttachmentMetadata) throws {
         guard metadata.id.utf8.count == 64,
               metadata.id.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }),
               !metadata.filename.isEmpty, metadata.filename != ".", metadata.filename != "..",
@@ -48,8 +54,6 @@ public struct ReviewedGroupFile: Sendable {
               !metadata.mimeType.isEmpty, metadata.mimeType.utf8.count <= 255,
               !metadata.mimeType.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }),
               metadata.hasValidAltText else { throw AgentPublicationError.invalid }
-        self.metadata = metadata; self.groupID = groupID; self.senderID = senderID; self.lifetime = lifetime
-        self.messageID = messageID
     }
 }
 

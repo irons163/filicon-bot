@@ -842,6 +842,61 @@ struct AgentImageMessagingTests {
         }
     }
 
+    @Test func reviewedMailboxFileIsScopedReplayableAndReplyable() async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let inbound = AgentMessage(senderID: f.sender.id, recipientID: f.recipient.id, text: "File",
+            delivery: .init(chainID: UUID(), originConversationID: f.origin))
+        try await f.messenger.send(inbound)
+        try await f.messenger.updateDelivery(id: inbound.id, state: .running)
+        let metadata = AttachmentMetadata(id: String(repeating: "a", count: 64), filename: "report.txt",
+                                          mimeType: "text/plain", byteCount: 4, kind: .document)
+        let lifetime = AgentPublicationLifetime()
+        let reviewed = try ReviewedMailboxFile(metadata: metadata, incomingID: inbound.id, originID: f.origin,
+            senderID: f.recipient.id, messageID: UUID(), lifetime: lifetime)
+        for (incoming, origin, sender) in [(UUID(), f.origin, f.recipient.id),
+                                          (inbound.id, UUID(), f.recipient.id),
+                                          (inbound.id, f.origin, f.sender.id)] {
+            let invalid = try ReviewedMailboxFile(metadata: metadata, incomingID: incoming, originID: origin,
+                senderID: sender, messageID: UUID(), lifetime: lifetime)
+            await #expect(throws: AgentPublicationError.invalid) { try await f.messenger.publishFile(invalid) }
+        }
+        let file = f.root.appending(path: "messages.json"), backup = f.root.appending(path: "file.backup")
+        try FileManager.default.moveItem(at: file, to: backup)
+        try FileManager.default.createDirectory(at: file, withIntermediateDirectories: false)
+        await #expect(throws: (any Error).self) { try await f.messenger.publishFile(reviewed) }
+        let unsaved = await f.messenger.allMessages()
+        expectNoDifference(unsaved.first?.delivery?.publications, nil)
+        try FileManager.default.removeItem(at: file)
+        try FileManager.default.moveItem(at: backup, to: file)
+        let saved = try await f.messenger.publishFile(reviewed)
+        let replay = try await f.messenger.publishFile(reviewed)
+        expectNoDifference(saved, replay)
+        expectNoDifference(saved.files, [metadata])
+        #expect(saved.shortAddress != nil)
+        let reused = try ReviewedMailboxFile(metadata: metadata, incomingID: inbound.id, originID: f.origin,
+            senderID: f.recipient.id, messageID: inbound.id, lifetime: lifetime)
+        await #expect(throws: AgentPublicationError.invalid) { try await f.messenger.publishFile(reused) }
+        let changed = try ReviewedMailboxFile(metadata: metadata, incomingID: inbound.id, originID: f.origin,
+            senderID: f.recipient.id, messageID: saved.id, replyToMessageID: inbound.id, lifetime: lifetime)
+        await #expect(throws: AgentPublicationError.invalid) { try await f.messenger.publishFile(changed) }
+        let directory = try await f.messenger.replyDirectory(replyingTo: inbound.id)
+        #expect(directory.contains(where: { $0.id == saved.id }))
+        await #expect(throws: AgentPublicationError.invalid) {
+            try await f.messenger.publish(saved, replyingTo: inbound.id, lifetime: lifetime)
+        }
+        var reply = RoomMessage(groupID: f.origin, senderID: f.recipient.id, text: "See file")
+        reply.replyToMessageID = saved.id
+        try await f.messenger.publish(reply, replyingTo: inbound.id, lifetime: lifetime)
+        let extra = try ReviewedMailboxFile(metadata: metadata, incomingID: inbound.id, originID: f.origin,
+            senderID: f.recipient.id, messageID: UUID(), lifetime: lifetime)
+        await #expect(throws: AgentPublicationError.limit) { try await f.messenger.publishFile(extra) }
+        lifetime.close()
+        await #expect(throws: CancellationError.self) { try await f.messenger.publishFile(reviewed) }
+        let reopened = try AgentMessenger(service: f.agents, storeURL: file)
+        let restored = try await reopened.replyDirectory(replyingTo: inbound.id)
+        expectNoDifference(restored.first(where: { $0.id == saved.id })?.files?.map(\.id), [metadata.id])
+    }
+
     @Test func oldTextPublicationsAndRoomMessagesDecodeWithoutImages() throws {
         let delivery = AgentMessageDelivery(chainID: UUID(), originConversationID: UUID(), state: .completed, response: "Old reply")
         let encoded = try JSONEncoder().encode(delivery)

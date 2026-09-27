@@ -216,3 +216,13 @@ App 隔離 fixture 以不同來源／目的群組實際執行 SendToAgent → Se
 這項防護不是傳檔功能替代品。後續必須加入 host-only 已核准檔案證明、固定 mailbox incoming／origin／sender、原始檔案 bytes 與核准、quota／附件 owner、canonical receipt、信箱保存與 direct mirror／preview；不能只把 files 放進既有文字 callback。direct 歷史投影目前只填 images，file-only 引用也須一併驗收。未放寬遠端存取或既有圖片授權。
 
 驗證：完整非平行 Swift 測試 exit 0，原生 Debug build 與 deep strict 封裝／簽章通過，日誌 `.build/validation/mailbox-file-admission-{full,native}.log`。初版 fixture 誤用不存在的 AttachmentKind.file，改為 document 後完整驗證通過。未重啟 App 或修改真實資料。
+
+## 第十六階段：信箱已核准檔案的正式保存入口（2026-09-28）
+
+新增非 Codable 的 ReviewedMailboxFile，固定 incoming ID、origin、sender、訊息 ID、檔案 metadata、reply target 與 lifetime。publishFile 只接受此 host envelope；既有 publish 與 finalPublication 仍拒絕未核准 files。與群組共用 metadata 格式驗證，保存仍走信箱的 running delivery、作者／來源、唯一 ID、兩則上限、取消 fence 與 atomic write。檔案本身的 bytes、核准、quota 和 owner 必須由 host 先完成，這個入口不授予讀寫權限。
+
+file-only 訊息加入 replyDirectory，保存後回傳具短地址的 canonical receipt。依 pfw-testing 新增隔離測試：錯誤 incoming／origin／author、實際信箱寫入失敗與狀態不變、相同 envelope 重播、ID 重用／變更、一般入口拒絕已保存檔案、引用檔案訊息、發布上限、lifetime 取消與重開後 metadata 保留。
+
+這是保存層，不代表 App 信箱傳檔已完成：AgentMessagingSession 的 filePublication、App host 的來源核准／blob owner／quota、direct mirror／preview 尚須接線與端到端測試。direct 自身檔案發布、遠端 URL／媒體與 ABA／crash recovery 缺口仍保留。
+
+驗證：完整非平行 Swift 測試 exit 0；追加 ID 重用與上限斷言後定向測試 exit 0。原生 Debug build 與 deep strict 封裝／簽章通過。日誌 `.build/validation/mailbox-reviewed-file-{full,final-target,native}.log`。未啟動或重啟使用者 App，未修改真實資料。

@@ -1,6 +1,26 @@
 import Foundation
 import FiliconDomain
 
+/// Host-only evidence of file review and ownership, bound to one delivery.
+/// This is not a model-decodable request or a grant of filesystem access.
+public struct ReviewedMailboxFile: Sendable {
+    public let incomingID: UUID
+    public let publication: RoomMessage
+    public let lifetime: AgentPublicationLifetime
+
+    public init(metadata: AttachmentMetadata, incomingID: UUID, originID: UUID,
+                senderID: UUID, messageID: UUID, replyToMessageID: UUID? = nil,
+                lifetime: AgentPublicationLifetime) throws {
+        try ReviewedGroupFile.validate(metadata)
+        self.incomingID = incomingID
+        self.lifetime = lifetime
+        var message = RoomMessage(id: messageID, groupID: originID, senderID: senderID,
+                                  text: "", files: [metadata])
+        message.replyToMessageID = replyToMessageID
+        self.publication = message
+    }
+}
+
 /// A canonical transcript candidate, never an execution or permission request.
 public struct AgentPeerTranscriptEntry: Hashable, Sendable {
     public let source: AgentMessageSource
@@ -117,6 +137,13 @@ public actor AgentMessenger {
         guard publication.question == nil, publication.secretRequest == nil else { throw AgentPublicationError.invalid }
         try publishValidated(publication, replyingTo: id, lifetime: lifetime)
         return addressedReceipt(publication)
+    }
+
+    /// The host must commit the reviewed blob owner before requesting this receipt.
+    public func publishFile(_ file: ReviewedMailboxFile) throws -> RoomMessage {
+        try publishValidated(file.publication, replyingTo: file.incomingID,
+                             lifetime: file.lifetime, reviewedFile: file)
+        return addressedReceipt(file.publication)
     }
 
     /// The host supplies account/scope; the model supplies only question content.
@@ -308,7 +335,7 @@ public actor AgentMessenger {
         let counts = Dictionary(grouping: candidates, by: \.id).mapValues(\.count)
         let addressCounts = Dictionary(grouping: candidates.compactMap(\.shortAddress), by: { $0 }).mapValues(\.count)
         return Array(candidates.filter {
-            counts[$0.id] == 1 && (!$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !($0.images ?? []).isEmpty)
+            counts[$0.id] == 1 && (!$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !($0.images ?? []).isEmpty || !($0.files ?? []).isEmpty)
         }.map { message in
             var target = message
             if let address = target.shortAddress,
@@ -319,7 +346,15 @@ public actor AgentMessenger {
         }.suffix(40))
     }
 
-    private func publishValidated(_ publication: RoomMessage, replyingTo id: UUID, lifetime: AgentPublicationLifetime) throws {
+    private func publishValidated(_ publication: RoomMessage, replyingTo id: UUID, lifetime: AgentPublicationLifetime,
+                                  reviewedFile: ReviewedMailboxFile? = nil) throws {
+        if let reviewedFile {
+            guard reviewedFile.incomingID == id, reviewedFile.publication == publication else {
+                throw AgentPublicationError.invalid
+            }
+        } else if publication.files?.isEmpty == false {
+            throw AgentPublicationError.invalid
+        }
         guard publication.shortAddress == nil || publication.shortAddress == state.mailboxAddresses[publication.id] else {
             throw AgentPublicationError.invalid
         }
@@ -331,9 +366,8 @@ public actor AgentMessenger {
                   delivery.state == .running,
                   publication.groupID == delivery.originConversationID,
                   publication.senderID == state.messages[index].recipientID,
-                  (!publication.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !(publication.images ?? []).isEmpty),
+                  (!publication.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !(publication.images ?? []).isEmpty || reviewedFile != nil),
                   publication.text.count <= 8_000, publication.toolActivities.isEmpty,
-                  publication.files?.isEmpty != false,
                   publication.memberOutcome == nil,
                   publication.shortAddress == nil else { throw AgentPublicationError.invalid }
             let prior = delivery.publications ?? []
