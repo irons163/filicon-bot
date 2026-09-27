@@ -117,8 +117,13 @@ public struct AgentAvatarStore: Sendable {
     }
 
     public func importImage(at sourceURL: URL, crop: AgentAvatarCrop, shape: AgentAvatarShape = .circle) throws -> AgentAvatar {
+        try install(prepareImage(at: sourceURL, crop: crop, shape: shape))
+    }
+
+    /// Capture an explicitly selected local image without installing it yet.
+    public func prepareImage(at sourceURL: URL, crop: AgentAvatarCrop, shape: AgentAvatarShape = .circle) throws -> PreparedAgentAvatar {
         let bytes = try readRegularFile(sourceURL, maximumBytes: Self.maximumInputBytes)
-        return try install(prepareImage(data: bytes, crop: crop, shape: shape))
+        return try prepareImage(data: bytes, crop: crop, shape: shape)
     }
 
     /// No disk writes. Host file authorization and model-specific limits belong

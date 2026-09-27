@@ -62,6 +62,50 @@ struct AgentAvatarQuotaTests {
         expectNoDifference(usage.reservationCount, 0)
     }
 
+    @Test(arguments: ["save", "full", "corrupt", "cancel", "invalid"])
+    func manualImportReservesBeforeInstalling(mode: String) async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "avatar-manual-quota-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let source = root.appending(path: "selected.svg")
+        let bytes = Data((mode == "invalid" ? "not an image" : "<svg xmlns='http://www.w3.org/2000/svg' width='32' height='32'><rect width='32' height='32' fill='red'/></svg>").utf8)
+        try bytes.write(to: source)
+        if mode == "full" {
+            let ledger = try StorageQuotaLedger.live(dataRoot: root)
+            _ = try await ledger.reconcile(authoritativeRecords: (0..<32).map {
+                StorageQuotaRecord(scope: "fixture", key: "\($0)", byteCount: 8 * 1_024 * 1_024, generation: 1)
+            })
+        }
+        if mode == "corrupt" {
+            let quota = root.appending(path: "quota")
+            try FileManager.default.createDirectory(at: quota, withIntermediateDirectories: true)
+            try Data("invalid ledger".utf8).write(to: quota.appending(path: "storage-quota-v1.json"))
+        }
+        let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+        let work = Task { await model.importAgentAvatar(from: source, crop: .init(), shape: .hexagon) }
+        if mode == "cancel" { work.cancel() }
+        let avatar = await work.value
+        let store = AgentAvatarStore(rootURL: root.appending(path: "agent-avatars"))
+        if mode == "save" {
+            let saved = try #require(avatar)
+            expectNoDifference(saved.shape, .hexagon)
+            let again = await model.importAgentAvatar(from: source, crop: .init(), shape: .hexagon)
+            expectNoDifference(again, saved)
+            expectNoDifference(try store.storageInventory().count, 1)
+            let data = try #require(store.imageData(for: saved))
+            let ledger = try StorageQuotaLedger.live(dataRoot: root)
+            let record = await ledger.record(scope: "avatar-blob", key: saved.imageRelativePath!)
+            expectNoDifference(record?.byteCount, Int64(data.count))
+            let usage = await ledger.usage()
+            expectNoDifference(usage.reservationCount, 0)
+        } else {
+            expectNoDifference(avatar, nil)
+            expectNoDifference(try store.storageInventory(), [])
+        }
+        expectNoDifference(try Data(contentsOf: source), bytes)
+        #expect(model.agents.isEmpty)
+    }
+
     @Test func quotaDenialDoesNotInstallBytes() async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "avatar-quota-denial-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }

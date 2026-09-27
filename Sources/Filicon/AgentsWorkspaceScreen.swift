@@ -364,12 +364,21 @@ struct AgentEditorView: View {
         .interactiveDismissDisabled(saving)
         .onChange(of: selectedAvatarKind) { _, kind in avatarKindChanged(kind) }
         .fileImporter(isPresented: $importingImage, allowedContentTypes: [.image]) { result in
-            guard case .success(let url) = result else { return }
-            let accessed = url.startAccessingSecurityScopedResource()
-            defer { if accessed { url.stopAccessingSecurityScopedResource() } }
-            if let avatar = model.importAgentAvatar(from: url, crop: .init(focusX: focusX, focusY: focusY, zoom: zoom), shape: selectedAvatarShape) {
-                profile.avatar = avatar
-            }
+            Task { await imageSelected(result) }
+        }
+    }
+
+    private func imageSelected(_ result: Result<URL, Error>) async {
+        guard case .success(let url) = result, !saving else { return }
+        saving = true
+        let accessed = url.startAccessingSecurityScopedResource()
+        defer {
+            if accessed { url.stopAccessingSecurityScopedResource() }
+            saving = false
+        }
+        if let avatar = await model.importAgentAvatar(from: url,
+            crop: .init(focusX: focusX, focusY: focusY, zoom: zoom), shape: selectedAvatarShape) {
+            profile.avatar = avatar
         }
     }
 

@@ -140,3 +140,15 @@ App 整合測試經 mailbox 接收者的模型 `update_state`，使用真正 `HT
 這補上 App 到 HTTP adapter 的 fixture 驗收，不是線上服務驗收：未連網、未驗證真實服務宣告的隔離能力、登入／憑證或遠端實際檔案。人工匯入配額、CAS 復原／回收、SVG 支援範圍及最低支援 macOS 仍未完成。
 
 驗證：八種情境定向測試與完整非平行 Swift 測試 exit 0；最後補入 clear 的 await 後 revision 檢查後，App management／RemoteComputer／RemoteIsolation 定向重跑 exit 0。最終原生 Debug 建置與 deep strict 封裝／簽章檢查通過。日誌 `.build/validation/avatar-remote-{focused,full,final-focused,native}.log`。pfw-testing 的隔離依賴方式讓 HTTP 與暫停邊界可控，未連線外部服務或修改使用者設定。
+
+## 第十階段：人工匯入提交前配額
+
+新增只準備、不安裝的 `AgentAvatarStore.prepareImage(at:crop:shape:)`，沿用既有 regular-file、安全路徑、大小與圖片解碼檢查。App 的人工 `importAgentAvatar` 改為 async，要求可用的 quota writer，先對不可變 PNG 的 CAS 路徑保留配額，再安裝與提交記帳。提交前重驗 task cancellation 與帳號 generation，完成後也檢查，避免將舊帳號匯入結果套用到編輯草稿。同一 CAS 圖片不重複計量；不修改來源或自動保存成員 profile。
+
+SwiftUI 檔案選取後由獨立 async action 處理，期間維持 security-scoped URL access、停用編輯／儲存並顯示既有進度指示，結束時恢復。只在成功回傳後更新草稿頭像。這個 UI 行為已接線並通過編譯；未操作使用者的實際檔案選取器。
+
+人工匯入測試覆蓋保存與重用、ledger 用量已滿、ledger 損壞、已取消 task、無效圖片；核對 CAS 寫入數、配額 bytes／reservation、shape、來源 bytes 不變及沒有建立成員。既有底層同步 `importImage` 保留作為 library API，並不宣稱所有外部 library 呼叫也經 App 配額。
+
+取消發生在安裝之後或編輯草稿取消時，圖片可能成為已記帳的 orphan，不會擅自刪除；CAS 回收及崩潰復原策略仍未完成。遠端線上服務、SVG 完整範圍與最低支援 macOS 驗收也仍保留。
+
+驗證：圖片 quota suite 定向及完整非平行 Swift 測試 exit 0，原生 Debug 建置與 deep strict 封裝／簽章檢查通過。日誌 `.build/validation/avatar-manual-{focused,full,native}.log`。pfw-modern-swiftui 促使選取後的非同步行為移入獨立 action；pfw-testing 使用隔離 ledger／檔案測試，沒有操作真實 App 或資料。

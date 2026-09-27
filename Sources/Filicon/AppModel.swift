@@ -5246,9 +5246,29 @@ final class AppModel: ObservableObject {
         } catch { errorMessage = error.localizedDescription }
     }
 
-    func importAgentAvatar(from url: URL, crop: AgentAvatarCrop, shape: AgentAvatarShape) -> AgentAvatar? {
-        do { return try agentAvatarStore.importImage(at: url, crop: crop, shape: shape) }
+    func importAgentAvatar(from url: URL, crop: AgentAvatarCrop, shape: AgentAvatarShape) async -> AgentAvatar? {
+        let generation = autoReviewAccountGeneration
+        do {
+            try Task.checkCancellation()
+            guard quotaWriter != nil else { throw StorageQuotaError.corruptLedger }
+            let image = try agentAvatarStore.prepareImage(at: url, crop: crop, shape: shape)
+            guard let path = image.avatar.imageRelativePath else { throw AgentAvatarChangeError.invalid }
+            let result = try await quotaWrite(scope: "avatar-blob", key: path, data: image.pngData) { [weak self] in
+                guard let self else { throw CancellationError() }
+                return try await self.installManualAvatarBytes(image, generation: generation)
+            }
+            try Task.checkCancellation()
+            guard generation == autoReviewAccountGeneration else { throw CancellationError() }
+            return result
+        }
+        catch is CancellationError { return nil }
         catch { errorMessage = error.localizedDescription; return nil }
+    }
+
+    private func installManualAvatarBytes(_ image: PreparedAgentAvatar, generation: UInt64) throws -> AgentAvatar {
+        try Task.checkCancellation()
+        guard generation == autoReviewAccountGeneration else { throw CancellationError() }
+        return try agentAvatarStore.install(image)
     }
 
     func agentAvatarURL(for avatar: AgentAvatar?) -> URL? {
