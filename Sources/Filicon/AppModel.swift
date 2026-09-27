@@ -2127,6 +2127,8 @@ final class AppModel: ObservableObject {
                                 assistantID: assistantID, accountScope: accountScope,
                                 generation: publicationGeneration, replyTo: replyTo, cursorAgent: reference)
                         },
+                        filePublication: makeDirectFilePublication(conversationID: id, assistantID: assistantID,
+                            account: accountScope, generation: publicationGeneration, agentID: agentIdentity?.agentID ?? id),
                         replyHistory: replyHistory, receiptSenderID: id, supportsReferenceNavigation: true,
                         directConversationPresentation: true,
                         publishQuestionReceipt: { [weak self] question, replyTo in
@@ -2455,6 +2457,128 @@ final class AppModel: ObservableObject {
         try Task.checkCancellation()
         guard generation == autoReviewAccountGeneration, running.contains(context.conversationID),
               !agentMessagingAccountTransition, !deletedConversationIDs.contains(context.conversationID) else { throw CancellationError() }
+    }
+
+    private func checkDirectFileScope(_ id: UUID, assistantID: UUID, account: String, generation: UInt64) throws {
+        try Task.checkCancellation()
+        guard !agentMessagingAccountTransition, generation == autoReviewAccountGeneration,
+              account == (settings.accountScope ?? "local"), running.contains(id),
+              !deletedConversationIDs.contains(id), directPublicationIDs[assistantID] != nil,
+              conversations.contains(where: { $0.id == id && $0.messages.contains(where: { $0.id == assistantID }) }) else {
+            throw CancellationError()
+        }
+    }
+
+    private func makeDirectFilePublication(conversationID id: UUID, assistantID: UUID,
+        account: String, generation: UInt64, agentID: UUID) -> AgentFilePublicationTransaction? {
+        guard quotaWriter != nil, attachmentLifecycle != nil else { return nil }
+        let validate: @Sendable () async throws -> Void = { [weak self] in
+            guard let self else { throw CancellationError() }
+            try await self.checkDirectFileScope(id, assistantID: assistantID, account: account, generation: generation)
+        }
+        let reader = AuthorizedAgentFileReader(runtime: localToolRuntime, folders: workspaceFolders,
+            policy: localToolPermissionPolicy, validateScope: validate, authorizeRead: { [weak self] operation, context, callID in
+                guard let self else { throw CancellationError() }
+                let target = try await self.localToolRuntime.authorizationTarget(for: operation)
+                let decision = await self.localToolPermissionPolicy.evaluate(action: .readFile,
+                    conversationID: context.conversationID, toolCallID: "publication-source:\(callID.rawValue)", title: target, reason: "SendMessage")
+                switch decision {
+                case .denied: throw LocalToolError.permissionMismatch
+                case .requiresApproval(let request):
+                    guard await self.localToolApprovalBroker.requestApproval(request) else { throw CancellationError() }
+                case .allowed: break
+                }
+            })
+        return AgentFilePublicationTransaction(conversationID: id, senderID: id, validateScope: validate,
+            prepare: { url, call, context in
+                try await AgentPublicationFileSource(reader: reader).prepare(url: url, agentID: agentID, call: call, context: context)
+            }, authorize: { [weak self] review, call, context in
+                guard let self else { throw CancellationError() }
+                try await self.authorizeDirectFile(review, call: call, context: context,
+                    assistantID: assistantID, account: account, generation: generation)
+            }, commit: { [weak self] review, _, _ in
+                guard let self else { throw CancellationError() }
+                let saved = try await self.commitDirectFile(review, assistantID: assistantID, account: account, generation: generation)
+                return .init(messageID: saved.id, conversationID: id, senderID: id, replyTo: review.replyTo,
+                    digest: review.file.digest, filename: review.file.filename, byteCount: review.file.bytes.count, savedMessage: saved)
+            })
+    }
+
+    private func authorizeDirectFile(_ review: AgentFilePublicationTransaction.Review,
+        call: NormalizedToolCall, context: ToolContext, assistantID: UUID, account: String, generation: UInt64) async throws {
+        let id = review.conversationID
+        try checkDirectFileScope(id, assistantID: assistantID, account: account, generation: generation)
+        guard review.senderID == id, context.conversationID == id else { throw AgentFilePublicationError.unavailable }
+        let fence = ApprovalFence(accountID: account, agentID: id.uuidString.lowercased(), runID: context.runID, generation: generation)
+        await autoReviewBroker.activate(fence)
+        let details = "\(review.file.filename)\n\(ByteCountFormatter.string(fromByteCount: Int64(review.file.bytes.count), countStyle: .file))\nSHA-256: \(review.file.digest)"
+        let action = AutoReviewAction(summary: review.file.filename,
+            target: .resource(kind: "conversation", identifier: id.uuidString), risks: [.sensitive],
+            context: .init(fence: fence, conversationID: id, toolCallID: call.id.rawValue,
+                metadata: ["tool": "SendMessage", "agentFilePublication": "true", "agentMessage": details]))
+        let pending = PendingApproval(action: action, reason: "Approval required", expiresAt: Date().addingTimeInterval(300))
+        try await autoReviewBroker.waitForApprovalToExecute(pending) { [weak self] in await self?.registerAutoReviewApproval($0) }
+        try checkDirectFileScope(id, assistantID: assistantID, account: account, generation: generation)
+    }
+
+    private func commitDirectFile(_ review: AgentFilePublicationTransaction.Review,
+        assistantID: UUID, account: String, generation: UInt64) async throws -> RoomMessage {
+        let id = review.conversationID
+        try checkDirectFileScope(id, assistantID: assistantID, account: account, generation: generation)
+        guard review.senderID == id, let attachmentLifecycle else { throw AgentFilePublicationError.unavailable }
+        let upload = try await quotaWrite(scope: "attachment-blob", key: review.file.digest, data: review.file.bytes) {
+            try await attachmentLifecycle.stage(prepared: review.file)
+        }
+        // A distinct immutable ID prevents an existing text publication from being overwritten.
+        let messageID = UUID()
+        let fileOwner = AttachmentReferenceOwner(conversationID: id, messageID: messageID)
+        var metadata: AttachmentMetadata?
+        do {
+            try checkDirectFileScope(id, assistantID: assistantID, account: account, generation: generation)
+            let file = try await attachmentLifecycle.commit(upload, to: fileOwner)
+            metadata = file
+            try checkDirectFileScope(id, assistantID: assistantID, account: account, generation: generation)
+            guard let ci = conversations.firstIndex(where: { $0.id == id }) else { throw CancellationError() }
+            if let reply = review.replyTo {
+                let targets = conversations[ci].messages.filter { $0.id == reply }
+                guard targets.count == 1, let target = targets.first,
+                      target.role == .user || target.role == .assistant,
+                      !target.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !target.attachments.isEmpty else {
+                    throw GroupReplyError.unavailable
+                }
+            }
+            let message = ChatMessage(id: messageID, role: .assistant, text: "", attachments: [file], replyToMessageID: review.replyTo)
+            conversations[ci].messages.append(message)
+            try await persistOrThrow(conversationID: id)
+        } catch {
+            // Quota accounting may throw after the canonical save. Do not erase a delivered file.
+            let durable: Conversation?
+            do { durable = try await store.conversation(id: id) }
+            catch {
+                // An unreadable store is not evidence that the save failed.
+                // Retain reachability for reconciliation rather than deleting the blob.
+                throw AgentFilePublicationError.uncertainCommit
+            }
+            if let metadata, let saved = durable?.messages.first(where: { $0.id == messageID }),
+               saved.role == .assistant, saved.attachments == [metadata], saved.replyToMessageID == review.replyTo {
+                directPublicationIDs[assistantID]?.append(messageID)
+                var receipt = RoomMessage(id: messageID, groupID: id, senderID: id, text: "", files: [metadata])
+                receipt.replyToMessageID = review.replyTo; receipt.shortAddress = saved.shortAddress
+                return receipt
+            }
+            if let ci = conversations.firstIndex(where: { $0.id == id }) {
+                conversations[ci].messages.removeAll { $0.id == messageID }
+            }
+            try? await attachmentLifecycle.removeReferences(owner: fileOwner)
+            try? await attachmentLifecycle.abort(upload)
+            throw error
+        }
+        guard let metadata else { throw AgentFilePublicationError.invalidReceipt }
+        directPublicationIDs[assistantID]?.append(messageID)
+        var receipt = RoomMessage(id: messageID, groupID: id, senderID: id, text: "", files: [metadata])
+        receipt.replyToMessageID = review.replyTo
+        receipt.shortAddress = conversations.first(where: { $0.id == id })?.messages.first(where: { $0.id == messageID })?.shortAddress
+        return receipt
     }
 
     /// Bind publications to the active turn, never the currently selected chat.

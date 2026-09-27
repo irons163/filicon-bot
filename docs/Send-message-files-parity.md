@@ -270,3 +270,17 @@ direct 主回合建立 SendMessage 的 replyHistory 時，除了圖片也帶入�
 這只補齊引用既有檔案訊息，不代表 direct 主回合已能透過 SendMessage 發布一般檔案；該核准與持久化交易仍待接線。
 
 驗證：10 種定向案例、完整非平行 Swift 回歸 exit 0；原生 Debug build 與 deep strict 封裝／簽章通過。日誌 `.build/validation/direct-file-reference-{target,full,native}.log`；負向對照為 `direct-file-reference-negative.log`。未啟動使用者 App／Xcode，未修改真實資料。
+
+## 第二十一階段：direct 主回合的本機檔案交易（2026-09-28）
+
+單獨聊天的 SendMessage 注入獨立 AgentFilePublicationTransaction，不再只有信箱／群組能發布本機檔案。來源仍經工作區授權與 readFile gate；核准顯示檔名、大小和 digest，固定核准前取得的 bytes。帳號 generation、對話、執行中回合和 assistant identity 在讀取／核准／保存前重查，不依目前選取的聊天決定目的地。
+
+保存時先建立附件 owner，再持久化獨立 file-only ChatMessage，回條包含實際短地址；不覆蓋同回合已有文字。保存失敗會移除未保存訊息與 owner；若 quota 在 canonical save 後失敗，核對持久層再回傳已保存回條。若持久層本身無法讀取，保留引用供後續 reconciliation，不把無法確認誤判為可刪除。
+
+依 pfw-testing 加入 9 種隔離 App 案例：核准、拒絕、停止、換帳號、核准後来源改寫、blob quota reserve／commit 故障、訊息 quota reserve／late commit 故障。檢查保存數量、owner bytes、短地址、失敗無 owner，以及 provider 實際收到的成功／失敗回條。
+
+本批仍只涵蓋授權工作區的本機檔案，繼承目前 helper 的 10 MiB 上限。遠端 URL／媒體、更大檔案、強制中止的 crash recovery 與外部服務驗收仍未完成；不得解讀為所有傳檔 parity 已達成。
+
+首輪完整回歸暴露信箱預覽測試使用另一個 messenger JSON 解碼後的 metadata，與 UI 即時 metadata 的 Date 精度可能不同；改用畫面實際持有的 metadata 模擬點擊，仍檢查檔案 identity、錯誤 message ID 拒絕及預覽 bytes，沒有放寬 production 比對。
+
+驗證：9 種主回合傳檔情境、18 種信箱／委派情境及完整非平行 Swift 回歸 exit 0。原生 Debug build 與 deep strict 封裝／簽章通過。日誌 `.build/validation/direct-file-host-final-full.log`、`direct-file-host-native.log`。未啟動或重啟使用者 App／Xcode，未改真實資料。

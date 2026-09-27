@@ -16,13 +16,18 @@ private final class GroupFileQuotaFault: @unchecked Sendable {
     private let groupsURL: URL
     private var mode: String?
     private var triggered = false
+    private var directCheckpoints = 0
     init(groupsURL: URL) { self.groupsURL = groupsURL }
     func arm(_ mode: String) { lock.lock(); defer { lock.unlock() }; self.mode = mode }
     var didTrigger: Bool { lock.lock(); defer { lock.unlock() }; return triggered }
     func inject(_ point: StorageQuotaFaultPoint) throws {
         lock.lock(); defer { lock.unlock() }
         guard let mode else { return }
-        if mode == "quota-reserve" {
+        if mode == "direct-message-reserve" || mode == "direct-message-late" {
+            guard point == (mode == "direct-message-reserve" ? .afterReservationPersist : .afterCommitPersist) else { return }
+            directCheckpoints += 1
+            guard directCheckpoints == 2 else { return }
+        } else if mode == "quota-reserve" {
             guard point == .afterReservationPersist else { return }
         } else {
             guard point == .afterCommitPersist else { return }
@@ -44,6 +49,7 @@ private struct GroupFileAppProvider: AIProvider {
     let url: String
     var destinationID: UUID? = nil
     var peerRecipientID: UUID? = nil
+    var expectedFileSuccess: Bool? = nil
     let descriptor = ProviderDescriptor(id: "group-file-app", displayName: "Files fixture", requiresAPIKey: false)
     func models() async throws -> [AIModel] { [.init(id: "test")] }
     func stream(_ request: InferenceRequest) -> AsyncThrowingStream<InferenceEvent, Error> {
@@ -68,6 +74,11 @@ private struct GroupFileAppProvider: AIProvider {
                     continuation.yield(.toolCallCompleted(call))
                     continuation.yield(.completed(.toolUse))
                 } else {
+                    if let expectedFileSuccess {
+                        let result = try #require(request.toolExchanges.last?.results.first)
+                        expectNoDifference(result.isError, !expectedFileSuccess)
+                        expectNoDifference(result.wireText.contains("Saved message receipt:"), expectedFileSuccess)
+                    }
                     continuation.yield(.textDelta("PASS"))
                     continuation.yield(.completed(.stop))
                 }
@@ -79,6 +90,69 @@ private struct GroupFileAppProvider: AIProvider {
 
 @Suite("App group file publication", .timeLimit(.minutes(1)))
 @MainActor struct GroupFilePublicationAppTests {
+    @Test(arguments: ["approve", "deny", "stop", "account", "source-changed", "quota-reserve", "quota-blob", "direct-message-reserve", "direct-message-late"])
+    func directMainPublishesReviewedFile(mode: String) async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "filicon-direct-file-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let workspace = root.appending(path: "workspace")
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        let source = workspace.appending(path: "report.txt"), bytes = Data("Reviewed direct artifact".utf8)
+        try bytes.write(to: source)
+        let grants = WorkspaceAuthorizationStore(fileURL: root.appending(path: "grants.json"))
+        try await grants.authorize(workspace)
+        let generation = UUID(), key = Data(repeating: 13, count: 32)
+        let authenticator = LocalSessionAuthenticator(sessionKey: key)
+        let helper = LocalToolProcessHost(generation: generation, requiresPermissionReceipts: true,
+            authenticate: { _ in true }, verifyReceipt: { authenticator.verify($0) })
+        let runtime = LocalToolRuntime(workspaceStore: grants, generation: generation, sessionKey: key, helper: helper)
+        let fault = GroupFileQuotaFault(groupsURL: root.appending(path: "unused.json"))
+        let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false, localToolRuntime: runtime,
+            quotaFaultInjector: { try fault.inject($0) })
+        await model.bootstrap()
+        try await model.localToolPermissionPolicy.setChoice(.always, for: .readFile)
+        await model.registry.register(GroupFileAppProvider(url: source.absoluteString,
+            expectedFileSuccess: ["approve", "source-changed", "direct-message-late"].contains(mode)))
+        let id = try #require(model.selection)
+        let ci = try #require(model.conversations.firstIndex(where: { $0.id == id }))
+        model.conversations[ci].providerID = "group-file-app"
+        model.conversations[ci].modelID = "test"
+        await model.refreshModels()
+        model.draft = "Publish report"
+        model.send()
+        let approval = try await pending(model)
+        expectNoDifference(approval.action.context.metadata["agentFilePublication"], "true")
+        #expect(model.conversations[ci].messages.allSatisfy { $0.attachments.isEmpty })
+        if mode == "source-changed" { try Data("Unreviewed replacement".utf8).write(to: source) }
+        if mode.hasPrefix("quota-") || mode.hasPrefix("direct-message-") { fault.arm(mode) }
+        if mode == "stop" { model.cancel() }
+        if mode == "account" { await model.cancelAutoReviewApprovals(nextAccountID: "other") }
+        model.handleTranscriptCardIntent(mode == "deny" ? .rejectReview(reviewID: approval.id) : .approveReview(reviewID: approval.id))
+        for _ in 0..<600 {
+            if !model.running.contains(id) { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(!model.running.contains(id))
+        let store = ConversationStore(fileURL: root.appending(path: "conversations.json"))
+        let saved = try #require(try await store.conversation(id: id))
+        let files = saved.messages.filter { !$0.attachments.isEmpty }
+        expectNoDifference(files.count, ["approve", "source-changed", "direct-message-late"].contains(mode) ? 1 : 0)
+        if files.isEmpty {
+            let prepared = try PreparedAgentPublicationFile(bytes: bytes, filename: "report.txt")
+            let index = try AttachmentReferenceRepository(databaseURL: root.appending(path: "attachment-index.sqlite"))
+            let count = try await index.referenceCount(blobID: prepared.digest)
+            expectNoDifference(count, 0)
+        }
+        if let message = files.first {
+            let metadata = try #require(message.attachments.first)
+            expectNoDifference(message.text, "")
+            #expect(message.shortAddress != nil)
+            let lifecycle = try AttachmentLifecycle.live(applicationSupportDirectory: root)
+            let data = try await lifecycle.data(for: metadata, owner: .init(conversationID: id, messageID: message.id))
+            expectNoDifference(data, bytes)
+        }
+        if mode.hasPrefix("quota-") || mode.hasPrefix("direct-message-") { #expect(fault.didTrigger) }
+    }
+
     @Test(arguments: ["approve", "deny", "stop", "account", "source-changed", "quota-reserve", "quota-blob", "quota-message", "message-write"], ["mailbox", "direct"])
     func mailboxPublishesReviewedFileWithDurableOwner(mode: String, route: String) async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-mailbox-file-\(UUID())")
@@ -190,9 +264,15 @@ private struct GroupFileAppProvider: AIProvider {
             }
             let directory = try await messenger.replyDirectory(replyingTo: messages[0].id)
             #expect(directory.contains(where: { $0.id == message.id && $0.shortAddress != nil }))
-            model.openMailboxMessageFile(file, messageID: UUID(), incomingID: messages[0].id)
+            // Click with the current UI's metadata, not a separately JSON-decoded
+            // Date value whose floating-point precision can differ from the live actor.
+            let previewFile = try #require(model.agentMessages.first(where: { $0.id == messages[0].id })?
+                .delivery?.publications?.first(where: { $0.id == message.id })?.files?.first)
+            expectNoDifference(previewFile.id, file.id)
+            expectNoDifference(previewFile.filename, file.filename)
+            model.openMailboxMessageFile(previewFile, messageID: UUID(), incomingID: messages[0].id)
             #expect(model.attachmentPreview == nil)
-            model.openMailboxMessageFile(file, messageID: message.id, incomingID: messages[0].id)
+            model.openMailboxMessageFile(previewFile, messageID: message.id, incomingID: messages[0].id)
             let previewDeadline = ContinuousClock.now + .seconds(5)
             while model.attachmentPreview == nil && ContinuousClock.now < previewDeadline {
                 try await Task.sleep(for: .milliseconds(10))
