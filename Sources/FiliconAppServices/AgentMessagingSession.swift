@@ -75,6 +75,7 @@ public actor AgentMessagingSession {
     private let imageStore: AgentImageStore?
     private let authorizePublication: PublicationAuthorizer
     private let groupFiles: AgentGroupFilePublicationServices?
+    private let mailboxFiles: (@Sendable (AgentMessage) -> AgentMailboxFileServices?)?
     private let publicationLifetime = AgentPublicationLifetime()
     private let onChange: @Sendable () async -> Void
     private let turnTimeout: Duration
@@ -130,6 +131,7 @@ public actor AgentMessagingSession {
                 authorizeImages: @escaping ImageAuthorizer = { _, _, _, _, _, _ in throw AgentMessagingError.approvalRequired },
                 authorizePublication: @escaping PublicationAuthorizer = { _, _, _, _, _ in throw AgentMessagingError.approvalRequired },
                 groupFiles: AgentGroupFilePublicationServices? = nil,
+                mailboxFiles: (@Sendable (AgentMessage) -> AgentMailboxFileServices?)? = nil,
                 authorize: @escaping Authorizer = { _, _, _, _, _ in throw AgentMessagingError.approvalRequired },
                 onChange: @escaping @Sendable () async -> Void = {}) {
         self.id = id; self.originConversationID = originConversationID
@@ -151,6 +153,7 @@ public actor AgentMessagingSession {
         self.imageStore = imageStore; self.authorizeImages = authorizeImages
         self.authorizePublication = authorizePublication
         self.groupFiles = groupFiles
+        self.mailboxFiles = mailboxFiles
     }
 
     public nonisolated func tool(for senderID: UUID, groupUserMessageID: UUID? = nil) -> any ToolExecutor {
@@ -211,6 +214,47 @@ public actor AgentMessagingSession {
                 return try await publish(.init(text: text, images: images, sourceUserMessageID: userMessageID,
                     lifetime: publicationLifetime, question: card, replyToMessageID: replyID))
             }
+    }
+
+    private func makeMailboxFilePublication(inbound: AgentMessage, sender: AgentProfile,
+                                           output: AgentInboundOutput) -> AgentFilePublicationTransaction? {
+        guard supportsMailboxQuestions, let capability = mailboxFiles?(inbound) else { return nil }
+        let validate: @Sendable () async throws -> Void = { [self] in
+            try await checkOpen()
+            guard capability.incomingID == inbound.id, capability.originID == originConversationID,
+                  capability.senderID == sender.id, inbound.recipientID == sender.id,
+                  inbound.delivery?.originConversationID == originConversationID else {
+                throw AgentFilePublicationError.unavailable
+            }
+            try await capability.validate()
+            try await checkOpen()
+        }
+        return AgentFilePublicationTransaction(conversationID: originConversationID, senderID: sender.id,
+            validateScope: validate,
+            prepare: { url, call, context in try await capability.services.prepare(sender, url, call, context) },
+            authorize: { review, call, context in try await capability.services.authorize(sender, review, call, context) },
+            commit: { [self, messenger, publicationLifetime, onChange] review, call, context in
+                let saved = try await capability.services.commit(review, call, context) { metadata, messageID in
+                    guard metadata.id == review.file.digest, metadata.filename == review.file.filename,
+                          metadata.byteCount == review.file.bytes.count else { throw AgentFilePublicationError.invalidReceipt }
+                    try await validate()
+                    let file = try ReviewedMailboxFile(metadata: metadata, incomingID: inbound.id,
+                        originID: self.originConversationID, senderID: sender.id, messageID: messageID,
+                        replyToMessageID: review.replyTo, lifetime: publicationLifetime)
+                    return try await messenger.publishFile(file)
+                }
+                guard saved.groupID == originConversationID, saved.senderID == sender.id,
+                      saved.replyToMessageID == review.replyTo, saved.files?.count == 1,
+                      let file = saved.files?.first, file.id == review.file.digest,
+                      file.filename == review.file.filename, file.byteCount == review.file.bytes.count else {
+                    throw AgentFilePublicationError.invalidReceipt
+                }
+                await output.recordSavedPublication(saved)
+                await onChange()
+                return .init(messageID: saved.id, conversationID: saved.groupID, senderID: sender.id,
+                    replyTo: saved.replyToMessageID, digest: file.id, filename: file.filename,
+                    byteCount: Int(file.byteCount), savedMessage: saved)
+            })
     }
 
     private func makeGroupFilePublication(sender: AgentProfile, userMessageID: UUID,
@@ -719,7 +763,7 @@ public actor AgentMessagingSession {
                 questionPublisher = { [messenger, accountID, originConversationID, publicationLifetime, onChange] question in
                     let publication = try await messenger.publishQuestion(question, replyingTo: inbound.id,
                         accountID: accountID, originID: originConversationID, lifetime: publicationLifetime)
-                    await output.recordQuestion(publication)
+                    await output.recordSavedPublication(publication)
                     await onChange()
                 }
             } else { questionPublisher = nil }
@@ -729,7 +773,7 @@ public actor AgentMessagingSession {
                     let publication = try await messenger.publishQuestion(question, replyingTo: inbound.id,
                         accountID: accountID, originID: originConversationID, replyToMessageID: target,
                         lifetime: publicationLifetime)
-                    await output.recordQuestion(publication)
+                    await output.recordSavedPublication(publication)
                     await onChange()
                 }
             } else { questionReplyPublisher = nil }
@@ -737,7 +781,7 @@ public actor AgentMessagingSession {
             if let publishSecret {
                 secretPublisher = { [publicationLifetime, onChange] request, target in
                     let publication = try await publishSecret(request, inbound, target, publicationLifetime)
-                    await output.recordQuestion(publication)
+                    await output.recordSavedPublication(publication)
                     await onChange()
                 }
             } else { secretPublisher = nil }
@@ -763,6 +807,7 @@ public actor AgentMessagingSession {
                     return saved
                 }
             } else { cloudPublisher = nil }
+            let filePublication = makeMailboxFilePublication(inbound: inbound, sender: agent, output: output)
             let publisher = AgentUserMessageTool(conversationID: originConversationID,
                 availableImages: inbound.images ?? [], imageStore: imageStore,
                 authorizeImages: { [self] text, images, call, context in
@@ -770,7 +815,7 @@ public actor AgentMessagingSession {
                     try await authorizePublication(agent, text, images, call, context)
                     try await checkOpen()
                 }, publishQuestion: questionPublisher, publishSecret: secretPublisher, publishCursorAgent: cloudPublisher,
-                publishQuestionReply: questionReplyPublisher,
+                filePublication: filePublication, publishQuestionReply: questionReplyPublisher,
                 replyHistory: replyHistory, receiptSenderID: supportsMailboxQuestions ? agent.id : nil,
                 supportsReferenceNavigation: true, mailboxPresentation: true,
                 publishReceipt: receiptPublisher) { [messenger, onChange, publicationLifetime] text, images in
@@ -1006,7 +1051,7 @@ private actor AgentInboundOutput {
         do { try await onPublication(publication) } catch { projectionFailure = error }
         return saved
     }
-    func recordQuestion(_ publication: RoomMessage) async {
+    func recordSavedPublication(_ publication: RoomMessage) async {
         publishedTexts.append(publication.text)
         var projection = publication
         projection.shortAddress = nil

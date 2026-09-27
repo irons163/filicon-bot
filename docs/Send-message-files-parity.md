@@ -226,3 +226,13 @@ file-only 訊息加入 replyDirectory，保存後回傳具短地址的 canonical
 這是保存層，不代表 App 信箱傳檔已完成：AgentMessagingSession 的 filePublication、App host 的來源核准／blob owner／quota、direct mirror／preview 尚須接線與端到端測試。direct 自身檔案發布、遠端 URL／媒體與 ABA／crash recovery 缺口仍保留。
 
 驗證：完整非平行 Swift 測試 exit 0；追加 ID 重用與上限斷言後定向測試 exit 0。原生 Debug build 與 deep strict 封裝／簽章通過。日誌 `.build/validation/mailbox-reviewed-file-{full,final-target,native}.log`。未啟動或重啟使用者 App，未修改真實資料。
+
+## 第十七階段：信箱執行流程的檔案交易接線（2026-09-28）
+
+AgentMessagingSession 可由 host 為每次 incoming 提供 AgentMailboxFileServices，固定 incoming／origin／recipient 身分與撤銷驗證。共用檔案服務改名 AgentFilePublicationServices，保留群組名稱 alias；沒有注入信箱能力時仍不提供檔案發布。信箱工具經 prepare、authorize、scope recheck、host commit，再使用 ReviewedMailboxFile 保存，不走一般文字／圖片入口。
+
+保存後記錄 canonical publication，file-only 不產生額外 final text；投影去掉信箱短地址以保留目的地命名空間。已保存後的畫面投影失敗留至 turn finish 回報，不讓工具重試已保存訊息。測試涵蓋成功、相同 call ID 被 ToolLoop 拒絕而不重複保存、拒絕、核准期間撤銷、錯誤 incoming／origin／sender、未注入、投影失敗、provider 後續失敗；檢查保存數量、檔案 bytes、重開後可引用地址與 delivery 狀態。
+
+此階段隔離測試注入 AttachmentStore，尚非 App quota／owner 的端到端證據。AppModel 尚未注入 mailboxFiles；主程式的核准、附件 lifecycle、direct mirror／preview 仍待完成，不能宣稱真實信箱傳檔可用。
+
+驗證：10 種信箱情境與完整非平行 Swift 回歸通過（exit 0），原生 Debug build、deep strict 封裝／簽章通過。日誌 `.build/validation/mailbox-file-session-final-full.log`、`mailbox-file-session-native.log`。初版測試把重複 tool ID 當成正常回合、並假定短地址前綴，已分離防重送情境並改為比對實際 canonical 地址；沒有放寬 production 防重送規則。未啟動 App 或改真實資料。

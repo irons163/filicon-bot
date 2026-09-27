@@ -105,6 +105,76 @@ struct AgentImageMessagingTests {
         func check() throws { if !active { throw CancellationError() } }
     }
 
+    @Test(arguments: ["valid", "denied", "revoked", "wrong-incoming", "wrong-origin", "wrong-sender", "missing", "projection", "failure", "duplicate-call"])
+    func mailboxFileTransactionPublishesCanonicalReceipt(mode: String) async throws {
+        struct ProjectionFailure: Error {}
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let prepared = try PreparedAgentPublicationFile(bytes: Data("Mailbox report".utf8), filename: "report.txt")
+        let store = AttachmentStore(rootURL: f.root.appending(path: "files"))
+        let fence = FileDispatchFence()
+        let projected = ImagePublicationProbe()
+        let services = AgentFilePublicationServices(prepare: { sender, _, _, context in
+            expectNoDifference(sender.id, f.recipient.id)
+            expectNoDifference(context.conversationID, f.origin)
+            return prepared
+        }, authorize: { _, review, _, _ in
+            expectNoDifference(review.conversationID, f.origin)
+            if mode == "denied" { throw CancellationError() }
+            if mode == "revoked" { await fence.revoke() }
+        }, commit: { review, _, _, save in
+            let metadata = try await store.ingest(prepared: review.file, createdAt: Date(timeIntervalSince1970: 123))
+            return try await save(metadata, UUID())
+        })
+        let session = AgentMessagingSession(originConversationID: f.origin, agents: f.agents, messenger: f.messenger,
+            registry: f.registry, coordinator: TurnCoordinator(registry: f.registry, toolCatalog: ToolCatalog()),
+            supportsMailboxQuestions: true, mailboxFiles: { inbound in
+                if mode == "missing" { return nil }
+                return AgentMailboxFileServices(incomingID: mode == "wrong-incoming" ? UUID() : inbound.id,
+                    originID: mode == "wrong-origin" ? UUID() : f.origin,
+                    senderID: mode == "wrong-sender" ? f.sender.id : f.recipient.id, services: services,
+                    validate: { try await fence.check() })
+            })
+        let succeeds = ["valid", "projection", "failure", "duplicate-call"].contains(mode)
+        await f.registry.register(ImagePeerProvider { _, execute in
+            let call = try NormalizedToolCall(id: "file", name: "SendMessage",
+                argumentsJSON: Data(#"{"type":"attachment","url":"file:///report.txt"}"#.utf8))
+            let result = try await execute(call)
+            expectNoDifference(result.isError, !succeeds)
+            if succeeds {
+                let messages = await f.messenger.allMessages()
+                let incoming = try #require(messages.first)
+                let saved = try #require(incoming.delivery?.publications?.first)
+                let directory = try await f.messenger.replyDirectory(replyingTo: incoming.id)
+                let address = try #require(directory.first(where: { $0.id == saved.id })?.shortAddress)
+                #expect(result.wireText.contains(address))
+            }
+            if mode == "duplicate-call" { _ = try await execute(call) }
+            if mode == "failure" { throw ProviderError.invalidResponse }
+            return "PASS"
+        })
+        try await session.enqueueUserMessage(senderID: f.sender.id, recipientID: f.recipient.id, text: "Send file")
+        do { try await session.drain(onUpdate: { message in
+            if message.files?.isEmpty == false {
+                if mode == "projection" { throw ProjectionFailure() }
+                await projected.append(message)
+            }
+        }) } catch { #expect(["denied", "revoked"].contains(mode) && error is CancellationError) }
+        let messages = await f.messenger.allMessages()
+        let files = messages.flatMap { $0.delivery?.publications ?? [] }.filter { $0.files?.isEmpty == false }
+        expectNoDifference(files.count, succeeds ? 1 : 0)
+        let visible = await projected.values
+        expectNoDifference(visible.count, succeeds && mode != "projection" ? 1 : 0)
+        if let saved = files.first, let metadata = saved.files?.first {
+            let bytes = try await store.data(for: metadata)
+            expectNoDifference(bytes, prepared.bytes)
+            expectNoDifference(messages.first?.delivery?.state, mode == "valid" ? .completed : .failed)
+            let reopened = try AgentMessenger(service: f.agents, storeURL: f.root.appending(path: "messages.json"))
+            let directory = try await reopened.replyDirectory(replyingTo: messages[0].id)
+            #expect(directory.contains(where: { $0.id == saved.id && $0.shortAddress != nil }))
+        }
+        try await session.close()
+    }
+
     @Test(arguments: ["valid", "denied", "members", "closed", "revoked", "wrong-origin", "wrong-destination", "wrong-context", "missing"])
     func backgroundFilesSeparateOriginAndDestination(mode: String) async throws {
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
