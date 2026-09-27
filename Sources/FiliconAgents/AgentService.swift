@@ -776,12 +776,16 @@ public actor AgentService {
     }
 
     public func applyAvatarChange(_ change: AgentAvatarChange, lifetime: AgentAvatarChangeLifetime,
-                                  at: Date = Date()) throws -> AgentProfile {
+                                  at: Date = Date(), imageStore: AgentAvatarStore? = nil) throws -> AgentProfile {
         try lifetime.commit(change) {
             guard change.isValid else { throw AgentAvatarChangeError.invalid }
             guard let index = state.agents.firstIndex(where: { $0.id == change.agentID }),
                   state.agents[index].archivedAt == nil else { throw AgentProfileChangeError.unavailable }
             guard state.agents[index].avatar == change.previousAvatar else { throw AgentProfileChangeError.stale }
+            if let image = change.image {
+                guard let imageStore else { throw AgentAvatarChangeError.invalid }
+                _ = try imageStore.install(image)
+            }
             // Merge only the reviewed avatar; keep current persona/model/profile fields.
             state.agents[index].avatar = change.avatar
             state.agents[index].updatedAt = at

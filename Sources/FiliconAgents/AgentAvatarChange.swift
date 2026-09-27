@@ -1,25 +1,34 @@
 import Foundation
 
-/// Host-bound own-avatar proposal. Never accepts a model-selected owner or path.
+/// Host-bound own-avatar proposal. Image bytes are prepared by the host, not
+/// reopened from a model-selected path after approval.
 public struct AgentAvatarChange: Sendable, Equatable {
     public enum Operation: String, Sendable { case set, clear }
     public let operation: Operation
     public let agentID: UUID
     public let pet: AgentPetAvatar?
     public let previousAvatar: AgentAvatar?
+    public let image: PreparedAgentAvatar?
+    public static let maximumImageSourceBytes = 5 * 1_024 * 1_024
 
-    public init(operation: Operation, agentID: UUID, pet: AgentPetAvatar? = nil, previousAvatar: AgentAvatar?) {
+    public init(operation: Operation, agentID: UUID, pet: AgentPetAvatar? = nil, previousAvatar: AgentAvatar?,
+                image: PreparedAgentAvatar? = nil) {
         self.operation = operation; self.agentID = agentID
         self.pet = pet; self.previousAvatar = previousAvatar
+        self.image = image
     }
 
     /// Filicon's default companion is Codex; clearing never deletes image files.
-    public var avatar: AgentAvatar { .pet(pet ?? .codex) }
-    public var isValid: Bool { operation == .set ? pet != nil : pet == nil }
+    public var avatar: AgentAvatar { image?.avatar ?? .pet(pet ?? .codex) }
+    public var isValid: Bool {
+        if operation == .clear { return pet == nil && image == nil }
+        if let image { return pet == nil && image.sourceByteCount > 0 && image.sourceByteCount <= Self.maximumImageSourceBytes }
+        return pet != nil
+    }
 }
 
 public enum AgentAvatarChangeError: String, LocalizedError, Sendable {
-    case invalid = "For avatar changes, use target avatar with action set and a listed pet_id, or action clear without pet_id. Paths, URLs and other fields are not supported."
+    case invalid = "Invalid avatar proposal. Set requires exactly one supported source; clear accepts no source. File images require host-enabled source preparation, image approval and storage, with an absolute path and at most 5 MiB. URLs, owner IDs and unknown fields are not accepted."
     public var errorDescription: String? { rawValue }
 }
 

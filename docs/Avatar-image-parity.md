@@ -38,3 +38,17 @@ CAS 已存在時必須與準備資料完全相同；讀取頭像也核對內容�
 驗證：完整非平行 Swift 測試、原生 `Filicon App` Debug 建置及 `verify-package.sh --xcode-debug` 均通過。未啟動 App、未操作真實群組／帳號資料。測試 target 明確加入既有 CustomDump product，避免隱含依賴導致連結失敗。
 
 這只是共享 codec 基礎，不是模型圖片功能完成：尚未接模型主機／box 來源授權、5 MiB 模型限制、圖片核准及其生命週期，也尚未逐項驗證五種參考格式。檔案路徑檢查不宣稱能抵禦所有父目錄並行替換；模型來源仍須走既有工作區授權，不能直接呼叫人工匯入繞過權限。下一個切點是來源解析與真正圖片核准。
+
+## 第二階段：受控模型提案與保存
+
+第一階段之後新增圖片提案介面：`AgentAvatarChange.image` 保存不可變準備資料，pet 與 image 互斥，clear 不可帶任一來源。模型來源大小限制是大於零且至多 5 MiB（包含邊界），獨立於人工匯入的 25 MiB 限制。
+
+`AgentManagementSession` 只有同時注入 `prepareAvatarImage`、獨立的 `authorizeAvatarImage` 與自訂 `commitAvatar` 才宣告／接受 `path`。原本寵物核准 callback 不會核准圖片。path 必須為絕對檔案路徑，拒絕 URL、父路徑跳脫、控制字元、雙斜線前綴、混用 pet_id、任意 owner 及其他欄位。與參考實作會 resolve 相對路徑不同，Filicon 目前不推測主機或遠端的 cwd。
+
+來源讀取前後和核准後均檢查 lifetime；重播已完成的同一 call 不重讀來源。`AgentService.applyAvatarChange(...,imageStore:)` 在 lifetime 的同步提交區內重驗 owner／封存／原頭像，安裝原封不動的準備 bytes 後才更新 profile；沒給 imageStore 則失敗。只合併頭像欄位，保留私人指令等資料。若後續 profile 寫入失敗，可能留下不被 profile 引用的 CAS blob；不刪除共享 blob，回收策略尚待後續整合。
+
+`AgentImageAvatarChangeTests` 驗證八種接線組合、圖片專用預覽、owner 綁定、保存／重開／重播、核准拒絕、封存、人工修改衝突、Stop 於讀取／核准期間、缺 store、磁碟失敗、durable receipt 及 5 MiB 邊界。這裡的 preparer 是隔離測試提供的資料，不代表主機／box 檔案權限已實接。
+
+驗證：第二階段的完整非平行 Swift 測試、原生 Debug 建置及封裝檢查皆通過；新增案例也實際執行包含 durable receipt 的分支。沒有啟動使用者 App 或更改真實資料。
+
+**App 尚未啟用 path**：目前仍缺 App 的來源讀取 adapter、真正圖片核准 UI 與七語顯示、完整格式驗證、quota／帳號切換整合及 CAS 清理策略。上述初始可達流程表代表 `a57e545` 基準；現行底層提案能力已增加，但使用者端尚未達到完整圖片 parity。

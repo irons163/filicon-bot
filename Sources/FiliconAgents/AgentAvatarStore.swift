@@ -39,9 +39,11 @@ public struct AgentAvatarCrop: Equatable, Sendable {
 public struct PreparedAgentAvatar: Sendable, Equatable {
     public let pngData: Data
     public let avatar: AgentAvatar
-    fileprivate init(pngData: Data, avatar: AgentAvatar) {
+    public let sourceByteCount: Int
+    fileprivate init(pngData: Data, avatar: AgentAvatar, sourceByteCount: Int) {
         self.pngData = pngData
         self.avatar = avatar
+        self.sourceByteCount = sourceByteCount
     }
 }
 
@@ -94,7 +96,7 @@ public struct AgentAvatarStore: Sendable {
         }
         let digest = SHA256.hash(data: png).map { String(format: "%02x", $0) }.joined()
         let relativePath = "\(digest.prefix(2))/\(digest).png"
-        return PreparedAgentAvatar(pngData: png, avatar: .image(hash: digest, relativePath: relativePath, shape: shape))
+        return PreparedAgentAvatar(pngData: png, avatar: .image(hash: digest, relativePath: relativePath, shape: shape), sourceByteCount: data.count)
     }
 
     /// Installs only the bytes shown during approval, never a mutable source URL.
