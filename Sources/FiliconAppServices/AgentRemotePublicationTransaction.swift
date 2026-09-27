@@ -2,6 +2,21 @@ import Foundation
 import FiliconAgents
 import FiliconDomain
 
+/// Bound to one host dispatch. The validator must reject a stale or cancelled
+/// dispatch even if both conversations still exist.
+public struct AgentBackgroundGroupRemoteServices: Sendable {
+    public let originID: UUID
+    public let groupID: UUID
+    public let validate: @Sendable () async throws -> Void
+    public let authorize: AgentMessagingSession.RemotePublicationAuthorizer
+    public init(originID: UUID, groupID: UUID,
+                validate: @escaping @Sendable () async throws -> Void,
+                authorize: @escaping AgentMessagingSession.RemotePublicationAuthorizer) {
+        self.originID = originID; self.groupID = groupID
+        self.validate = validate; self.authorize = authorize
+    }
+}
+
 /// Host-owned approval and persistence of a locator. No download, credentials,
 /// MIME inference, or local attachment ownership is implied by this receipt.
 public actor AgentRemotePublicationTransaction {

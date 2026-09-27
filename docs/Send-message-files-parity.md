@@ -336,3 +336,11 @@ AgentMessagingSession 新增可選的 host 遠端發布核准回呼；未配置�
 新增 5 種經 GroupService.run 的整合情境：核准、拒絕、未配置、核准時新 human request、撤銷。成功後重開群組 store 核對 locator、回覆目標、短地址；負向情境確認沒有保存附件。撤銷遵循既有 CancellationError 路徑，不當成成功或一般工具錯誤。
 
 驗證：13 個群組定向案例 exit 0（remote-session-target.log），原生 Debug build 與 deep strict 封裝／簽章通過（remote-session-native.log）。本批未重跑完整套件。背景群組、App 核准 UI、信箱／單聊遠端保存、alt 與媒體顯示仍未完成；不預設啟用、無網路請求、未重啟 App 或改真實資料。
+
+## 第二十八階段：背景群組遠端發布能力（2026-09-28）
+
+新增 AgentBackgroundGroupRemoteServices，由 host 綁定 origin、目的群組、核准及精確 dispatch validator，不沿用前景 capability。背景工具建立時及交易核准前後核對 dispatch、session、群組成員與作者狀態；交易 context 仍是 origin，回條與保存則是目的群組。未配置時不開放遠端發布。與前景共用保存 adapter 及 lifetime，沒有建立新的 user request 或複製圖片權限。
+
+群組整合測試擴充前景／背景兩條路徑：核准、拒絕、缺 capability、請求失效、撤銷，並加入錯誤 origin／destination capability 必須拒絕的斷言。成功重開 store 驗證目的群組 locator／reply／短地址，失敗不得保存。
+
+驗證：18 個群組定向案例通過（remote-background-final-target.log），原生 Debug build 與 deep strict 簽章通過（remote-background-native.log）。本批未重跑完整套件。App host 核准與可用 UI、信箱／單聊遠端持久化、alt／媒體顯示仍待完成；未 push、未重啟 App、無網路或真實資料變更。

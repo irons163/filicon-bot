@@ -231,9 +231,18 @@ public actor AgentMessagingSession {
             }
             try await checkOpen()
         }
-        return AgentRemotePublicationTransaction(conversationID: originConversationID, senderID: sender.id,
+        return makeGroupRemotePublication(sender: sender, destinationID: originConversationID,
+            validate: validate, authorize: authorizeRemotePublication, publish: publish)
+    }
+
+    private func makeGroupRemotePublication(sender: AgentProfile, destinationID: UUID,
+        validate: @escaping @Sendable () async throws -> Void,
+        authorize: @escaping RemotePublicationAuthorizer,
+        publish: @escaping @Sendable (GroupAgentPublication) async throws -> RoomMessage?) -> AgentRemotePublicationTransaction {
+        AgentRemotePublicationTransaction(conversationID: originConversationID, senderID: sender.id,
+            destinationConversationID: destinationID,
             validateScope: validate, authorize: { review, call, context in
-                try await authorizeRemotePublication(sender, review, call, context)
+                try await authorize(sender, review, call, context)
             }, commit: { [self] review, _, _ in
                 try await validate()
                 let remote = ReviewedGroupRemoteAttachment(reference: review.reference,
@@ -333,6 +342,7 @@ public actor AgentMessagingSession {
     /// human answer in that group; it does not resume this old peer wake.
     public func savedBackgroundGroupPublisher(for senderID: UUID, groupID: UUID, memberIDs: [UUID], replyHistory: [RoomMessage],
                                               fileServices: AgentBackgroundGroupFileServices? = nil,
+                                              remoteServices: AgentBackgroundGroupRemoteServices? = nil,
                                               publish: @escaping @Sendable (GroupAgentPublication) async throws -> RoomMessage?) async throws -> AgentUserMessageTool {
         guard let sender = await agents.profile(id: senderID), sender.archivedAt == nil else {
             throw AgentMessagingError.invalidRecipient
@@ -357,13 +367,32 @@ public actor AgentMessagingSession {
             filePublication = makeGroupFilePublication(sender: sender, destinationID: groupID,
                 services: fileServices.services, validate: validate, publish: publish)
         } else { filePublication = nil }
+        let remotePublication: AgentRemotePublicationTransaction?
+        if let remoteServices {
+            guard remoteServices.originID == originConversationID, remoteServices.groupID == groupID else {
+                throw AgentMessagingError.scopeMismatch
+            }
+            let validate: @Sendable () async throws -> Void = { [self] in
+                try await checkOpen()
+                try await remoteServices.validate()
+                guard let groups, let current = await groups.list().first(where: { $0.id == groupID }),
+                      current.memberIDs == memberIDs, memberIDs.contains(senderID),
+                      let currentSender = await agents.profile(id: senderID), currentSender.archivedAt == nil else {
+                    throw AgentGroupPostError.changed
+                }
+                try await checkOpen()
+            }
+            try await validate()
+            remotePublication = makeGroupRemotePublication(sender: sender, destinationID: groupID,
+                validate: validate, authorize: remoteServices.authorize, publish: publish)
+        } else { remotePublication = nil }
         return AgentUserMessageTool(conversationID: originConversationID, senderID: senderID,
             replyHistory: replyHistory, supportsQuestions: true, replyGroupID: groupID,
             publishCursorAgent: { [self] reference, replyID in
                 try await checkOpen()
                 return try await publish(.init(text: reference.summary, lifetime: publicationLifetime,
                     replyToMessageID: replyID, cursorAgent: reference))
-            }, filePublication: filePublication) { [self] text, images, replyID, question in
+            }, filePublication: filePublication, remotePublication: remotePublication) { [self] text, images, replyID, question in
             guard images.isEmpty else { throw AgentImageError.unavailable }
             try await checkOpen()
             let card = question.map { GroupQuestion(question: $0, accountID: accountID, memberIDs: memberIDs) }

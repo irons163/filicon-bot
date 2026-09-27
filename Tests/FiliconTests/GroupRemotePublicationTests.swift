@@ -20,8 +20,8 @@ private struct RemoteGroupResponder: GroupAgentResponder {
 
 @Suite("Reviewed group remote attachment persistence")
 struct GroupRemotePublicationTests {
-    @Test(arguments: ["approve", "deny", "unavailable", "new-user", "revoked"])
-    func sessionPublishesThroughDurableGroupCallback(mode: String) async throws {
+    @Test(arguments: ["approve", "deny", "unavailable", "new-user", "revoked"], [false, true])
+    func sessionPublishesThroughDurableGroupCallback(mode: String, background: Bool) async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-session-remote-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }
         let agents = try AgentService(storeURL: root.appending(path: "agents.json"))
@@ -32,24 +32,49 @@ struct GroupRemotePublicationTests {
         let user = try await groups.postUserMessage("Share", groupID: group.id)
         let messenger = try AgentMessenger(service: agents, storeURL: root.appending(path: "messages.json"))
         let registry = ProviderRegistry()
-        let authorizer: AgentMessagingSession.RemotePublicationAuthorizer = { profile, review, _, _ in
+        let origin = background ? UUID() : group.id
+        let authorizer: AgentMessagingSession.RemotePublicationAuthorizer = { profile, review, _, context in
+            expectNoDifference(context.conversationID, origin)
             expectNoDifference(profile.id, sender.id)
             expectNoDifference(review.conversationID, group.id)
             expectNoDifference(review.replyTo, user.id)
             if mode == "deny" { throw AgentMessagingError.approvalRequired }
             if mode == "new-user" { _ = try await groups.postUserMessage("Changed request", groupID: group.id) }
         }
-        let session = AgentMessagingSession(originConversationID: group.id, agents: agents, messenger: messenger,
+        let session = AgentMessagingSession(originConversationID: origin, agents: agents, messenger: messenger,
             registry: registry, coordinator: TurnCoordinator(registry: registry), groups: groups,
             authorizeRemotePublication: mode == "unavailable" ? nil : authorizer)
         let responder = RemoteGroupResponder { publish in
-            let tool = try await session.savedGroupPublisher(for: sender.id, userMessageID: user.id,
-                replyHistory: [user], questionAccountID: nil, memberIDs: [sender.id], publish: publish)
+            let tool: AgentUserMessageTool
+            if background {
+                for wrongOrigin in [false, true] {
+                    let invalid = AgentBackgroundGroupRemoteServices(originID: wrongOrigin ? UUID() : origin,
+                        groupID: wrongOrigin ? group.id : UUID(), validate: {}, authorize: authorizer)
+                    await #expect(throws: AgentMessagingError.scopeMismatch) {
+                        try await session.savedBackgroundGroupPublisher(for: sender.id, groupID: group.id,
+                            memberIDs: [sender.id], replyHistory: [user], remoteServices: invalid, publish: publish)
+                    }
+                }
+                let services = AgentBackgroundGroupRemoteServices(originID: origin, groupID: group.id,
+                    validate: {
+                        // This fixture's dispatch is valid only until a new human request.
+                        let history = await groups.messages(groupID: group.id)
+                        guard history.last(where: { $0.senderID == nil })?.id == user.id else {
+                            throw AgentMessagingError.scopeMismatch
+                        }
+                    }, authorize: authorizer)
+                tool = try await session.savedBackgroundGroupPublisher(for: sender.id, groupID: group.id,
+                    memberIDs: [sender.id], replyHistory: [user],
+                    remoteServices: mode == "unavailable" ? nil : services, publish: publish)
+            } else {
+                tool = try await session.savedGroupPublisher(for: sender.id, userMessageID: user.id,
+                    replyHistory: [user], questionAccountID: nil, memberIDs: [sender.id], publish: publish)
+            }
             if mode == "revoked" { session.revokeProfileChanges() }
             let call = try NormalizedToolCall(id: "remote", name: "SendMessage", argumentsJSON:
                 JSONEncoder().encode(["type": "attachment", "url": "https://example.com/media", "reply_to": user.id.uuidString]))
             do {
-                let result = try await tool.execute(call, context: .init(conversationID: group.id))
+                let result = try await tool.execute(call, context: .init(conversationID: origin))
                 expectNoDifference(result.isError, mode != "approve")
             } catch is CancellationError {
                 expectNoDifference(mode, "revoked")
