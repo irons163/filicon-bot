@@ -2,10 +2,52 @@ import AppKit
 import CustomDump
 import FiliconAgents
 import Foundation
+import ImageIO
 import Testing
 
 @Suite("Immutable avatar preparation")
 struct PreparedAgentAvatarTests {
+    private func frame(red: CGFloat, blue: CGFloat) throws -> CGImage {
+        let context = try #require(CGContext(data: nil, width: 16, height: 16,
+            bitsPerComponent: 8, bytesPerRow: 64, space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        context.setFillColor(CGColor(red: red, green: 0, blue: blue, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: 16, height: 16))
+        return try #require(context.makeImage())
+    }
+
+    @Test(arguments: ["public.png", "public.jpeg", "com.compuserve.gif"])
+    func rasterFormatsBecomeSingleFramePNGs(type: String) throws {
+        let bytes = NSMutableData()
+        let destination = try #require(CGImageDestinationCreateWithData(bytes, type as CFString, 1, nil))
+        CGImageDestinationAddImage(destination, try frame(red: 1, blue: 0), nil)
+        #expect(CGImageDestinationFinalize(destination))
+        let prepared = try AgentAvatarStore(rootURL: URL(fileURLWithPath: "/unused-avatar-format-store"))
+            .prepareImage(data: bytes as Data)
+        let result = try #require(CGImageSourceCreateWithData(prepared.pngData as CFData, nil))
+        expectNoDifference(CGImageSourceGetType(result) as String?, "public.png")
+        expectNoDifference(CGImageSourceGetCount(result), 1)
+        let image = try #require(CGImageSourceCreateImageAtIndex(result, 0, nil))
+        expectNoDifference(image.width, 256)
+        expectNoDifference(image.height, 256)
+        expectNoDifference(prepared.sourceByteCount, bytes.length)
+    }
+
+    @Test func animatedGIFFreezesTheFirstFrame() throws {
+        let bytes = NSMutableData()
+        let destination = try #require(CGImageDestinationCreateWithData(bytes, "com.compuserve.gif" as CFString, 2, nil))
+        CGImageDestinationAddImage(destination, try frame(red: 1, blue: 0), nil)
+        CGImageDestinationAddImage(destination, try frame(red: 0, blue: 1), nil)
+        #expect(CGImageDestinationFinalize(destination))
+        let source = try #require(CGImageSourceCreateWithData(bytes, nil))
+        expectNoDifference(CGImageSourceGetCount(source), 2)
+        let first = try #require(CGImageSourceCreateImageAtIndex(source, 0, nil))
+        let firstPNG = try #require(NSBitmapImageRep(cgImage: first).representation(using: .png, properties: [:]))
+        let store = AgentAvatarStore(rootURL: URL(fileURLWithPath: "/unused-avatar-format-store"))
+        expectNoDifference(try store.prepareImage(data: bytes as Data).pngData,
+                           try store.prepareImage(data: firstPNG).pngData)
+    }
+
     private func png() throws -> Data {
         let rep = try #require(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 8, pixelsHigh: 8,
             bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
