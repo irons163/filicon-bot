@@ -105,6 +105,56 @@ struct AgentImageMessagingTests {
         func check() throws { if !active { throw CancellationError() } }
     }
 
+    @Test(arguments: ["valid", "denied", "revoked", "wrong-incoming", "wrong-origin", "wrong-sender", "missing", "failure", "duplicate-call"])
+    func mailboxRemoteTransactionPublishesCanonicalReceipt(mode: String) async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let fence = FileDispatchFence()
+        let reference = try RemoteAttachmentReference(url: "https://example.com/report?sig=a%2Bb", alt: "報表")
+        let session = AgentMessagingSession(originConversationID: f.origin, agents: f.agents, messenger: f.messenger,
+            registry: f.registry, coordinator: TurnCoordinator(registry: f.registry, toolCatalog: ToolCatalog()),
+            supportsMailboxQuestions: true, mailboxRemote: { inbound in
+                if mode == "missing" { return nil }
+                return AgentMailboxRemoteServices(incomingID: mode == "wrong-incoming" ? UUID() : inbound.id,
+                    originID: mode == "wrong-origin" ? UUID() : f.origin,
+                    senderID: mode == "wrong-sender" ? f.sender.id : f.recipient.id,
+                    validate: { try await fence.check() }, authorize: { sender, review, _, context in
+                        expectNoDifference(sender.id, f.recipient.id)
+                        expectNoDifference(review.reference, reference)
+                        expectNoDifference(context.conversationID, f.origin)
+                        if mode == "denied" { throw CancellationError() }
+                        if mode == "revoked" { await fence.revoke() }
+                    })
+            })
+        let succeeds = ["valid", "failure", "duplicate-call"].contains(mode)
+        await f.registry.register(ImagePeerProvider { _, execute in
+            let call = try NormalizedToolCall(id: "remote", name: "SendMessage",
+                argumentsJSON: JSONSerialization.data(withJSONObject: ["type": "attachment", "url": reference.url, "alt": "報表"]))
+            let result = try await execute(call)
+            expectNoDifference(result.isError, !succeeds)
+            if succeeds {
+                let messages = await f.messenger.allMessages()
+                let incoming = try #require(messages.first)
+                let saved = try #require(incoming.delivery?.publications?.first)
+                let directory = try await f.messenger.replyDirectory(replyingTo: incoming.id)
+                let address = try #require(directory.first(where: { $0.id == saved.id })?.shortAddress)
+                #expect(result.wireText.contains(address))
+            }
+            if mode == "duplicate-call" { _ = try await execute(call) }
+            if mode == "failure" { throw ProviderError.invalidResponse }
+            return "PASS"
+        })
+        try await session.enqueueUserMessage(senderID: f.sender.id, recipientID: f.recipient.id, text: "Share report")
+        do { try await session.drain(onUpdate: { _ in }) }
+        catch { #expect(["denied", "revoked"].contains(mode) && error is CancellationError) }
+        let messages = await f.messenger.allMessages()
+        let remotes = messages.flatMap { $0.delivery?.publications ?? [] }.compactMap(\.remoteAttachment)
+        expectNoDifference(remotes, succeeds ? [reference] : [])
+        let reopened = try AgentMessenger(service: f.agents, storeURL: f.root.appending(path: "messages.json"))
+        let restored = await reopened.allMessages()
+        expectNoDifference(restored.flatMap { $0.delivery?.publications ?? [] }.compactMap(\.remoteAttachment), remotes)
+        try await session.close()
+    }
+
     @Test(arguments: ["valid", "denied", "revoked", "wrong-incoming", "wrong-origin", "wrong-sender", "missing", "projection", "failure", "duplicate-call"])
     func mailboxFileTransactionPublishesCanonicalReceipt(mode: String) async throws {
         struct ProjectionFailure: Error {}

@@ -412,3 +412,13 @@ App 背景委派授權、信箱／單聊 HTTPS、真正媒體預覽仍未完成�
 新增整合測試涵蓋錯誤收件／來源／作者、普通入口拒絕、實際寫入失敗無殘留、精確 URL／alt 保存、同 ID 重播、變更重播拒絕、回覆定位、上限、關閉 lifetime 及重開 store。定向通過；AgentImageMessagingTests 全部 28 tests 通過（remote-mailbox-regression.log），原生 Debug build 及 deep strict 簽章通過（remote-mailbox-native.log）。本批未重跑完整回歸。
 
 這只是信箱可信保存層，尚未接入 session 遠端交易、App 核准及信箱 UI。直接對話／媒體預覽仍有差異；未下載內容、未 push、未啟動 App 或改真實資料。
+
+## 第三十七階段：信箱 SendMessage 遠端交易（2026-09-28）
+
+AgentMessagingSession 新增逐筆 incoming 綁定的 AgentMailboxRemoteServices factory。交易檢查 incoming／origin／sender、host revoke fence 及 session close，核准後再檢查才經 ReviewedMailboxRemoteAttachment 保存。使用 canonical mailbox receipt 回傳精確 reference／reply target，並通知既有 transcript projection；缺少能力時不開放遠端發布。
+
+九種隔離 session 情境通過：正常、拒絕、核准時撤銷、錯 incoming／origin／sender、缺少能力、保存後 provider 失敗、相同 call 重播。檢查工具結果與短地址、只保存一次、重開 store 保留精確 URL／alt（remote-mailbox-session-target.log）。原生 Debug build 與 deep strict 簽章通過（remote-mailbox-session-native.log）。完整回歸結果另記。
+
+App 尚未提供 mailboxRemote factory，因此未宣稱使用者端已可用；App 核准、信箱 UI、單聊及媒體預覽仍待補齊。無遠端網路請求、無使用者 App 重啟或真實資料修改。
+
+完整非平行 Swift 回歸 exit 0（remote-mailbox-session-full.log）。

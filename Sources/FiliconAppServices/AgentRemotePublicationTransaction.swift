@@ -2,6 +2,21 @@ import Foundation
 import FiliconAgents
 import FiliconDomain
 
+/// Host authorization for one incoming mailbox delivery, never model supplied.
+public struct AgentMailboxRemoteServices: Sendable {
+    public let incomingID: UUID
+    public let originID: UUID
+    public let senderID: UUID
+    public let validate: @Sendable () async throws -> Void
+    public let authorize: AgentMessagingSession.RemotePublicationAuthorizer
+    public init(incomingID: UUID, originID: UUID, senderID: UUID,
+                validate: @escaping @Sendable () async throws -> Void,
+                authorize: @escaping AgentMessagingSession.RemotePublicationAuthorizer) {
+        self.incomingID = incomingID; self.originID = originID; self.senderID = senderID
+        self.validate = validate; self.authorize = authorize
+    }
+}
+
 /// Bound to one host dispatch. The validator must reject a stale or cancelled
 /// dispatch even if both conversations still exist.
 public struct AgentBackgroundGroupRemoteServices: Sendable {

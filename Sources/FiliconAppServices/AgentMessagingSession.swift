@@ -78,6 +78,7 @@ public actor AgentMessagingSession {
     public typealias RemotePublicationAuthorizer = @Sendable (AgentProfile, AgentRemotePublicationTransaction.Review, NormalizedToolCall, ToolContext) async throws -> Void
     private let authorizeRemotePublication: RemotePublicationAuthorizer?
     private let mailboxFiles: (@Sendable (AgentMessage) -> AgentMailboxFileServices?)?
+    private let mailboxRemote: (@Sendable (AgentMessage) -> AgentMailboxRemoteServices?)?
     private let publicationLifetime = AgentPublicationLifetime()
     private let onChange: @Sendable () async -> Void
     private let turnTimeout: Duration
@@ -135,6 +136,7 @@ public actor AgentMessagingSession {
                 groupFiles: AgentGroupFilePublicationServices? = nil,
                 authorizeRemotePublication: RemotePublicationAuthorizer? = nil,
                 mailboxFiles: (@Sendable (AgentMessage) -> AgentMailboxFileServices?)? = nil,
+                mailboxRemote: (@Sendable (AgentMessage) -> AgentMailboxRemoteServices?)? = nil,
                 authorize: @escaping Authorizer = { _, _, _, _, _ in throw AgentMessagingError.approvalRequired },
                 onChange: @escaping @Sendable () async -> Void = {}) {
         self.id = id; self.originConversationID = originConversationID
@@ -158,6 +160,7 @@ public actor AgentMessagingSession {
         self.groupFiles = groupFiles
         self.authorizeRemotePublication = authorizeRemotePublication
         self.mailboxFiles = mailboxFiles
+        self.mailboxRemote = mailboxRemote
     }
 
     public nonisolated func tool(for senderID: UUID, groupUserMessageID: UUID? = nil) -> any ToolExecutor {
@@ -251,6 +254,34 @@ public actor AgentMessagingSession {
                     throw AgentRemotePublicationTransaction.Failure.invalidReceipt
                 }
                 return .init(messageID: remote.messageID, review: review, savedMessage: saved)
+            })
+    }
+
+    private func makeMailboxRemotePublication(inbound: AgentMessage, sender: AgentProfile,
+                                             output: AgentInboundOutput) -> AgentRemotePublicationTransaction? {
+        guard supportsMailboxQuestions, let capability = mailboxRemote?(inbound) else { return nil }
+        let validate: @Sendable () async throws -> Void = { [self] in
+            try await checkOpen()
+            guard capability.incomingID == inbound.id, capability.originID == originConversationID,
+                  capability.senderID == sender.id, inbound.recipientID == sender.id,
+                  inbound.delivery?.originConversationID == originConversationID else {
+                throw AgentRemotePublicationTransaction.Failure.unavailable
+            }
+            try await capability.validate()
+            try await checkOpen()
+        }
+        return AgentRemotePublicationTransaction(conversationID: originConversationID, senderID: sender.id,
+            validateScope: validate, authorize: { review, call, context in
+                try await capability.authorize(sender, review, call, context)
+            }, commit: { [self, messenger, publicationLifetime, onChange] review, _, _ in
+                try await validate()
+                let remote = ReviewedMailboxRemoteAttachment(reference: review.reference, incomingID: inbound.id,
+                    originID: originConversationID, senderID: sender.id, messageID: UUID(),
+                    replyToMessageID: review.replyTo, lifetime: publicationLifetime)
+                let saved = try await messenger.publishRemoteAttachment(remote)
+                await output.recordSavedPublication(saved)
+                await onChange()
+                return .init(messageID: saved.id, review: review, savedMessage: saved)
             })
     }
 
@@ -866,6 +897,7 @@ public actor AgentMessagingSession {
                 }
             } else { cloudPublisher = nil }
             let filePublication = makeMailboxFilePublication(inbound: inbound, sender: agent, output: output)
+            let remotePublication = makeMailboxRemotePublication(inbound: inbound, sender: agent, output: output)
             let publisher = AgentUserMessageTool(conversationID: originConversationID,
                 availableImages: inbound.images ?? [], imageStore: imageStore,
                 authorizeImages: { [self] text, images, call, context in
@@ -873,7 +905,7 @@ public actor AgentMessagingSession {
                     try await authorizePublication(agent, text, images, call, context)
                     try await checkOpen()
                 }, publishQuestion: questionPublisher, publishSecret: secretPublisher, publishCursorAgent: cloudPublisher,
-                filePublication: filePublication, publishQuestionReply: questionReplyPublisher,
+                filePublication: filePublication, remotePublication: remotePublication, publishQuestionReply: questionReplyPublisher,
                 replyHistory: replyHistory, receiptSenderID: supportsMailboxQuestions ? agent.id : nil,
                 supportsReferenceNavigation: true, mailboxPresentation: true,
                 publishReceipt: receiptPublisher) { [messenger, onChange, publicationLifetime] text, images in
