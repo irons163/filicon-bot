@@ -4109,39 +4109,46 @@ final class AppModel: ObservableObject {
 
     func groupApprovalScope(_ groupID: UUID) -> UUID { delegatedGroupOrigins[groupID] ?? groupID }
 
-    private func makeGroupFileServices(originID: UUID, generation: UInt64) -> AgentGroupFilePublicationServices? {
+    private func makeGroupFileServices(originID: UUID, generation: UInt64, destinationID: UUID? = nil, dispatchID: UUID? = nil) -> AgentGroupFilePublicationServices? {
         guard quotaWriter != nil, attachmentLifecycle != nil,
-              let audience = groups.first(where: { $0.id == originID }) else { return nil }
+              let audience = groups.first(where: { $0.id == (destinationID ?? originID) }) else { return nil }
         return .init(prepare: { [weak self] sender, url, call, context in
             guard let self else { throw CancellationError() }
             return try await self.prepareGroupPublicationFile(sender: sender, url: url, call: call, context: context,
-                audience: audience, generation: generation)
+                audience: audience, generation: generation, originID: originID, dispatchID: dispatchID)
         }, authorize: { [weak self] sender, review, call, context in
             guard let self else { throw CancellationError() }
             try await self.authorizeGroupPublicationFile(sender: sender, review: review, call: call, context: context,
-                audience: audience, generation: generation)
+                audience: audience, generation: generation, originID: originID, dispatchID: dispatchID)
         }, commit: { [weak self] review, _, _, save in
             guard let self else { throw CancellationError() }
-            return try await self.commitGroupPublicationFile(review, audience: audience, generation: generation, save: save)
+            return try await self.commitGroupPublicationFile(review, audience: audience, generation: generation, originID: originID, dispatchID: dispatchID, save: save)
         })
     }
 
-    private func checkGroupFileScope(senderID: UUID, audience: AgentGroup, generation: UInt64) throws {
+    private func checkGroupFileScope(senderID: UUID, audience: AgentGroup, generation: UInt64, originID: UUID, dispatchID: UUID?) throws {
         try Task.checkCancellation()
+        if let dispatchID {
+            guard delegatedGroupOrigins[audience.id] == originID,
+                  delegatedGroupPosts[audience.id]?.message.id == dispatchID,
+                  delegatedGroupPosts[audience.id]?.audience.members.map(\.id) == audience.memberIDs else {
+                throw CancellationError()
+            }
+        } else if originID != audience.id { throw CancellationError() }
         guard generation == autoReviewAccountGeneration, !agentMessagingAccountTransition,
-              isAgentMessagingScopeActive(audience.id),
+              isAgentMessagingScopeActive(originID),
               groups.first(where: { $0.id == audience.id })?.memberIDs == audience.memberIDs,
               audience.memberIDs.contains(senderID),
               agents.contains(where: { $0.id == senderID && $0.archivedAt == nil }) else { throw CancellationError() }
     }
 
     private func prepareGroupPublicationFile(sender: AgentProfile, url: String, call: NormalizedToolCall,
-        context: ToolContext, audience: AgentGroup, generation: UInt64) async throws -> PreparedAgentPublicationFile {
-        guard context.conversationID == audience.id else { throw AgentMessagingError.scopeMismatch }
+        context: ToolContext, audience: AgentGroup, generation: UInt64, originID: UUID, dispatchID: UUID?) async throws -> PreparedAgentPublicationFile {
+        guard context.conversationID == originID else { throw AgentMessagingError.scopeMismatch }
         let reader = AuthorizedAgentFileReader(runtime: localToolRuntime, folders: workspaceFolders,
             policy: localToolPermissionPolicy, validateScope: { [weak self] in
                 guard let self else { throw CancellationError() }
-                try await self.checkGroupFileScope(senderID: sender.id, audience: audience, generation: generation)
+                try await self.checkGroupFileScope(senderID: sender.id, audience: audience, generation: generation, originID: originID, dispatchID: dispatchID)
             }, authorizeRead: { [weak self] operation, context, callID in
                 guard let self else { throw CancellationError() }
                 let target = try await self.localToolRuntime.authorizationTarget(for: operation)
@@ -4159,46 +4166,46 @@ final class AppModel: ObservableObject {
     }
 
     private func authorizeGroupPublicationFile(sender: AgentProfile, review: AgentFilePublicationTransaction.Review,
-        call: NormalizedToolCall, context: ToolContext, audience: AgentGroup, generation: UInt64) async throws {
-        try checkGroupFileScope(senderID: sender.id, audience: audience, generation: generation)
+        call: NormalizedToolCall, context: ToolContext, audience: AgentGroup, generation: UInt64, originID: UUID, dispatchID: UUID?) async throws {
+        try checkGroupFileScope(senderID: sender.id, audience: audience, generation: generation, originID: originID, dispatchID: dispatchID)
         guard review.senderID == sender.id, review.conversationID == audience.id,
-              context.conversationID == audience.id else { throw AgentMessagingError.scopeMismatch }
-        let fence = ApprovalFence(accountID: settings.accountScope ?? "local", agentID: audience.id.uuidString.lowercased(),
+              context.conversationID == originID else { throw AgentMessagingError.scopeMismatch }
+        let fence = ApprovalFence(accountID: settings.accountScope ?? "local", agentID: originID.uuidString.lowercased(),
             runID: context.runID, generation: generation)
         await autoReviewBroker.activate(fence)
         let details = "\(review.file.filename)\n\(ByteCountFormatter.string(fromByteCount: Int64(review.file.bytes.count), countStyle: .file))\nSHA-256: \(review.file.digest)"
         let action = AutoReviewAction(summary: "\(sender.name) → \(audience.name): \(review.file.filename)",
             target: .resource(kind: "group", identifier: audience.id.uuidString), risks: [.sensitive],
-            context: .init(fence: fence, conversationID: audience.id, toolCallID: call.id.rawValue,
+            context: .init(fence: fence, conversationID: originID, toolCallID: call.id.rawValue,
                 metadata: ["tool": "SendMessage", "agentFilePublication": "true", "agentMessage": details,
                     "agentGroupName": audience.name, "agentGroupMembers": audience.memberIDs.map { id in
                         "\(agents.first(where: { $0.id == id })?.name ?? id.uuidString) (\(id.uuidString))"
                     }.joined(separator: "\n")]))
         let pending = PendingApproval(action: action, reason: "Approval required", expiresAt: Date().addingTimeInterval(300))
         try await autoReviewBroker.waitForApprovalToExecute(pending) { [weak self] in await self?.registerAutoReviewApproval($0) }
-        try checkGroupFileScope(senderID: sender.id, audience: audience, generation: generation)
+        try checkGroupFileScope(senderID: sender.id, audience: audience, generation: generation, originID: originID, dispatchID: dispatchID)
     }
 
     private func commitGroupPublicationFile(_ review: AgentFilePublicationTransaction.Review,
-        audience: AgentGroup, generation: UInt64, save: @escaping AgentGroupFilePublicationServices.Save) async throws -> RoomMessage {
-        try checkGroupFileScope(senderID: review.senderID, audience: audience, generation: generation)
+        audience: AgentGroup, generation: UInt64, originID: UUID, dispatchID: UUID?, save: @escaping AgentGroupFilePublicationServices.Save) async throws -> RoomMessage {
+        try checkGroupFileScope(senderID: review.senderID, audience: audience, generation: generation, originID: originID, dispatchID: dispatchID)
         guard let attachmentLifecycle, let groupService, quotaWriter != nil,
               review.conversationID == audience.id else { throw AgentFilePublicationError.unavailable }
         let upload = try await quotaWrite(scope: "attachment-blob", key: review.file.digest, data: review.file.bytes) { [weak self] in
             guard let self else { throw CancellationError() }
-            try await self.checkGroupFileScope(senderID: review.senderID, audience: audience, generation: generation)
+            try await self.checkGroupFileScope(senderID: review.senderID, audience: audience, generation: generation, originID: originID, dispatchID: dispatchID)
             return try await attachmentLifecycle.stage(prepared: review.file)
         }
         let messageID = UUID()
         let owner = AttachmentReferenceOwner(conversationID: audience.id, messageID: messageID)
         do {
-            try checkGroupFileScope(senderID: review.senderID, audience: audience, generation: generation)
+            try checkGroupFileScope(senderID: review.senderID, audience: audience, generation: generation, originID: originID, dispatchID: dispatchID)
             let metadata = try await attachmentLifecycle.commit(upload, to: owner)
             let record = RoomMessage(id: messageID, groupID: audience.id, senderID: review.senderID, text: "", files: [metadata])
             return try await quotaWrite(scope: "group-file-message", key: messageID.uuidString,
                 data: JSONEncoder().encode(record)) { [weak self] in
                 guard let self else { throw CancellationError() }
-                try await self.checkGroupFileScope(senderID: review.senderID, audience: audience, generation: generation)
+                try await self.checkGroupFileScope(senderID: review.senderID, audience: audience, generation: generation, originID: originID, dispatchID: dispatchID)
                 return try await save(metadata, messageID)
             }
         } catch {
@@ -4254,10 +4261,20 @@ final class AppModel: ObservableObject {
                                     originID: UUID, generation: UInt64) async throws {
         let groupID = dispatch.audience.id
         guard let groupService, delegatedGroupOrigins[groupID] == originID,
+              delegatedGroupPosts[groupID]?.message.id == dispatch.message.id,
               generation == autoReviewAccountGeneration, isAgentMessagingScopeActive(originID) else { throw CancellationError() }
+        let backgroundFiles = makeGroupFileServices(originID: originID, generation: generation,
+            destinationID: groupID, dispatchID: dispatch.message.id).map { services in
+            AgentBackgroundGroupFileServices(originID: originID, groupID: groupID, services: services,
+                validate: { [weak self] in
+                    guard let self else { throw CancellationError() }
+                    try await self.validateBackgroundFileDispatch(dispatch, originID: originID, generation: generation)
+                })
+        }
         _ = try await groupService.run(groupID: groupID,
             responder: GroupConversationResponder(groupID: groupID, registry: registry, coordinator: coordinator,
-                messaging: session, delegatedMessage: dispatch.message, toolScopeID: originID),
+                messaging: session, delegatedMessage: dispatch.message, toolScopeID: originID,
+                backgroundFileServices: backgroundFiles),
             delegatedAudience: dispatch.audience, delegatedSenderID: dispatch.message.senderID,
             onAgentChange: { [weak self] agentID in
                 await MainActor.run { self?.thinkingGroupMembers[groupID] = agentID }
@@ -4272,6 +4289,16 @@ final class AppModel: ObservableObject {
             })
         try Task.checkCancellation()
         guard generation == autoReviewAccountGeneration, isAgentMessagingScopeActive(originID) else { throw CancellationError() }
+    }
+
+    private func validateBackgroundFileDispatch(_ dispatch: AgentGroupDispatch, originID: UUID, generation: UInt64) throws {
+        try Task.checkCancellation()
+        guard generation == autoReviewAccountGeneration, !agentMessagingAccountTransition,
+              isAgentMessagingScopeActive(originID),
+              delegatedGroupOrigins[dispatch.audience.id] == originID,
+              delegatedGroupPosts[dispatch.audience.id]?.message.id == dispatch.message.id,
+              groups.first(where: { $0.id == dispatch.audience.id })?.memberIDs == dispatch.audience.members.map(\.id)
+        else { throw CancellationError() }
     }
 
     private func finishGroupDelegation(groupID: UUID, originID: UUID, failed: Bool) async {

@@ -162,3 +162,15 @@ savedBackgroundGroupPublisher 現在可接收 AgentBackgroundGroupFileServices�
 App／responder 尚未注入這項背景能力，仍須接上確切 delegatedGroupPosts 身分、來源核准、目的 owner／quota 與 App 層停止／ABA 測試；此階段不是使用者端背景傳檔完成證據。
 
 驗證：定向與完整非平行 Swift 測試 exit 0；原生 Debug build、deep strict 封裝／簽章通過。日誌 `.build/validation/background-file-session-{focused,full,native}.log`。未重啟 App／Xcode、未改真實帳號／群組資料。
+
+## 第十一階段：App 背景群組傳檔接線（2026-09-28）
+
+AppModel.runGroupDelegation 現在提供該次委派專屬的背景檔案能力，GroupConversationResponder 將它傳入背景 publisher。能力固定來源、目的、帳號 generation 與 delegatedGroupPosts.message.id；準備、核准後及保存前都檢查確切委派、來源仍執行、目的成員快照與作者有效性。不能只用相同群組仍存在判定舊委派有效。
+
+檔案讀取與核准沿用來源 conversation scope；核准摘要顯示目的群組與成員；配額、附件 owner、RoomMessage 與回條則落在目的群組。保留 GroupService 的 epoch／lifetime 保存檢查，不把背景委派變成人類圖片授權。
+
+App 隔離 fixture 以不同來源／目的群組實際執行 SendToAgent → SendMessage，與前景共用 14 種案例：核准、拒絕、停止來源、停止目的、切帳號、改成員、核准期間替換來源內容。驗證來源沒有附件訊息，目的重開後 bytes 與核准快照一致、附件 owner 可讀，以及 quota reconcile 沒有新增錯誤。依 pfw-testing 使用隔離資料與 helper，不碰真實資料或啟動 App。
+
+仍待獨立驗收：direct／mailbox 來源的 App 背景檔案流程、同一目的群組被下一次委派重用的 ABA 情境、配額／保存故障注入及 crash recovery。direct／mailbox 本身傳檔、遠端來源與媒體能力亦未完成；本階段不代表整體 parity 完成。
+
+驗證：14 種 App 定向案例與最終完整非平行 Swift 測試 exit 0；原生 Debug build、deep strict 封裝／簽章通過。日誌 `.build/validation/background-file-app-{target,final-full,native}.log`。整理測試 fixture 時曾把 ToolName 宣告為 String 導致編譯失敗，修正後重跑完整套件通過。未重啟使用者 App／Xcode。
