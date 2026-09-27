@@ -806,6 +806,8 @@ struct AgentImageMessagingTests {
         let lifetime = AgentPublicationLifetime()
         let publication = RoomMessage(groupID: f.origin, senderID: f.recipient.id, text: "Reviewed", images: [image])
         let invalid = [RoomMessage(groupID: UUID(), senderID: f.recipient.id, text: "Wrong room"),
+                       RoomMessage(groupID: f.origin, senderID: f.recipient.id, text: "Unreviewed file", files: [image]),
+                       RoomMessage(groupID: f.origin, senderID: f.recipient.id, text: "Mixed file", images: [image], files: [image]),
                        RoomMessage(groupID: f.origin, senderID: f.sender.id, text: "Spoofed author"),
                        RoomMessage(groupID: f.origin, senderID: f.recipient.id, text: "Unknown image", images: [.init(id: "unknown", filename: "x.png", mimeType: "image/png", byteCount: 10, kind: .image)])]
         for value in invalid {

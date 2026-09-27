@@ -206,3 +206,13 @@ App 隔離 fixture 以不同來源／目的群組實際執行 SendToAgent → Se
 底層寫入失敗的既有清理流程符合上述斷言，本批沒有變更 production code。程序中止／crash recovery 與委派重用（ABA）尚未由這些案例證明；direct／mailbox 自身一般檔案發布及遠端／媒體能力仍未完成。
 
 驗證：44 種定向情境通過，補上 quarantine 斷言後完整非平行 Swift 測試 exit 0；日誌 `.build/validation/group-file-write-failure-{target,full}.log`。本批僅測試與文件變更，未重建或啟動使用者 App；production build／簽章證據沿用第十三階段。
+
+## 第十五階段：direct／mailbox 入口審查與未授權檔案防護（2026-09-28）
+
+重新核對 reference `source/host/runner/tools/send-message-tool.ts`：attachment URL 經 resolveAttachmentSource，再由 onSendMessage 保存；因此尚缺的 direct／mailbox 一般檔案發布不是可忽略項目。Filicon 的 direct publisher 在 AppModel.startTurn 建立，目前只接圖片驗證／核准及 publishDirectText；信箱 publisher 在 AgentMessagingSession.drain 使用 AgentInboundOutput.publish → AgentMessenger.publish，也尚未注入 filePublication。
+
+入口審查發現 AgentMessenger.publishValidated 驗證文字／圖片但未拒絕 RoomMessage.files，updateDelivery 的純文字 finalPublication 同樣漏檢。雖然現有工具尚不產生此欄位，新的 host 接線若直接傳 RoomMessage，會跳過一般檔案的來源核准與引用建立。因此兩個舊入口先明確拒絕非空 files；新增文字夾檔、已知圖片混檔及 finalPublication 夾檔測試，並驗證拒絕後狀態不變。依 pfw-testing 保留現有合法圖片／文字保存回歸。
+
+這項防護不是傳檔功能替代品。後續必須加入 host-only 已核准檔案證明、固定 mailbox incoming／origin／sender、原始檔案 bytes 與核准、quota／附件 owner、canonical receipt、信箱保存與 direct mirror／preview；不能只把 files 放進既有文字 callback。direct 歷史投影目前只填 images，file-only 引用也須一併驗收。未放寬遠端存取或既有圖片授權。
+
+驗證：完整非平行 Swift 測試 exit 0，原生 Debug build 與 deep strict 封裝／簽章通過，日誌 `.build/validation/mailbox-file-admission-{full,native}.log`。初版 fixture 誤用不存在的 AttachmentKind.file，改為 document 後完整驗證通過。未重啟 App 或修改真實資料。

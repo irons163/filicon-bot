@@ -333,6 +333,7 @@ public actor AgentMessenger {
                   publication.senderID == state.messages[index].recipientID,
                   (!publication.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !(publication.images ?? []).isEmpty),
                   publication.text.count <= 8_000, publication.toolActivities.isEmpty,
+                  publication.files?.isEmpty != false,
                   publication.memberOutcome == nil,
                   publication.shortAddress == nil else { throw AgentPublicationError.invalid }
             let prior = delivery.publications ?? []
@@ -382,7 +383,7 @@ public actor AgentMessenger {
                   report.senderID == previous.recipientID, report.text == response,
                   !report.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                   report.question == nil, report.secretRequest == nil, report.cursorAgent == nil,
-                  report.images?.isEmpty != false, report.toolActivities.isEmpty,
+                  report.images?.isEmpty != false, report.files?.isEmpty != false, report.toolActivities.isEmpty,
                   report.memberOutcome == nil, report.shortAddress == nil,
                   report.replyToMessageID == nil, report.questionReplyTo == nil,
                   !containsMessageID(report.id) else { throw AgentPublicationError.invalid }

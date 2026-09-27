@@ -197,7 +197,7 @@ struct AgentMessagingSessionTests {
         expectNoDifference(old.response, "Old report")
     }
 
-    @Test(arguments: ["valid", "author", "scope", "identity", "text", "pending"])
+    @Test(arguments: ["valid", "author", "scope", "identity", "text", "pending", "unreviewed-file"])
     func finalReceiptIsAtomicAndPreservesFullText(mode: String) async throws {
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
         let incoming = AgentMessage(senderID: f.sender.id, recipientID: f.recipient.id, text: "Report",
@@ -207,11 +207,15 @@ struct AgentMessagingSessionTests {
         try await f.messenger.updateDelivery(id: incoming.id, state: .running, at: Date(timeIntervalSince1970: 1_700_000_000))
         let before = await f.messenger.allMessages()
         let text = String(repeating: "Full report. ", count: 1_000)
-        let report = RoomMessage(id: mode == "identity" ? incoming.id : UUID(),
+        var report = RoomMessage(id: mode == "identity" ? incoming.id : UUID(),
             groupID: mode == "scope" ? UUID() : f.origin,
             senderID: mode == "author" ? f.sender.id : f.recipient.id,
             text: mode == "text" ? "Different text" : text,
             createdAt: Date(timeIntervalSince1970: 1_700_000_000))
+        if mode == "unreviewed-file" {
+            report.files = [.init(id: String(repeating: "a", count: 64), filename: "report.txt",
+                mimeType: "text/plain", byteCount: 12, kind: .document)]
+        }
         if mode == "valid" {
             try await f.messenger.updateDelivery(id: incoming.id, state: .completed, response: text, finalPublication: report)
             let saved = try #require(await f.messenger.allMessages().first)
