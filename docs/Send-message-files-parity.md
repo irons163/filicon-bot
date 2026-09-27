@@ -92,3 +92,13 @@ GroupService 在保存前檢查群組、當前成員及不混用圖片／問題�
 待完成仍包含 App 核准 UI、原子 quota／blob reference 與訊息保存整合、檔案顯示，以及 direct／mailbox 接線、大檔與遠端來源。此階段不宣稱端到端可用。
 
 驗證：修正測試對既有毫秒時間格式的比較後，完整非平行 Swift 測試 exit 0；原生 Debug build、deep strict 封裝／簽章均通過。日誌 `.build/validation/publication-group-{full,native}.log`。未啟動 App／Xcode。
+
+## 第六階段：群組檔案卡片與預覽（2026-09-28）
+
+群組訊息的 files 顯示檔名、大小及預覽按鈕，不再將含檔案的訊息標示為純文字。點擊會核對目前帳號 generation、所選群組與已保存訊息中的完整 metadata，再從 AttachmentStore 驗證 CAS bytes，交給既有附件預覽。切換群組、偽造 metadata、錯誤訊息／群組與缺少 blob 均不開啟。這不會讀取原始 file URL，也不會自動執行附件。
+
+單獨聊天 peer projection 現在合併 canonical publication 的 images 與 files；files 從 AttachmentStore 驗證並補 reference，不經圖片解碼器。incoming peer message 暫不允許附加未存在於 canonical incoming schema 的 files。端到端檔案 transaction 尚未注入，該 projection 接線仍需隨後以完整 direct／mailbox 發佈案例驗收。
+
+依 pfw-modern-swiftui 使用 callback 傳遞開啟動作，依 pfw-testing 以隔離已保存群組及 CAS fixture 驗證六種預覽情況。七語系離屏 render 通過，繁中截圖人工檢視檔名／大小／預覽圖示無截斷。未開啟使用者 App、未改真實帳號或群組。下一步仍為實際核准及原子 quota 的發佈接線，不宣稱全部完成。
+
+驗證：定向與完整非平行 Swift 測試 exit 0；原生 Debug build、deep strict 封裝／簽章通過。日誌 `.build/validation/group-file-preview-{focused,full,native}.log`，離屏截圖 `.build/validation/group-file-ui/`，均不提交。

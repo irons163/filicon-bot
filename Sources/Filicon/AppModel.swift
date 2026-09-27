@@ -2699,6 +2699,28 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func openGroupMessageFile(_ metadata: AttachmentMetadata, messageID: UUID, groupID: UUID) {
+        guard !agentMessagingAccountTransition, selectedGroupID == groupID,
+              let groupService else { return }
+        let accountGeneration = autoReviewAccountGeneration
+        openAttachmentGallery(metadata, gallery: [metadata]) { candidate in
+            @MainActor func checkScope() throws {
+                guard !self.agentMessagingAccountTransition,
+                      accountGeneration == self.autoReviewAccountGeneration,
+                      self.selectedGroupID == groupID else { throw CancellationError() }
+            }
+            try checkScope()
+            let messages = await groupService.messages(groupID: groupID)
+            try checkScope()
+            guard messages.contains(where: { $0.id == messageID && $0.files?.contains(candidate) == true }) else {
+                throw AttachmentPreviewError.previewFileUnavailable
+            }
+            let data = try await self.attachmentStore.data(for: candidate)
+            try checkScope()
+            return data
+        }
+    }
+
     private func openAttachmentGallery(_ metadata: AttachmentMetadata, gallery: [AttachmentMetadata],
                                        load: @escaping @MainActor (AttachmentMetadata) async throws -> Data) {
         attachmentPreviewGeneration += 1
@@ -4858,6 +4880,7 @@ final class AppModel: ObservableObject {
         case .incoming:
             guard canonical.questionResponse == nil, canonical.secretResponse == nil,
                   message.secretRequest == nil, message.question == nil, message.cursorAgent == nil,
+                  message.files?.isEmpty != false,
                   delivery.state == .running, message.id == canonical.id,
                   message.text == canonical.text,
                   message.images ?? [] == canonical.images ?? [] else { throw AgentMessagingError.scopeMismatch }
@@ -4969,17 +4992,20 @@ final class AppModel: ObservableObject {
             throw CancellationError()
         }
         let images = message.images ?? []
+        let files = message.files ?? []
+        let attachments = images + files
+        guard Set(attachments.map(\.id)).count == attachments.count else { throw AgentMessagingError.scopeMismatch }
         var cards: [TranscriptCard] = []
         if let reference = message.cursorAgent {
             guard source.kind == .publication, message.text == reference.summary,
-                  message.question == nil, images.isEmpty else { throw AgentMessagingError.scopeMismatch }
+                  message.question == nil, attachments.isEmpty else { throw AgentMessagingError.scopeMismatch }
             cards = [TranscriptCard(id: message.id, lifecycle: .succeeded,
                 createdAt: message.createdAt, updatedAt: message.createdAt,
                 payload: .cloudAgent(.init(agentID: "", title: "Cursor cloud agent", externalReferenceID: reference.bcID)))]
         }
         if let saved = stored?.messages.first(where: { $0.id == message.id }) {
             guard saved.agentMessageSource == source, saved.text == message.text,
-                  saved.attachments == images,
+                  saved.attachments == attachments,
                   saved.transcriptCards.map(\.payload) == cards.map(\.payload),
                   saved.transcriptCards.map(\.id) == cards.map(\.id),
                   saved.transcriptCards.allSatisfy({ $0.lifecycle == .succeeded && $0.actions.isEmpty }) else {
@@ -4997,6 +5023,18 @@ final class AppModel: ObservableObject {
                     throw AgentImageError.invalid
                 }
                 try await attachmentLifecycle.addReference(attachment.metadata,
+                    owner: .init(conversationID: destination, messageID: message.id))
+                try checkScope()
+            }
+        }
+        if !files.isEmpty {
+            guard let attachmentLifecycle else { throw AttachmentStoreError.missing("lifecycle") }
+            for file in files {
+                // Reviewed file bytes already live in AttachmentStore, not the
+                // current-image store. Verify before adding a durable owner.
+                _ = try await attachmentStore.data(for: file)
+                try checkScope()
+                try await attachmentLifecycle.addReference(file,
                     owner: .init(conversationID: destination, messageID: message.id))
                 try checkScope()
             }
@@ -5029,7 +5067,7 @@ final class AppModel: ObservableObject {
               conversations[index].agentBinding == binding else { throw CancellationError() }
         var projected = ChatMessage(id: message.id, role: .assistant, text: message.text,
             createdAt: message.createdAt, agentMessageSource: source)
-        projected.attachments = images
+        projected.attachments = attachments
         projected.transcriptCards = cards
         let position = conversations[index].messages.firstIndex { $0.createdAt > projected.createdAt }
             ?? conversations[index].messages.endIndex

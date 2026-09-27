@@ -220,6 +220,7 @@ struct GroupConversationView: View {
             replyAuthor: replyAuthor(for: message), inlineReferences: references,
             onShowReply: { threadPresentation.reveal($0, in: threads) },
             onReply: threads.canReply(to: message.id) ? { beginReply(to: message.id) } : nil,
+            onOpenFile: { model.openGroupMessageFile($0, messageID: message.id, groupID: group.id) },
             onReaction: { Task { await model.toggleGroupReaction(groupID: group.id, messageID: message.id, emoji: "👍") } }
         )
     }
@@ -562,6 +563,7 @@ struct GroupMessageBubble: View {
     var inlineReferences: GroupMessageReferenceDirectory?
     var onShowReply: ((UUID) -> Void)?
     var onReply: (() -> Void)?
+    var onOpenFile: ((AttachmentMetadata) -> Void)?
     let onReaction: () -> Void
     @State private var hovering = false
     private var isUser: Bool { message.senderID == nil }
@@ -610,6 +612,24 @@ struct GroupMessageBubble: View {
                     }
                 }
                 if let images = message.images, !images.isEmpty { AgentMessageImagePreviews(images: images) }
+                ForEach(message.files ?? []) { file in
+                    Button { onOpenFile?(file) } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: "doc")
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(file.filename).lineLimit(2)
+                                Text(ByteCountFormatter.string(fromByteCount: file.byteCount, countStyle: .file))
+                                    .font(.caption).foregroundStyle(FiliconTheme.textSecondary)
+                            }
+                            Spacer(minLength: 4)
+                            Image(systemName: "eye")
+                        }
+                        .padding(12)
+                        .background(FiliconTheme.input, in: RoundedRectangle(cornerRadius: 10))
+                    }
+                    .buttonStyle(.plain).disabled(onOpenFile == nil)
+                    .accessibilityIdentifier("group-file-\(file.id)")
+                }
                 ForEach(message.toolActivities) { tool in
                     let waitingForFolder = tool.status == .pending && waitingForFolderCallIDs.contains(tool.id)
                     HStack(spacing: 7) {
@@ -632,7 +652,7 @@ struct GroupMessageBubble: View {
                     .font(.caption).foregroundStyle(FiliconTheme.textSecondary)
                     .accessibilityIdentifier("group-member-outcome-\(outcome.rawValue)")
                 } else if !isUser && message.toolActivities.isEmpty && message.question == nil && message.cursorAgent == nil
-                            && message.images?.isEmpty != false && !message.text.isEmpty {
+                            && message.images?.isEmpty != false && message.files?.isEmpty != false && !message.text.isEmpty {
                     Text(l10n("Text reply · no tools used"))
                         .font(.system(size: 10)).foregroundStyle(FiliconTheme.textTertiary)
                 }
