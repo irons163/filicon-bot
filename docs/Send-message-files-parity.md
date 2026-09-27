@@ -478,3 +478,11 @@ App 核准測試擴為信箱／單聊 × 同意、拒絕、停止、帳號切換
 這是 peer 發布同步，不是單聊主代理人直接 SendMessage 遠端發布；後者與真正媒體預覽仍待補。未 push、重啟使用者 App 或改真實資料。
 
 完整非平行 Swift 回歸 exit 0（remote-peer-projection-full.log）。
+
+## 第四十四階段：單聊主代理人遠端附件發布（2026-09-28）
+
+單聊 SendMessage 接入遠端附件交易：顯示精確 URL、描述及未下載驗證提示，經使用者核准後保存 ChatMessage，回傳 canonical receipt。核准前後檢查帳號、generation 與執行狀態；保存錯誤時查核 durable message，區分未保存與保存後 quota 報錯，不重複發布或誤報失敗。
+
+六個隔離 App 測試涵蓋同意、拒絕、停止、帳號切換、保存前與保存後故障（remote-direct-host-target-fixed.log）。完整回歸首次因既有核准測試的固定 yield 次數過早耗盡失敗；依 pfw-testing 將其等待改為五秒單調時鐘上限並保留逾時失敗。重跑完整非平行 Swift 測試 exit 0（remote-direct-host-full-fixed.log），原生 Debug build 與 deep strict 簽章通過（remote-direct-host-native.log）。
+
+尚待單聊引用歷史／跳轉索引補齊遠端欄位；locator 卡片並非真正媒體預覽。未 push、重啟 App／Xcode 或修改真實帳號資料。

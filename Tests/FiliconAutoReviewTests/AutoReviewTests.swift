@@ -463,9 +463,11 @@ private func reviewing(
 }
 
 private func waitForPending(_ broker: PendingApprovalBroker) async throws -> PendingApproval {
-    for _ in 0..<1_000 {
+    let clock = ContinuousClock()
+    let deadline = clock.now.advanced(by: .seconds(5))
+    while clock.now < deadline {
         if let value = await broker.pendingApprovals.first { return value }
-        await Task.yield()
+        try await Task.sleep(for: .milliseconds(5))
     }
     throw NSError(domain: "AutoReviewTests", code: 1, userInfo: [NSLocalizedDescriptionKey: "approval was not registered"])
 }

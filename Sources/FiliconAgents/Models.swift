@@ -417,12 +417,13 @@ public struct RoomMessage: Identifiable, Codable, Hashable, Sendable {
     public var replyToMessageID: UUID?
     /// Host-assigned, group-local address. Never recomputed from a bounded prompt.
     public var shortAddress: String?
-    public init(id: UUID = UUID(), groupID: UUID, senderID: UUID?, text: String, createdAt: Date = Date(), toolActivities: [RoomToolActivity] = [], memberOutcome: RoomMemberOutcome? = nil, images: [AttachmentMetadata] = [], files: [AttachmentMetadata] = []) {
+    public init(id: UUID = UUID(), groupID: UUID, senderID: UUID?, text: String, createdAt: Date = Date(), toolActivities: [RoomToolActivity] = [], memberOutcome: RoomMemberOutcome? = nil, images: [AttachmentMetadata] = [], files: [AttachmentMetadata] = [], remoteAttachment: RemoteAttachmentReference? = nil) {
         self.id = id; self.groupID = groupID; self.senderID = senderID; self.text = text; self.createdAt = createdAt
         self.toolActivities = toolActivities
         self.memberOutcome = memberOutcome
         self.images = images.isEmpty ? nil : images
         self.files = files.isEmpty ? nil : files
+        self.remoteAttachment = remoteAttachment
     }
 
     private enum CodingKeys: String, CodingKey { case id, groupID, senderID, text, createdAt, toolActivities, memberOutcome, images, files, remoteAttachment, question, secretRequest, cursorAgent, questionReplyTo, replyToMessageID, shortAddress }

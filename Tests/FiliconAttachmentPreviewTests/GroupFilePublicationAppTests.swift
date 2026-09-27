@@ -17,7 +17,10 @@ private final class GroupFileQuotaFault: @unchecked Sendable {
     private var mode: String?
     private var triggered = false
     private var directCheckpoints = 0
-    init(groupsURL: URL) { self.groupsURL = groupsURL }
+    private let directCheckpointTarget: Int
+    init(groupsURL: URL, directCheckpointTarget: Int = 2) {
+        self.groupsURL = groupsURL; self.directCheckpointTarget = directCheckpointTarget
+    }
     func arm(_ mode: String) { lock.lock(); defer { lock.unlock() }; self.mode = mode }
     var didTrigger: Bool { lock.lock(); defer { lock.unlock() }; return triggered }
     func inject(_ point: StorageQuotaFaultPoint) throws {
@@ -26,7 +29,7 @@ private final class GroupFileQuotaFault: @unchecked Sendable {
         if mode == "direct-message-reserve" || mode == "direct-message-late" {
             guard point == (mode == "direct-message-reserve" ? .afterReservationPersist : .afterCommitPersist) else { return }
             directCheckpoints += 1
-            guard directCheckpoints == 2 else { return }
+            guard directCheckpoints == directCheckpointTarget else { return }
         } else if mode == "quota-reserve" {
             guard point == .afterReservationPersist else { return }
         } else {
@@ -144,6 +147,44 @@ private struct GroupFileAppProvider: AIProvider {
         let history = await groups.messages(groupID: destination.id)
         let attachments = history.compactMap(\.remoteAttachment)
         expectNoDifference(attachments, mode == "approve" ? [try RemoteAttachmentReference(url: url, alt: "報表說明")] : [])
+    }
+
+    @Test(arguments: ["approve", "deny", "stop", "account", "direct-message-reserve", "direct-message-late"])
+    func directMainPublishesReviewedRemote(mode: String) async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "filicon-direct-remote-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fault = GroupFileQuotaFault(groupsURL: root.appending(path: "unused.json"), directCheckpointTarget: 1)
+        let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false,
+            quotaFaultInjector: { try fault.inject($0) })
+        await model.bootstrap()
+        let reference = try RemoteAttachmentReference(url: "https://example.com/report?sig=a%2Bb", alt: "報表說明")
+        await model.registry.register(GroupFileAppProvider(url: reference.url,
+            expectedFileSuccess: ["approve", "direct-message-late"].contains(mode)))
+        let id = try #require(model.selection)
+        let ci = try #require(model.conversations.firstIndex(where: { $0.id == id }))
+        model.conversations[ci].providerID = "group-file-app"
+        model.conversations[ci].modelID = "test"
+        await model.refreshModels()
+        model.draft = "Publish report"
+        model.send()
+        let approval = try await pending(model)
+        expectNoDifference(approval.action.context.metadata["agentRemotePublication"], "true")
+        #expect(approval.action.context.metadata["agentMessage"]?.contains(reference.url) == true)
+        #expect(model.conversations[ci].messages.allSatisfy { $0.remoteAttachment == nil })
+        if mode.hasPrefix("direct-message-") { fault.arm(mode) }
+        if mode == "stop" { model.cancel() }
+        if mode == "account" { await model.cancelAutoReviewApprovals(nextAccountID: "other") }
+        model.handleTranscriptCardIntent(mode == "deny" ? .rejectReview(reviewID: approval.id) : .approveReview(reviewID: approval.id))
+        for _ in 0..<600 {
+            if !model.running.contains(id) { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(!model.running.contains(id))
+        let store = ConversationStore(fileURL: root.appending(path: "conversations.json"))
+        let saved = try #require(try await store.conversation(id: id))
+        let attachments = saved.messages.compactMap(\.remoteAttachment)
+        expectNoDifference(attachments, ["approve", "direct-message-late"].contains(mode) ? [reference] : [])
+        if mode.hasPrefix("direct-message-") { #expect(fault.didTrigger) }
     }
 
     @Test(arguments: ["approve", "deny", "stop", "account", "source-changed", "quota-reserve", "quota-blob", "direct-message-reserve", "direct-message-late"])

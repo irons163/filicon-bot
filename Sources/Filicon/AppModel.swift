@@ -2129,6 +2129,8 @@ final class AppModel: ObservableObject {
                         },
                         filePublication: makeDirectFilePublication(conversationID: id, assistantID: assistantID,
                             account: accountScope, generation: publicationGeneration, agentID: agentIdentity?.agentID ?? id),
+                        remotePublication: makeDirectRemotePublication(conversationID: id, assistantID: assistantID,
+                            account: accountScope, generation: publicationGeneration),
                         replyHistory: replyHistory, receiptSenderID: id, supportsReferenceNavigation: true,
                         directConversationPresentation: true,
                         publishQuestionReceipt: { [weak self] question, replyTo in
@@ -2468,6 +2470,73 @@ final class AppModel: ObservableObject {
               conversations.contains(where: { $0.id == id && $0.messages.contains(where: { $0.id == assistantID }) }) else {
             throw CancellationError()
         }
+    }
+
+    private func makeDirectRemotePublication(conversationID id: UUID, assistantID: UUID,
+        account: String, generation: UInt64) -> AgentRemotePublicationTransaction {
+        AgentRemotePublicationTransaction(conversationID: id, senderID: id,
+            validateScope: { [weak self] in
+                guard let self else { throw CancellationError() }
+                try await self.checkDirectFileScope(id, assistantID: assistantID, account: account, generation: generation)
+            }, authorize: { [weak self] review, call, context in
+                guard let self else { throw CancellationError() }
+                try await self.authorizeDirectRemote(review, call: call, context: context,
+                    assistantID: assistantID, account: account, generation: generation)
+            }, commit: { [weak self] review, _, _ in
+                guard let self else { throw CancellationError() }
+                let saved = try await self.commitDirectRemote(review, assistantID: assistantID, account: account, generation: generation)
+                return .init(messageID: saved.id, review: review, savedMessage: saved)
+            })
+    }
+
+    private func authorizeDirectRemote(_ review: AgentRemotePublicationTransaction.Review,
+        call: NormalizedToolCall, context: ToolContext, assistantID: UUID, account: String, generation: UInt64) async throws {
+        let id = review.conversationID
+        try checkDirectFileScope(id, assistantID: assistantID, account: account, generation: generation)
+        guard review.senderID == id, context.conversationID == id else { throw AgentMessagingError.scopeMismatch }
+        let fence = ApprovalFence(accountID: account, agentID: id.uuidString.lowercased(), runID: context.runID, generation: generation)
+        await autoReviewBroker.activate(fence)
+        let details = review.reference.url + (review.reference.alt.map { "\n\($0)" } ?? "")
+            + "\n" + l10n("Open external link. Content has not been downloaded or verified.")
+        let action = AutoReviewAction(summary: l10n("Remote attachment"),
+            target: .resource(kind: "conversation", identifier: id.uuidString), risks: [.sensitive],
+            context: .init(fence: fence, conversationID: id, toolCallID: call.id.rawValue,
+                metadata: ["tool": "SendMessage", "agentRemotePublication": "true", "agentMessage": details]))
+        let pending = PendingApproval(action: action, reason: "Approval required", expiresAt: Date().addingTimeInterval(300))
+        try await autoReviewBroker.waitForApprovalToExecute(pending) { [weak self] in await self?.registerAutoReviewApproval($0) }
+        try checkDirectFileScope(id, assistantID: assistantID, account: account, generation: generation)
+    }
+
+    private func commitDirectRemote(_ review: AgentRemotePublicationTransaction.Review,
+        assistantID: UUID, account: String, generation: UInt64) async throws -> RoomMessage {
+        let id = review.conversationID
+        try checkDirectFileScope(id, assistantID: assistantID, account: account, generation: generation)
+        guard review.senderID == id, let ci = conversations.firstIndex(where: { $0.id == id }) else { throw CancellationError() }
+        if let reply = review.replyTo {
+            let targets = conversations[ci].messages.filter { $0.id == reply }
+            guard targets.count == 1, let target = targets.first,
+                  target.role == .user || target.role == .assistant,
+                  !target.text.isEmpty || !target.attachments.isEmpty || target.remoteAttachment != nil else { throw GroupReplyError.unavailable }
+        }
+        let message = ChatMessage(role: .assistant, text: "", replyToMessageID: review.replyTo, remoteAttachment: review.reference)
+        conversations[ci].messages.append(message)
+        do { try await persistOrThrow(conversationID: id) }
+        catch {
+            let durable: Conversation?
+            do { durable = try await store.conversation(id: id) }
+            catch { throw AgentRemotePublicationTransaction.Failure.uncertainCommit }
+            if durable?.messages.contains(where: { $0.id == message.id && $0.remoteAttachment == review.reference && $0.replyToMessageID == review.replyTo }) != true {
+                if let index = conversations.firstIndex(where: { $0.id == id }) {
+                    conversations[index].messages.removeAll { $0.id == message.id }
+                }
+                throw error
+            }
+        }
+        directPublicationIDs[assistantID]?.append(message.id)
+        var receipt = RoomMessage(id: message.id, groupID: id, senderID: id, text: "", remoteAttachment: review.reference)
+        receipt.replyToMessageID = review.replyTo
+        receipt.shortAddress = conversations.first(where: { $0.id == id })?.messages.first(where: { $0.id == message.id })?.shortAddress
+        return receipt
     }
 
     private func makeDirectFilePublication(conversationID id: UUID, assistantID: UUID,
