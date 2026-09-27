@@ -197,7 +197,7 @@ struct AgentMessagingSessionTests {
         expectNoDifference(old.response, "Old report")
     }
 
-    @Test(arguments: ["valid", "author", "scope", "identity", "text", "pending", "unreviewed-file"])
+    @Test(arguments: ["valid", "author", "scope", "identity", "text", "pending", "unreviewed-file", "unreviewed-remote"])
     func finalReceiptIsAtomicAndPreservesFullText(mode: String) async throws {
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
         let incoming = AgentMessage(senderID: f.sender.id, recipientID: f.recipient.id, text: "Report",
@@ -215,6 +215,16 @@ struct AgentMessagingSessionTests {
         if mode == "unreviewed-file" {
             report.files = [.init(id: String(repeating: "a", count: 64), filename: "report.txt",
                 mimeType: "text/plain", byteCount: 12, kind: .document)]
+        }
+        if mode == "unreviewed-remote" {
+            var encoded = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(report)) as? [String: Any])
+            encoded["remoteAttachment"] = ["url": "https://example.com/report.pdf"]
+            report = try JSONDecoder().decode(RoomMessage.self, from: JSONSerialization.data(withJSONObject: encoded))
+            var raw = report
+            raw.text = "Report"
+            await #expect(throws: AgentPublicationError.invalid) {
+                try await f.messenger.publish(raw, replyingTo: incoming.id, lifetime: AgentPublicationLifetime())
+            }
         }
         if mode == "valid" {
             try await f.messenger.updateDelivery(id: incoming.id, state: .completed, response: text, finalPublication: report)

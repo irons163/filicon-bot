@@ -302,3 +302,13 @@ AgentRemotePublicationTransaction 將來源對話、目的對話、sender、精�
 相同 run／call 的已保存回條可重播，close 後也不再次核准／保存；更換輸入拒絕。開始保存後拋錯或回條不符，該 identity 進入 uncertainCommit，不盲目重試。核准中取消不保存，保存成功後的取消不抹除結果。同一保存中 call 重入回報 uncertainCommit，不同 call 重入回報 busy。
 
 依 pfw-testing 以可控制 gate 驗證 10 種情境：錯誤對話／tool／已關閉、成功重播、拒絕、核准後撤銷、保存失敗、錯誤回條、核准中與保存中取消；核對回呼順序與保存次數。定向測試及原生 Debug build exit 0。本批未重跑完整套件，亦未加入 RoomMessage／工具 schema／App UI 接線；不是 HTTPS 傳送功能已可使用的證據。日誌 `.build/validation/remote-publication-transaction-final-target.log`、`remote-publication-transaction-native.log`。
+
+## 第二十四階段：群組遠端附件持久化（2026-09-28）
+
+RoomMessage 新增可選 remoteAttachment，舊訊息仍可解碼；外部不可直接設定該欄位。GroupAgentPublication 只透過非 Codable 的 ReviewedGroupRemoteAttachment host envelope 發布。保存核對群組、作者、目前成員、訊息 ID 與 lifetime，拒絕混入文字／圖片／本機檔案／問題／其他 lifetime。相同 URL 即使換訊息 ID 也不在同回合重複發布。
+
+群組短地址、回覆投影、參考連結與已發言判定納入 remote-only 訊息。信箱 publishValidated／最終回覆與 direct peer recovery 尚未接線，因此明確拒絕／排除 remote payload，不讓一般入口繞過核准，也不把它假裝成本機檔案。
+
+依 pfw-testing 驗證核准、撤銷、錯誤群組／作者、混入文字／lifetime、不同 ID 重複 URL、舊訊息相容；成功後重開 store 檢查 exact URL、ID、短地址與 reply target。另以 JSON 注入 remoteAttachment，確認信箱一般發布與 finalPublication 拒絕且原 state 不變。這仍是保存層，工具 schema、App 核准與三種聊天的遠端媒體顯示尚未完成。
+
+驗證：群組定向測試、含信箱拒絕案例的完整非平行 Swift 回歸 exit 0；原生 Debug build 與 deep strict 封裝／簽章通過。日誌 `.build/validation/group-remote-publication-{target,full,native}.log`。沒有網路請求、使用者 App／Xcode 重啟或真實資料修改。

@@ -408,6 +408,8 @@ public struct RoomMessage: Identifiable, Codable, Hashable, Sendable {
     public var images: [AttachmentMetadata]?
     /// Reviewed, stored files; distinct from current-request image forwarding.
     public var files: [AttachmentMetadata]?
+    /// Reviewed remote locator; never a local blob or implicit network grant.
+    public internal(set) var remoteAttachment: RemoteAttachmentReference?
     public var question: GroupQuestion?
     public internal(set) var secretRequest: MailboxSecretRequest?
     public var cursorAgent: CursorAgentReference?
@@ -423,7 +425,7 @@ public struct RoomMessage: Identifiable, Codable, Hashable, Sendable {
         self.files = files.isEmpty ? nil : files
     }
 
-    private enum CodingKeys: String, CodingKey { case id, groupID, senderID, text, createdAt, toolActivities, memberOutcome, images, files, question, secretRequest, cursorAgent, questionReplyTo, replyToMessageID, shortAddress }
+    private enum CodingKeys: String, CodingKey { case id, groupID, senderID, text, createdAt, toolActivities, memberOutcome, images, files, remoteAttachment, question, secretRequest, cursorAgent, questionReplyTo, replyToMessageID, shortAddress }
     public init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         id = try values.decode(UUID.self, forKey: .id)
@@ -435,6 +437,7 @@ public struct RoomMessage: Identifiable, Codable, Hashable, Sendable {
         memberOutcome = try values.decodeIfPresent(RoomMemberOutcome.self, forKey: .memberOutcome)
         images = try values.decodeIfPresent([AttachmentMetadata].self, forKey: .images)
         files = try values.decodeIfPresent([AttachmentMetadata].self, forKey: .files)
+        remoteAttachment = try values.decodeIfPresent(RemoteAttachmentReference.self, forKey: .remoteAttachment)
         question = try values.decodeIfPresent(GroupQuestion.self, forKey: .question)
         secretRequest = try values.decodeIfPresent(MailboxSecretRequest.self, forKey: .secretRequest)
         cursorAgent = try values.decodeIfPresent(CursorAgentReference.self, forKey: .cursorAgent)

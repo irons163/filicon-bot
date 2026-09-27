@@ -59,6 +59,19 @@ public struct ReviewedGroupFile: Sendable {
 
 /// Host-only publication envelope. The model supplies text/image IDs, never
 /// the source request, lifetime, room, or author of the resulting message.
+public struct ReviewedGroupRemoteAttachment: Sendable {
+    public let messageID: UUID
+    public let reference: RemoteAttachmentReference
+    public let groupID: UUID
+    public let senderID: UUID
+    public let lifetime: AgentPublicationLifetime
+    public init(reference: RemoteAttachmentReference, groupID: UUID, senderID: UUID,
+                lifetime: AgentPublicationLifetime, messageID: UUID = UUID()) {
+        self.reference = reference; self.groupID = groupID; self.senderID = senderID
+        self.lifetime = lifetime; self.messageID = messageID
+    }
+}
+
 public struct GroupAgentPublication: Sendable {
     public let text: String
     public let images: [AttachmentMetadata]
@@ -68,16 +81,19 @@ public struct GroupAgentPublication: Sendable {
     public let cursorAgent: CursorAgentReference?
     public let replyToMessageID: UUID?
     public let file: ReviewedGroupFile?
+    public let remoteAttachment: ReviewedGroupRemoteAttachment?
 
     public init(text: String, images: [AttachmentMetadata] = [], sourceUserMessageID: UUID? = nil,
                 lifetime: AgentPublicationLifetime? = nil, question: GroupQuestion? = nil, replyToMessageID: UUID? = nil,
-                cursorAgent: CursorAgentReference? = nil, file: ReviewedGroupFile? = nil) {
+                cursorAgent: CursorAgentReference? = nil, file: ReviewedGroupFile? = nil,
+                remoteAttachment: ReviewedGroupRemoteAttachment? = nil) {
         self.text = text; self.images = images
         self.sourceUserMessageID = sourceUserMessageID; self.lifetime = lifetime
         self.question = question
         self.cursorAgent = cursorAgent
         self.replyToMessageID = replyToMessageID
         self.file = file
+        self.remoteAttachment = remoteAttachment
     }
 }
 
@@ -400,10 +416,10 @@ public actor GroupService {
                 guard epochs[groupID] == epoch, !Task.isCancelled else { return produced }
                 guard let agent = currentMembers.first(where: { $0.id == memberID }) else { continue }
                 let history = state.roomMessages.filter { $0.groupID == groupID }
-                let previousSpeech = history.lastIndex { $0.senderID == memberID && (!$0.text.isEmpty || !($0.images ?? []).isEmpty || !($0.files ?? []).isEmpty) }
+                let previousSpeech = history.lastIndex { $0.senderID == memberID && (!$0.text.isEmpty || !($0.images ?? []).isEmpty || !($0.files ?? []).isEmpty || $0.remoteAttachment != nil) }
                 let unread = history.dropFirst(seenMessageCounts[memberID] ?? previousSpeech.map { $0 + 1 } ?? 0)
                 if seenMessageCounts[memberID] != nil,
-                   !unread.contains(where: { $0.senderID != memberID && (!$0.text.isEmpty || !($0.images ?? []).isEmpty || !($0.files ?? []).isEmpty || !$0.toolActivities.isEmpty) }) {
+                   !unread.contains(where: { $0.senderID != memberID && (!$0.text.isEmpty || !($0.images ?? []).isEmpty || !($0.files ?? []).isEmpty || $0.remoteAttachment != nil || !$0.toolActivities.isEmpty) }) {
                     continue
                 }
                 let context = GroupTurnContext(
@@ -469,7 +485,7 @@ public actor GroupService {
                 total += published.count
                 messagesThisRound += published.count
                 for message in published {
-                    publishedTexts[memberID, default: []].insert(Self.replyFingerprint(message.text, images: message.images ?? [], files: message.files ?? []))
+                    publishedTexts[memberID, default: []].insert(Self.replyFingerprint(message.text, images: message.images ?? [], files: message.files ?? [], remote: message.remoteAttachment))
                 }
                 var sentThisTurn = published.count
                 for text in responses.filter({ !Self.isPass($0) }).prefix(Self.maximumMessagesPerMemberTurn) {
@@ -522,9 +538,11 @@ public actor GroupService {
         case text(String)
         case imageIDs([String])
         case fileIDs([String])
+        case remoteURL(String)
     }
 
-    private static func replyFingerprint(_ text: String, images: [AttachmentMetadata], files: [AttachmentMetadata] = []) -> ReplyFingerprint {
+    private static func replyFingerprint(_ text: String, images: [AttachmentMetadata], files: [AttachmentMetadata] = [], remote: RemoteAttachmentReference? = nil) -> ReplyFingerprint {
+        if let remote { return .remoteURL(remote.url) }
         if !files.isEmpty { return .fileIDs(files.map(\.id)) }
         let normalized = text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
         return normalized.isEmpty ? .imageIDs(images.map(\.id)) : .text(normalized)
@@ -536,6 +554,14 @@ public actor GroupService {
         guard epochs[activity.groupID] == epoch else { throw CancellationError() }
         let text = publication.text, images = publication.images
         let files = publication.file.map { [$0.metadata] } ?? []
+        if let remote = publication.remoteAttachment {
+            guard remote.groupID == activity.groupID, remote.senderID == activity.senderID,
+                  !state.roomMessages.contains(where: { $0.id == remote.messageID }),
+                  state.groups.first(where: { $0.id == activity.groupID })?.memberIDs.contains(remote.senderID) == true,
+                  text.isEmpty, images.isEmpty, files.isEmpty, publication.question == nil,
+                  publication.cursorAgent == nil, publication.lifetime == nil,
+                  publication.sourceUserMessageID == nil else { throw AgentPublicationError.invalid }
+        }
         if let file = publication.file {
             guard file.groupID == activity.groupID, file.senderID == activity.senderID,
                   !state.roomMessages.contains(where: { $0.id == file.messageID }),
@@ -550,7 +576,7 @@ public actor GroupService {
                   publication.lifetime != nil else { throw AgentPublicationError.invalid }
         }
         if let replyID = publication.replyToMessageID {
-            guard publication.lifetime != nil || publication.file != nil, replyID != activity.id,
+            guard publication.lifetime != nil || publication.file != nil || publication.remoteAttachment != nil, replyID != activity.id,
                   GroupThreadProjection(history: state.roomMessages, groupID: activity.groupID).canReply(to: replyID) else {
                 throw GroupReplyError.unavailable
             }
@@ -574,13 +600,14 @@ public actor GroupService {
             }
         }
         let replies = explicitReplies[activity.id] ?? []
-        let fingerprint = Self.replyFingerprint(text, images: images, files: files)
-        guard (!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !images.isEmpty || !files.isEmpty), text.count <= 8_000,
+        let fingerprint = Self.replyFingerprint(text, images: images, files: files, remote: publication.remoteAttachment?.reference)
+        guard (!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !images.isEmpty || !files.isEmpty || publication.remoteAttachment != nil), text.count <= 8_000,
               replies.count < min(remainingBudget, Self.maximumMessagesPerMemberTurn),
-              !previousTexts.contains(fingerprint), !replies.contains(where: { Self.replyFingerprint($0.text, images: $0.images ?? [], files: $0.files ?? []) == fingerprint }) else {
+              !previousTexts.contains(fingerprint), !replies.contains(where: { Self.replyFingerprint($0.text, images: $0.images ?? [], files: $0.files ?? [], remote: $0.remoteAttachment) == fingerprint }) else {
             throw AgentServiceError.invalidName
         }
-        var draft = RoomMessage(id: publication.file?.messageID ?? UUID(), groupID: activity.groupID, senderID: activity.senderID, text: text, images: images, files: files)
+        var draft = RoomMessage(id: publication.remoteAttachment?.messageID ?? publication.file?.messageID ?? UUID(), groupID: activity.groupID, senderID: activity.senderID, text: text, images: images, files: files)
+        draft.remoteAttachment = publication.remoteAttachment?.reference
         draft.question = publication.question
         draft.cursorAgent = publication.cursorAgent
         draft.replyToMessageID = publication.replyToMessageID ?? activity.replyToMessageID
@@ -591,7 +618,7 @@ public actor GroupService {
             let saved = self.state.roomMessages.last(where: { $0.id == message.id }) ?? message
             self.explicitReplies[activity.id, default: []].append(saved)
         }
-        if let lifetime = publication.file?.lifetime ?? publication.lifetime { try lifetime.commit(commit) }
+        if let lifetime = publication.remoteAttachment?.lifetime ?? publication.file?.lifetime ?? publication.lifetime { try lifetime.commit(commit) }
         else { try commit() }
         // Capture the durable identity before yielding to UI callbacks. Never
         // acknowledge the pre-save draft, which has no assigned short address.

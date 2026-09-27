@@ -348,6 +348,7 @@ public actor AgentMessenger {
 
     private func publishValidated(_ publication: RoomMessage, replyingTo id: UUID, lifetime: AgentPublicationLifetime,
                                   reviewedFile: ReviewedMailboxFile? = nil) throws {
+        guard publication.remoteAttachment == nil else { throw AgentPublicationError.invalid }
         if let reviewedFile {
             guard reviewedFile.incomingID == id, reviewedFile.publication == publication else {
                 throw AgentPublicationError.invalid
@@ -417,7 +418,7 @@ public actor AgentMessenger {
                   report.senderID == previous.recipientID, report.text == response,
                   !report.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                   report.question == nil, report.secretRequest == nil, report.cursorAgent == nil,
-                  report.images?.isEmpty != false, report.files?.isEmpty != false, report.toolActivities.isEmpty,
+                  report.images?.isEmpty != false, report.files?.isEmpty != false, report.remoteAttachment == nil, report.toolActivities.isEmpty,
                   report.memberOutcome == nil, report.shortAddress == nil,
                   report.replyToMessageID == nil, report.questionReplyTo == nil,
                   !containsMessageID(report.id) else { throw AgentPublicationError.invalid }
@@ -513,7 +514,7 @@ public actor AgentMessenger {
                       (!message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                         || !(message.images ?? []).isEmpty || !(message.files ?? []).isEmpty),
                       message.toolActivities.isEmpty,
-                      message.memberOutcome == nil, message.questionReplyTo == nil else { return }
+                      message.memberOutcome == nil, message.questionReplyTo == nil, message.remoteAttachment == nil else { return }
                 if let secret = message.secretRequest {
                     guard kind == .publication, secret.accountID == binding.accountID,
                           message.text == "Requested a credential securely: \(secret.request.label)",
