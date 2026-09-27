@@ -80,3 +80,7 @@ AppModel 圖片專用核准流程按 pending ID 保留預覽，結束時移除�
 ## 第五階段（部分）：格式驗證
 
 隔離記憶體測試已驗證 PNG、JPEG、GIF 輸入都轉為單幀 256×256 PNG，並使用紅／藍雙幀 GIF 驗證輸出確實等於第一幀的正規化結果。兩項測試（含三種格式參數）通過，不使用真實檔案或外部圖片。這明確記錄動畫會凍結在第一幀，不宣稱保留動畫。WebP 與 SVG 仍待各自驗證／安全實作；完整套件仍受上述鎖定環境影響而待重跑。
+
+後續 WebP 驗證：`bundledWebPDecodesToBoundedPNG` 使用 repo 內九個既有寵物素材，先確認 ImageIO 辨識為 `org.webmproject.webp`，再驗證 codec 輸出為小於 1 MiB 的單幀 256×256 PNG、保留原始 bytes 數量，且只有 12-byte header 的截斷資料不能通過。九個案例全部通過；PNG／JPEG／GIF 及 GIF 首幀測試一併重跑通過。此證據涵蓋目前主機的九個 WebP 素材，不宣稱涵蓋所有 WebP 編碼變體或最低支援 macOS 的解碼能力。
+
+再次核對 reference `sand-state-tool.ts:149` 與 `agent-state.ts:60`，五格式清單確實包含 SVG；Filicon 尚無 SVG 專用轉換器，因此這項仍未完成。不得為了顯示頭像載入含腳本或任意外部資源的 SVG；後續安全渲染與驗收需要另行實作。來源 adapter 與圖片核准尚未注入 AppModel session，模型 path 仍未對使用者開放。

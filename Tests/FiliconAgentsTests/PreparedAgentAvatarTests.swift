@@ -48,6 +48,29 @@ struct PreparedAgentAvatarTests {
                            try store.prepareImage(data: firstPNG).pngData)
     }
 
+    @Test(arguments: ["codex", "dewey", "fireball", "hoots", "rocky", "seedy", "stacky", "bsod", "null-signal"])
+    func bundledWebPDecodesToBoundedPNG(pet: String) throws {
+        // Existing repository assets, not network fixtures or user avatar data.
+        let repository = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let bytes = try Data(contentsOf: repository.appending(path: "Sources/Filicon/Resources/PetAvatars/\(pet).webp"))
+        let source = try #require(CGImageSourceCreateWithData(bytes as CFData, nil))
+        expectNoDifference(CGImageSourceGetType(source) as String?, "org.webmproject.webp")
+        let store = AgentAvatarStore(rootURL: URL(fileURLWithPath: "/unused-avatar-format-store"))
+        let prepared = try store.prepareImage(data: bytes)
+        let result = try #require(CGImageSourceCreateWithData(prepared.pngData as CFData, nil))
+        expectNoDifference(CGImageSourceGetType(result) as String?, "public.png")
+        expectNoDifference(CGImageSourceGetCount(result), 1)
+        let image = try #require(CGImageSourceCreateImageAtIndex(result, 0, nil))
+        expectNoDifference(image.width, 256)
+        expectNoDifference(image.height, 256)
+        expectNoDifference(prepared.sourceByteCount, bytes.count)
+        #expect(prepared.pngData.count < 1_024 * 1_024)
+        #expect(throws: AgentAvatarStoreError.invalidImage) {
+            try store.prepareImage(data: bytes.prefix(12))
+        }
+    }
+
     private func png() throws -> Data {
         let rep = try #require(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 8, pixelsHigh: 8,
             bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
