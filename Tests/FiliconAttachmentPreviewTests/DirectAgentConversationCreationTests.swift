@@ -9,6 +9,55 @@ import Testing
 
 @Suite("Create bound direct conversations") @MainActor
 struct DirectAgentConversationCreationTests {
+    @Test(arguments: ["success", "disk", "foreign", "archived"])
+    func manualSidebarVisibilityIsDurableAndSharedWithSearch(mode: String) async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "filicon-sidebar-app-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+        await model.bootstrap()
+        let agent = try #require(await model.createAgent(name: "Needle", summary: "", instructions: "",
+            providerID: "fake", modelID: "fake-stream"))
+        let id = try #require(await model.addConversation(agentID: agent.id))
+        let store = ConversationStore(fileURL: root.appending(path: "conversations.json"))
+        let before = try #require(try await store.conversation(id: id))
+        if mode == "foreign" {
+            let index = try #require(model.conversations.firstIndex(where: { $0.id == id }))
+            model.conversations[index].agentBinding = .init(accountID: "other", agentID: agent.id)
+        }
+        let file = root.appending(path: "agents.json"), backup = root.appending(path: "agents-backup.json")
+        if mode == "disk" {
+            try FileManager.default.moveItem(at: file, to: backup)
+            try FileManager.default.createDirectory(at: file, withIntermediateDirectories: false)
+        }
+        let saved = await model.saveBoundConversationVisibility(id: id, hidden: true)
+        let success = mode == "success" || mode == "archived"
+        expectNoDifference(saved, success)
+        expectNoDifference(model.hiddenConversations.contains(where: { $0.id == id }), success)
+        expectNoDifference(model.visibleConversations.contains(where: { $0.id == id }), !success)
+        let unchanged = try await store.conversation(id: id)
+        expectNoDifference(unchanged, before)
+        if !success { return }
+        // A queued observer snapshot must not undo the newer durable save.
+        model.updateSidebarVisibility(.init(revision: 0, agents: [], subagents: []))
+        #expect(model.hiddenConversations.contains(where: { $0.id == id }))
+        model.searchQuery = "Needle"
+        model.globalSearchTab = .conversations
+        await model.performGlobalSearch()
+        #expect(!model.searchResults.contains(where: { $0.id == id }))
+        let reopened = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+        await reopened.bootstrap()
+        #expect(reopened.hiddenConversations.contains(where: { $0.id == id }))
+        if mode == "archived" { await reopened.archiveAgent(id: agent.id) }
+        #expect(await reopened.saveBoundConversationVisibility(id: id, hidden: false))
+        #expect(reopened.visibleConversations.contains(where: { $0.id == id }))
+        reopened.searchQuery = "Needle"
+        reopened.globalSearchTab = .conversations
+        await reopened.performGlobalSearch()
+        #expect(reopened.searchResults.contains(where: { $0.id == id }))
+        expectNoDifference(reopened.agents.first(where: { $0.id == agent.id })?.notifyOnAgentUpdates, true)
+        expectNoDifference(reopened.agents.first(where: { $0.id == agent.id })?.archivedAt != nil, mode == "archived")
+    }
+
     @Test(arguments: ["success", "write-failure", "archived", "foreign", "running"])
     func syncUsesLiveAgentWithoutChangingIdentityOrHistory(mode: String) async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-bound-sync-\(UUID())")

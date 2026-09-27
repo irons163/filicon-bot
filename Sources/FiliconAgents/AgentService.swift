@@ -793,9 +793,29 @@ public actor AgentService {
 
     public func applySettingsChange(_ change: AgentSettingsChange, lifetime: AgentSettingsChangeLifetime,
                                     at: Date = Date()) throws -> AgentProfile {
+        try saveSettingsChange(change, lifetime: lifetime, at: at, allowArchived: false)
+    }
+
+    /// Explicit human sidebar controls may restore an archived agent's history.
+    /// This cannot change notification preferences or unarchive the agent.
+    public func applyManualSidebarVisibility(_ visibility: AgentSidebarVisibilityChange,
+                                             lifetime: AgentSettingsChangeLifetime) throws -> AgentProfile {
+        guard let profile = state.agents.first(where: { $0.id == visibility.proposed.agentID }) else {
+            throw AgentProfileChangeError.unavailable
+        }
+        let change = AgentSettingsChange(agentID: profile.id, notifyOnUpdates: profile.notifyOnAgentUpdates,
+            previousValue: profile.notifyOnAgentUpdates, previousRevision: profile.notificationSettingsRevision,
+            visibility: visibility)
+        return try saveSettingsChange(change, lifetime: lifetime, at: profile.updatedAt, allowArchived: true)
+    }
+
+    public func currentSnapshot() -> AgentServiceSnapshot { snapshot() }
+
+    private func saveSettingsChange(_ change: AgentSettingsChange, lifetime: AgentSettingsChangeLifetime,
+                                    at: Date, allowArchived: Bool) throws -> AgentProfile {
         try lifetime.commit(change) {
             guard let index = state.agents.firstIndex(where: { $0.id == change.agentID }),
-                  state.agents[index].archivedAt == nil else { throw AgentProfileChangeError.unavailable }
+                  allowArchived || state.agents[index].archivedAt == nil else { throw AgentProfileChangeError.unavailable }
             guard state.agents[index].notifyOnAgentUpdates == change.previousValue,
                   state.agents[index].notificationSettingsRevision == change.previousRevision else {
                 throw AgentSettingsChangeError.stale

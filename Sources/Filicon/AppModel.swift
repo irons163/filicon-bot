@@ -96,6 +96,9 @@ final class AppModel: ObservableObject {
     @Published private(set) var globalSearchFocusRequestID = UUID()
     @Published private(set) var requestedMessageJumpID: UUID?
     @Published var agents: [AgentProfile] = []
+    @Published private(set) var agentSidebarVisibility: [AgentSidebarVisibility] = []
+    private var sidebarVisibilityRevision: UInt64?
+    private var manualSidebarChanges: [UUID: AgentSettingsChangeLifetime] = [:]
     @Published var requestedAgentInspectionID: UUID?
     @Published var pinnedAgentIDs: Set<UUID> = []
     @Published var agentAsyncTasks: [AgentAsyncTask] = []
@@ -615,8 +618,16 @@ final class AppModel: ObservableObject {
             loading: isLoadingModels
         )
     }
-    var visibleConversations: [Conversation] { conversations.filter { $0.hiddenAt == nil } }
-    var hiddenConversations: [Conversation] { conversations.filter { $0.hiddenAt != nil } }
+    var conversationVisibilityOverrides: [ConversationVisibilityOverride] {
+        agentSidebarVisibility.filter { $0.accountID == (settings.accountScope ?? "local") }.map {
+            .init(conversationID: $0.conversationID, binding: .init(accountID: $0.accountID, agentID: $0.agentID), hidden: $0.hidden)
+        }
+    }
+    func isConversationHidden(_ conversation: Conversation) -> Bool {
+        ConversationVisibilityOverride.isHidden(conversation, overrides: conversationVisibilityOverrides)
+    }
+    var visibleConversations: [Conversation] { conversations.filter { !isConversationHidden($0) } }
+    var hiddenConversations: [Conversation] { conversations.filter { isConversationHidden($0) } }
     var selectedConversationHasOlderMessages: Bool {
         selection.map { messageContinuations[$0] != nil } ?? false
     }
@@ -685,11 +696,12 @@ final class AppModel: ObservableObject {
             startupBanner = "Conversation storage is unavailable. Your data was not replaced."
             errorMessage = error.localizedDescription
         }
+        if let agentService { updateSidebarVisibility(await agentService.currentSnapshot()) }
         if conversations.isEmpty {
             addConversationUnchecked()
             await persist(conversationID: selection)
         } else {
-            selection = conversations.first(where: { $0.hiddenAt == nil })?.id
+            selection = visibleConversations.first?.id
             route = selection.map(WorkspaceRoute.conversation)
             if selection == nil { route = .search }
         }
@@ -997,11 +1009,15 @@ final class AppModel: ObservableObject {
     }
 
     func setConversationHidden(id: UUID, hidden: Bool) {
+        if conversations.first(where: { $0.id == id })?.agentBinding != nil {
+            Task { await saveBoundConversationVisibility(id: id, hidden: hidden) }
+            return
+        }
         guard let index = conversations.firstIndex(where: { $0.id == id }) else { return }
         conversations[index].hiddenAt = hidden ? .now : nil
         conversations[index].updatedAt = .now
         if hidden, selection == id {
-            selection = conversations.first(where: { $0.hiddenAt == nil && $0.id != id })?.id
+            selection = visibleConversations.first(where: { $0.id != id })?.id
             setRoute(selection.map(WorkspaceRoute.conversation) ?? .search, recordingHistory: true)
             if let selection {
                 Task {
@@ -1015,7 +1031,65 @@ final class AppModel: ObservableObject {
         Task { await persist(conversationID: id) }
     }
 
+    @discardableResult
+    func saveBoundConversationVisibility(id: UUID, hidden: Bool) async -> Bool {
+        guard !agentMessagingAccountTransition, manualSidebarChanges[id] == nil, let agentService,
+              let chat = conversations.first(where: { $0.id == id }), let binding = chat.agentBinding,
+              binding.accountID == (settings.accountScope ?? "local") else { return false }
+        let generation = autoReviewAccountGeneration
+        let lifetime = AgentSettingsChangeLifetime()
+        manualSidebarChanges[id] = lifetime
+        defer { manualSidebarChanges[id] = nil }
+        do {
+            let previous = await agentService.sidebarVisibility(accountID: binding.accountID, agentID: binding.agentID, conversationID: id)
+            guard let stored = try await store.conversation(id: id), stored.agentBinding == binding,
+                  generation == autoReviewAccountGeneration, !agentMessagingAccountTransition,
+                  conversations.contains(where: { $0.id == id && $0.agentBinding == binding }) else { throw CancellationError() }
+            let proposed = AgentSidebarVisibility(accountID: binding.accountID, agentID: binding.agentID,
+                conversationID: id, hidden: hidden)
+            let change = AgentSidebarVisibilityChange(proposed: proposed, previous: previous,
+                previousHidden: previous?.hidden ?? (stored.hiddenAt != nil))
+            do {
+                try await quotaWrite(scope: "workflow", key: "sidebar-\(binding.accountID)-\(id)", data: JSONEncoder().encode(proposed)) {
+                    _ = try await agentService.applyManualSidebarVisibility(change, lifetime: lifetime)
+                }
+            } catch {
+                let saved = await agentService.sidebarVisibility(accountID: binding.accountID, agentID: binding.agentID, conversationID: id)
+                guard saved == proposed else { throw error }
+                errorMessage = Self.quotaMessage(error)
+            }
+            let visibility = await agentService.currentSnapshot()
+            guard generation == autoReviewAccountGeneration,
+                  conversations.contains(where: { $0.id == id && $0.agentBinding == binding }) else { return true }
+            updateSidebarVisibility(visibility)
+            if hidden, selection == id {
+                selection = visibleConversations.first(where: { $0.id != id })?.id
+                setRoute(selection.map(WorkspaceRoute.conversation) ?? .search, recordingHistory: true)
+                if let next = selection {
+                    await loadLatestMessages(for: next)
+                    guard selection == next else { return true }
+                    await restoreDraft(for: next)
+                    await refreshModels()
+                }
+            }
+            return true
+        } catch {
+            if !(error is CancellationError) { errorMessage = error.localizedDescription }
+            return false
+        }
+    }
+
+    func updateSidebarVisibility(_ snapshot: AgentServiceSnapshot) {
+        guard sidebarVisibilityRevision.map({ snapshot.revision >= $0 }) ?? true else { return }
+        sidebarVisibilityRevision = snapshot.revision
+        let values = snapshot.sidebarVisibility
+        guard values != agentSidebarVisibility else { return }
+        agentSidebarVisibility = values
+        scheduleGlobalSearch()
+    }
+
     func deleteConversation(id: UUID) {
+        manualSidebarChanges[id]?.close()
         let wasBound = conversations.first(where: { $0.id == id })?.agentBinding != nil
         if let peer = directPeerExecutions[id] { cancelConversationWork(peer.originID) }
         invalidateDirectSecrets(conversationID: id)
@@ -1034,7 +1108,7 @@ final class AppModel: ObservableObject {
         draftCache.removeValue(forKey: id)
         Task { try? await draftStore.remove(for: id) }
         if selection == id {
-            selection = conversations.first(where: { $0.hiddenAt == nil })?.id
+            selection = visibleConversations.first?.id
             setRoute(selection.map(WorkspaceRoute.conversation) ?? .search, recordingHistory: true)
         }
         let remainingHistoryIDs = Set(navigationHistory.entries.compactMap { destination -> UUID? in
@@ -2725,7 +2799,7 @@ final class AppModel: ObservableObject {
         do {
             switch globalSearchTab {
             case .conversations:
-                let results = try await store.search(query).filter { $0.hiddenAt == nil }
+                let results = try await store.search(query, includeHidden: false, visibility: conversationVisibilityOverrides)
                 guard generation == globalSearchGeneration, !Task.isCancelled else { return }
                 searchResults = results
                 globalSearchState = results.isEmpty ? .empty : .results
@@ -2738,20 +2812,21 @@ final class AppModel: ObservableObject {
                             role: message.role,
                             timestamp: message.createdAt,
                             body: message.text,
-                            isHidden: conversation.hiddenAt != nil
+                            isHidden: isConversationHidden(conversation)
                         )
                     }
                 }
                 let results = try await store.searchGlobalMessages(
                     query,
                     includeHidden: false,
-                    latestLiveInputs: liveInputs
+                    latestLiveInputs: liveInputs,
+                    visibility: conversationVisibilityOverrides
                 )
                 guard generation == globalSearchGeneration, !Task.isCancelled else { return }
                 globalMessageSearchResults = results
                 globalSearchState = results.isEmpty ? .empty : .results
             case .files:
-                let results = try await store.searchGlobalMedia(query, includeHidden: false)
+                let results = try await store.searchGlobalMedia(query, includeHidden: false, visibility: conversationVisibilityOverrides)
                 guard generation == globalSearchGeneration, !Task.isCancelled else { return }
                 globalMediaSearchResults = results
                 globalSearchState = results.isEmpty ? .empty : .results
@@ -2898,6 +2973,7 @@ final class AppModel: ObservableObject {
                 guard !Task.isCancelled else { return }
                 guard let self else { return }
                 self.agents = snapshot.agents.sorted { $0.createdAt < $1.createdAt }
+                self.updateSidebarVisibility(snapshot)
                 self.agentAsyncTasks = snapshot.subagents
                     .sorted { $0.startedAt < $1.startedAt }
                     .map(AgentAsyncTask.init(record:))
@@ -2953,6 +3029,7 @@ final class AppModel: ObservableObject {
 
     func reloadWorkspaceData() async {
         if let agentService {
+            updateSidebarVisibility(await agentService.currentSnapshot())
             agents = await agentService.list(includeArchived: true)
             agentAsyncTasks = await agentService.subagents().map(AgentAsyncTask.init(record:))
             pinnedAgentIDs.formIntersection(Set(agents.map(\.id)))
@@ -6654,6 +6731,7 @@ final class AppModel: ObservableObject {
     }
 
     func cancelAutoReviewApprovals(nextAccountID: String) async {
+        for lifetime in manualSidebarChanges.values { lifetime.close() }
         // Queued peer work is scoped to the account that approved the exchange.
         agentMessagingAccountTransition = true
         memorySynthesisAccountLifetime.close()

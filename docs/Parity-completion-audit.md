@@ -63,6 +63,16 @@ App 的設定核准 metadata 現由共用 presentation builder 產生。可見�
 
 驗證：定向搜尋測試通過；包含最終串流與備援規則的完整 nonparallel Swift tests exit 0，原生 Debug build exit 0，verify-package deep/strict 通過。日誌 `.build/validation/sidebar-search-{focused,full,native}.log` 不提交。
 
+### App 可見性與人工恢復（2026-09-27）
+
+App 現在於啟動、重新載入及 agent snapshot 更新時讀取已保存的側欄設定；側欄、隱藏聊天、預設選取與三種搜尋共用精確 binding 的 effective visibility。使用 snapshot revision 防止較舊的串流事件覆蓋人工操作剛取得的新狀態，設定更新也會使搜尋結果失效並重新查詢。
+
+已綁定成員的聊天由人工隱藏／恢復時，先驗證目前帳號及 durable conversation binding，再保存 override，成功後才改畫面；磁碟失敗保留原狀。刪除聊天及切換帳號會關閉待提交 lifetime。人工可恢復已封存成員的聊天，但不解除封存、不改通知、不改寫聊天歷史。未綁定聊天仍沿用 legacy hiddenAt 路徑。本批的隔離 App 測試涵蓋保存／重開／搜尋、磁碟失敗、外部帳號、封存後恢復及舊快照拒絕。
+
+模型 preparer 仍未注入。接續須完成模型核准後的唯一 binding 重驗及生命週期提交 fence、可見性 quota 記帳，再做模型端到端測試；本批不代表原版設定工具已完整啟用。
+
+驗證：定向測試通過；含最終 revision 防護的完整 nonparallel Swift tests 與原生 Debug build 均 exit 0，verify-package deep/strict 通過。日誌 `.build/validation/sidebar-app-{focused,full,native}.log` 不提交。未啟動 App 或修改真實資料。
+
 ## 必須保留的其他分類
 
 - 記憶：最新保存／搜尋／synthesis／episode／project recall 證據見 `Memory-archive-parity.md`；跨 epoch snapshot 是未接線參考設計，見 `Memory-snapshot-audit.md`，不能自行換成永久 cache。
