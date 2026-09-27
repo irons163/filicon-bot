@@ -150,3 +150,15 @@ Xcode 專案補列 AgentPublicationFileSource.swift，最終原生 Debug build �
 最低整合驗收：來源與目的不同的成功保存及重開；來源停止／切帳號；目的成員變更；原委派結束後同一群組的新委派；錯誤來源 context；拒絕核准；配額或保存失敗；核准後來源檔案變更；背景仍不能取得人類圖片轉貼權限。必須檢查目的附件 owner 與來源沒有多出訊息，不能只看成功字串。
 
 此節是程式路徑審查，不是背景傳檔完成證據；未放寬 runtime 權限或新增對外連線。
+
+## 第十階段：背景群組 session 的明確 host 能力（2026-09-28）
+
+savedBackgroundGroupPublisher 現在可接收 AgentBackgroundGroupFileServices，內含固定 originID、groupID、三個檔案服務 callback 及必填的委派有效性檢查。來源／目的不符立即拒絕；缺少能力不宣告檔案 URL。前景與背景共用保存／回條驗證，但背景不使用人類訊息 ID 或圖片 forwarding directory。
+
+交易 context 仍限定來源對話，Review、附件訊息與 reply directory 使用目的群組。準備前、核准後、保存 callback 前驗證 session 未關閉、host 委派有效、目的成員快照相符、作者未封存。真正保存仍由 GroupService 的 epoch 與 publication lifetime 控制。host validator 必須綁定確切 dispatch；此 API 不會自行推測 App 的委派身分。
+
+隔離 fixture 涵蓋來源與目的不同的保存／重播／重開、拒絕、成員變更、session close、host 撤銷、錯誤能力來源／目的、錯誤呼叫 context、缺少能力，以及不能順便轉貼未知人類圖片。驗證目的檔案 bytes，來源沒有新群組訊息。依 pfw-testing 注入服務與可撤銷委派 fixture，不接觸真實資料。
+
+App／responder 尚未注入這項背景能力，仍須接上確切 delegatedGroupPosts 身分、來源核准、目的 owner／quota 與 App 層停止／ABA 測試；此階段不是使用者端背景傳檔完成證據。
+
+驗證：定向與完整非平行 Swift 測試 exit 0；原生 Debug build、deep strict 封裝／簽章通過。日誌 `.build/validation/background-file-session-{focused,full,native}.log`。未重啟 App／Xcode、未改真實帳號／群組資料。

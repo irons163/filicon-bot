@@ -99,6 +99,77 @@ private func forwardImage(_ target: UUID, ids: [String], id: ToolCallID = "forwa
 
 @Suite("Peer image storage and delivery", .timeLimit(.minutes(1)))
 struct AgentImageMessagingTests {
+    private actor FileDispatchFence {
+        var active = true
+        func revoke() { active = false }
+        func check() throws { if !active { throw CancellationError() } }
+    }
+
+    @Test(arguments: ["valid", "denied", "members", "closed", "revoked", "wrong-origin", "wrong-destination", "wrong-context", "missing"])
+    func backgroundFilesSeparateOriginAndDestination(mode: String) async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let groups = try GroupService(agents: f.agents, storeURL: f.root.appending(path: "groups.json"))
+        let group = try await groups.create(name: "Destination", memberIDs: [f.sender.id])
+        let prepared = try PreparedAgentPublicationFile(bytes: Data("Background report".utf8), filename: "report.txt")
+        let store = AttachmentStore(rootURL: f.root.appending(path: "files"))
+        let fence = FileDispatchFence()
+        let services = AgentGroupFilePublicationServices(prepare: { _, _, _, context in
+            expectNoDifference(context.conversationID, f.origin)
+            return prepared
+        }, authorize: { _, review, _, context in
+            expectNoDifference(context.conversationID, f.origin)
+            expectNoDifference(review.conversationID, group.id)
+            if mode == "denied" { throw CancellationError() }
+            if mode == "revoked" { await fence.revoke() }
+            if mode == "members" { try await groups.updateMembers(groupID: group.id, memberIDs: []) }
+        }, commit: { review, _, _, save in
+            let metadata = try await store.ingest(prepared: review.file, createdAt: Date(timeIntervalSince1970: 123))
+            return try await save(metadata, UUID())
+        })
+        let capability = AgentBackgroundGroupFileServices(originID: mode == "wrong-origin" ? UUID() : f.origin,
+            groupID: mode == "wrong-destination" ? UUID() : group.id, services: services,
+            validate: { try await fence.check() })
+        let session = AgentMessagingSession(originConversationID: f.origin, agents: f.agents, messenger: f.messenger,
+            registry: f.registry, coordinator: TurnCoordinator(registry: f.registry, toolCatalog: ToolCatalog()), groups: groups)
+        let responder = ImageGroupSavedPublicationResponder { publish in
+            do {
+                let tool = try await session.savedBackgroundGroupPublisher(for: f.sender.id, groupID: group.id,
+                    memberIDs: [f.sender.id], replyHistory: [], fileServices: mode == "missing" ? nil : capability, publish: publish)
+                if mode == "closed" { try await session.close() }
+                let context = ToolContext(conversationID: mode == "wrong-context" ? group.id : f.origin)
+                if mode == "valid" {
+                    let image = try await tool.execute(publishStandaloneImage("unrelated-human-image"), context: context)
+                    #expect(image.isError)
+                }
+                let call = try NormalizedToolCall(id: "file", name: "SendMessage",
+                    argumentsJSON: Data(#"{"type":"attachment","url":"file:///report.txt"}"#.utf8))
+                let result = try await tool.execute(call, context: context)
+                expectNoDifference(result.isError, mode != "valid")
+                if mode == "valid" {
+                    let replay = try await tool.execute(call, context: context)
+                    expectNoDifference(replay, result)
+                    #expect(result.wireText.contains("tbs0"))
+                }
+            } catch { #expect(mode != "valid") }
+            return ["PASS"]
+        }
+        do { _ = try await groups.run(groupID: group.id, responder: responder) }
+        catch { #expect(mode == "members") }
+        let history = await groups.messages(groupID: group.id)
+        let files = history.filter { $0.files?.isEmpty == false }
+        expectNoDifference(files.count, mode == "valid" ? 1 : 0)
+        let originMessages = await groups.messages(groupID: f.origin)
+        expectNoDifference(originMessages, [])
+        if let file = files.first?.files?.first {
+            let bytes = try await store.data(for: file)
+            expectNoDifference(bytes, prepared.bytes)
+            let reopened = try GroupService(agents: f.agents, storeURL: f.root.appending(path: "groups.json"))
+            let restored = await reopened.messages(groupID: group.id)
+            expectNoDifference(restored.first(where: { $0.files != nil })?.files, [file])
+        }
+        try await session.close()
+    }
+
     @Test(arguments: ["valid", "denied", "stale-review", "stale-save", "bad-metadata", "closed", "unavailable"])
     func groupFileTransactionUsesSessionAndDurablePublication(mode: String) async throws {
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }

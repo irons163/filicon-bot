@@ -19,6 +19,21 @@ public struct AgentGroupFilePublicationServices: Sendable {
     }
 }
 
+/// Capability for one host-owned delegation, never reconstructed from model
+/// arguments. The host validator must fence the exact dispatch, not merely
+/// the continued existence of the source and destination conversations.
+public struct AgentBackgroundGroupFileServices: Sendable {
+    public let originID: UUID
+    public let groupID: UUID
+    public let services: AgentGroupFilePublicationServices
+    public let validate: @Sendable () async throws -> Void
+    public init(originID: UUID, groupID: UUID, services: AgentGroupFilePublicationServices,
+                validate: @escaping @Sendable () async throws -> Void) {
+        self.originID = originID; self.groupID = groupID
+        self.services = services; self.validate = validate
+    }
+}
+
 /// Captured bytes, not a promise to read a mutable path after approval.
 public struct PreparedAgentPublicationFile: Sendable, Equatable {
     public let bytes: Data

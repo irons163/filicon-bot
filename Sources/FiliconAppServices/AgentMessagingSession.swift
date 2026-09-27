@@ -216,10 +216,18 @@ public actor AgentMessagingSession {
     private func makeGroupFilePublication(sender: AgentProfile, userMessageID: UUID,
         publish: @escaping @Sendable (GroupAgentPublication) async throws -> RoomMessage?) -> AgentFilePublicationTransaction? {
         guard let groupFiles else { return nil }
-        return AgentFilePublicationTransaction(conversationID: originConversationID, senderID: sender.id,
-            validateScope: { [self] in
+        return makeGroupFilePublication(sender: sender, destinationID: originConversationID, services: groupFiles,
+            validate: { [self] in
                 _ = try await availableImages(senderID: sender.id, replyTo: nil, groupUserMessageID: userMessageID)
-            }, prepare: { url, call, context in
+            }, publish: publish)
+    }
+
+    private func makeGroupFilePublication(sender: AgentProfile, destinationID: UUID,
+        services groupFiles: AgentGroupFilePublicationServices, validate: @escaping @Sendable () async throws -> Void,
+        publish: @escaping @Sendable (GroupAgentPublication) async throws -> RoomMessage?) -> AgentFilePublicationTransaction {
+        return AgentFilePublicationTransaction(conversationID: originConversationID, senderID: sender.id,
+            destinationConversationID: destinationID,
+            validateScope: validate, prepare: { url, call, context in
                 try await groupFiles.prepare(sender, url, call, context)
             }, authorize: { review, call, context in
                 try await groupFiles.authorize(sender, review, call, context)
@@ -227,7 +235,7 @@ public actor AgentMessagingSession {
                 let saved = try await groupFiles.commit(review, call, context) { [self] metadata, messageID in
                     guard metadata.id == review.file.digest, metadata.filename == review.file.filename,
                           metadata.byteCount == review.file.bytes.count else { throw AgentFilePublicationError.invalidReceipt }
-                    _ = try await availableImages(senderID: sender.id, replyTo: nil, groupUserMessageID: userMessageID)
+                    try await validate()
                     let file = try ReviewedGroupFile(metadata: metadata, groupID: review.conversationID,
                         senderID: sender.id, lifetime: publicationLifetime, messageID: messageID)
                     guard let saved = try await publish(.init(text: "", replyToMessageID: review.replyTo, file: file)) else {
@@ -251,18 +259,38 @@ public actor AgentMessagingSession {
     /// human input or image handles. A saved choice question waits for a new
     /// human answer in that group; it does not resume this old peer wake.
     public func savedBackgroundGroupPublisher(for senderID: UUID, groupID: UUID, memberIDs: [UUID], replyHistory: [RoomMessage],
+                                              fileServices: AgentBackgroundGroupFileServices? = nil,
                                               publish: @escaping @Sendable (GroupAgentPublication) async throws -> RoomMessage?) async throws -> AgentUserMessageTool {
         guard let sender = await agents.profile(id: senderID), sender.archivedAt == nil else {
             throw AgentMessagingError.invalidRecipient
         }
         try checkOpen()
+        let filePublication: AgentFilePublicationTransaction?
+        if let fileServices {
+            guard fileServices.originID == originConversationID, fileServices.groupID == groupID else {
+                throw AgentMessagingError.scopeMismatch
+            }
+            let validate: @Sendable () async throws -> Void = { [self] in
+                try await checkOpen()
+                try await fileServices.validate()
+                guard let groups, let current = await groups.list().first(where: { $0.id == groupID }),
+                      current.memberIDs == memberIDs, memberIDs.contains(senderID),
+                      let currentSender = await agents.profile(id: senderID), currentSender.archivedAt == nil else {
+                    throw AgentGroupPostError.changed
+                }
+                try await checkOpen()
+            }
+            try await validate()
+            filePublication = makeGroupFilePublication(sender: sender, destinationID: groupID,
+                services: fileServices.services, validate: validate, publish: publish)
+        } else { filePublication = nil }
         return AgentUserMessageTool(conversationID: originConversationID, senderID: senderID,
             replyHistory: replyHistory, supportsQuestions: true, replyGroupID: groupID,
             publishCursorAgent: { [self] reference, replyID in
                 try await checkOpen()
                 return try await publish(.init(text: reference.summary, lifetime: publicationLifetime,
                     replyToMessageID: replyID, cursorAgent: reference))
-            }) { [self] text, images, replyID, question in
+            }, filePublication: filePublication) { [self] text, images, replyID, question in
             guard images.isEmpty else { throw AgentImageError.unavailable }
             try await checkOpen()
             let card = question.map { GroupQuestion(question: $0, accountID: accountID, memberIDs: memberIDs) }
