@@ -354,3 +354,11 @@ SendMessage 的 HTTPS attachment 接受可選 alt，限非空白、無控制字�
 定向交易／工具測試 30 案例通過（remote-alt-target.log）；原生 Debug build 與 deep strict 封裝／簽章通過（remote-alt-native.log）。完整回歸結果另記於下方。未 push、未重啟 App、無真實資料或網路變更。
 
 完整非平行 Swift 回歸 exit 0（remote-alt-full.log），包含更新後的前景／背景描述持久化案例。
+
+## 第三十階段：本機檔案描述交易契約（2026-09-28）
+
+AgentFilePublicationTransaction 的 input／review／receipt 加入可選 altText，描述與 captured bytes 一起核准；同 call 更改描述拒絕重播。空白、控制字元、超過 500 字元或 2,000 bytes 在 source prepare 前拒絕。保存回條必須保留完全相同描述；若提供 savedMessage，其唯一 file metadata 也需一致。描述不影響 blob digest，同內容重複傳送規則不變。
+
+新增 5 個描述交易情境，涵蓋成功重播、改標籤、回條遺失描述、空白、控制字元與過長。定向交易測試與原生 Debug build／deep strict 簽章通過（local-alt-contract-target/native.log）。這是資料契約，工具輸入、App 核准文字與三條路徑的 message-local metadata 仍待接上；目前仍不宣稱本機 alt 可用。
+
+完整非平行 Swift 回歸 exit 0（local-alt-contract-full.log），既有群組／單聊／信箱傳檔維持通過。未 push、重啟 App 或改真實資料。

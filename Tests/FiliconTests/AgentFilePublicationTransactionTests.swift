@@ -31,6 +31,41 @@ private actor FilePublicationGate {
 
 @Suite("File publication approval and durable receipt", .timeLimit(.minutes(1)))
 struct AgentFilePublicationTransactionTests {
+    @Test(arguments: ["valid", "missing-receipt-alt", "blank", "control", "long"])
+    func fileDescriptionIsPartOfApprovalAndReceipt(mode: String) async throws {
+        let origin = UUID(), sender = UUID(), message = UUID(), probe = FilePublicationProbe()
+        let alt = mode == "blank" ? "  " : mode == "control" ? "a\nb" : mode == "long" ? String(repeating: "a", count: 501) : "報表"
+        let file = try PreparedAgentPublicationFile(bytes: Data("artifact".utf8), filename: "report.txt")
+        let transaction = AgentFilePublicationTransaction(conversationID: origin, senderID: sender,
+            validateScope: {}, prepare: { _, _, _ in await probe.record("prepare"); return file },
+            authorize: { review, _, _ in
+                expectNoDifference(review.altText, alt)
+                await probe.record("review")
+            }, commit: { review, _, _ in
+                await probe.record("save")
+                return .init(messageID: message, conversationID: origin, senderID: sender, replyTo: nil,
+                    digest: file.digest, filename: file.filename, byteCount: file.bytes.count,
+                    altText: mode == "missing-receipt-alt" ? nil : review.altText)
+            })
+        let context = ToolContext(conversationID: origin)
+        let call = try NormalizedToolCall(id: "alt", name: "SendMessage", argumentsJSON: Data("{}".utf8))
+        if mode == "valid" {
+            let saved = try await transaction.publish(url: "file:///report.txt", replyTo: nil, altText: alt, call: call, context: context)
+            expectNoDifference(saved.altText, alt)
+            let replay = try await transaction.publish(url: "file:///report.txt", replyTo: nil, altText: alt, call: call, context: context)
+            expectNoDifference(replay, saved)
+            await #expect(throws: AgentFilePublicationError.duplicateCall) {
+                try await transaction.publish(url: "file:///report.txt", replyTo: nil, altText: "Changed", call: call, context: context)
+            }
+        } else {
+            await #expect(throws: mode == "missing-receipt-alt" ? AgentFilePublicationError.invalidReceipt : .unavailable) {
+                try await transaction.publish(url: "file:///report.txt", replyTo: nil, altText: alt, call: call, context: context)
+            }
+        }
+        let events = await probe.events
+        expectNoDifference(events, ["valid", "missing-receipt-alt"].contains(mode) ? ["prepare", "review", "save"] : [])
+    }
+
     @Test(arguments: ["success", "deny", "revoke-read", "revoke-review", "prepare-failure", "save-failure",
         "wrong-conversation", "wrong-sender", "wrong-reply", "wrong-digest", "wrong-size", "wrong-name"])
     func orderedSnapshotTransaction(mode: String) async throws {

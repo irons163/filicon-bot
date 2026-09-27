@@ -84,6 +84,7 @@ public actor AgentFilePublicationTransaction {
         public let senderID: UUID
         public let replyTo: UUID?
         public let file: PreparedAgentPublicationFile
+        public let altText: String?
     }
     public struct Receipt: Sendable, Equatable {
         public let messageID: UUID
@@ -94,19 +95,21 @@ public actor AgentFilePublicationTransaction {
         public let filename: String
         public let byteCount: Int
         public let savedMessage: RoomMessage?
+        public let altText: String?
 
         public init(messageID: UUID, conversationID: UUID, senderID: UUID, replyTo: UUID?,
-                    digest: String, filename: String, byteCount: Int, savedMessage: RoomMessage? = nil) {
+                    digest: String, filename: String, byteCount: Int, savedMessage: RoomMessage? = nil, altText: String? = nil) {
             self.messageID = messageID; self.conversationID = conversationID; self.senderID = senderID
             self.replyTo = replyTo; self.digest = digest; self.filename = filename; self.byteCount = byteCount
             self.savedMessage = savedMessage
+            self.altText = altText
         }
     }
     public typealias Prepare = @Sendable (String, NormalizedToolCall, ToolContext) async throws -> PreparedAgentPublicationFile
     public typealias Authorize = @Sendable (Review, NormalizedToolCall, ToolContext) async throws -> Void
     public typealias Commit = @Sendable (Review, NormalizedToolCall, ToolContext) async throws -> Receipt
     private struct Key: Hashable { let runID: UUID; let callID: ToolCallID }
-    private struct Input: Equatable { let url: String; let replyTo: UUID? }
+    private struct Input: Equatable { let url: String; let replyTo: UUID?; let altText: String? }
     private struct Completed { let input: Input; let receipt: Receipt }
     public nonisolated let conversationID: UUID
     public nonisolated let destinationConversationID: UUID
@@ -132,12 +135,19 @@ public actor AgentFilePublicationTransaction {
 
     public func close() { closed = true }
 
-    public func publish(url: String, replyTo: UUID?, call: NormalizedToolCall, context: ToolContext) async throws -> Receipt {
+    public func publish(url: String, replyTo: UUID?, altText: String? = nil, call: NormalizedToolCall, context: ToolContext) async throws -> Receipt {
         guard context.conversationID == conversationID, call.name == "SendMessage",
               !url.isEmpty, url.utf8.count <= 16_384 else {
             throw AgentFilePublicationError.unavailable
         }
-        let key = Key(runID: context.runID, callID: call.id), input = Input(url: url, replyTo: replyTo)
+        if let altText {
+            guard !altText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  altText.count <= 500, altText.utf8.count <= 2_000,
+                  !altText.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else {
+                throw AgentFilePublicationError.unavailable
+            }
+        }
+        let key = Key(runID: context.runID, callID: call.id), input = Input(url: url, replyTo: replyTo, altText: altText)
         // A known durable result remains queryable after cancellation/close;
         // retrieving it never reads or writes anything again.
         if let previous = completed[key] {
@@ -152,7 +162,7 @@ public actor AgentFilePublicationTransaction {
         let file = try await prepare(url, call, context)
         try await checkScope()
         guard !publishedDigests.contains(file.digest) else { throw AgentFilePublicationError.duplicateCall }
-        let review = Review(conversationID: destinationConversationID, senderID: senderID, replyTo: replyTo, file: file)
+        let review = Review(conversationID: destinationConversationID, senderID: senderID, replyTo: replyTo, file: file, altText: altText)
         try await authorize(review, call, context)
         try await checkScope()
         // A thrown save can be ambiguous. Never repeat the side effect under
@@ -162,7 +172,12 @@ public actor AgentFilePublicationTransaction {
         guard receipt.conversationID == destinationConversationID, receipt.senderID == senderID,
               receipt.replyTo == replyTo, receipt.digest == file.digest,
               receipt.filename == file.filename, receipt.byteCount == file.bytes.count,
+              receipt.altText == altText,
               !messageIDs.contains(receipt.messageID) else { throw AgentFilePublicationError.invalidReceipt }
+        if let saved = receipt.savedMessage {
+            guard saved.files?.count == 1, let attachment = saved.files?.first,
+                  attachment.altText == altText else { throw AgentFilePublicationError.invalidReceipt }
+        }
         messageIDs.insert(receipt.messageID)
         publishedDigests.insert(file.digest)
         completed[key] = Completed(input: input, receipt: receipt)
