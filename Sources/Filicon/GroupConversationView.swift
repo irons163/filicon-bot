@@ -222,6 +222,7 @@ struct GroupConversationView: View {
             onReply: threads.canReply(to: message.id) ? { beginReply(to: message.id) } : nil,
             onOpenFile: { model.openGroupMessageFile($0, messageID: message.id, groupID: group.id) },
             onPreviewRemote: { reference, review in try await model.previewRemoteAttachment(reference, at: .group(group.id, message.id), approveRedirect: review) },
+            onThumbnail: { reference, review in try await model.remoteGalleryThumbnail(reference, at: .group(group.id, message.id), approveRedirect: review) },
             onReaction: { Task { await model.toggleGroupReaction(groupID: group.id, messageID: message.id, emoji: "👍") } }
         )
     }
@@ -566,6 +567,7 @@ struct GroupMessageBubble: View {
     var onReply: (() -> Void)?
     var onOpenFile: ((AttachmentMetadata) -> Void)?
     var onPreviewRemote: ((RemoteAttachmentReference, @escaping RemoteRedirectReview) async throws -> Void)?
+    var onThumbnail: ((RemoteAttachmentReference, @escaping RemoteRedirectReview) async throws -> Data)?
     let onReaction: () -> Void
     @State private var hovering = false
     private var isUser: Bool { message.senderID == nil }
@@ -617,7 +619,7 @@ struct GroupMessageBubble: View {
                     }
                 }
                 if let gallery = message.remoteImages {
-                    RemoteImageGalleryView(gallery: gallery, onPreview: onPreviewRemote)
+                    RemoteImageGalleryView(gallery: gallery, onPreview: onPreviewRemote, onThumbnail: onThumbnail)
                 }
                 if let images = message.images, !images.isEmpty { AgentMessageImagePreviews(images: images) }
                 ForEach(message.files ?? []) { file in

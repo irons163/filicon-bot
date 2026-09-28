@@ -1530,9 +1530,9 @@ struct TranscriptMessageView: View {
                 }
             }
             if let gallery = message.remoteImages {
-                RemoteImageGalleryView(gallery: gallery) { reference, review in
-                    try await model.previewRemoteAttachment(reference, at: .direct(conversation.id, message.id), approveRedirect: review)
-                }
+                RemoteImageGalleryView(gallery: gallery, onThumbnail: { reference, review in
+                    try await model.remoteGalleryThumbnail(reference, at: .direct(conversation.id, message.id), approveRedirect: review)
+                })
             }
             if !message.attachments.isEmpty {
                 ScrollView(.horizontal) {

@@ -3073,6 +3073,19 @@ final class AppModel: ObservableObject {
 
     func previewRemoteAttachment(_ reference: RemoteAttachmentReference, at location: RemoteAttachmentLocation,
                                  approveRedirect: @escaping RemoteRedirectReview = { _, _ in false }) async throws {
+        _ = try await prepareRemotePreview(reference, at: location, inline: false, approveRedirect: approveRedirect)
+    }
+
+    func remoteGalleryThumbnail(_ reference: RemoteAttachmentReference, at location: RemoteAttachmentLocation,
+                                approveRedirect: @escaping RemoteRedirectReview) async throws -> Data {
+        guard let data = try await prepareRemotePreview(reference, at: location, inline: true, approveRedirect: approveRedirect) else {
+            throw AttachmentPreviewError.integrityMismatch
+        }
+        return data
+    }
+
+    private func prepareRemotePreview(_ reference: RemoteAttachmentReference, at location: RemoteAttachmentLocation,
+                                      inline: Bool, approveRedirect: @escaping RemoteRedirectReview) async throws -> Data? {
         let accountGeneration = autoReviewAccountGeneration
         @MainActor @Sendable func validate() async throws -> Bool {
             guard !agentMessagingAccountTransition, accountGeneration == autoReviewAccountGeneration else { throw CancellationError() }
@@ -3103,6 +3116,7 @@ final class AppModel: ObservableObject {
             return gallery != nil
         }
         let imageGallery = try await validate()
+        guard !inline || imageGallery else { throw AttachmentPreviewError.integrityMismatch }
         attachmentPreviewGeneration += 1
         let generation = attachmentPreviewGeneration
         let download = try await remoteAttachmentDownloader.downloadFollowingReviewedRedirects(reference,
@@ -3115,25 +3129,31 @@ final class AppModel: ObservableObject {
             }
         guard download.reference == reference else { throw AttachmentPreviewError.integrityMismatch }
         guard try await validate() == imageGallery else { throw CancellationError() }
-        let preparation = Task.detached {
+        let preparation = Task.detached { () async throws -> (AttachmentMetadata, Data?) in
+            if inline {
+                let thumbnail = try RemoteAttachmentImagePreparation.thumbnail(for: download.data, reference: reference)
+                return (thumbnail.original, thumbnail.data)
+            }
             if imageGallery {
-                return try RemoteAttachmentImagePreparation.metadata(for: download.data, reference: reference)
+                return (try RemoteAttachmentImagePreparation.metadata(for: download.data, reference: reference), nil)
             }
             if RemoteAttachmentVideoPreparation.isCandidate(download.data) {
-                return try await RemoteAttachmentVideoPreparation.metadata(for: download.data, reference: reference)
+                return (try await RemoteAttachmentVideoPreparation.metadata(for: download.data, reference: reference), nil)
             }
-            return try RemoteAttachmentPreviewPreparation.metadata(for: download.data, reference: reference)
+            return (try RemoteAttachmentPreviewPreparation.metadata(for: download.data, reference: reference), nil)
         }
-        let metadata = try await withTaskCancellationHandler {
+        let (metadata, thumbnail) = try await withTaskCancellationHandler {
             try await preparation.value
         } onCancel: {
             preparation.cancel()
         }
         guard try await validate() == imageGallery else { throw CancellationError() }
         guard generation == attachmentPreviewGeneration else { throw CancellationError() }
+        if inline { return thumbnail }
         let item = try attachmentPreviewMaterializer.materialize(data: download.data, metadata: metadata)
         if let previous = attachmentPreview { attachmentPreviewMaterializer.remove(previous) }
         attachmentPreview = item
+        return nil
     }
 
     func dismissAttachmentPreview() {

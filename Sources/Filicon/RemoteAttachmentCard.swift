@@ -5,16 +5,32 @@ import FiliconDomain
 typealias RemoteRedirectReview = @MainActor @Sendable (RemoteAttachmentReference, RemoteAttachmentReference) async throws -> Bool
 typealias RemotePreviewAction = (@escaping RemoteRedirectReview) async throws -> Void
 
+struct RemoteGalleryThumbnailView: View {
+    let image: NSImage
+    let alt: String?
+
+    var body: some View {
+        if let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) {
+            Image(decorative: cgImage, scale: 1).resizable().scaledToFit()
+                .frame(maxWidth: .infinity, maxHeight: 240)
+                .accessibilityLabel(alt ?? l10n("Image"))
+                .accessibilityIdentifier("remote-gallery-thumbnail")
+        }
+    }
+}
+
 /// Ordered saved image locators. Rendering never starts a network request.
 struct RemoteImageGalleryView: View {
     let gallery: RemoteImageGallery
     var onPreview: ((RemoteAttachmentReference, @escaping RemoteRedirectReview) async throws -> Void)?
+    var onThumbnail: ((RemoteAttachmentReference, @escaping RemoteRedirectReview) async throws -> Data)?
 
     var body: some View {
         LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), alignment: .top)], alignment: .leading, spacing: 12) {
             ForEach(gallery.images, id: \.url) { reference in
                 RemoteAttachmentCard(reference: reference,
-                    onPreview: onPreview.map { action in { review in try await action(reference, review) } }, isImage: true)
+                    onPreview: onPreview.map { action in { review in try await action(reference, review) } }, isImage: true,
+                    onThumbnail: onThumbnail.map { action in { review in try await action(reference, review) } })
                     .accessibilityIdentifier("remote-gallery-image-\(gallery.images.firstIndex(of: reference) ?? 0)")
             }
         }
@@ -63,13 +79,18 @@ struct RemoteAttachmentCard: View {
     let reference: RemoteAttachmentReference
     var onPreview: RemotePreviewAction?
     var isImage = false
+    var onThumbnail: ((@escaping RemoteRedirectReview) async throws -> Data)?
     @StateObject private var redirectReview = RemoteRedirectReviewModel()
     @Environment(\.openURL) private var openURL
     @State private var previewTask: Task<Void, Never>?
     @State private var previewFailed = false
+    @State private var thumbnail: NSImage?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
+        if let thumbnail {
+            RemoteGalleryThumbnailView(image: thumbnail, alt: reference.alt)
+        }
         Button { openReference() } label: {
             HStack(alignment: .top, spacing: 12) {
                 Image(systemName: isImage ? "photo" : "link").font(.title2)
@@ -93,13 +114,13 @@ struct RemoteAttachmentCard: View {
         .buttonStyle(.plain)
         .help(reference.url)
         .accessibilityIdentifier("remote-attachment-reference")
-            if let onPreview {
+            if onPreview != nil || onThumbnail != nil {
                 HStack {
                     if previewTask != nil {
                         ProgressView().controlSize(.small)
                         Button(l10n("Cancel")) { cancelButtonTapped() }
                     } else {
-                        Button(l10n("Download preview"), systemImage: "eye") { previewButtonTapped(onPreview) }
+                        Button(l10n("Download preview"), systemImage: "eye") { previewButtonTapped() }
                     }
                 }
                 if let request = redirectReview.request {
@@ -119,19 +140,30 @@ struct RemoteAttachmentCard: View {
             }
         }
         .onDisappear { cancelButtonTapped() }
+        .onChange(of: reference) { _, _ in cancelButtonTapped() }
     }
 
     private func cancelButtonTapped() {
         previewTask?.cancel()
         previewTask = nil
         redirectReview.resolve(approved: false)
+        thumbnail = nil
     }
 
-    private func previewButtonTapped(_ action: @escaping RemotePreviewAction) {
+    private func previewButtonTapped() {
         previewFailed = false
         previewTask = Task { @MainActor in
             defer { if !Task.isCancelled { previewTask = nil } }
-            do { try await action { source, destination in try await redirectReview.review(source, destination) } }
+            do {
+                if let onThumbnail {
+                    let data = try await onThumbnail { source, destination in try await redirectReview.review(source, destination) }
+                    try Task.checkCancellation()
+                    guard let image = NSImage(data: data) else { throw CancellationError() }
+                    thumbnail = image
+                } else if let onPreview {
+                    try await onPreview { source, destination in try await redirectReview.review(source, destination) }
+                }
+            }
             catch is CancellationError {}
             catch { if !Task.isCancelled { previewFailed = true } }
         }

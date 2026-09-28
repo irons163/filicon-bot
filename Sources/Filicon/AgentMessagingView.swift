@@ -248,6 +248,8 @@ struct AgentMessagingView: View {
             onOpenFile: { message, file in model.openMailboxMessageFile(file, messageID: message.id, incomingID: incoming.id) },
             onPreviewRemote: { message, reference, review in
                 try await model.previewRemoteAttachment(reference, at: .mailbox(incoming.id, message.id), approveRedirect: review)
+            }, onThumbnail: { message, reference, review in
+                try await model.remoteGalleryThumbnail(reference, at: .mailbox(incoming.id, message.id), approveRedirect: review)
             })
     }
 
@@ -359,6 +361,7 @@ struct AgentPublishedResponses: View {
     var secretEnabled: (RoomMessage) -> Bool = { _ in false }
     var onOpenFile: ((RoomMessage, AttachmentMetadata) -> Void)?
     var onPreviewRemote: ((RoomMessage, RemoteAttachmentReference, @escaping RemoteRedirectReview) async throws -> Void)?
+    var onThumbnail: ((RoomMessage, RemoteAttachmentReference, @escaping RemoteRedirectReview) async throws -> Data)?
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Label(l10n("Published response"), systemImage: "bubble.left.and.text.bubble.right").font(.caption).foregroundStyle(.secondary)
@@ -391,6 +394,8 @@ struct AgentPublishedResponses: View {
                     if let images = publication.images, !images.isEmpty { AgentMessageImagePreviews(images: images) }
                     if let gallery = publication.remoteImages {
                         RemoteImageGalleryView(gallery: gallery, onPreview: onPreviewRemote.map { action in
+                            { reference, review in try await action(publication, reference, review) }
+                        }, onThumbnail: onThumbnail.map { action in
                             { reference, review in try await action(publication, reference, review) }
                         })
                     }

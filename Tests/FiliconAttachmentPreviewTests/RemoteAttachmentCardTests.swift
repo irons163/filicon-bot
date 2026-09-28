@@ -65,6 +65,41 @@ struct RemotePreviewFixture: RemoteAttachmentDownloading {
 
 @Suite("Remote attachment card rendering", .timeLimit(.minutes(1)))
 @MainActor struct RemoteAttachmentCardTests {
+    @Test func inlineThumbnailRendersVerifiedPixels() throws {
+        let context = try #require(CGContext(data: nil, width: 320, height: 160, bitsPerComponent: 8,
+            bytesPerRow: 1280, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue))
+        context.setFillColor(CGColor(red: 0, green: 0, blue: 1, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: 160, height: 160))
+        context.setFillColor(CGColor(red: 1, green: 0.5, blue: 0, alpha: 1))
+        context.fill(CGRect(x: 160, y: 0, width: 160, height: 160))
+        let bitmap = NSBitmapImageRep(cgImage: try #require(context.makeImage()))
+        let source = try #require(bitmap.representation(using: .png, properties: [:]))
+        let reference = try RemoteAttachmentReference(url: "https://example.com/design", alt: "Blue and orange design")
+        let prepared = try RemoteAttachmentImagePreparation.thumbnail(for: source, reference: reference)
+        let preparedPixels = try #require(NSBitmapImageRep(data: prepared.data))
+        let preparedLeft = try #require(preparedPixels.colorAt(x: 80, y: 80)?.usingColorSpace(.deviceRGB))
+        #expect(preparedLeft.blueComponent > 0.8 && preparedLeft.redComponent < 0.2)
+        let image = try #require(NSImage(data: prepared.data))
+        let view = VStack(alignment: .leading, spacing: 12) {
+            Text("Compare designs")
+            RemoteGalleryThumbnailView(image: image, alt: reference.alt)
+            Text(verbatim: reference.alt ?? "")
+        }.padding(16).frame(width: 360).background(Color.white).environment(\.colorScheme, .light)
+        let renderer = ImageRenderer(content: view)
+        renderer.scale = 2
+        let rendered = try #require(renderer.cgImage)
+        #expect(rendered.height > 320 && rendered.height < 650)
+        expectNoDifference(rendered.width, 720)
+        let pixels = NSBitmapImageRep(cgImage: rendered)
+        let left = try #require(pixels.colorAt(x: 180, y: rendered.height / 2)?.usingColorSpace(.deviceRGB))
+        let right = try #require(pixels.colorAt(x: 540, y: rendered.height / 2)?.usingColorSpace(.deviceRGB))
+        #expect(left.blueComponent > 0.8 && left.redComponent < 0.2)
+        #expect(right.redComponent > 0.8 && right.blueComponent < 0.2)
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        try #require(NSBitmapImageRep(cgImage: rendered).representation(using: .png, properties: [:]))
+            .write(to: root.appending(path: ".build/validation/gallery-inline.png"))
+    }
+
     @Test(arguments: ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"], [320.0, 620.0])
     func galleryRendersWithoutFetching(language: String, width: Double) throws {
         try FiliconLocalization.$languageOverride.withValue(language) {
@@ -97,8 +132,8 @@ struct RemotePreviewFixture: RemoteAttachmentDownloading {
         }
     }
 
-    @Test(arguments: ["success", "foreign", "removed", "switched", "invalid"])
-    func galleryPreviewRequiresExactSavedImage(mode: String) async throws {
+    @Test(arguments: ["success", "foreign", "removed", "switched", "invalid"], [false, true])
+    func galleryPreviewRequiresExactSavedImage(mode: String, inline: Bool) async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "gallery-preview-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }
         let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
@@ -122,12 +157,21 @@ struct RemotePreviewFixture: RemoteAttachmentDownloading {
             })
         let requested = mode == "foreign" ? try RemoteAttachmentReference(url: reference.url, alt: "Not reviewed") : reference
         do {
+            if inline {
+                let bytes = try await model.remoteGalleryThumbnail(requested, at: .direct(conversation.id, message.id), approveRedirect: { _, _ in false })
+                expectNoDifference(mode, "success")
+                #expect(model.attachmentPreview == nil)
+                let image = try #require(NSBitmapImageRep(data: bytes))
+                expectNoDifference(image.pixelsWide, 2)
+                expectNoDifference(image.pixelsHigh, 2)
+            } else {
             try await model.previewRemoteAttachment(requested, at: .direct(conversation.id, message.id))
             expectNoDifference(mode, "success")
             let item = try #require(model.attachmentPreview)
             expectNoDifference(try AttachmentFileIntegrity().verifiedData(for: item.files[0]), data)
             expectNoDifference(item.metadata?.altText, reference.alt)
             expectNoDifference(item.metadata?.kind, .image)
+            }
         } catch { #expect(mode != "success"); #expect(model.attachmentPreview == nil) }
         expectNoDifference(downloads, mode == "foreign" ? 0 : 1)
     }

@@ -706,3 +706,13 @@ RemoteAttachmentImagePreparation 新增 thumbnail API：先通過既有檔案格
 此階段只有共用產生器，尚未把縮圖回傳給訊息卡片，也未完成內嵌 UI、快取／切換清理或視覺驗收。下一階段須接入受既有 scope／redirect 核准保護的下載流程，不能直接讓 View 以 URL 自動載入圖片。完整 parity 仍未完成，未 push、未重啟 App 或修改真實資料。
 
 完整回歸 gallery-thumbnail-full.log exit 0；git diff --check 通過。
+
+## 第六十八階段：訊息內縮圖接線（2026-09-28）
+
+單聊、群組與信箱圖片集的下載預覽入口改為在原訊息內顯示有界縮圖，沿用精確已保存 URL／alt、帳號 generation、對話選取、取消與逐次 redirect 核准。內嵌入口只接受 gallery；不自動連網、不建立獨立預覽暫存檔。View 消失或 reference 改變會取消工作並清除縮圖；原始遠端附件預覽仍維持原流程。
+
+聚焦 gallery-inline-final-target.log：9 tests／1 suite 通過，包含內嵌及獨立預覽成功、未知描述、移除 gallery、切換對話與無效 bytes。離屏圖片 .build/validation/gallery-inline.png 已目視確認藍／橘像素與正文，並新增原始縮圖及繪製結果像素斷言。最初 NSBitmapImageRep setColor fixture 的來源像素本身無效，導致空白，改為 CGContext 明確填色後通過；不能把初次空白產圖算驗收。
+
+完整 gallery-inline-full.log 未通過：多個既有儲存測試讀取隔離暫存 agents.json 等檔案遭 NSCocoaErrorDomain 257／POSIX EPERM，另有連帶失敗；未宣稱全部由環境造成，仍待分離重驗。此次沒有修改系統權限、重啟 App 或碰真實資料。內嵌圖片目前需明確下載，快取、動畫內嵌播放、本機／混合來源及完整 UI lifecycle 驗收仍待補。
+
+最終原生 gallery-inline-final-native.log exit 0，完整 package verifier／deep strict 簽章與 git diff --check 通過。使用者另明確要求 commit 後 push，因此本批及既有未推送提交將推送 origin/main；不改寫遠端歷史。
