@@ -1,4 +1,6 @@
 import AppKit
+import AVFoundation
+import CoreVideo
 import SwiftUI
 import Testing
 import CustomDump
@@ -63,6 +65,74 @@ struct RemotePreviewFixture: RemoteAttachmentDownloading {
 
 @Suite("Remote attachment card rendering", .timeLimit(.minutes(1)))
 @MainActor struct RemoteAttachmentCardTests {
+    @Test(arguments: [false, true], [false, true])
+    func videoPreviewUsesVerifiedBytesAndCleansUp(quickTime: Bool, cancelled: Bool) async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "remote-video-app-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appending(path: quickTime ? "fixture.mov" : "fixture.mp4")
+        let writer = try AVAssetWriter(outputURL: url, fileType: quickTime ? .mov : .mp4)
+        let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
+            AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: 16, AVVideoHeightKey: 16])
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input,
+            sourcePixelBufferAttributes: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32ARGB,
+                kCVPixelBufferWidthKey as String: 16, kCVPixelBufferHeightKey as String: 16])
+        writer.add(input)
+        try #require(writer.startWriting())
+        writer.startSession(atSourceTime: .zero)
+        var optionalBuffer: CVPixelBuffer?
+        try #require(CVPixelBufferCreate(kCFAllocatorDefault, 16, 16, kCVPixelFormatType_32ARGB,
+            nil, &optionalBuffer) == kCVReturnSuccess)
+        let buffer = try #require(optionalBuffer)
+        CVPixelBufferLockBaseAddress(buffer, [])
+        memset(CVPixelBufferGetBaseAddress(buffer), 128, CVPixelBufferGetDataSize(buffer))
+        CVPixelBufferUnlockBaseAddress(buffer, [])
+        let deadline = ContinuousClock.now + .seconds(5)
+        while !input.isReadyForMoreMediaData && ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        try #require(input.isReadyForMoreMediaData)
+        try #require(adaptor.append(buffer, withPresentationTime: .zero))
+        writer.endSession(atSourceTime: CMTime(value: 1, timescale: 30))
+        input.markAsFinished()
+        await writer.finishWriting()
+        try #require(writer.status == .completed)
+        let bytes = try Data(contentsOf: url)
+        let model = AppModel(applicationSupportRoot: root.appending(path: "app"), bootstrapImmediately: false)
+        defer { model.dismissAttachmentPreview() }
+        let reference = try RemoteAttachmentReference(url: "https://example.com/misleading.png", alt: "Video fixture")
+        let message = ChatMessage(role: .assistant, text: "", remoteAttachment: reference)
+        let conversation = Conversation(messages: [message])
+        model.conversations = [conversation]
+        model.selection = conversation.id
+        model.remoteAttachmentDownloader = RemotePreviewFixture(data: bytes, substitutedReference: nil,
+            beforeReturn: { if cancelled { withUnsafeCurrentTask { $0?.cancel() } } })
+        let preview = Task { @MainActor in
+            try await model.previewRemoteAttachment(reference, at: .direct(conversation.id, message.id))
+        }
+        if cancelled {
+            do {
+                try await preview.value
+                Issue.record("Cancelled video must not become a preview")
+            } catch is CancellationError {}
+            #expect(model.attachmentPreview == nil)
+            return
+        }
+        try await preview.value
+        let item = try #require(model.attachmentPreview)
+        let metadata = try #require(item.metadata)
+        expectNoDifference(try AttachmentFileIntegrity().verifiedData(for: item.files[0]), bytes)
+        expectNoDifference(metadata.mimeType, quickTime ? "video/quicktime" : "video/mp4")
+        expectNoDifference(metadata.altText, "Video fixture")
+        expectNoDifference(metadata.kind, .video)
+        expectNoDifference(AttachmentViewerKind.classify(filename: item.fileURL.lastPathComponent,
+            mimeType: metadata.mimeType), .audiovisual)
+        #expect(item.fileURL != url)
+        model.dismissAttachmentPreview()
+        #expect(!FileManager.default.fileExists(atPath: item.fileURL.path))
+        #expect(FileManager.default.fileExists(atPath: url.path))
+    }
+
     @Test(arguments: ["success", "pdf", "removed", "switched", "dismissed", "mismatch", "invalid"])
     func directPreviewIsIdentityBoundAndCleanedUp(mode: String) async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "remote-preview-\(UUID())")

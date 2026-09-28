@@ -558,3 +558,9 @@ RemoteAttachmentPreviewPreparation 依 bytes 分流 PDF／圖片；PDF 要求可
 AVAssetWriter 產生真正 MP4／MOV 小型影片，驗證 metadata；另測拒絕播放清單／偽造容器、HEIF 圖片分流。定向影片、既有 App 圖片／PDF 與七語系 render 測試 exit 0（remote-video-verified-target.log），原生 Debug build 與 deep strict 簽章通過（remote-video-verified-native.log）。未另跑完整回歸，尚未以 App 層影片 fixture 驗證整條播放路徑或實機播放，不能由服務測試推論所有媒體格式已驗收。
 
 轉址確認、文字內 URL 圖片與其他原版媒體／功能差異仍待補。沒有外網下載、App／Xcode 啟動、push 或真實帳號資料變更。
+
+## 第五十三階段：App 層影片預覽回歸（2026-09-28）
+
+依 pfw-testing 使用隔離 AppModel、注入下載器與 AVAssetWriter 產生的真正 MP4／MOV bytes，新增兩種格式各成功／取消共四個情境。下載器刻意宣告 text/html，來源 URL 刻意使用 .png；App 必須依媒體內容建立正確 video metadata、保留 alt、驗證副本完整 bytes，並分類至 audiovisual 檢視器。關閉預覽刪除副本但保留 fixture 原檔；下載途中取消不得留下可見預覽。
+
+定向測試 exit 0（remote-video-app-target.log），完整 Swift 測試套件 exit 0（remote-video-app-full.log），git diff --check 通過。這批只新增測試，未另跑原生建置；相同 production source 已於第五十二階段通過原生 Debug build 與簽章驗證。測試驗證到檢視器分類與副本生命週期，不等同實機影片播放驗收；未啟動使用者 App／Xcode、未使用外網或真實聊天資料。
