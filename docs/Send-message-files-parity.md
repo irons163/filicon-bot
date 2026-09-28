@@ -696,3 +696,13 @@ gallery-app-mailbox-target.log 全部通過；完整 gallery-app-mailbox-full.lo
 聚焦測試擴展為 14 案例，涵蓋遠端附件及圖片集的核准、引用、拒絕、停止、切帳號、保存前故障與落盤後故障；檢查核准前無 gallery，重開後正文、順序及 reply 不變。gallery-app-direct-target.log、完整 gallery-app-direct-full.log 與原生 gallery-app-direct-native.log 均 exit 0；package verifier／deep strict 簽章及 git diff --check 通過。未 push、未重啟使用者 App／Xcode、未修改真實資料。
 
 至此 App gallery 核准入口涵蓋單聊主執行、信箱、單聊委派、前景與背景群組；仍只有 HTTPS 來源卡片及明確下載預覽，內嵌縮圖與本機／混合來源尚待補齊，整體 parity 仍未完成。
+
+## 第六十七階段：有界內嵌縮圖準備（2026-09-28）
+
+RemoteAttachmentImagePreparation 新增 thumbnail API：先通過既有檔案格式、bytes、所有 frame 尺寸與解碼驗證，再由 ImageIO 產生套用方向資訊的第一幀 PNG。預設最大邊 640，呼叫端可指定 1…1024；拒絕無效上限。結果包含縮圖 bytes／尺寸及原始 AttachmentMetadata，不更換原始 hash、MIME 或動畫資料，不執行下載、不落盤、不授予新權限。
+
+測試驗證 PNG／JPEG／動畫 GIF 縮放、輸出 PNG 的真實解碼尺寸、原始 metadata 完全一致、動畫原始幀數不變，以及 HTML 類非圖片／SVG／PDF 與無效大小拒絕。聚焦 gallery-thumbnail-target.log：4 tests／1 suite 通過；原生 gallery-thumbnail-native.log exit 0，package verifier／deep strict 簽章通過。
+
+此階段只有共用產生器，尚未把縮圖回傳給訊息卡片，也未完成內嵌 UI、快取／切換清理或視覺驗收。下一階段須接入受既有 scope／redirect 核准保護的下載流程，不能直接讓 View 以 URL 自動載入圖片。完整 parity 仍未完成，未 push、未重啟 App 或修改真實資料。
+
+完整回歸 gallery-thumbnail-full.log exit 0；git diff --check 通過。

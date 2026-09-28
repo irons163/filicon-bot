@@ -14,6 +14,41 @@ public enum RemoteAttachmentImageError: Error, Equatable, Sendable {
 public enum RemoteAttachmentImagePreparation {
     public static let maximumBytes = 32 * 1_024 * 1_024
 
+    /// A bounded first-frame PNG for inline display. The original bytes and their
+    /// metadata remain separate, so a thumbnail never replaces an animated file.
+    public struct Thumbnail: Sendable {
+        public let data: Data
+        public let width: Int
+        public let height: Int
+        public let original: AttachmentMetadata
+    }
+
+    public static func thumbnail(for data: Data, reference: RemoteAttachmentReference,
+                                 maximumDimension: Int = 640, createdAt: Date = Date()) throws -> Thumbnail {
+        guard (1...1_024).contains(maximumDimension) else { throw RemoteAttachmentImageError.decodeLimit }
+        let original = try metadata(for: data, reference: reference, createdAt: createdAt)
+        try Task.checkCancellation()
+        guard let source = CGImageSourceCreateWithData(data as CFData,
+            [kCGImageSourceShouldCache: false] as CFDictionary),
+              let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceThumbnailMaxPixelSize: maximumDimension,
+                kCGImageSourceShouldCacheImmediately: true
+              ] as CFDictionary), image.width > 0, image.height > 0,
+              image.width <= maximumDimension, image.height <= maximumDimension else {
+            throw RemoteAttachmentImageError.unsupportedOrInvalid
+        }
+        let output = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(output, "public.png" as CFString, 1, nil) else {
+            throw RemoteAttachmentImageError.unsupportedOrInvalid
+        }
+        CGImageDestinationAddImage(destination, image, nil)
+        guard CGImageDestinationFinalize(destination) else { throw RemoteAttachmentImageError.unsupportedOrInvalid }
+        try Task.checkCancellation()
+        return Thumbnail(data: output as Data, width: image.width, height: image.height, original: original)
+    }
+
     public static func metadata(for data: Data, reference: RemoteAttachmentReference,
                                 createdAt: Date = Date()) throws -> AttachmentMetadata {
         try Task.checkCancellation()

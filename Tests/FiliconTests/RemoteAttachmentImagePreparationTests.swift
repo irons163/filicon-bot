@@ -9,6 +9,44 @@ import FiliconAppServices
 @Suite("Remote image preview preparation")
 struct RemoteAttachmentImagePreparationTests {
     @Test(arguments: ["public.png", "public.jpeg", "com.compuserve.gif"])
+    func boundedThumbnailPreservesOriginal(type: String) throws {
+        let data = try image(type: type, frames: type == "com.compuserve.gif" ? 2 : 1, width: 800)
+        let reference = try RemoteAttachmentReference(url: "https://example.com/not-an-image.html", alt: "Design")
+        let date = Date(timeIntervalSince1970: 0)
+        let thumbnail = try RemoteAttachmentImagePreparation.thumbnail(for: data, reference: reference,
+            maximumDimension: 200, createdAt: date)
+        let metadata = try RemoteAttachmentImagePreparation.metadata(for: data, reference: reference, createdAt: date)
+        expectNoDifference(thumbnail.original, metadata)
+        expectNoDifference(thumbnail.width, 200)
+        #expect(thumbnail.height > 0 && thumbnail.height <= 2)
+        let decoded = try #require(CGImageSourceCreateWithData(thumbnail.data as CFData, nil))
+        expectNoDifference(CGImageSourceGetType(decoded) as String?, "public.png")
+        expectNoDifference(CGImageSourceGetCount(decoded), 1)
+        let frame = try #require(CGImageSourceCreateImageAtIndex(decoded, 0, nil))
+        expectNoDifference(frame.width, thumbnail.width)
+        expectNoDifference(frame.height, thumbnail.height)
+        if type == "com.compuserve.gif" {
+            let original = try #require(CGImageSourceCreateWithData(data as CFData, nil))
+            expectNoDifference(CGImageSourceGetCount(original), 2)
+        }
+    }
+
+    @Test func thumbnailRejectsInvalidSourcesAndBounds() throws {
+        let reference = try RemoteAttachmentReference(url: "https://example.com/image.png")
+        for data in [Data(), Data("<svg/>".utf8), Data("%PDF-1.7".utf8)] {
+            #expect(throws: (any Error).self) {
+                try RemoteAttachmentImagePreparation.thumbnail(for: data, reference: reference)
+            }
+        }
+        let data = try image(type: "public.png", frames: 1)
+        for limit in [-1, 0, 1_025, Int.max] {
+            #expect(throws: RemoteAttachmentImageError.decodeLimit) {
+                try RemoteAttachmentImagePreparation.thumbnail(for: data, reference: reference, maximumDimension: limit)
+            }
+        }
+    }
+
+    @Test(arguments: ["public.png", "public.jpeg", "com.compuserve.gif"])
     func actualBytesDetermineFormat(type: String) throws {
         let data = try image(type: type, frames: type == "com.compuserve.gif" ? 2 : 1)
         let reference = try RemoteAttachmentReference(url: "https://example.com/malicious.html", alt: "**Not markdown**")
