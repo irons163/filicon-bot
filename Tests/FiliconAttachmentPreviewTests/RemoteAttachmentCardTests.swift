@@ -65,6 +65,73 @@ struct RemotePreviewFixture: RemoteAttachmentDownloading {
 
 @Suite("Remote attachment card rendering", .timeLimit(.minutes(1)))
 @MainActor struct RemoteAttachmentCardTests {
+    @Test(arguments: ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"], [320.0, 620.0])
+    func galleryRendersWithoutFetching(language: String, width: Double) throws {
+        try FiliconLocalization.$languageOverride.withValue(language) {
+            let gallery = try RemoteImageGallery(images: (1...4).map {
+                try RemoteAttachmentReference(url: "https://example.com/image-\($0)?sig=exact",
+                    alt: "\($0) — Design **plain text** 設計")
+            })
+            let host = NSHostingView(rootView: VStack(alignment: .leading) {
+                Text("Compare these designs")
+                RemoteImageGalleryView(gallery: gallery) { _, _ in Issue.record("Rendering must not download") }
+            }.padding(16).frame(width: width)
+                .environment(\.locale, Locale(identifier: language))
+                .environment(\.openURL, OpenURLAction { _ in Issue.record("Rendering must not open URLs"); return .handled })
+                .environment(\.colorScheme, .light).background(Color.white))
+            let size = host.fittingSize
+            expectNoDifference(size.width, width)
+            #expect(size.height > 100 && size.height < 1800)
+            host.frame = .init(origin: .zero, size: size)
+            host.layoutSubtreeIfNeeded()
+            let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            if language == "en", width == 620 {
+                let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+                let output = root.appending(path: ".build/validation/gallery-ui.png")
+                let renderer = ImageRenderer(content: host.rootView)
+                renderer.scale = 2
+                let image = try #require(renderer.cgImage)
+                try #require(NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])).write(to: output)
+            }
+        }
+    }
+
+    @Test(arguments: ["success", "foreign", "removed", "switched", "invalid"])
+    func galleryPreviewRequiresExactSavedImage(mode: String) async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "gallery-preview-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+        defer { model.dismissAttachmentPreview() }
+        let reference = try RemoteAttachmentReference(url: "https://example.com/a", alt: "Design A")
+        let gallery = try RemoteImageGallery(images: [reference])
+        let message = ChatMessage(role: .assistant, text: "Designs", remoteImages: gallery)
+        let conversation = Conversation(messages: [message])
+        model.conversations = [conversation]; model.selection = conversation.id
+        let bitmap = try #require(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 2, pixelsHigh: 2,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 8, bitsPerPixel: 32))
+        for x in 0..<2 { for y in 0..<2 { bitmap.setColor(.red, atX: x, y: y) } }
+        let data = try #require(bitmap.representation(using: .png, properties: [:]))
+        var downloads = 0
+        model.remoteAttachmentDownloader = RemotePreviewFixture(data: mode == "invalid" ? Data("not image".utf8) : data,
+            substitutedReference: nil, beforeReturn: {
+                downloads += 1
+                if mode == "removed" { model.conversations[0].messages[0].remoteImages = nil }
+                if mode == "switched" { model.selection = UUID() }
+            })
+        let requested = mode == "foreign" ? try RemoteAttachmentReference(url: reference.url, alt: "Not reviewed") : reference
+        do {
+            try await model.previewRemoteAttachment(requested, at: .direct(conversation.id, message.id))
+            expectNoDifference(mode, "success")
+            let item = try #require(model.attachmentPreview)
+            expectNoDifference(try AttachmentFileIntegrity().verifiedData(for: item.files[0]), data)
+            expectNoDifference(item.metadata?.altText, reference.alt)
+            expectNoDifference(item.metadata?.kind, .image)
+        } catch { #expect(mode != "success"); #expect(model.attachmentPreview == nil) }
+        expectNoDifference(downloads, mode == "foreign" ? 0 : 1)
+    }
+
     @Test(arguments: ["approve", "deny", "switch", "dismiss", "account"])
     func redirectDecisionRevalidatesMessageScope(mode: String) async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "redirect-app-\(UUID())")

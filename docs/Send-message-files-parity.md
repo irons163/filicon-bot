@@ -652,3 +652,15 @@ AgentMailboxGalleryServices 將 host 核准與 validator 綁定 incoming ID、�
 初版定向 gallery-mailbox-session-target.log：31 tests／1 suite 通過；原生 gallery-mailbox-session-native.log 與 deep strict 簽章驗證通過。後續新增的 projection failure 案例納入完整回歸。App 尚未提供 gallery authorizer／UI，單聊主執行與本機／混合來源亦未完成，不能宣稱圖片集功能已全面可用。未 push、未啟動 App／Xcode、未修改真實資料。
 
 完整回歸 gallery-mailbox-session-full.log exit 0，包含上述 10 個信箱情境；git diff --check 通過。
+
+## 第六十三階段：圖片集來源卡片與明確預覽（2026-09-28）
+
+RemoteImageGalleryView 依保存順序以自適應欄位顯示圖片來源卡片，單聊、群組、信箱及信箱引用內容皆接線。群組圖片集位於文字後方；顯示使用原有七語系的圖片、外部連結說明、下載預覽／取消文案。網址與描述為純文字，render 不觸發開啟或下載。
+
+AppModel 預覽驗證涵蓋 persisted gallery 的精確 URL／alt，拒絕未知圖片、單一附件與 gallery 混合形狀，以及等待期間移除／切換對話或帳號。gallery 下載採圖片 32 MiB 上限與 ImageIO 檢查，不走 PDF／影片準備路徑；既有轉址核准、取消、預覽清理保持適用。
+
+新增七語系 × 320／620 寬度離屏版面測試及 5 種真實 AppModel 預覽情境。gallery-ui-verified-target.log：8 tests／1 suite 通過。第一版 NSHostingView cacheDisplay 產圖只有空白區塊，未用作視覺驗收；改以 ImageRenderer 輸出 .build/validation/gallery-ui.png，已人工檢視英文雙欄文字、順序、網址與按鈕可讀。其餘語系有程式化版面檢查，尚無逐張視覺驗收。
+
+目前是未下載來源卡片＋明確下載預覽，尚未做到原版的內嵌圖片縮圖；也尚未注入 App gallery 核准工廠。此批不宣告原版圖片集 parity 完成，本機／混合來源仍待補。未 push、未啟動使用者 App／Xcode、未改真實資料。
+
+完整回歸 gallery-ui-full.log exit 0；原生 gallery-ui-verified-native.log exit 0，deep strict 簽章及 git diff --check 通過。

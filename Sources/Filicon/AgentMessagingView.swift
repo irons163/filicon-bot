@@ -389,6 +389,11 @@ struct AgentPublishedResponses: View {
                         RichMarkdownView(source: publication.text, messageReferences: references(publication))
                     }
                     if let images = publication.images, !images.isEmpty { AgentMessageImagePreviews(images: images) }
+                    if let gallery = publication.remoteImages {
+                        RemoteImageGalleryView(gallery: gallery, onPreview: onPreviewRemote.map { action in
+                            { reference, review in try await action(publication, reference, review) }
+                        })
+                    }
                     if let reference = publication.remoteAttachment {
                         RemoteAttachmentCard(reference: reference, onPreview: onPreviewRemote.map { action in { review in try await action(publication, reference, review) } })
                     }
@@ -434,6 +439,7 @@ struct MailboxReplyPreview: View {
                         .fixedSize(horizontal: false, vertical: true)
                     if let images = original.images, !images.isEmpty { AgentMessageImagePreviews(images: images) }
                     if let remote = original.remoteAttachment { RemoteAttachmentCard(reference: remote) }
+                    if let gallery = original.remoteImages { RemoteImageGalleryView(gallery: gallery) }
                     ForEach(original.files ?? []) { file in
                         Label(file.filename, systemImage: "doc").font(.caption)
                     }

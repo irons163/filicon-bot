@@ -616,6 +616,9 @@ struct GroupMessageBubble: View {
                         if !isUser { Button("👍", action: onReaction) }
                     }
                 }
+                if let gallery = message.remoteImages {
+                    RemoteImageGalleryView(gallery: gallery, onPreview: onPreviewRemote)
+                }
                 if let images = message.images, !images.isEmpty { AgentMessageImagePreviews(images: images) }
                 ForEach(message.files ?? []) { file in
                     Button { onOpenFile?(file) } label: {

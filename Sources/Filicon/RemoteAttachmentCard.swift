@@ -1,8 +1,26 @@
 import SwiftUI
 import FiliconAgents
+import FiliconDomain
 
 typealias RemoteRedirectReview = @MainActor @Sendable (RemoteAttachmentReference, RemoteAttachmentReference) async throws -> Bool
 typealias RemotePreviewAction = (@escaping RemoteRedirectReview) async throws -> Void
+
+/// Ordered saved image locators. Rendering never starts a network request.
+struct RemoteImageGalleryView: View {
+    let gallery: RemoteImageGallery
+    var onPreview: ((RemoteAttachmentReference, @escaping RemoteRedirectReview) async throws -> Void)?
+
+    var body: some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), alignment: .top)], alignment: .leading, spacing: 12) {
+            ForEach(gallery.images, id: \.url) { reference in
+                RemoteAttachmentCard(reference: reference,
+                    onPreview: onPreview.map { action in { review in try await action(reference, review) } }, isImage: true)
+                    .accessibilityIdentifier("remote-gallery-image-\(gallery.images.firstIndex(of: reference) ?? 0)")
+            }
+        }
+        .accessibilityIdentifier("remote-image-gallery")
+    }
+}
 
 @MainActor final class RemoteRedirectReviewModel: ObservableObject {
     struct Request {
@@ -44,6 +62,7 @@ typealias RemotePreviewAction = (@escaping RemoteRedirectReview) async throws ->
 struct RemoteAttachmentCard: View {
     let reference: RemoteAttachmentReference
     var onPreview: RemotePreviewAction?
+    var isImage = false
     @StateObject private var redirectReview = RemoteRedirectReviewModel()
     @Environment(\.openURL) private var openURL
     @State private var previewTask: Task<Void, Never>?
@@ -53,9 +72,9 @@ struct RemoteAttachmentCard: View {
         VStack(alignment: .leading, spacing: 8) {
         Button { openReference() } label: {
             HStack(alignment: .top, spacing: 12) {
-                Image(systemName: "link").font(.title2)
+                Image(systemName: isImage ? "photo" : "link").font(.title2)
                 VStack(alignment: .leading, spacing: 5) {
-                    Text(l10n("Remote attachment")).font(.headline)
+                    Text(l10n(isImage ? "Image" : "Remote attachment")).font(.headline)
                     if let alt = reference.alt {
                         Text(verbatim: alt).lineLimit(3)
                     }

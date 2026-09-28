@@ -1529,6 +1529,11 @@ struct TranscriptMessageView: View {
                     try await model.previewRemoteAttachment(reference, at: .direct(conversation.id, message.id), approveRedirect: review)
                 }
             }
+            if let gallery = message.remoteImages {
+                RemoteImageGalleryView(gallery: gallery) { reference, review in
+                    try await model.previewRemoteAttachment(reference, at: .direct(conversation.id, message.id), approveRedirect: review)
+                }
+            }
             if !message.attachments.isEmpty {
                 ScrollView(.horizontal) {
                     HStack { ForEach(message.attachments) { attachment in AttachmentCard(attachment: attachment) } }

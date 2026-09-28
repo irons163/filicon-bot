@@ -3000,21 +3000,25 @@ final class AppModel: ObservableObject {
     func previewRemoteAttachment(_ reference: RemoteAttachmentReference, at location: RemoteAttachmentLocation,
                                  approveRedirect: @escaping RemoteRedirectReview = { _, _ in false }) async throws {
         let accountGeneration = autoReviewAccountGeneration
-        @MainActor @Sendable func validate() async throws {
+        @MainActor @Sendable func validate() async throws -> Bool {
             guard !agentMessagingAccountTransition, accountGeneration == autoReviewAccountGeneration else { throw CancellationError() }
             let actual: RemoteAttachmentReference?
+            let gallery: RemoteImageGallery?
             switch location {
             case let .direct(conversationID, messageID):
                 guard selection == conversationID else { throw CancellationError() }
-                actual = conversations.first { $0.id == conversationID }?.messages.first { $0.id == messageID }?.remoteAttachment
+                let message = conversations.first { $0.id == conversationID }?.messages.first { $0.id == messageID }
+                actual = message?.remoteAttachment; gallery = message?.remoteImages
             case let .group(groupID, messageID):
                 guard selectedGroupID == groupID, let groupService else { throw CancellationError() }
-                actual = await groupService.messages(groupID: groupID).first { $0.id == messageID }?.remoteAttachment
+                let message = await groupService.messages(groupID: groupID).first { $0.id == messageID }
+                actual = message?.remoteAttachment; gallery = message?.remoteImages
             case let .mailbox(incomingID, messageID):
                 guard let agentMessenger else { throw CancellationError() }
-                actual = await agentMessenger.allMessages().first { $0.id == incomingID }?.delivery?.publications?.first { $0.id == messageID }?.remoteAttachment
+                let message = await agentMessenger.allMessages().first { $0.id == incomingID }?.delivery?.publications?.first { $0.id == messageID }
+                actual = message?.remoteAttachment; gallery = message?.remoteImages
             }
-            guard actual == reference, !agentMessagingAccountTransition,
+            guard (actual == reference && gallery == nil || actual == nil && gallery?.images.contains(reference) == true), !agentMessagingAccountTransition,
                   accountGeneration == autoReviewAccountGeneration else { throw CancellationError() }
             switch location {
             case let .direct(id, _): guard selection == id else { throw CancellationError() }
@@ -3022,21 +3026,25 @@ final class AppModel: ObservableObject {
             case .mailbox: break
             }
             try Task.checkCancellation()
+            return gallery != nil
         }
-        try await validate()
+        let imageGallery = try await validate()
         attachmentPreviewGeneration += 1
         let generation = attachmentPreviewGeneration
         let download = try await remoteAttachmentDownloader.downloadFollowingReviewedRedirects(reference,
-            maximumBytes: RemoteAttachmentVideoPreparation.maximumBytes) { source, destination in
-                try await validate()
+            maximumBytes: imageGallery ? RemoteAttachmentImagePreparation.maximumBytes : RemoteAttachmentVideoPreparation.maximumBytes) { source, destination in
+                guard try await validate() == imageGallery else { throw CancellationError() }
                 let approved = try await approveRedirect(source, destination)
-                try await validate()
+                guard try await validate() == imageGallery else { throw CancellationError() }
                 guard await self.attachmentPreviewGeneration == generation else { throw CancellationError() }
                 return approved
             }
         guard download.reference == reference else { throw AttachmentPreviewError.integrityMismatch }
-        try await validate()
+        guard try await validate() == imageGallery else { throw CancellationError() }
         let preparation = Task.detached {
+            if imageGallery {
+                return try RemoteAttachmentImagePreparation.metadata(for: download.data, reference: reference)
+            }
             if RemoteAttachmentVideoPreparation.isCandidate(download.data) {
                 return try await RemoteAttachmentVideoPreparation.metadata(for: download.data, reference: reference)
             }
@@ -3047,7 +3055,7 @@ final class AppModel: ObservableObject {
         } onCancel: {
             preparation.cancel()
         }
-        try await validate()
+        guard try await validate() == imageGallery else { throw CancellationError() }
         guard generation == attachmentPreviewGeneration else { throw CancellationError() }
         let item = try attachmentPreviewMaterializer.materialize(data: download.data, metadata: metadata)
         if let previous = attachmentPreview { attachmentPreviewMaterializer.remove(previous) }
