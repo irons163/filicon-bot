@@ -1725,3 +1725,5 @@
 "Open external link. Content has not been downloaded or verified." = "Ouvrir le lien externe. Le contenu n’a pas été téléchargé ni vérifié.";
 "Download image preview" = "Télécharger un aperçu de l’image";
 "Image preview unavailable. You can open the external link instead." = "Aperçu de l’image indisponible. Vous pouvez ouvrir le lien externe.";
+"Download preview" = "Télécharger l’aperçu";
+"Preview unavailable. You can open the external link instead." = "Aperçu indisponible. Vous pouvez ouvrir le lien externe.";

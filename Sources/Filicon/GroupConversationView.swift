@@ -221,7 +221,7 @@ struct GroupConversationView: View {
             onShowReply: { threadPresentation.reveal($0, in: threads) },
             onReply: threads.canReply(to: message.id) ? { beginReply(to: message.id) } : nil,
             onOpenFile: { model.openGroupMessageFile($0, messageID: message.id, groupID: group.id) },
-            onPreviewRemote: { reference in try await model.previewRemoteImage(reference, at: .group(group.id, message.id)) },
+            onPreviewRemote: { reference in try await model.previewRemoteAttachment(reference, at: .group(group.id, message.id)) },
             onReaction: { Task { await model.toggleGroupReaction(groupID: group.id, messageID: message.id, emoji: "👍") } }
         )
     }

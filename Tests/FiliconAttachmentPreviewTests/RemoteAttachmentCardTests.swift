@@ -29,11 +29,11 @@ struct RemotePreviewFixture: RemoteAttachmentDownloading {
     model.remoteAttachmentDownloader = RemotePreviewFixture(data: data, substitutedReference: nil,
         beforeReturn: { downloads += 1 })
     do {
-        try await model.previewRemoteImage(reference, at: wrongLocation)
+        try await model.previewRemoteAttachment(reference, at: wrongLocation)
         Issue.record("Unknown message identity must not download")
     } catch is CancellationError {}
     expectNoDifference(downloads, 0)
-    try await model.previewRemoteImage(reference, at: location)
+    try await model.previewRemoteAttachment(reference, at: location)
     expectNoDifference(downloads, 1)
     let item = try #require(model.attachmentPreview)
     defer { model.dismissAttachmentPreview() }
@@ -46,7 +46,7 @@ struct RemotePreviewFixture: RemoteAttachmentDownloading {
         model.remoteAttachmentDownloader = RemotePreviewFixture(data: data, substitutedReference: nil,
             beforeReturn: { model.selectedGroupID = UUID() })
         do {
-            try await model.previewRemoteImage(reference, at: location)
+            try await model.previewRemoteAttachment(reference, at: location)
             Issue.record("A group switch must invalidate the pending preview")
         } catch is CancellationError {}
         #expect(model.attachmentPreview == nil)
@@ -55,7 +55,7 @@ struct RemotePreviewFixture: RemoteAttachmentDownloading {
     model.remoteAttachmentDownloader = RemotePreviewFixture(data: data, substitutedReference: nil,
         beforeReturn: { await model.cancelAutoReviewApprovals(nextAccountID: "preview-other-account") })
     do {
-        try await model.previewRemoteImage(reference, at: location)
+        try await model.previewRemoteAttachment(reference, at: location)
         Issue.record("An account switch must invalidate the pending preview")
     } catch is CancellationError {}
     #expect(model.attachmentPreview == nil)
@@ -63,7 +63,7 @@ struct RemotePreviewFixture: RemoteAttachmentDownloading {
 
 @Suite("Remote attachment card rendering", .timeLimit(.minutes(1)))
 @MainActor struct RemoteAttachmentCardTests {
-    @Test(arguments: ["success", "removed", "switched", "dismissed", "mismatch", "invalid"])
+    @Test(arguments: ["success", "pdf", "removed", "switched", "dismissed", "mismatch", "invalid"])
     func directPreviewIsIdentityBoundAndCleanedUp(mode: String) async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "remote-preview-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }
@@ -79,7 +79,19 @@ struct RemotePreviewFixture: RemoteAttachmentDownloading {
             colorSpaceName: .deviceRGB, bytesPerRow: 8, bitsPerPixel: 32))
         for x in 0..<2 { for y in 0..<2 { bitmap.setColor(.red, atX: x, y: y) } }
         let png = try #require(bitmap.representation(using: .png, properties: [:]))
-        model.remoteAttachmentDownloader = RemotePreviewFixture(data: mode == "invalid" ? Data("bad".utf8) : png,
+        var previewBytes = png
+        if mode == "pdf" {
+            let bytes = NSMutableData()
+            let consumer = try #require(CGDataConsumer(data: bytes))
+            var page = CGRect(x: 0, y: 0, width: 612, height: 792)
+            let context = try #require(CGContext(consumer: consumer, mediaBox: &page, nil))
+            context.beginPDFPage(nil)
+            context.fill(CGRect(x: 10, y: 10, width: 20, height: 20))
+            context.endPDFPage()
+            context.closePDF()
+            previewBytes = bytes as Data
+        }
+        model.remoteAttachmentDownloader = RemotePreviewFixture(data: mode == "invalid" ? Data("bad".utf8) : previewBytes,
             substitutedReference: mode == "mismatch" ? try RemoteAttachmentReference(url: "https://other.example/image") : nil,
             beforeReturn: {
                 if mode == "removed" { model.conversations[0].messages = [] }
@@ -87,16 +99,16 @@ struct RemotePreviewFixture: RemoteAttachmentDownloading {
                 if mode == "dismissed" { model.dismissAttachmentPreview() }
             })
         do {
-            try await model.previewRemoteImage(reference, at: .direct(conversation.id, message.id))
-            expectNoDifference(mode, "success")
+            try await model.previewRemoteAttachment(reference, at: .direct(conversation.id, message.id))
+            #expect(["success", "pdf"].contains(mode))
             let item = try #require(model.attachmentPreview)
-            expectNoDifference(try AttachmentFileIntegrity().verifiedData(for: item.files[0]), png)
-            expectNoDifference(item.metadata?.mimeType, "image/png")
+            expectNoDifference(try AttachmentFileIntegrity().verifiedData(for: item.files[0]), previewBytes)
+            expectNoDifference(item.metadata?.mimeType, mode == "pdf" ? "application/pdf" : "image/png")
             let url = item.fileURL
             model.dismissAttachmentPreview()
             #expect(!FileManager.default.fileExists(atPath: url.path))
         } catch {
-            #expect(mode != "success")
+            #expect(!["success", "pdf"].contains(mode))
             #expect(model.attachmentPreview == nil)
         }
     }

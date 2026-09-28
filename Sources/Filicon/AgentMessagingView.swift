@@ -247,7 +247,7 @@ struct AgentMessagingView: View {
             secretEnabled: { model.canUseMailboxSecret(incoming, publication: $0) },
             onOpenFile: { message, file in model.openMailboxMessageFile(file, messageID: message.id, incomingID: incoming.id) },
             onPreviewRemote: { message, reference in
-                try await model.previewRemoteImage(reference, at: .mailbox(incoming.id, message.id))
+                try await model.previewRemoteAttachment(reference, at: .mailbox(incoming.id, message.id))
             })
     }
 

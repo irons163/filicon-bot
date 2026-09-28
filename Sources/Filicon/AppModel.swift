@@ -2996,7 +2996,7 @@ final class AppModel: ObservableObject {
         case mailbox(UUID, UUID)
     }
 
-    func previewRemoteImage(_ reference: RemoteAttachmentReference, at location: RemoteAttachmentLocation) async throws {
+    func previewRemoteAttachment(_ reference: RemoteAttachmentReference, at location: RemoteAttachmentLocation) async throws {
         let accountGeneration = autoReviewAccountGeneration
         @MainActor func validate() async throws {
             guard !agentMessagingAccountTransition, accountGeneration == autoReviewAccountGeneration else { throw CancellationError() }
@@ -3024,11 +3024,11 @@ final class AppModel: ObservableObject {
         try await validate()
         attachmentPreviewGeneration += 1
         let generation = attachmentPreviewGeneration
-        let download = try await remoteAttachmentDownloader.download(reference, maximumBytes: RemoteAttachmentImagePreparation.maximumBytes)
+        let download = try await remoteAttachmentDownloader.download(reference, maximumBytes: RemoteAttachmentPreviewPreparation.maximumBytes)
         guard download.reference == reference else { throw AttachmentPreviewError.integrityMismatch }
         try await validate()
         let metadata = try await Task.detached {
-            try RemoteAttachmentImagePreparation.metadata(for: download.data, reference: reference)
+            try RemoteAttachmentPreviewPreparation.metadata(for: download.data, reference: reference)
         }.value
         try await validate()
         guard generation == attachmentPreviewGeneration else { throw CancellationError() }

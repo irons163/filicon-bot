@@ -538,3 +538,13 @@ AppModel 在下載前後及圖片辨識後核對帳號 generation、已保存訊
 依 pfw-testing 沿用隔離 AppModel fixture 與 CustomDump 斷言。相關 12 群組情境、8 信箱情境、6 單聊預覽情境、14 語系／主題 render 與摘要測試全部通過（remote-preview-scope-target.log，5 tests／2 suites，exit 0）。此批只改測試與文件，未另跑原生建置或全套回歸；上階段相同 production source 已完成兩者。
 
 影片／PDF、轉址確認與文字內 URL 圖片仍有差異；未 push、未啟動 App／Xcode、未改真實帳號或群組資料。
+
+## 第五十一階段：遠端 PDF 預覽（2026-09-28）
+
+RemoteAttachmentPreviewPreparation 依 bytes 分流 PDF／圖片；PDF 要求可解析且已解鎖、1 至 1000 頁、有限且正值的頁面尺寸、單邊最多 14400 points，沿用 32 MiB 下載上限與 SHA-256 metadata。固定安全檔名 remote-document.pdf，忽略網址副檔名及伺服器宣告 MIME。這是結構與資源限制檢查，不是惡意文件掃描。
+
+三種聊天共享入口改名 previewRemoteAttachment，七語系按鈕改為「下載預覽」，不再暗示只支援圖片。下載完成後沿用既有 PDFKit 檢視器、scope 重新檢查與暫存清理。新增真正 CoreGraphics PDF fixture、加密／過大頁面／偽造 PDF 測試，以及單聊 PDF 副本完整性與清理案例。
+
+建置期間方法改名曾造成新舊來源混合而失敗，已以一致來源重跑；驗證結果另記。影片、轉址確認與文字內 URL 圖片仍未完成。未實際下載外網或啟動使用者 App，未 push、未改真實帳號資料。
+
+加密 fixture 首輪僅設定 user password 未形成鎖定文件；改以 PDFKit 明確 owner／user password 並先斷言 isLocked 後，鎖定拒絕測試通過。最終 PDF 測試與 App 預覽／七語系 render exit 0（remote-pdf-verified-target.log），原生 Debug build、deep strict 簽章通過（remote-pdf-native.log）。本批未另跑完整回歸；不宣稱 PDF 內容經惡意程式掃描或所有 PDF 變體已驗收。

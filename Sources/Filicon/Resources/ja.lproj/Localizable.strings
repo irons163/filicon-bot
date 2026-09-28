@@ -1725,3 +1725,5 @@
 "Open external link. Content has not been downloaded or verified." = "外部リンクを開きます。内容はダウンロードも検証もされていません。";
 "Download image preview" = "画像プレビューをダウンロード";
 "Image preview unavailable. You can open the external link instead." = "画像をプレビューできません。代わりに外部リンクを開けます。";
+"Download preview" = "プレビューをダウンロード";
+"Preview unavailable. You can open the external link instead." = "プレビューできません。代わりに外部リンクを開けます。";

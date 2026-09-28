@@ -40,11 +40,11 @@ struct RemoteAttachmentCard: View {
                         ProgressView().controlSize(.small)
                         Button(l10n("Cancel")) { previewTask?.cancel(); previewTask = nil }
                     } else {
-                        Button(l10n("Download image preview"), systemImage: "photo") { previewButtonTapped(onPreview) }
+                        Button(l10n("Download preview"), systemImage: "eye") { previewButtonTapped(onPreview) }
                     }
                 }
                 if previewFailed {
-                    Text(l10n("Image preview unavailable. You can open the external link instead."))
+                    Text(l10n("Preview unavailable. You can open the external link instead."))
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
