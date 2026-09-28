@@ -1726,4 +1726,6 @@
 "Download image preview" = "이미지 미리보기 다운로드";
 "Image preview unavailable. You can open the external link instead." = "이미지를 미리 볼 수 없습니다. 대신 외부 링크를 열 수 있습니다.";
 "Download preview" = "미리보기 다운로드";
+"Confirm download redirect" = "다운로드 리디렉션 확인";
+"Download from this address" = "이 주소에서 다운로드";
 "Preview unavailable. You can open the external link instead." = "미리 볼 수 없습니다. 대신 외부 링크를 열 수 있습니다.";

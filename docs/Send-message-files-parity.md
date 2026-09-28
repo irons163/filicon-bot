@@ -570,3 +570,11 @@ AVAssetWriter 產生真正 MP4／MOV 小型影片，驗證 metadata；另測拒�
 RemoteAttachmentDownloading 新增 downloadFollowingReviewedRedirects；底層原有 download 仍不自動轉址。新介面解析相對 Location、驗證 HTTPS 與無帳密、拒絕缺失／控制字元／錯誤 percent encoding／超長 Location，並逐站將來源與目的地交由 async 決策回呼。拒絕或取消不發出下一個請求；最多五次轉址並拒絕重訪 URL。結果檢查下載器回傳身份後，綁回原始已保存附件 reference；不快取任何核准。
 
 離線定向測試 exit 0（remote-redirect-verified-target.log）：十種逐站決策情境、七種既有 transport 邊界與取消前不建立請求。此批提供可測試的安全下載介面，尚未接到 AppModel／聊天卡片的使用者確認 UI；不能視為完整轉址功能已完成。未另跑完整回歸或原生 build，未 push／啟動 App／修改真實資料。
+
+## 第五十五階段：聊天內轉址確認（2026-09-28）
+
+單聊、群組、信箱的 RemoteAttachmentCard 接上逐站下載確認，直接顯示完整來源／目的地 URL 與七語系下載／取消按鈕。RemoteRedirectReviewModel 管理一次性 continuation；確認、拒絕、取消、卡片離開與替換提示會結束舊等待，取消事件以 request ID 防止影響新提示。AppModel 在詢問前後重新檢查保存的訊息、聊天選取、帳號 generation，詢問後再檢查 preview generation；沒有核准回呼的呼叫預設拒絕轉址。
+
+四種決策狀態測試與五種 App scope 測試通過：approve 保留原始 alt 並建立完整 PNG 副本；deny／switch／dismiss／account 均停在第一個請求，未下載目的地。既有 MP4／MOV／PDF／圖片、七語系卡片測試一併通過。首輪編譯抓到 local validate 缺少 Sendable 與測試 autoclosure 內 await，已修正重跑。
+
+定向 remote-redirect-ui-target.log、完整 remote-redirect-ui-full.log、原生 remote-redirect-ui-native.log 均 exit 0；封裝 deep strict 簽章驗證通過。未實際啟動 App 或存取外網，互動式提示的實機點擊／長網址版面仍未驗收。文字附帶 URL 圖片、其他媒體與原版功能差異仍需繼續；未 push、未修改真實資料。

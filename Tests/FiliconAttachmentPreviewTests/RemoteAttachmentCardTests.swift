@@ -65,6 +65,76 @@ struct RemotePreviewFixture: RemoteAttachmentDownloading {
 
 @Suite("Remote attachment card rendering", .timeLimit(.minutes(1)))
 @MainActor struct RemoteAttachmentCardTests {
+    @Test(arguments: ["approve", "deny", "switch", "dismiss", "account"])
+    func redirectDecisionRevalidatesMessageScope(mode: String) async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "redirect-app-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+        defer { model.dismissAttachmentPreview() }
+        let source = try RemoteAttachmentReference(url: "https://example.com/start", alt: "Original")
+        let message = ChatMessage(role: .assistant, text: "", remoteAttachment: source)
+        let conversation = Conversation(messages: [message])
+        model.conversations = [conversation]
+        model.selection = conversation.id
+        let bitmap = try #require(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 2, pixelsHigh: 2,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 8, bitsPerPixel: 32))
+        for x in 0..<2 { for y in 0..<2 { bitmap.setColor(.blue, atX: x, y: y) } }
+        let bytes = try #require(bitmap.representation(using: .png, properties: [:]))
+        let downloader = RedirectAppFixture(data: bytes)
+        model.remoteAttachmentDownloader = downloader
+        do {
+            try await model.previewRemoteAttachment(source, at: .direct(conversation.id, message.id)) { from, to in
+                expectNoDifference(from, source)
+                expectNoDifference(to.url, "https://other.example/final")
+                if mode == "switch" { model.selection = UUID() }
+                if mode == "dismiss" { model.dismissAttachmentPreview() }
+                if mode == "account" { await model.cancelAutoReviewApprovals(nextAccountID: "redirect-other") }
+                return mode != "deny"
+            }
+            expectNoDifference(mode, "approve")
+            let item = try #require(model.attachmentPreview)
+            expectNoDifference(try AttachmentFileIntegrity().verifiedData(for: item.files[0]), bytes)
+            expectNoDifference(item.metadata?.altText, "Original")
+        } catch is CancellationError {
+            #expect(mode != "approve")
+            #expect(model.attachmentPreview == nil)
+        }
+        let count = await downloader.count
+        expectNoDifference(count, mode == "approve" ? 2 : 1)
+    }
+
+    @Test(arguments: ["approve", "deny", "cancel", "replace"])
+    func redirectReviewResumesExactlyOnce(mode: String) async throws {
+        let model = RemoteRedirectReviewModel()
+        let source = try RemoteAttachmentReference(url: "https://example.com/start")
+        let destination = try RemoteAttachmentReference(url: "https://other.example/end")
+        let task = Task { try await model.review(source, destination) }
+        let deadline = ContinuousClock.now + .seconds(5)
+        while model.request == nil && ContinuousClock.now < deadline { await Task.yield() }
+        let request = try #require(model.request)
+        expectNoDifference(request.source, source)
+        expectNoDifference(request.destination, destination)
+        if mode == "cancel" {
+            task.cancel()
+            do { _ = try await task.value; Issue.record("Expected cancellation") }
+            catch is CancellationError {}
+        } else if mode == "replace" {
+            let second = Task { try await model.review(destination, source) }
+            let firstResult = try await task.value
+            expectNoDifference(firstResult, false)
+            model.resolve(approved: true)
+            let secondResult = try await second.value
+            expectNoDifference(secondResult, true)
+        } else {
+            model.resolve(approved: mode == "approve")
+            model.resolve(approved: false)
+            let result = try await task.value
+            expectNoDifference(result, mode == "approve")
+        }
+        #expect(model.request == nil)
+    }
+
     @Test(arguments: [false, true], [false, true])
     func videoPreviewUsesVerifiedBytesAndCleansUp(quickTime: Bool, cancelled: Bool) async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "remote-video-app-\(UUID())")
@@ -198,7 +268,7 @@ struct RemotePreviewFixture: RemoteAttachmentDownloading {
         try FiliconLocalization.$languageOverride.withValue(language) {
             let reference = try RemoteAttachmentReference(url: "https://example.com/media?signature=a%2Bb#preview",
                 alt: String(repeating: "報表 **plain text** ", count: 20))
-            let host = NSHostingView(rootView: RemoteAttachmentCard(reference: reference, onPreview: {
+            let host = NSHostingView(rootView: RemoteAttachmentCard(reference: reference, onPreview: { _ in
                 Issue.record("Rendering must not download remote content")
             })
                 .padding(16).frame(width: 320)
@@ -266,5 +336,16 @@ struct RemotePreviewFixture: RemoteAttachmentDownloading {
             let directBitmap = try #require(direct.bitmapImageRepForCachingDisplay(in: direct.bounds))
             direct.cacheDisplay(in: direct.bounds, to: directBitmap)
         }
+    }
+}
+
+private actor RedirectAppFixture: RemoteAttachmentDownloading {
+    let data: Data
+    var count = 0
+    init(data: Data) { self.data = data }
+    func download(_ reference: RemoteAttachmentReference, maximumBytes: Int) async throws -> RemoteAttachmentDownload {
+        count += 1
+        if count == 1 { throw RemoteAttachmentDownloadError.redirect("https://other.example/final") }
+        return RemoteAttachmentDownload(reference: reference, data: data, declaredMIMEType: nil)
     }
 }

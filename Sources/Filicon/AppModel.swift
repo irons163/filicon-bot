@@ -2990,15 +2990,16 @@ final class AppModel: ObservableObject {
         }
     }
 
-    enum RemoteAttachmentLocation {
+    enum RemoteAttachmentLocation: Sendable {
         case direct(UUID, UUID)
         case group(UUID, UUID)
         case mailbox(UUID, UUID)
     }
 
-    func previewRemoteAttachment(_ reference: RemoteAttachmentReference, at location: RemoteAttachmentLocation) async throws {
+    func previewRemoteAttachment(_ reference: RemoteAttachmentReference, at location: RemoteAttachmentLocation,
+                                 approveRedirect: @escaping RemoteRedirectReview = { _, _ in false }) async throws {
         let accountGeneration = autoReviewAccountGeneration
-        @MainActor func validate() async throws {
+        @MainActor @Sendable func validate() async throws {
             guard !agentMessagingAccountTransition, accountGeneration == autoReviewAccountGeneration else { throw CancellationError() }
             let actual: RemoteAttachmentReference?
             switch location {
@@ -3024,7 +3025,14 @@ final class AppModel: ObservableObject {
         try await validate()
         attachmentPreviewGeneration += 1
         let generation = attachmentPreviewGeneration
-        let download = try await remoteAttachmentDownloader.download(reference, maximumBytes: RemoteAttachmentVideoPreparation.maximumBytes)
+        let download = try await remoteAttachmentDownloader.downloadFollowingReviewedRedirects(reference,
+            maximumBytes: RemoteAttachmentVideoPreparation.maximumBytes) { source, destination in
+                try await validate()
+                let approved = try await approveRedirect(source, destination)
+                try await validate()
+                guard await self.attachmentPreviewGeneration == generation else { throw CancellationError() }
+                return approved
+            }
         guard download.reference == reference else { throw AttachmentPreviewError.integrityMismatch }
         try await validate()
         let preparation = Task.detached {

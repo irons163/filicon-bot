@@ -246,8 +246,8 @@ struct AgentMessagingView: View {
             }, secretModel: { model.mailboxSecretCards[$0.id] },
             secretEnabled: { model.canUseMailboxSecret(incoming, publication: $0) },
             onOpenFile: { message, file in model.openMailboxMessageFile(file, messageID: message.id, incomingID: incoming.id) },
-            onPreviewRemote: { message, reference in
-                try await model.previewRemoteAttachment(reference, at: .mailbox(incoming.id, message.id))
+            onPreviewRemote: { message, reference, review in
+                try await model.previewRemoteAttachment(reference, at: .mailbox(incoming.id, message.id), approveRedirect: review)
             })
     }
 
@@ -358,7 +358,7 @@ struct AgentPublishedResponses: View {
     var secretModel: (RoomMessage) -> AgentSecretRequestCardModel? = { _ in nil }
     var secretEnabled: (RoomMessage) -> Bool = { _ in false }
     var onOpenFile: ((RoomMessage, AttachmentMetadata) -> Void)?
-    var onPreviewRemote: ((RoomMessage, RemoteAttachmentReference) async throws -> Void)?
+    var onPreviewRemote: ((RoomMessage, RemoteAttachmentReference, @escaping RemoteRedirectReview) async throws -> Void)?
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Label(l10n("Published response"), systemImage: "bubble.left.and.text.bubble.right").font(.caption).foregroundStyle(.secondary)
@@ -390,7 +390,7 @@ struct AgentPublishedResponses: View {
                     }
                     if let images = publication.images, !images.isEmpty { AgentMessageImagePreviews(images: images) }
                     if let reference = publication.remoteAttachment {
-                        RemoteAttachmentCard(reference: reference, onPreview: onPreviewRemote.map { action in { try await action(publication, reference) } })
+                        RemoteAttachmentCard(reference: reference, onPreview: onPreviewRemote.map { action in { review in try await action(publication, reference, review) } })
                     }
                     ForEach(publication.files ?? []) { file in
                         Button { onOpenFile?(publication, file) } label: {

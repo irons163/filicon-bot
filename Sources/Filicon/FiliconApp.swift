@@ -1525,8 +1525,8 @@ struct TranscriptMessageView: View {
                 }
             }
             if let reference = message.remoteAttachment {
-                RemoteAttachmentCard(reference: reference) {
-                    try await model.previewRemoteAttachment(reference, at: .direct(conversation.id, message.id))
+                RemoteAttachmentCard(reference: reference) { review in
+                    try await model.previewRemoteAttachment(reference, at: .direct(conversation.id, message.id), approveRedirect: review)
                 }
             }
             if !message.attachments.isEmpty {
