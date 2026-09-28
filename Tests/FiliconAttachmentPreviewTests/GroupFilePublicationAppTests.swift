@@ -336,14 +336,17 @@ private struct GroupFileAppProvider: AIProvider {
         if mode.hasPrefix("quota-") || mode.hasPrefix("direct-message-") { #expect(fault.didTrigger) }
     }
 
-    @Test(arguments: ["approve", "deny", "stop", "account"], [false, true])
-    func mailboxRemoteRequiresAppApproval(mode: String, direct: Bool) async throws {
+    @Test(arguments: ["approve", "deny", "stop", "account"], ["remote", "remote-direct", "gallery", "gallery-direct"])
+    func mailboxRemoteRequiresAppApproval(mode: String, route: String) async throws {
+        let direct = route.hasSuffix("-direct"), gallery = route.hasPrefix("gallery")
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-mailbox-remote-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }
         let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
         await model.bootstrap()
         let reference = try RemoteAttachmentReference(url: "https://example.com/report?sig=a%2Bb", alt: "報表說明")
-        await model.registry.register(GroupFileAppProvider(url: reference.url))
+        let expectedGallery = try RemoteImageGallery(images: [reference,
+            RemoteAttachmentReference(url: reference.url + "2", alt: "Second design")])
+        await model.registry.register(GroupFileAppProvider(url: reference.url, gallery: gallery))
         let senderValue = await model.createAgent(name: "Sender", summary: "", instructions: "", providerID: "group-file-app", modelID: "test")
         let recipientValue = await model.createAgent(name: "Recipient", summary: "", instructions: "", providerID: "group-file-app", modelID: "test")
         let sender = try #require(senderValue), recipient = try #require(recipientValue)
@@ -351,7 +354,7 @@ private struct GroupFileAppProvider: AIProvider {
         if direct {
             _ = await model.addConversation(agentID: sender.id)
             await model.refreshModels()
-            await model.registry.register(GroupFileAppProvider(url: reference.url, peerRecipientID: recipient.id))
+            await model.registry.register(GroupFileAppProvider(url: reference.url, peerRecipientID: recipient.id, gallery: gallery))
             model.draft = "Share report"
             model.send()
             let delegation = try await pending(model)
@@ -362,10 +365,15 @@ private struct GroupFileAppProvider: AIProvider {
         }
         let approval = try await pending(model, excluding: delegationID)
         let originID = approval.action.context.conversationID
-        expectNoDifference(approval.action.context.metadata["agentRemotePublication"], "true")
+        expectNoDifference(approval.action.context.metadata[gallery ? "agentGalleryPublication" : "agentRemotePublication"], "true")
         #expect(approval.action.context.metadata["mailboxIncomingID"] != nil)
         #expect(approval.action.context.metadata["agentMessage"]?.contains(reference.url) == true)
         #expect(approval.action.context.metadata["agentMessage"]?.contains("報表說明") == true)
+        if gallery {
+            #expect(approval.action.context.metadata["agentMessage"]?.contains("Compare designs") == true)
+            #expect(approval.action.context.metadata["agentMessage"]?.contains(reference.url + "2") == true)
+            #expect(approval.action.context.metadata["agentMessage"]?.contains("Second design") == true)
+        }
         if mode == "stop" {
             if direct { model.cancel() }
             else { await model.stopAgentMessages(scopeID: originID) }
@@ -381,6 +389,26 @@ private struct GroupFileAppProvider: AIProvider {
         let agents = try AgentService(storeURL: root.appending(path: "agents.json"))
         let messenger = try AgentMessenger(service: agents, storeURL: root.appending(path: "agent-messages.json"))
         let messages = await messenger.allMessages()
+        if gallery {
+            let publications = messages.flatMap { $0.delivery?.publications ?? [] }.filter { $0.remoteImages != nil }
+            expectNoDifference(publications.compactMap(\.remoteImages), mode == "approve" ? [expectedGallery] : [])
+            expectNoDifference(publications.map(\.text), mode == "approve" ? ["Compare designs"] : [])
+            if direct {
+                let projected = model.conversations.flatMap(\.messages).filter { $0.remoteImages != nil }
+                expectNoDifference(projected.compactMap(\.remoteImages), mode == "approve" ? [expectedGallery] : [])
+                expectNoDifference(projected.map(\.text), mode == "approve" ? ["Compare designs"] : [])
+                let binding = DirectConversationAgentBinding(accountID: "local", agentID: sender.id)
+                let recovered = try await messenger.directPeerTranscript(originID: originID, binding: binding)
+                expectNoDifference(recovered.compactMap { $0.message.remoteImages }, mode == "approve" ? [expectedGallery] : [])
+            }
+            if mode == "approve" {
+                let incoming = try #require(messages.first { $0.delivery?.publications?.contains(where: { $0.remoteImages == expectedGallery }) == true })
+                let publication = try #require(publications.first)
+                try await verifySavedRemotePreview(model: model, reference: reference,
+                    location: .mailbox(incoming.id, publication.id), wrongLocation: .mailbox(incoming.id, UUID()))
+            }
+            return
+        }
         let references = messages.flatMap { $0.delivery?.publications ?? [] }.compactMap(\.remoteAttachment)
         expectNoDifference(references, mode == "approve" ? [reference] : [])
         if direct && mode == "approve" {

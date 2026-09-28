@@ -676,3 +676,13 @@ AppModel 注入 group gallery authorizer；背景委派經 GroupConversationResp
 仍待 App 信箱與單聊主執行核准接線、原版內嵌縮圖、本機／混合來源，不能宣告整體 parity 完成。未 push、未啟動使用者 App／Xcode、未修改真實資料。
 
 完整回歸 gallery-app-group-full.log exit 0，deep strict 簽章及 git diff --check 通過。
+
+## 第六十五階段：App 信箱及單聊委派圖片集（2026-09-28）
+
+三個 App session 建立入口注入 mailbox gallery factory，綁定 incoming、來源對話、收件代理人及帳號 generation。核准提示包含完整文字、每張圖片 URL／alt、reply ID 與未下載提示；核准前後沿用信箱執行及 chain 檢查，拒絕、停止、換帳號不可繼續保存。
+
+既有信箱遠端附件整合測試擴展為四條路徑 × 四種結果，共 16 個案例，涵蓋原遠端附件及新圖片集、一般信箱及單聊委派。驗證圖片順序、正文、核准內容、取消清理、持久資料重開、單聊投影及 directPeerTranscript 復原；核准後信箱圖片預覽也驗證正確及錯誤 publication ID。依 pfw-testing／custom-dump 使用隔離 AppModel、模擬 provider 及完整預期值比較，不使用真實帳號資料或網路。
+
+gallery-app-mailbox-target.log 全部通過；完整 gallery-app-mailbox-full.log 與原生 gallery-app-mailbox-native.log 均 exit 0，完整 package verifier／deep strict 簽章通過。未 push、未重啟 App 或 Xcode。
+
+此批完成的是單聊委派的收件代理人發佈，不是單聊主執行的 gallery 工廠。後者、內嵌縮圖及本機／混合來源仍待完成；不宣告整體 parity 完成。

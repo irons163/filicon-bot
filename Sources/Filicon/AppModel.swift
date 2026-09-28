@@ -2224,6 +2224,7 @@ final class AppModel: ObservableObject {
                         },
                         mailboxFiles: makeMailboxFileFactory(originID: id, generation: publicationGeneration),
                         mailboxRemote: makeMailboxRemoteFactory(originID: id, generation: publicationGeneration),
+                        mailboxGallery: makeMailboxGalleryFactory(originID: id, generation: publicationGeneration),
                         authorize: { [weak self] sender, recipient, text, call, context in
                             guard let self else { throw CancellationError() }
                             try await self.validateDirectDelegation(conversationID: id, binding: agentBinding,
@@ -4345,6 +4346,7 @@ final class AppModel: ObservableObject {
                 },
                 mailboxFiles: makeMailboxFileFactory(originID: originID, generation: generation),
                 mailboxRemote: makeMailboxRemoteFactory(originID: originID, generation: generation),
+                mailboxGallery: makeMailboxGalleryFactory(originID: originID, generation: generation),
                 authorize: { [weak self] sender, recipient, text, call, context in
                     guard let self else { throw CancellationError() }
                     try await MainActor.run {
@@ -4399,6 +4401,7 @@ final class AppModel: ObservableObject {
             authorizeGalleryPublication: makeGroupGalleryAuthorizer(originID: originID, generation: generation),
             mailboxFiles: makeMailboxFileFactory(originID: originID, generation: generation),
             mailboxRemote: makeMailboxRemoteFactory(originID: originID, generation: generation),
+            mailboxGallery: makeMailboxGalleryFactory(originID: originID, generation: generation),
             authorize: { [weak self] sender, recipient, text, call, context in
                 guard let self else { throw CancellationError() }
                 try await self.authorizeAgentDelegation(sender: sender, recipient: recipient, text: text, call: call, context: context)
@@ -4421,6 +4424,46 @@ final class AppModel: ObservableObject {
                         call: call, context: context, originID: originID, generation: generation)
                 })
         }
+    }
+
+    private func makeMailboxGalleryFactory(originID: UUID, generation: UInt64) -> (@Sendable (AgentMessage) -> AgentMailboxGalleryServices?) {
+        return { [weak self] incoming in
+            guard let self else { return nil }
+            return .init(incomingID: incoming.id, originID: originID, senderID: incoming.recipientID,
+                validate: { [weak self] in
+                    guard let self else { throw CancellationError() }
+                    try await self.checkMailboxFileScope(incoming, originID: originID, generation: generation)
+                }, authorize: { [weak self] sender, review, call, context in
+                    guard let self else { throw CancellationError() }
+                    try await self.authorizeMailboxGallery(incoming, sender: sender, review: review,
+                        call: call, context: context, originID: originID, generation: generation)
+                })
+        }
+    }
+
+    private func authorizeMailboxGallery(_ incoming: AgentMessage, sender: AgentProfile,
+        review: AgentGalleryPublicationTransaction.Review, call: NormalizedToolCall, context: ToolContext,
+        originID: UUID, generation: UInt64) async throws {
+        try await checkMailboxFileScope(incoming, originID: originID, generation: generation)
+        guard review.senderID == sender.id, sender.id == incoming.recipientID,
+              review.conversationID == originID, context.conversationID == originID else { throw AgentMessagingError.scopeMismatch }
+        let fence = ApprovalFence(accountID: settings.accountScope ?? "local", agentID: originID.uuidString.lowercased(),
+            runID: context.runID, generation: generation)
+        await autoReviewBroker.activate(fence)
+        let images = review.gallery.images.enumerated().map { index, image in
+            "\(index + 1). \(image.url)" + (image.alt.map { "\n\($0)" } ?? "")
+        }.joined(separator: "\n\n")
+        let details = review.text + "\n\n" + images
+            + (review.replyTo.map { "\n\(l10n("Reply")): \($0.uuidString)" } ?? "")
+            + "\n" + l10n("Open external link. Content has not been downloaded or verified.")
+        let action = AutoReviewAction(summary: "\(sender.name) → \(l10n("User in this conversation")): \(l10n("Image"))",
+            target: .resource(kind: "conversation", identifier: originID.uuidString), risks: [.sensitive],
+            context: .init(fence: fence, conversationID: originID, toolCallID: call.id.rawValue,
+                metadata: ["tool": "SendMessage", "agentGalleryPublication": "true", "agentMessage": details,
+                    "mailboxIncomingID": incoming.id.uuidString]))
+        let pending = PendingApproval(action: action, reason: "Approval required", expiresAt: Date().addingTimeInterval(300))
+        try await autoReviewBroker.waitForApprovalToExecute(pending) { [weak self] in await self?.registerAutoReviewApproval($0) }
+        try await checkMailboxFileScope(incoming, originID: originID, generation: generation)
     }
 
     private func authorizeMailboxRemote(_ incoming: AgentMessage, sender: AgentProfile,
