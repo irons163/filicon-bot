@@ -17,6 +17,64 @@ private actor GalleryPublicationProbe {
 
 @Suite("Atomic reviewed text and image gallery", .timeLimit(.minutes(1)))
 struct AgentGalleryPublicationTransactionTests {
+    @Test(arguments: ["success", "legacy", "deny", "unavailable", "wrong-scope", "mixed", "local", "duplicate", "http", "invalid-receipt"])
+    func messageToolPublishesOneReviewedGallery(mode: String) async throws {
+        let origin = UUID(), sender = UUID(), messageID = UUID(), probe = GalleryPublicationProbe()
+        let transaction = AgentGalleryPublicationTransaction(conversationID: mode == "wrong-scope" ? UUID() : origin,
+            senderID: sender, validateScope: {}, authorize: { review, _, _ in
+                await probe.record("review")
+                expectNoDifference(review.text, "Designs")
+                expectNoDifference(review.gallery.images.map(\.alt), ["A", "B"])
+                if mode == "deny" { throw AgentMessagingError.approvalRequired }
+            }, commit: { review, _, _ in
+                await probe.record("save")
+                var saved = RoomMessage(id: messageID, groupID: origin, senderID: sender,
+                    text: mode == "invalid-receipt" ? "Wrong" : review.text, remoteImages: review.gallery)
+                saved.replyToMessageID = review.replyTo
+                return .init(review: review, message: saved)
+            })
+        let tool = AgentUserMessageTool(conversationID: origin, senderID: sender, replyHistory: [], supportsQuestions: false,
+            galleryPublication: mode == "unavailable" ? nil : transaction,
+            publishGroup: { text, _, reply, _ in
+                var message = RoomMessage(groupID: origin, senderID: sender, text: text)
+                message.replyToMessageID = reply
+                return message
+            })
+        var images: [[String: String]] = [["url": "https://example.com/a", "alt": "A"],
+                                        ["url": "https://example.com/b", "alt": "B"]]
+        if mode == "mixed" { images[1] = ["image_id": "host-image"] }
+        if mode == "local" { images[1] = ["url": "file:///tmp/a.png"] }
+        if mode == "duplicate" { images[1]["url"] = images[0]["url"] }
+        if mode == "http" { images[0]["url"] = "http://example.com/a" }
+        var args: [String: Any] = mode == "legacy" ? ["text": "Designs"] : ["type": "text", "content": "Designs"]
+        args["images"] = images
+        let call = try NormalizedToolCall(id: "gallery", name: "SendMessage", argumentsJSON: JSONSerialization.data(withJSONObject: args))
+        let context = ToolContext(conversationID: origin)
+        let result = try await tool.execute(call, context: context)
+        let succeeds = ["success", "legacy"].contains(mode)
+        expectNoDifference(result.isError, !succeeds)
+        let schema = try #require(JSONSerialization.jsonObject(with: tool.descriptor.inputSchema) as? [String: Any])
+        let properties = try #require(schema["properties"] as? [String: Any])
+        expectNoDifference(properties["images"] != nil, !["unavailable", "wrong-scope"].contains(mode))
+        if succeeds {
+            let replay = try await tool.execute(call, context: context)
+            expectNoDifference(replay, result)
+            args[mode == "legacy" ? "text" : "content"] = "Changed"
+            let changed = try NormalizedToolCall(id: "gallery", name: "SendMessage", argumentsJSON: JSONSerialization.data(withJSONObject: args))
+            #expect(try await tool.execute(changed, context: context).isError)
+            let reply = try NormalizedToolCall(id: "reply", name: "SendMessage", argumentsJSON:
+                JSONSerialization.data(withJSONObject: ["text": "See designs", "reply_to": messageID.uuidString]))
+            #expect(try await !tool.execute(reply, context: context).isError)
+            let third = try NormalizedToolCall(id: "third", name: "SendMessage", argumentsJSON: Data(#"{"text":"Third"}"#.utf8))
+            #expect(try await tool.execute(third, context: context).isError)
+        }
+        if mode == "invalid-receipt" {
+            #expect(try await tool.execute(call, context: context).isError)
+        }
+        let events = await probe.events
+        expectNoDifference(events, succeeds || mode == "invalid-receipt" ? ["review", "save"] : mode == "deny" ? ["review"] : [])
+    }
+
     @Test(arguments: ["success", "deny", "revoke", "wrong-scope", "empty", "uncertain",
                       "text", "order", "description", "reply", "sender", "destination", "mixed"])
     func wholeMessageMustMatchApproval(mode: String) async throws {

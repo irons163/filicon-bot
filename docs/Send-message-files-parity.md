@@ -618,3 +618,15 @@ directPeerTranscript 驗證圖片集不能混合單一附件、既有圖片／�
 此階段仍未將 gallery 接入模型工具、App 核准入口及 UI；不宣告完整功能已開放。App 投影新增欄位尚需專用端到端圖片集測試，現有回歸不能替代此驗收。未 push、未啟動使用者 App／Xcode、未修改真實資料。
 
 完整回歸 gallery-mailbox-full.log exit 0，git diff --check 通過。
+
+## 第六十階段：文字圖片集的 SendMessage 入口（2026-09-28）
+
+AgentUserMessageTool 可注入 AgentGalleryPublicationTransaction；初始化驗證來源對話、目的地與作者，只有可用交易才宣告 HTTPS gallery schema。接受 type:text/content 或 legacy text 搭配有序 images:[{url,alt}]，整批解析、核准及保存，保留 reply_to；不經既有 host image ID 發布路徑，且不下載內容。
+
+圖片集與其他訊息共用兩則上限、呼叫 ID 佔用及 reserved fence。精確重送回傳同一結果，改內容重送、跨種類重用、錯誤回執後再試均拒絕；成功回執加入 reply directory，可由下一則訊息引用。close 同時關閉 gallery 交易。runtime 說明與 schema 明確區分 host ID、遠端 locator 與未提供的本機／混合來源能力。
+
+新增 10 種工具測試（成功、legacy、拒絕、未提供／錯誤 scope、混合 host ID、本機 URL、重複 URL、HTTP、錯誤回執），成功案例另驗證重送、改文、回覆與第三則上限。gallery-tool-target.log：37 tests／3 suites 通過；原生 gallery-tool-native.log 與 deep strict 簽章驗證通過。
+
+此批是可注入的工具能力，App／session 尚未提供 gallery 交易，正常 App 尚不宣告支援；接續須補群組／背景／信箱／單聊工廠與核准 UI、圖片集呈現及端到端測試。本機及混合來源圖片集仍屬原版差異，未縮減原需求。未 push、未啟動使用者 App／Xcode、未修改真實資料。
+
+完整回歸 gallery-tool-full.log exit 0，git diff --check 通過。
