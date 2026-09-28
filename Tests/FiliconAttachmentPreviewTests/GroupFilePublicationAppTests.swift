@@ -419,7 +419,13 @@ private struct GroupFileAppProvider: AIProvider {
             if route == "direct" {
                 let destination = try #require(model.conversations.first(where: { $0.agentBinding?.agentID == recipient.id }))
                 let projected = try #require(destination.messages.first(where: { $0.id == message.id }))
-                expectNoDifference(projected.attachments, [file])
+                let projectedFile = try #require(projected.attachments.first)
+                // JSON date round trips can differ by one floating-point ULP.
+                #expect(abs(projectedFile.createdAt.timeIntervalSince(file.createdAt)) < 0.000001)
+                let expectedFile = AttachmentMetadata(id: file.id, filename: file.filename,
+                    mimeType: file.mimeType, byteCount: file.byteCount, kind: file.kind,
+                    createdAt: projectedFile.createdAt, altText: file.altText)
+                expectNoDifference(projected.attachments, [expectedFile])
                 expectNoDifference(projected.agentMessageSource?.deliveryID, messages[0].id)
                 #expect(model.conversations.first(where: { $0.id == originID })?.messages.allSatisfy { $0.id != message.id } == true)
                 let mirroredBytes = try await lifecycle.data(for: file, owner: .init(conversationID: destination.id, messageID: message.id))

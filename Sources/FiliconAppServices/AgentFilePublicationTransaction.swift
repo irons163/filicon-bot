@@ -175,7 +175,7 @@ public actor AgentFilePublicationTransaction {
               receipt.altText == altText,
               !messageIDs.contains(receipt.messageID) else { throw AgentFilePublicationError.invalidReceipt }
         if let saved = receipt.savedMessage {
-            guard saved.files?.count == 1, let attachment = saved.files?.first,
+            guard saved.remoteImages == nil, saved.files?.count == 1, let attachment = saved.files?.first,
                   attachment.altText == altText else { throw AgentFilePublicationError.invalidReceipt }
         }
         messageIDs.insert(receipt.messageID)

@@ -86,7 +86,7 @@ struct AgentRemotePublicationTransactionTests {
         expectNoDifference(events, succeeds || mode == "missing-receipt" ? ["review", "save"] : mode == "deny" ? ["review"] : [])
     }
 
-    @Test(arguments: ["valid", "id", "group", "sender", "reference", "reply", "text", "missing-reference"])
+    @Test(arguments: ["valid", "id", "group", "sender", "reference", "reply", "text", "missing-reference", "unreviewed-gallery"])
     func canonicalMessageMustMatchReview(mode: String) async throws {
         let origin = UUID(), sender = UUID(), messageID = UUID(), reply = UUID()
         let reference = try RemoteAttachmentReference(url: "https://example.com/media", alt: "Media")
@@ -101,6 +101,9 @@ struct AgentRemotePublicationTransactionTests {
                     createdAt: Date(timeIntervalSince1970: 0))
                 var json = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(message)) as? [String: Any])
                 json["replyToMessageID"] = (mode == "reply" ? UUID() : reply).uuidString
+                if mode == "unreviewed-gallery" {
+                    json["remoteImages"] = ["images": [["url": "https://other.example/unreviewed"]]]
+                }
                 if mode != "missing-reference" {
                     json["remoteAttachment"] = ["url": mode == "reference" ? "https://example.com/other" : reference.url, "alt": "Media"]
                 }

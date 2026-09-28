@@ -586,3 +586,13 @@ RemoteAttachmentDownloading 新增 downloadFollowingReviewedRedirects；底層�
 既有 AgentUserMessageTool 的 ID 圖片路徑改用共用解析器，維持描述覆寫與省略語義。URL 分支尚未接上整批核准／原子保存，故 descriptor 不宣告支援、執行仍拒絕，不能把這階段當作 URL gallery 已完成。下一階段需實作整批來源準備、核准、durable receipt、保存與文字下方 gallery，涵蓋群組／單聊／信箱。
 
 45 tests／4 suites 定向測試通過（image-source-input-verified-target.log），原生 Debug build 通過（image-source-input-native.log）。未另跑完整回歸；未 push、未啟動使用者 App／Xcode、未修改真實資料。
+
+## 第五十七階段：圖片集保存模型與 SQLite 遷移（2026-09-28）
+
+新增 RemoteImageGallery，保存 1 至 4 個有序遠端 locator，拒絕重複 URL，解碼時重新驗證；不代表已下載或確認為圖片。ChatMessage／RoomMessage 增加 optional remoteImages，舊 JSON 缺欄位仍相容，重新送出會清除舊圖片集。SQLite schema 15 新增 remote_images_json，同步更新整批保存、載入、keyset 分頁、資料庫復原掃描／寫回與 schema shape；舊版本測試 fixture 一併更新。
+
+測試包含兩張圖片順序與 alt／簽名 URL 保存、JSON 往返、舊 schema 14 遷移、分頁游標、復原後保留圖片集。既有非圖片集發布回執必須 remoteImages 為 nil，另測單一遠端附件回執夾帶 gallery 會被拒絕。這批尚未接 gallery 發布／核准／UI，不宣告完整功能可用。
+
+首輪測試遇到分頁參數順序編譯錯誤，已修正。完整回歸另抓到既有附件跨 JSON 保存的 Date 浮點微差；測試改為時間差小於一微秒，其餘 metadata 嚴格完整比對，未修改 production 日期。測試修正曾因 createdAt 為 let 編譯失敗，改以 initializer 建立比對值後重跑。
+
+最終完整回歸 remote-gallery-storage-verified-full.log exit 0；原生 Debug build remote-gallery-storage-native.log exit 0，deep strict 簽章驗證通過。未 push、未啟動 App／Xcode，所有資料庫測試使用臨時資料，不涉及真實帳號或群組。

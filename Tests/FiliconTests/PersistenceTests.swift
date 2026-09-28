@@ -6,6 +6,35 @@ import FiliconAppServices
 import CSQLite
 import CustomDump
 
+@Test func remoteGallerySQLiteMigrationAndPaging() async throws {
+    let directory = try persistenceTemporaryDirectory(); defer { try? FileManager.default.removeItem(at: directory) }
+    let url = directory.appending(path: "gallery.sqlite3")
+    let gallery = try RemoteImageGallery(images: [RemoteAttachmentReference(url: "https://example.com/a", alt: "A"),
+        RemoteAttachmentReference(url: "https://example.com/b?sig=x%2By", alt: "B")])
+    let conversation = Conversation(messages: [.init(role: .user, text: "Compare"),
+        .init(role: .assistant, text: "Here are both", remoteImages: gallery)])
+    let repository = try ConversationRepository(databaseURL: url)
+    try await repository.save([conversation])
+    let reopened = try ConversationRepository(databaseURL: url)
+    let loaded = try await reopened.load()
+    expectNoDifference(loaded.first?.messages.last?.remoteImages, gallery)
+    let page = try await reopened.messagePage(conversationID: conversation.id, request: MessagePageRequest(limit: 1))
+    expectNoDifference(page.items.first?.remoteImages, gallery)
+    let next = try await reopened.messagePage(conversationID: conversation.id,
+        request: MessagePageRequest(before: try #require(page.nextCursor), limit: 1))
+    expectNoDifference(next.items.first?.text, "Compare")
+    var database: OpaquePointer?
+    try #require(sqlite3_open(url.path, &database) == SQLITE_OK)
+    defer { sqlite3_close(database) }
+    try #require(sqlite3_exec(database, "ALTER TABLE messages DROP COLUMN remote_images_json; UPDATE schema_version SET version=14", nil, nil, nil) == SQLITE_OK)
+    let migrated = try ConversationRepository(databaseURL: url)
+    let legacy = try await migrated.load()
+    expectNoDifference(legacy.first?.messages.last?.remoteImages, nil)
+    try await migrated.save([conversation])
+    let restored = try await migrated.load()
+    expectNoDifference(restored.first?.messages.last?.remoteImages, gallery)
+}
+
 @Test func remoteAttachmentSQLiteMigrationAndPaging() async throws {
     let directory = try persistenceTemporaryDirectory(); defer { try? FileManager.default.removeItem(at: directory) }
     let url = directory.appending(path: "remote.sqlite3")
@@ -21,7 +50,7 @@ import CustomDump
     var database: OpaquePointer?
     #expect(sqlite3_open(url.path, &database) == SQLITE_OK)
     defer { sqlite3_close(database) }
-    #expect(sqlite3_exec(database, "ALTER TABLE messages DROP COLUMN remote_attachment_json; UPDATE schema_version SET version=13", nil, nil, nil) == SQLITE_OK)
+    #expect(sqlite3_exec(database, "ALTER TABLE messages DROP COLUMN remote_images_json; ALTER TABLE messages DROP COLUMN remote_attachment_json; UPDATE schema_version SET version=13", nil, nil, nil) == SQLITE_OK)
     let migrated = try ConversationRepository(databaseURL: url)
     let legacy = try await migrated.load()
     expectNoDifference(legacy.first?.messages.first?.remoteAttachment, nil)

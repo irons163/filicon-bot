@@ -230,7 +230,7 @@ public actor AgentUserMessageTool: ToolExecutor, ToolRuntimeContextProviding {
               saved.text == text, saved.images ?? [] == images, saved.files ?? [] == files, saved.memberOutcome == nil,
               saved.replyToMessageID == replyTo, saved.question?.question == question,
               saved.questionReplyTo == nil, saved.secretRequest == nil, saved.cursorAgent == cursorAgent,
-              saved.remoteAttachment == remote,
+              saved.remoteAttachment == remote, saved.remoteImages == nil,
               !knownMessageIDs.contains(saved.id) else { return "" }
         // A bad or colliding alias must not hide a successful save, invent an
         // identity, or make a foreign/ambiguous address actionable. UUIDs remain
