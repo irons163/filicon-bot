@@ -578,3 +578,11 @@ RemoteAttachmentDownloading 新增 downloadFollowingReviewedRedirects；底層�
 四種決策狀態測試與五種 App scope 測試通過：approve 保留原始 alt 並建立完整 PNG 副本；deny／switch／dismiss／account 均停在第一個請求，未下載目的地。既有 MP4／MOV／PDF／圖片、七語系卡片測試一併通過。首輪編譯抓到 local validate 缺少 Sendable 與測試 autoclosure 內 await，已修正重跑。
 
 定向 remote-redirect-ui-target.log、完整 remote-redirect-ui-full.log、原生 remote-redirect-ui-native.log 均 exit 0；封裝 deep strict 簽章驗證通過。未實際啟動 App 或存取外網，互動式提示的實機點擊／長網址版面仍未驗收。文字附帶 URL 圖片、其他媒體與原版功能差異仍需繼續；未 push、未修改真實資料。
+
+## 第五十六階段：文字圖片來源解析（2026-09-28）
+
+重新核對原版 send-message-tool.ts：text.images 接受 {url,alt} 並與文字一起保存／顯示，而 Filicon 目前僅接受 host image ID。新增 AgentMessageImageInput 區分 hostImage、localFile、remote，保留精確 URL 與描述；拒絕混合 ID／URL、不明欄位、錯誤 alt、非 HTTPS 遠端來源及不安全 file URL。解析不讀檔、不下載、不授予任何權限。
+
+既有 AgentUserMessageTool 的 ID 圖片路徑改用共用解析器，維持描述覆寫與省略語義。URL 分支尚未接上整批核准／原子保存，故 descriptor 不宣告支援、執行仍拒絕，不能把這階段當作 URL gallery 已完成。下一階段需實作整批來源準備、核准、durable receipt、保存與文字下方 gallery，涵蓋群組／單聊／信箱。
+
+45 tests／4 suites 定向測試通過（image-source-input-verified-target.log），原生 Debug build 通過（image-source-input-native.log）。未另跑完整回歸；未 push、未啟動使用者 App／Xcode、未修改真實資料。

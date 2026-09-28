@@ -558,20 +558,13 @@ public actor AgentUserMessageTool: ToolExecutor, ToolRuntimeContextProviding {
             if replyID != nil, publishReply == nil { throw GroupReplyError.unavailable }
             guard entries.count <= 4 else { throw AgentImageError.limit }
             let images = try entries.map { entry -> AttachmentMetadata in
-                let id: String, rawAlt: Any?
-                if let value = entry as? String {
-                    id = value; rawAlt = nil
-                } else if let value = entry as? [String: Any],
-                          Set(value.keys).isSubset(of: ["image_id", "alt"]),
-                          let imageID = value["image_id"] as? String {
-                    id = imageID; rawAlt = value["alt"]
-                } else { throw AgentImageError.invalid }
+                let input = try AgentMessageImageInput(entry: entry)
+                // URL inputs require an atomic reviewed gallery publisher. Do not
+                // advertise or publish them through the incoming-image ID path.
+                guard case let .hostImage(id) = input.source else { throw AgentImageError.invalid }
                 guard var image = availableImages.first(where: { $0.id == id }) else { throw AgentImageError.unavailable }
-                if let rawAlt {
-                    guard let value = rawAlt as? String, value.count <= 500, value.utf8.count <= 2_000,
-                          !value.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else { throw AgentImageError.invalid }
-                    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-                    image.altText = trimmed.isEmpty ? nil : trimmed
+                if let object = entry as? [String: Any], object["alt"] != nil {
+                    image.altText = input.alt
                 }
                 return image
             }
