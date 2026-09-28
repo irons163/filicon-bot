@@ -596,3 +596,13 @@ RemoteAttachmentDownloading 新增 downloadFollowingReviewedRedirects；底層�
 首輪測試遇到分頁參數順序編譯錯誤，已修正。完整回歸另抓到既有附件跨 JSON 保存的 Date 浮點微差；測試改為時間差小於一微秒，其餘 metadata 嚴格完整比對，未修改 production 日期。測試修正曾因 createdAt 為 let 編譯失敗，改以 initializer 建立比對值後重跑。
 
 最終完整回歸 remote-gallery-storage-verified-full.log exit 0；原生 Debug build remote-gallery-storage-native.log exit 0，deep strict 簽章驗證通過。未 push、未啟動 App／Xcode，所有資料庫測試使用臨時資料，不涉及真實帳號或群組。
+
+## 第五十八階段：整批圖片集交易與群組保存（2026-09-28）
+
+AgentGalleryPublicationTransaction 將文字、完整有序 gallery、目的地、作者、replyTo 綁為同一次 review；僅一次 commit，驗證 canonical RoomMessage 所有內容與身份。已完成 call 可重取回執，改內容重用 call 被拒絕；保存失敗或回執不符後禁止盲目重送。核准前後檢查 scope／取消，拒絕、撤銷不 commit。
+
+ReviewedGroupImageGallery 將 review 綁到 lifetime 與 message ID；GroupService 檢查群組／成員、文字／回覆目標一致、不可混入其他 publication 種類，再一次性保存整則訊息。重複判斷納入文字與完整 gallery，重開保存保留同一則訊息的文字、圖片順序／alt、reply 與短地址。
+
+新增 13 種交易情境及 6 種真實群組儲存情境，既有 group remote 測試一併通過（gallery-group-target.log）；原生 build gallery-group-native.log 與 deep strict 簽章驗證通過。模型工具、App 核准入口、單聊／信箱與 gallery UI 尚未接線，不宣告功能已完整開放。未 push、未啟動使用者 App／Xcode、未修改真實資料。
+
+完整回歸 gallery-group-full.log exit 0，git diff --check 通過。

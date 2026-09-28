@@ -20,6 +20,53 @@ private struct RemoteGroupResponder: GroupAgentResponder {
 
 @Suite("Reviewed group remote attachment persistence")
 struct GroupRemotePublicationTests {
+    @Test(arguments: ["approve", "revoke", "group", "sender", "text", "reply"])
+    func galleryTransactionSavesOneReviewedMessage(mode: String) async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "gallery-group-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let agents = try AgentService(storeURL: root.appending(path: "agents.json"))
+        let sender = try await agents.create(name: "Sender", providerID: "fixture", modelID: "test")
+        let url = root.appending(path: "groups.json")
+        let groups = try GroupService(agents: agents, storeURL: url)
+        let group = try await groups.create(name: "Gallery", memberIDs: [sender.id])
+        let user = try await groups.postUserMessage("Compare", groupID: group.id)
+        let gallery = try RemoteImageGallery(images: [RemoteAttachmentReference(url: "https://example.com/a", alt: "A"),
+            RemoteAttachmentReference(url: "https://example.com/b", alt: "B")])
+        let responder = RemoteGroupResponder { publish in
+            let lifetime = AgentPublicationLifetime()
+            let transaction = AgentGalleryPublicationTransaction(conversationID: group.id, senderID: sender.id,
+                validateScope: {}, authorize: { review, _, _ in
+                    expectNoDifference(review.gallery, gallery)
+                    if mode == "revoke" { lifetime.close() }
+                }, commit: { review, _, _ in
+                    let reviewed = ReviewedGroupImageGallery(text: review.text, gallery: review.gallery,
+                        groupID: mode == "group" ? UUID() : group.id,
+                        senderID: mode == "sender" ? UUID() : sender.id,
+                        replyTo: review.replyTo, lifetime: lifetime)
+                    let saved = try #require(try await publish(.init(text: mode == "text" ? "Changed" : review.text,
+                        replyToMessageID: mode == "reply" ? nil : review.replyTo, remoteImages: reviewed)))
+                    return .init(review: review, message: saved)
+                })
+            let call = try NormalizedToolCall(id: "gallery", name: "SendMessage", argumentsJSON: Data("{}".utf8))
+            do {
+                let saved = try await transaction.publish(text: "Compare these", gallery: gallery, replyTo: user.id,
+                    call: call, context: ToolContext(conversationID: group.id))
+                expectNoDifference(mode, "approve")
+                expectNoDifference(saved.message.shortAddress, "t0s0")
+            } catch { #expect(mode != "approve") }
+            return ["PASS"]
+        }
+        _ = try await groups.run(groupID: group.id, responder: responder)
+        let reopened = try GroupService(agents: agents, storeURL: url)
+        let saved = await reopened.messages(groupID: group.id).filter { $0.remoteImages != nil }
+        expectNoDifference(saved.count, mode == "approve" ? 1 : 0)
+        if let message = saved.first {
+            expectNoDifference(message.text, "Compare these")
+            expectNoDifference(message.remoteImages, gallery)
+            expectNoDifference(message.replyToMessageID, user.id)
+        }
+    }
+
     @Test(arguments: ["approve", "deny", "unavailable", "new-user", "revoked"], [false, true])
     func sessionPublishesThroughDurableGroupCallback(mode: String, background: Bool) async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-session-remote-\(UUID())")
