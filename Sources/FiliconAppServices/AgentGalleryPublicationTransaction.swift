@@ -2,6 +2,21 @@ import Foundation
 import FiliconAgents
 import FiliconDomain
 
+/// Bound to one host-owned mailbox delivery, not model-provided scope.
+public struct AgentMailboxGalleryServices: Sendable {
+    public let incomingID: UUID
+    public let originID: UUID
+    public let senderID: UUID
+    public let validate: @Sendable () async throws -> Void
+    public let authorize: AgentMessagingSession.GalleryPublicationAuthorizer
+    public init(incomingID: UUID, originID: UUID, senderID: UUID,
+                validate: @escaping @Sendable () async throws -> Void,
+                authorize: @escaping AgentMessagingSession.GalleryPublicationAuthorizer) {
+        self.incomingID = incomingID; self.originID = originID; self.senderID = senderID
+        self.validate = validate; self.authorize = authorize
+    }
+}
+
 /// A host dispatch capability; validation must reject cancellation and stale scope.
 public struct AgentBackgroundGroupGalleryServices: Sendable {
     public let originID: UUID

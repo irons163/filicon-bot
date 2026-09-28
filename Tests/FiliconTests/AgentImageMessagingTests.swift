@@ -105,6 +105,77 @@ struct AgentImageMessagingTests {
         func check() throws { if !active { throw CancellationError() } }
     }
 
+    @Test(arguments: ["valid", "denied", "revoked", "wrong-incoming", "wrong-origin", "wrong-sender", "missing", "projection", "failure", "duplicate-call"])
+    func mailboxGalleryTransactionPublishesCanonicalReceipt(mode: String) async throws {
+        struct ProjectionFailure: Error {}
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let fence = FileDispatchFence()
+        let projected = ImagePublicationProbe()
+        let gallery = try RemoteImageGallery(images: [RemoteAttachmentReference(url: "https://example.com/a", alt: "A"),
+            RemoteAttachmentReference(url: "https://example.com/b", alt: "B")])
+        let session = AgentMessagingSession(originConversationID: f.origin, agents: f.agents, messenger: f.messenger,
+            registry: f.registry, coordinator: TurnCoordinator(registry: f.registry, toolCatalog: ToolCatalog()),
+            supportsMailboxQuestions: true, mailboxGallery: { inbound in
+                if mode == "missing" { return nil }
+                return AgentMailboxGalleryServices(incomingID: mode == "wrong-incoming" ? UUID() : inbound.id,
+                    originID: mode == "wrong-origin" ? UUID() : f.origin,
+                    senderID: mode == "wrong-sender" ? f.sender.id : f.recipient.id,
+                    validate: { try await fence.check() }, authorize: { sender, review, _, context in
+                        expectNoDifference(sender.id, f.recipient.id)
+                        expectNoDifference(review.text, "Designs")
+                        expectNoDifference(review.gallery, gallery)
+                        expectNoDifference(context.conversationID, f.origin)
+                        if mode == "denied" { throw CancellationError() }
+                        if mode == "revoked" { await fence.revoke() }
+                    })
+            })
+        let succeeds = ["valid", "projection", "failure", "duplicate-call"].contains(mode)
+        await f.registry.register(ImagePeerProvider { _, execute in
+            let args: [String: Any] = ["type": "text", "content": "Designs",
+                "images": [["url": "https://example.com/a", "alt": "A"], ["url": "https://example.com/b", "alt": "B"]]]
+            let call = try NormalizedToolCall(id: "gallery", name: "SendMessage",
+                argumentsJSON: JSONSerialization.data(withJSONObject: args))
+            let result = try await execute(call)
+            expectNoDifference(result.isError, !succeeds)
+            if succeeds {
+                let messages = await f.messenger.allMessages()
+                let incoming = try #require(messages.first)
+                let saved = try #require(incoming.delivery?.publications?.first)
+                expectNoDifference(saved.remoteImages, gallery)
+                expectNoDifference(saved.text, "Designs")
+                let directory = try await f.messenger.replyDirectory(replyingTo: incoming.id)
+                let address = try #require(directory.first(where: { $0.id == saved.id })?.shortAddress)
+                #expect(result.wireText.contains(address))
+            }
+            if mode == "duplicate-call" {
+                let replay = try await execute(call)
+                expectNoDifference(replay, result)
+            }
+            if mode == "failure" { throw ProviderError.invalidResponse }
+            return "PASS"
+        })
+        try await session.enqueueUserMessage(senderID: f.sender.id, recipientID: f.recipient.id, text: "Share designs")
+        do { try await session.drain(onUpdate: { message in
+            if message.remoteImages != nil {
+                if mode == "projection" { throw ProjectionFailure() }
+                await projected.append(message)
+            }
+        }) }
+        catch { #expect(["denied", "revoked"].contains(mode) && error is CancellationError) }
+        let messages = await f.messenger.allMessages()
+        let galleries = messages.flatMap { $0.delivery?.publications ?? [] }.compactMap(\.remoteImages)
+        expectNoDifference(galleries, succeeds ? [gallery] : [])
+        let visible = await projected.values
+        expectNoDifference(visible.compactMap(\.remoteImages), succeeds && mode != "projection" ? [gallery] : [])
+        if mode == "projection" || mode == "failure" {
+            expectNoDifference(messages.first?.delivery?.state, .failed)
+        }
+        let reopened = try AgentMessenger(service: f.agents, storeURL: f.root.appending(path: "messages.json"))
+        let restored = await reopened.allMessages()
+        expectNoDifference(restored.flatMap { $0.delivery?.publications ?? [] }.compactMap(\.remoteImages), galleries)
+        try await session.close()
+    }
+
     @Test(arguments: ["valid", "denied", "revoked", "wrong-incoming", "wrong-origin", "wrong-sender", "missing", "failure", "duplicate-call"])
     func mailboxRemoteTransactionPublishesCanonicalReceipt(mode: String) async throws {
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }

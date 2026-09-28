@@ -642,3 +642,13 @@ AgentMessagingSession 增加獨立 GalleryPublicationAuthorizer，savedGroupPubl
 gallery-session-final-target.log：7 tests／2 suites 通過；原生 gallery-session-native.log 與 deep strict 簽章驗證通過。後續仍需信箱／單聊工廠、App 核准入口與 gallery UI，以及本機／混合來源 parity。未 push、未啟動使用者 App／Xcode、未修改真實資料。
 
 完整回歸 gallery-session-full.log exit 0，git diff --check 通過。
+
+## 第六十二階段：信箱執行圖片集接線（2026-09-28）
+
+AgentMailboxGalleryServices 將 host 核准與 validator 綁定 incoming ID、來源對話及收件代理人。AgentMessagingSession 只在具 canonical mailbox receipt 的執行流程建立 gallery transaction，核准前後檢查 scope；保存呼叫 publishImageGallery，再記錄既有 AgentInboundOutput，讓文字、圖片集和短地址沿同一 durable receipt 傳遞。
+
+隔離 provider／信箱整合測試涵蓋有效發布、拒絕、核准後撤銷、錯誤 incoming／來源／作者、未提供 capability、保存後 provider failure、重複呼叫；另補 projection failure，確認已保存訊息不遺失且 delivery 標示失敗。重開信箱驗證完整有序 gallery 保留，成功回傳的地址與 reply directory 一致。
+
+初版定向 gallery-mailbox-session-target.log：31 tests／1 suite 通過；原生 gallery-mailbox-session-native.log 與 deep strict 簽章驗證通過。後續新增的 projection failure 案例納入完整回歸。App 尚未提供 gallery authorizer／UI，單聊主執行與本機／混合來源亦未完成，不能宣稱圖片集功能已全面可用。未 push、未啟動 App／Xcode、未修改真實資料。
+
+完整回歸 gallery-mailbox-session-full.log exit 0，包含上述 10 個信箱情境；git diff --check 通過。
