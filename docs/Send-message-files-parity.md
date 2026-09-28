@@ -530,3 +530,11 @@ AppModel 在下載前後及圖片辨識後核對帳號 generation、已保存訊
 群組／信箱已接線，但尚須額外 host-level scope 情境測試；影片／PDF 與轉址確認仍未完成。未請求實際外網、未啟動 App／Xcode、未 push 或修改真實帳號資料。
 
 完整非平行 Swift 回歸 exit 0（remote-image-ui-full.log），含最後加入的 render 不觸發下載斷言。
+
+## 第五十階段：群組／信箱預覽 scope 驗收（2026-09-28）
+
+在前景／背景群組及普通信箱／單聊委派的核准整合測試上，接續使用真正保存的遠端 publication 驗證圖片預覽。錯誤訊息 ID 必須在下載前拒絕（計數為零）；成功副本核對完整 bytes、alt 與關閉後刪除。下載回呼中切換群組或切換帳號，結果不得成為預覽。測試使用注入的記憶體 PNG，沒有外網存取或直接塞入 fake publication。
+
+依 pfw-testing 沿用隔離 AppModel fixture 與 CustomDump 斷言。相關 12 群組情境、8 信箱情境、6 單聊預覽情境、14 語系／主題 render 與摘要測試全部通過（remote-preview-scope-target.log，5 tests／2 suites，exit 0）。此批只改測試與文件，未另跑原生建置或全套回歸；上階段相同 production source 已完成兩者。
+
+影片／PDF、轉址確認與文字內 URL 圖片仍有差異；未 push、未啟動 App／Xcode、未改真實帳號或群組資料。

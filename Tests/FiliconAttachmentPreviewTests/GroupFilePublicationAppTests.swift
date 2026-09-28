@@ -149,6 +149,13 @@ private struct GroupFileAppProvider: AIProvider {
         let history = await groups.messages(groupID: destination.id)
         let attachments = history.compactMap(\.remoteAttachment)
         expectNoDifference(attachments, mode == "approve" ? [try RemoteAttachmentReference(url: url, alt: "報表說明")] : [])
+        if mode == "approve" {
+            let publication = try #require(history.first { $0.remoteAttachment != nil })
+            let reference = try #require(publication.remoteAttachment)
+            model.selectedGroupID = destination.id
+            try await verifySavedRemotePreview(model: model, reference: reference,
+                location: .group(destination.id, publication.id), wrongLocation: .group(destination.id, UUID()))
+        }
     }
 
     @Test(arguments: ["approve", "reply", "deny", "stop", "account", "direct-message-reserve", "direct-message-late"])
@@ -315,6 +322,12 @@ private struct GroupFileAppProvider: AIProvider {
             let binding = DirectConversationAgentBinding(accountID: "local", agentID: sender.id)
             let recovered = try await messenger.directPeerTranscript(originID: originID, binding: binding)
             expectNoDifference(recovered.compactMap { $0.message.remoteAttachment }, [reference])
+        }
+        if mode == "approve" {
+            let incoming = try #require(messages.first { $0.delivery?.publications?.contains(where: { $0.remoteAttachment == reference }) == true })
+            let publication = try #require(incoming.delivery?.publications?.first { $0.remoteAttachment == reference })
+            try await verifySavedRemotePreview(model: model, reference: reference,
+                location: .mailbox(incoming.id, publication.id), wrongLocation: .mailbox(incoming.id, UUID()))
         }
     }
 

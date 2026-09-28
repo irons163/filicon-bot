@@ -7,14 +7,58 @@ import FiliconDomain
 @testable import Filicon
 @testable import FiliconAppServices
 
-private struct RemotePreviewFixture: RemoteAttachmentDownloading {
+struct RemotePreviewFixture: RemoteAttachmentDownloading {
     let data: Data
     let substitutedReference: RemoteAttachmentReference?
-    let beforeReturn: @MainActor @Sendable () -> Void
+    let beforeReturn: @MainActor @Sendable () async -> Void
     func download(_ reference: RemoteAttachmentReference, maximumBytes: Int) async throws -> RemoteAttachmentDownload {
         await beforeReturn()
         return RemoteAttachmentDownload(reference: substitutedReference ?? reference, data: data, declaredMIMEType: "text/html")
     }
+}
+
+@MainActor func verifySavedRemotePreview(model: AppModel, reference: RemoteAttachmentReference,
+                                        location: AppModel.RemoteAttachmentLocation,
+                                        wrongLocation: AppModel.RemoteAttachmentLocation) async throws {
+    let bitmap = try #require(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 2, pixelsHigh: 2,
+        bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+        colorSpaceName: .deviceRGB, bytesPerRow: 8, bitsPerPixel: 32))
+    for x in 0..<2 { for y in 0..<2 { bitmap.setColor(.blue, atX: x, y: y) } }
+    let data = try #require(bitmap.representation(using: .png, properties: [:]))
+    var downloads = 0
+    model.remoteAttachmentDownloader = RemotePreviewFixture(data: data, substitutedReference: nil,
+        beforeReturn: { downloads += 1 })
+    do {
+        try await model.previewRemoteImage(reference, at: wrongLocation)
+        Issue.record("Unknown message identity must not download")
+    } catch is CancellationError {}
+    expectNoDifference(downloads, 0)
+    try await model.previewRemoteImage(reference, at: location)
+    expectNoDifference(downloads, 1)
+    let item = try #require(model.attachmentPreview)
+    defer { model.dismissAttachmentPreview() }
+    expectNoDifference(try AttachmentFileIntegrity().verifiedData(for: item.files[0]), data)
+    expectNoDifference(item.metadata?.altText, reference.alt)
+    model.dismissAttachmentPreview()
+    #expect(!FileManager.default.fileExists(atPath: item.fileURL.path))
+
+    if case let .group(groupID, _) = location {
+        model.remoteAttachmentDownloader = RemotePreviewFixture(data: data, substitutedReference: nil,
+            beforeReturn: { model.selectedGroupID = UUID() })
+        do {
+            try await model.previewRemoteImage(reference, at: location)
+            Issue.record("A group switch must invalidate the pending preview")
+        } catch is CancellationError {}
+        #expect(model.attachmentPreview == nil)
+        model.selectedGroupID = groupID
+    }
+    model.remoteAttachmentDownloader = RemotePreviewFixture(data: data, substitutedReference: nil,
+        beforeReturn: { await model.cancelAutoReviewApprovals(nextAccountID: "preview-other-account") })
+    do {
+        try await model.previewRemoteImage(reference, at: location)
+        Issue.record("An account switch must invalidate the pending preview")
+    } catch is CancellationError {}
+    #expect(model.attachmentPreview == nil)
 }
 
 @Suite("Remote attachment card rendering", .timeLimit(.minutes(1)))
