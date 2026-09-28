@@ -13,6 +13,7 @@ public struct GroupConversationResponder: GroupAgentResponder {
     private let delegatedMessage: RoomMessage?
     private let backgroundFileServices: AgentBackgroundGroupFileServices?
     private let backgroundRemoteServices: AgentBackgroundGroupRemoteServices?
+    private let backgroundGalleryServices: AgentBackgroundGroupGalleryServices?
     private let toolScopeID: UUID
     private let userMessageID: UUID?
     private let userImages: [InferenceAttachment]
@@ -24,6 +25,7 @@ public struct GroupConversationResponder: GroupAgentResponder {
                 delegatedMessage: RoomMessage? = nil, toolScopeID: UUID? = nil,
                 backgroundFileServices: AgentBackgroundGroupFileServices? = nil,
                 backgroundRemoteServices: AgentBackgroundGroupRemoteServices? = nil,
+                backgroundGalleryServices: AgentBackgroundGroupGalleryServices? = nil,
                 userMessageID: UUID? = nil, userImages: [InferenceAttachment] = [], imageRecipientIDs: Set<UUID> = [],
                 questionAccountID: String? = nil, questionLifetime: AgentPublicationLifetime? = nil) {
         self.groupID = groupID; self.registry = registry; self.coordinator = coordinator
@@ -31,6 +33,7 @@ public struct GroupConversationResponder: GroupAgentResponder {
         self.delegatedMessage = delegatedMessage; self.toolScopeID = toolScopeID ?? groupID
         self.backgroundFileServices = backgroundFileServices
         self.backgroundRemoteServices = backgroundRemoteServices
+        self.backgroundGalleryServices = backgroundGalleryServices
         self.userMessageID = userMessageID; self.userImages = userImages
         self.imageRecipientIDs = imageRecipientIDs
         self.questionAccountID = questionAccountID; self.questionLifetime = questionLifetime
@@ -180,7 +183,8 @@ public struct GroupConversationResponder: GroupAgentResponder {
         if delegatedMessage != nil, let onSavedPublication, let messaging, let roomContext {
             publisher = try await messaging.savedBackgroundGroupPublisher(for: agent.id, groupID: groupID,
                 memberIDs: roomContext.group.memberIDs, replyHistory: replyHistory,
-                fileServices: backgroundFileServices, remoteServices: backgroundRemoteServices, publish: onSavedPublication)
+                fileServices: backgroundFileServices, remoteServices: backgroundRemoteServices,
+                galleryServices: backgroundGalleryServices, publish: onSavedPublication)
         } else if delegatedMessage == nil, let onSavedPublication, let roomContext, let questionLifetime {
             if let messaging, let publicationRequestID = latestUser?.id {
                 // File publication can start from a text-only request. Image

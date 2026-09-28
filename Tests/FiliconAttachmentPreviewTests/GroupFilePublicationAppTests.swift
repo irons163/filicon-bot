@@ -54,6 +54,7 @@ private struct GroupFileAppProvider: AIProvider {
     var peerRecipientID: UUID? = nil
     var replyTo: String? = nil
     var expectedFileSuccess: Bool? = nil
+    var gallery = false
     let descriptor = ProviderDescriptor(id: "group-file-app", displayName: "Files fixture", requiresAPIKey: false)
     func models() async throws -> [AIModel] { [.init(id: "test")] }
     func stream(_ request: InferenceRequest) -> AsyncThrowingStream<InferenceEvent, Error> {
@@ -61,7 +62,7 @@ private struct GroupFileAppProvider: AIProvider {
             do {
                 if request.toolExchanges.isEmpty {
                     let name: ToolName
-                    var arguments: [String: String]
+                    var arguments: [String: Any]
                     if let peerRecipientID, request.messages.first?.text.contains("You are Sender,") == true {
                         name = "SendToAgent"
                         arguments = ["recipientID": peerRecipientID.uuidString, "message": "Publish the reviewed report"]
@@ -71,6 +72,10 @@ private struct GroupFileAppProvider: AIProvider {
                     } else {
                         name = "SendMessage"
                         arguments = ["type": "attachment", "url": url, "alt": "報表說明"]
+                        if gallery {
+                            arguments = ["type": "text", "content": "Compare designs",
+                                "images": [["url": url, "alt": "報表說明"], ["url": url + "2", "alt": "Second design"]]]
+                        }
                         if let replyTo { arguments["reply_to"] = replyTo }
                     }
                     let call = try NormalizedToolCall(id: "publish-report", name: name,
@@ -95,6 +100,68 @@ private struct GroupFileAppProvider: AIProvider {
 
 @Suite("App group file publication", .timeLimit(.minutes(1)))
 @MainActor struct GroupFilePublicationAppTests {
+    @Test(arguments: ["approve", "deny", "stop", "destination-stop", "account", "members"], [false, true])
+    func galleryPublicationRequiresWholeMessageReview(mode: String, background: Bool) async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "filicon-gallery-host-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+        await model.bootstrap()
+        let url = "https://example.com/design?signature=a%2Bb"
+        await model.registry.register(GroupFileAppProvider(url: url, gallery: true))
+        let value = await model.createAgent(name: "Sender", summary: "", instructions: "", providerID: "group-file-app", modelID: "test")
+        let sender = try #require(value)
+        #expect(await model.createGroup(name: "Gallery", summary: "", memberIDs: [sender.id]))
+        let group = try #require(model.groups.first)
+        var destination = group
+        if background {
+            let designerValue = await model.createAgent(name: "Designer", summary: "", instructions: "", providerID: "group-file-app", modelID: "test")
+            let designer = try #require(designerValue)
+            #expect(await model.createGroup(name: "Destination", summary: "", memberIDs: [sender.id, designer.id]))
+            destination = try #require(model.groups.first(where: { $0.name == "Destination" }))
+            await model.registry.register(GroupFileAppProvider(url: url, destinationID: destination.id, gallery: true))
+        }
+        let send = Task { await model.sendGroupMessage(groupID: group.id, text: "Share designs") }
+        defer { send.cancel() }
+        var delegationID: String?
+        if background {
+            let delegation = try await pending(model)
+            delegationID = delegation.id
+            await model.resolveGroupApproval(delegation, groupID: group.id, approve: true)
+        }
+        let approval = try await pending(model, excluding: delegationID)
+        expectNoDifference(approval.action.context.metadata["agentGalleryPublication"], "true")
+        expectNoDifference(approval.action.context.conversationID, group.id)
+        expectNoDifference(approval.action.context.metadata["agentGroupName"], destination.name)
+        let details = try #require(approval.action.context.metadata["agentMessage"])
+        for text in ["Compare designs", url, url + "2", "報表說明", "Second design"] { #expect(details.contains(text)) }
+        #expect(model.groupMessages[destination.id, default: []].allSatisfy { $0.remoteImages == nil })
+        if mode == "stop" { await model.stopGroup(id: group.id) }
+        if mode == "destination-stop" { await model.stopGroup(id: destination.id) }
+        if mode == "account" { await model.cancelAutoReviewApprovals(nextAccountID: "other") }
+        if mode == "members" { await model.updateGroupMembers(groupID: destination.id, memberIDs: []) }
+        await model.resolveGroupApproval(approval, groupID: group.id, approve: mode != "deny")
+        await send.value
+        let deadline = ContinuousClock.now + .seconds(10)
+        while model.runningGroups.contains(destination.id), ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(!model.runningGroups.contains(destination.id))
+        #expect(model.pendingAutoReviewApprovals.isEmpty)
+        let agents = try AgentService(storeURL: root.appending(path: "agents.json"))
+        let groups = try GroupService(agents: agents, storeURL: root.appending(path: "groups.json"))
+        let history = await groups.messages(groupID: destination.id)
+        let saved = history.filter { $0.remoteImages != nil }
+        expectNoDifference(saved.count, mode == "approve" ? 1 : 0)
+        if let message = saved.first {
+            expectNoDifference(message.text, "Compare designs")
+            expectNoDifference(message.remoteImages?.images.map(\.url), [url, url + "2"])
+            expectNoDifference(message.remoteImages?.images.map(\.alt), ["報表說明", "Second design"])
+            model.selectedGroupID = destination.id
+            try await verifySavedRemotePreview(model: model, reference: try #require(message.remoteImages?.images.first),
+                location: .group(destination.id, message.id), wrongLocation: .group(destination.id, UUID()))
+        }
+    }
+
     @Test(arguments: ["approve", "deny", "stop", "destination-stop", "account", "members"], [false, true])
     func remotePublicationRequiresHostReview(mode: String, background: Bool) async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-remote-host-\(UUID())")

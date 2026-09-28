@@ -664,3 +664,15 @@ AppModel 預覽驗證涵蓋 persisted gallery 的精確 URL／alt，拒絕未知
 目前是未下載來源卡片＋明確下載預覽，尚未做到原版的內嵌圖片縮圖；也尚未注入 App gallery 核准工廠。此批不宣告原版圖片集 parity 完成，本機／混合來源仍待補。未 push、未啟動使用者 App／Xcode、未改真實資料。
 
 完整回歸 gallery-ui-full.log exit 0；原生 gallery-ui-verified-native.log exit 0，deep strict 簽章及 git diff --check 通過。
+
+## 第六十四階段：App 前景／背景群組核准入口（2026-09-28）
+
+AppModel 注入 group gallery authorizer；背景委派經 GroupConversationResponder 傳入綁定 dispatch 的 gallery services。核准提示完整顯示文字、依序編號的每個 URL／alt、reply ID（若有）及未下載提示，沿用 SendMessage 的純文字完整 payload UI，不只展示有截斷的 summary。
+
+核准前後檢查來源執行、目的群組／成員、帳號 generation 與背景 dispatch；停止、換帳號或變更成員使舊核准失效。既有圖片來源卡片與明確預覽已接線，前景與背景群組開始可提供 HTTPS gallery 能力；不授予下載／遠端服務權限。
+
+新增 12 種隔離 AppModel 整合情境，驗證核准前零 gallery、核准後一則完整文字／有序 gallery、拒絕與撤銷無保存、pending 清理、重開持久資料，以及群組圖片預覽的正確／錯誤訊息 ID 與切換帳號檢查。gallery-app-group-target.log：8 tests／1 suite 通過（含既有附件整合）；原生 gallery-app-group-native.log exit 0。
+
+仍待 App 信箱與單聊主執行核准接線、原版內嵌縮圖、本機／混合來源，不能宣告整體 parity 完成。未 push、未啟動使用者 App／Xcode、未修改真實資料。
+
+完整回歸 gallery-app-group-full.log exit 0，deep strict 簽章及 git diff --check 通過。
