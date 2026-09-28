@@ -20,6 +20,87 @@ private struct RemoteGroupResponder: GroupAgentResponder {
 
 @Suite("Reviewed group remote attachment persistence")
 struct GroupRemotePublicationTests {
+    @Test(arguments: ["approve", "deny", "unavailable", "new-user", "members", "revoked"], [false, true])
+    func sessionGalleryUsesScopedDurableGroupPublication(mode: String, background: Bool) async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "filicon-session-gallery-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let agents = try AgentService(storeURL: root.appending(path: "agents.json"))
+        let sender = try await agents.create(name: "Sender", providerID: "fixture", modelID: "test")
+        let other = try await agents.create(name: "Other", providerID: "fixture", modelID: "test")
+        let store = root.appending(path: "groups.json")
+        let groups = try GroupService(agents: agents, storeURL: store)
+        let group = try await groups.create(name: "Gallery", memberIDs: [sender.id])
+        let user = try await groups.postUserMessage("Share designs", groupID: group.id)
+        let messenger = try AgentMessenger(service: agents, storeURL: root.appending(path: "messages.json"))
+        let registry = ProviderRegistry(), origin = background ? UUID() : group.id
+        let gallery = try RemoteImageGallery(images: [RemoteAttachmentReference(url: "https://example.com/a", alt: "A"),
+            RemoteAttachmentReference(url: "https://example.com/b", alt: "B")])
+        let authorizer: AgentMessagingSession.GalleryPublicationAuthorizer = { profile, review, _, context in
+            expectNoDifference(context.conversationID, origin)
+            expectNoDifference(profile.id, sender.id)
+            expectNoDifference(review.conversationID, group.id)
+            expectNoDifference(review.replyTo, user.id)
+            expectNoDifference(review.text, "Designs")
+            expectNoDifference(review.gallery, gallery)
+            if mode == "deny" { throw AgentMessagingError.approvalRequired }
+            if mode == "new-user" { _ = try await groups.postUserMessage("Changed request", groupID: group.id) }
+            if mode == "members" { try await groups.updateMembers(groupID: group.id, memberIDs: [sender.id, other.id]) }
+        }
+        let session = AgentMessagingSession(originConversationID: origin, agents: agents, messenger: messenger,
+            registry: registry, coordinator: TurnCoordinator(registry: registry), groups: groups,
+            authorizeGalleryPublication: mode == "unavailable" ? nil : authorizer)
+        let responder = RemoteGroupResponder { publish in
+            let tool: AgentUserMessageTool
+            if background {
+                for wrongOrigin in [false, true] {
+                    let invalid = AgentBackgroundGroupGalleryServices(originID: wrongOrigin ? UUID() : origin,
+                        groupID: wrongOrigin ? group.id : UUID(), validate: {}, authorize: authorizer)
+                    await #expect(throws: AgentMessagingError.scopeMismatch) {
+                        try await session.savedBackgroundGroupPublisher(for: sender.id, groupID: group.id,
+                            memberIDs: [sender.id], replyHistory: [user], galleryServices: invalid, publish: publish)
+                    }
+                }
+                let services = AgentBackgroundGroupGalleryServices(originID: origin, groupID: group.id,
+                    validate: {
+                        let history = await groups.messages(groupID: group.id)
+                        guard history.last(where: { $0.senderID == nil })?.id == user.id else {
+                            throw AgentMessagingError.scopeMismatch
+                        }
+                    }, authorize: authorizer)
+                tool = try await session.savedBackgroundGroupPublisher(for: sender.id, groupID: group.id,
+                    memberIDs: [sender.id], replyHistory: [user],
+                    galleryServices: mode == "unavailable" ? nil : services, publish: publish)
+            } else {
+                tool = try await session.savedGroupPublisher(for: sender.id, userMessageID: user.id,
+                    replyHistory: [user], questionAccountID: nil, memberIDs: [sender.id], publish: publish)
+            }
+            if mode == "revoked" { session.revokeProfileChanges() }
+            let args: [String: Any] = ["type": "text", "content": "Designs", "reply_to": user.id.uuidString,
+                "images": [["url": "https://example.com/a", "alt": "A"], ["url": "https://example.com/b", "alt": "B"]]]
+            let call = try NormalizedToolCall(id: "gallery", name: "SendMessage",
+                argumentsJSON: JSONSerialization.data(withJSONObject: args))
+            do {
+                let result = try await tool.execute(call, context: .init(conversationID: origin))
+                expectNoDifference(result.isError, mode != "approve")
+            } catch is CancellationError {
+                // Membership updates cancel the active group run immediately.
+                #expect(["members", "revoked"].contains(mode))
+            }
+            return ["PASS"]
+        }
+        _ = try await groups.run(groupID: group.id, responder: responder)
+        try await session.close()
+        let reopened = try GroupService(agents: agents, storeURL: store)
+        let saved = await reopened.messages(groupID: group.id).filter { $0.remoteImages != nil }
+        expectNoDifference(saved.count, mode == "approve" ? 1 : 0)
+        if let message = saved.first {
+            expectNoDifference(message.remoteImages, gallery)
+            expectNoDifference(message.text, "Designs")
+            expectNoDifference(message.shortAddress, "t0s0")
+            expectNoDifference(message.replyToMessageID, user.id)
+        }
+    }
+
     @Test(arguments: ["approve", "revoke", "group", "sender", "text", "reply"])
     func galleryTransactionSavesOneReviewedMessage(mode: String) async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "gallery-group-\(UUID())")

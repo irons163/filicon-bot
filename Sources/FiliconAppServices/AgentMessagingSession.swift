@@ -77,6 +77,8 @@ public actor AgentMessagingSession {
     private let groupFiles: AgentGroupFilePublicationServices?
     public typealias RemotePublicationAuthorizer = @Sendable (AgentProfile, AgentRemotePublicationTransaction.Review, NormalizedToolCall, ToolContext) async throws -> Void
     private let authorizeRemotePublication: RemotePublicationAuthorizer?
+    public typealias GalleryPublicationAuthorizer = @Sendable (AgentProfile, AgentGalleryPublicationTransaction.Review, NormalizedToolCall, ToolContext) async throws -> Void
+    private let authorizeGalleryPublication: GalleryPublicationAuthorizer?
     private let mailboxFiles: (@Sendable (AgentMessage) -> AgentMailboxFileServices?)?
     private let mailboxRemote: (@Sendable (AgentMessage) -> AgentMailboxRemoteServices?)?
     private let publicationLifetime = AgentPublicationLifetime()
@@ -135,6 +137,7 @@ public actor AgentMessagingSession {
                 authorizePublication: @escaping PublicationAuthorizer = { _, _, _, _, _ in throw AgentMessagingError.approvalRequired },
                 groupFiles: AgentGroupFilePublicationServices? = nil,
                 authorizeRemotePublication: RemotePublicationAuthorizer? = nil,
+                authorizeGalleryPublication: GalleryPublicationAuthorizer? = nil,
                 mailboxFiles: (@Sendable (AgentMessage) -> AgentMailboxFileServices?)? = nil,
                 mailboxRemote: (@Sendable (AgentMessage) -> AgentMailboxRemoteServices?)? = nil,
                 authorize: @escaping Authorizer = { _, _, _, _, _ in throw AgentMessagingError.approvalRequired },
@@ -159,6 +162,7 @@ public actor AgentMessagingSession {
         self.authorizePublication = authorizePublication
         self.groupFiles = groupFiles
         self.authorizeRemotePublication = authorizeRemotePublication
+        self.authorizeGalleryPublication = authorizeGalleryPublication
         self.mailboxFiles = mailboxFiles
         self.mailboxRemote = mailboxRemote
     }
@@ -203,6 +207,21 @@ public actor AgentMessagingSession {
         try checkOpen()
         let filePublication = makeGroupFilePublication(sender: sender, userMessageID: userMessageID, publish: publish)
         let remotePublication = makeGroupRemotePublication(sender: sender, userMessageID: userMessageID, publish: publish)
+        let galleryPublication: AgentGalleryPublicationTransaction?
+        if let authorizeGalleryPublication {
+            let validate: @Sendable () async throws -> Void = { [self] in
+                _ = try await availableImages(senderID: senderID, replyTo: nil, groupUserMessageID: userMessageID)
+                guard let groups, let current = await groups.list().first(where: { $0.id == originConversationID }),
+                      current.memberIDs == memberIDs,
+                      let currentSender = await agents.profile(id: senderID), currentSender.archivedAt == nil else {
+                    throw AgentGroupPostError.changed
+                }
+                try await checkOpen()
+            }
+            try await validate()
+            galleryPublication = makeGroupGalleryPublication(sender: sender, destinationID: originConversationID,
+                validate: validate, authorize: authorizeGalleryPublication, publish: publish)
+        } else { galleryPublication = nil }
         return AgentUserMessageTool(conversationID: originConversationID, senderID: senderID, replyHistory: replyHistory,
             supportsQuestions: questionAccountID != nil, defaultReplyToMessageID: defaultReplyToMessageID,
             availableImages: images, imageStore: imageStore,
@@ -214,7 +233,8 @@ public actor AgentMessagingSession {
                 try await validateGroupPublication(images: [], senderID: senderID, userMessageID: userMessageID)
                 return try await publish(.init(text: reference.summary, sourceUserMessageID: userMessageID,
                     lifetime: publicationLifetime, replyToMessageID: replyID, cursorAgent: reference))
-            }, filePublication: filePublication, remotePublication: remotePublication) { [self] text, images, replyID, question in
+            }, filePublication: filePublication, remotePublication: remotePublication,
+            galleryPublication: galleryPublication) { [self] text, images, replyID, question in
                 try await validateGroupPublication(images: images, senderID: senderID, userMessageID: userMessageID)
                 let card = question.flatMap { question in questionAccountID.map {
                     GroupQuestion(question: question, accountID: $0, memberIDs: memberIDs)
@@ -222,6 +242,24 @@ public actor AgentMessagingSession {
                 return try await publish(.init(text: text, images: images, sourceUserMessageID: userMessageID,
                     lifetime: publicationLifetime, question: card, replyToMessageID: replyID))
             }
+    }
+
+    private func makeGroupGalleryPublication(sender: AgentProfile, destinationID: UUID,
+        validate: @escaping @Sendable () async throws -> Void,
+        authorize: @escaping GalleryPublicationAuthorizer,
+        publish: @escaping @Sendable (GroupAgentPublication) async throws -> RoomMessage?) -> AgentGalleryPublicationTransaction {
+        AgentGalleryPublicationTransaction(conversationID: originConversationID, senderID: sender.id,
+            destinationConversationID: destinationID, validateScope: validate,
+            authorize: { review, call, context in try await authorize(sender, review, call, context) },
+            commit: { [self] review, _, _ in
+                try await validate()
+                let gallery = ReviewedGroupImageGallery(text: review.text, gallery: review.gallery,
+                    groupID: review.conversationID, senderID: sender.id,
+                    replyTo: review.replyTo, lifetime: publicationLifetime)
+                guard let saved = try await publish(.init(text: review.text, replyToMessageID: review.replyTo,
+                    remoteImages: gallery)) else { throw AgentGalleryPublicationTransaction.Failure.invalidReceipt }
+                return .init(review: review, message: saved)
+            })
     }
 
     private func makeGroupRemotePublication(sender: AgentProfile, userMessageID: UUID,
@@ -374,6 +412,7 @@ public actor AgentMessagingSession {
     public func savedBackgroundGroupPublisher(for senderID: UUID, groupID: UUID, memberIDs: [UUID], replyHistory: [RoomMessage],
                                               fileServices: AgentBackgroundGroupFileServices? = nil,
                                               remoteServices: AgentBackgroundGroupRemoteServices? = nil,
+                                              galleryServices: AgentBackgroundGroupGalleryServices? = nil,
                                               publish: @escaping @Sendable (GroupAgentPublication) async throws -> RoomMessage?) async throws -> AgentUserMessageTool {
         guard let sender = await agents.profile(id: senderID), sender.archivedAt == nil else {
             throw AgentMessagingError.invalidRecipient
@@ -417,13 +456,33 @@ public actor AgentMessagingSession {
             remotePublication = makeGroupRemotePublication(sender: sender, destinationID: groupID,
                 validate: validate, authorize: remoteServices.authorize, publish: publish)
         } else { remotePublication = nil }
+        let galleryPublication: AgentGalleryPublicationTransaction?
+        if let galleryServices {
+            guard galleryServices.originID == originConversationID, galleryServices.groupID == groupID else {
+                throw AgentMessagingError.scopeMismatch
+            }
+            let validate: @Sendable () async throws -> Void = { [self] in
+                try await checkOpen()
+                try await galleryServices.validate()
+                guard let groups, let current = await groups.list().first(where: { $0.id == groupID }),
+                      current.memberIDs == memberIDs, memberIDs.contains(senderID),
+                      let currentSender = await agents.profile(id: senderID), currentSender.archivedAt == nil else {
+                    throw AgentGroupPostError.changed
+                }
+                try await checkOpen()
+            }
+            try await validate()
+            galleryPublication = makeGroupGalleryPublication(sender: sender, destinationID: groupID,
+                validate: validate, authorize: galleryServices.authorize, publish: publish)
+        } else { galleryPublication = nil }
         return AgentUserMessageTool(conversationID: originConversationID, senderID: senderID,
             replyHistory: replyHistory, supportsQuestions: true, replyGroupID: groupID,
             publishCursorAgent: { [self] reference, replyID in
                 try await checkOpen()
                 return try await publish(.init(text: reference.summary, lifetime: publicationLifetime,
                     replyToMessageID: replyID, cursorAgent: reference))
-            }, filePublication: filePublication, remotePublication: remotePublication) { [self] text, images, replyID, question in
+            }, filePublication: filePublication, remotePublication: remotePublication,
+            galleryPublication: galleryPublication) { [self] text, images, replyID, question in
             guard images.isEmpty else { throw AgentImageError.unavailable }
             try await checkOpen()
             let card = question.map { GroupQuestion(question: $0, accountID: accountID, memberIDs: memberIDs) }

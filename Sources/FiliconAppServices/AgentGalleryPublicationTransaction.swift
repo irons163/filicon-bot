@@ -2,6 +2,20 @@ import Foundation
 import FiliconAgents
 import FiliconDomain
 
+/// A host dispatch capability; validation must reject cancellation and stale scope.
+public struct AgentBackgroundGroupGalleryServices: Sendable {
+    public let originID: UUID
+    public let groupID: UUID
+    public let validate: @Sendable () async throws -> Void
+    public let authorize: AgentMessagingSession.GalleryPublicationAuthorizer
+    public init(originID: UUID, groupID: UUID,
+                validate: @escaping @Sendable () async throws -> Void,
+                authorize: @escaping AgentMessagingSession.GalleryPublicationAuthorizer) {
+        self.originID = originID; self.groupID = groupID
+        self.validate = validate; self.authorize = authorize
+    }
+}
+
 /// One reviewed text-and-gallery publication. The host commits exactly one durable message.
 /// Locators are not downloaded by this transaction and confer no network or file permission.
 public actor AgentGalleryPublicationTransaction {

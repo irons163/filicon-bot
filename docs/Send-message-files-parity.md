@@ -630,3 +630,15 @@ AgentUserMessageTool 可注入 AgentGalleryPublicationTransaction；初始化驗
 此批是可注入的工具能力，App／session 尚未提供 gallery 交易，正常 App 尚不宣告支援；接續須補群組／背景／信箱／單聊工廠與核准 UI、圖片集呈現及端到端測試。本機及混合來源圖片集仍屬原版差異，未縮減原需求。未 push、未啟動使用者 App／Xcode、未修改真實資料。
 
 完整回歸 gallery-tool-full.log exit 0，git diff --check 通過。
+
+## 第六十一階段：前景／背景群組圖片集接線（2026-09-28）
+
+AgentMessagingSession 增加獨立 GalleryPublicationAuthorizer，savedGroupPublisher 以目前人類請求、完整成員名單、作者有效性及執行 lifetime 建立交易。背景群組使用 AgentBackgroundGroupGalleryServices 綁定來源與目的群組，核准前後重新驗證派送及成員，不能繼承前景請求或略過派送檢查。
+
+核准後透過 ReviewedGroupImageGallery 呼叫原有 durable group callback，一則訊息原子保存文字、順序／alt、reply 與短地址；缺少核准能力時 descriptor 不宣告 gallery。App 尚未注入此能力，等待核准／顯示 UI 完成。
+
+新增前景／背景共 12 種情境：成功、拒絕、未提供能力、新人類請求、成員變動、撤銷，另檢查背景來源／目的地不符。真實 GroupService 重開後驗證成功只保存一則 gallery，其餘零則。初次建置參數 replyToMessageID 改為正確 replyTo；成員更新實際會取消群組執行，測試修正為驗證 cancellation 及無保存，非放寬 production 邊界。
+
+gallery-session-final-target.log：7 tests／2 suites 通過；原生 gallery-session-native.log 與 deep strict 簽章驗證通過。後續仍需信箱／單聊工廠、App 核准入口與 gallery UI，以及本機／混合來源 parity。未 push、未啟動使用者 App／Xcode、未修改真實資料。
+
+完整回歸 gallery-session-full.log exit 0，git diff --check 通過。
