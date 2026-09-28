@@ -502,3 +502,11 @@ App 核准測試擴為信箱／單聊 × 同意、拒絕、停止、帳號切換
 RemoteAttachmentCardTests 的描述／URL／長度斷言與七語系 × 深淺色離屏 bitmap 渲染通過，包含群組與信箱引用，openURL spy 驗證渲染不開啟網址（remote-reply-preview-target.log）。原生 Debug build 及 deep strict 簽章通過（remote-reply-preview-native.log）。未另重跑完整回歸，未啟動使用者 App，未下載遠端內容或修改真實資料。
 
 後續仍須原版媒體展示、文字內 URL 圖片與其網路政策；本批不以 locator／摘要替代這些差異。
+
+## 第四十七階段：遠端媒體有界下載層（2026-09-28）
+
+新增 RemoteAttachmentDownloading 與 URLSession 串流實作，供後續使用者明確請求的媒體預覽使用。使用 ephemeral session、停用共用 Cookie／credential／cache、清除額外 headers；維持系統 TLS 驗證並拒絕登入 challenge。要求 HTTP 200，先查 Content-Length，再逐 byte 檢查上限（呼叫端限額最高 256 MiB）、取消與空內容。request／resource timeout 分別 30／60 秒。轉址不自動追蹤，回報 Location 留給後續 UI 重新確認；不得當作原網址已下載成功。
+
+結果明確是未驗證 bytes 加伺服器宣告 MIME，不聲稱媒體安全或內容類型已驗證。尚未接到 UI、沒有自動載入，也不以這層宣称原版預覽完成；後續須內容辨識、預覽副本生命週期、帳號／訊息 scope 與轉址確認流程。
+
+離線 URLProtocol 測試涵蓋成功、HTTP 錯誤、302、宣告過大、串流超量、空內容、非法上限與啟動前取消；驗證沒有 Authorization／Cookie headers，共八案例通過（remote-download-final-target.log）。原生 Debug build 與 deep strict 簽章通過（remote-download-native.log）。未重跑全套、未實際網路請求、未啟動 App／Xcode、未改真實帳號資料。
