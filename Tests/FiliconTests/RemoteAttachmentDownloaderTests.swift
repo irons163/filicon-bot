@@ -27,6 +27,49 @@ private final class RemoteDownloadProtocol: URLProtocol, @unchecked Sendable {
 
 @Suite("Bounded remote attachment download")
 struct RemoteAttachmentDownloaderTests {
+    @Test(arguments: ["approve", "deny", "cancel", "http", "credentials", "loop", "limit", "mismatch", "malformed", "missing"])
+    func redirectsRequireFreshBoundedReview(mode: String) async throws {
+        let reference = try RemoteAttachmentReference(url: "https://example.com/start", alt: "Original")
+        let transport = ReviewedRedirectFixture(mode: mode)
+        do {
+            let result = try await transport.downloadFollowingReviewedRedirects(reference, maximumBytes: 32) { source, target in
+                await transport.recordReview(source, target)
+                if mode == "cancel" { withUnsafeCurrentTask { $0?.cancel() } }
+                return mode != "deny"
+            }
+            expectNoDifference(mode, "approve")
+            expectNoDifference(result.reference, reference)
+            expectNoDifference(result.data, Data([1, 2, 3]))
+        } catch {
+            #expect(mode != "approve")
+            switch mode {
+            case "deny", "cancel": #expect(error is CancellationError)
+            case "http", "credentials":
+                expectNoDifference(error as? RemoteAttachmentReference.ValidationError, .invalidURL)
+            case "loop", "limit":
+                expectNoDifference(error as? RemoteAttachmentDownloadError, .tooManyRedirects)
+            default:
+                expectNoDifference(error as? RemoteAttachmentDownloadError, .invalidResponse)
+            }
+        }
+        let requests = await transport.requests
+        let reviews = await transport.reviews
+        switch mode {
+        case "approve":
+            expectNoDifference(requests, [reference.url, "https://example.com/final"])
+            expectNoDifference(reviews, [[reference.url, "https://example.com/final"]])
+        case "deny", "cancel":
+            expectNoDifference(requests, [reference.url])
+            expectNoDifference(reviews.count, 1)
+        case "limit":
+            expectNoDifference(requests.count, 6)
+            expectNoDifference(reviews.count, 5)
+        default:
+            expectNoDifference(requests, [reference.url])
+            expectNoDifference(reviews, [])
+        }
+    }
+
     @Test func cancelledDownloadDoesNotStartNetworkWork() async throws {
         let reference = try RemoteAttachmentReference(url: "https://example.com/cancelled")
         let task = Task {
@@ -68,5 +111,37 @@ struct RemoteAttachmentDownloaderTests {
             #expect(mode != "valid")
             expectNoDifference(error, expected)
         }
+    }
+}
+
+private actor ReviewedRedirectFixture: RemoteAttachmentDownloading {
+    let mode: String
+    var requests: [String] = []
+    var reviews: [[String]] = []
+    init(mode: String) { self.mode = mode }
+    func recordReview(_ source: RemoteAttachmentReference, _ target: RemoteAttachmentReference) {
+        reviews.append([source.url, target.url])
+        expectNoDifference(target.alt, "Original")
+    }
+    func download(_ reference: RemoteAttachmentReference, maximumBytes: Int) async throws -> RemoteAttachmentDownload {
+        requests.append(reference.url)
+        expectNoDifference(maximumBytes, 32)
+        if mode == "mismatch" {
+            return RemoteAttachmentDownload(reference: try RemoteAttachmentReference(url: "https://other.example/file"),
+                data: Data([1]), declaredMIMEType: nil)
+        }
+        if mode == "limit" { throw RemoteAttachmentDownloadError.redirect("/hop\(requests.count)") }
+        if mode == "missing" { throw RemoteAttachmentDownloadError.redirect(nil) }
+        if requests.count == 1 {
+            let location = switch mode {
+            case "http": "http://other.example/file"
+            case "credentials": "https://user:password@other.example/file"
+            case "loop": "/start"
+            case "malformed": "/bad%zz"
+            default: "/final"
+            }
+            throw RemoteAttachmentDownloadError.redirect(location)
+        }
+        return RemoteAttachmentDownload(reference: reference, data: Data([1, 2, 3]), declaredMIMEType: "image/png")
     }
 }

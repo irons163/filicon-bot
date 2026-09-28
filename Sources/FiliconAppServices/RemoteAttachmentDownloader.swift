@@ -9,6 +9,7 @@ public enum RemoteAttachmentDownloadError: Error, Equatable, Sendable {
     case empty
     /// The caller must review the new destination before making another request.
     case redirect(String?)
+    case tooManyRedirects
 }
 
 /// Untrusted bytes, not proof of media type or permission to execute the content.
@@ -21,6 +22,48 @@ public struct RemoteAttachmentDownload: Sendable {
 public protocol RemoteAttachmentDownloading: Sendable {
     /// Call only after the user requests this exact remote resource.
     func download(_ reference: RemoteAttachmentReference, maximumBytes: Int) async throws -> RemoteAttachmentDownload
+}
+
+extension RemoteAttachmentDownloading {
+    /// Each new destination requires an explicit caller decision. No approval is cached.
+    /// The returned bytes remain bound to the original saved attachment identity.
+    public func downloadFollowingReviewedRedirects(
+        _ reference: RemoteAttachmentReference, maximumBytes: Int,
+        approveRedirect: @Sendable (RemoteAttachmentReference, RemoteAttachmentReference) async throws -> Bool
+    ) async throws -> RemoteAttachmentDownload {
+        var current = reference
+        var visited: Set<String> = [reference.url]
+        var redirects = 0
+        while true {
+            try Task.checkCancellation()
+            do {
+                let result = try await download(current, maximumBytes: maximumBytes)
+                try Task.checkCancellation()
+                guard result.reference == current else { throw RemoteAttachmentDownloadError.invalidResponse }
+                return RemoteAttachmentDownload(reference: reference, data: result.data,
+                    declaredMIMEType: result.declaredMIMEType)
+            } catch RemoteAttachmentDownloadError.redirect(let location) {
+                guard redirects < 5 else { throw RemoteAttachmentDownloadError.tooManyRedirects }
+                guard let location, !location.isEmpty, location.utf8.count <= 16_384,
+                      let decoded = location.removingPercentEncoding,
+                      !decoded.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }),
+                      !location.unicodeScalars.contains(where: { CharacterSet.whitespacesAndNewlines.contains($0)
+                          || CharacterSet.controlCharacters.contains($0) }),
+                      !location.contains("\\"),
+                      let base = URL(string: current.url),
+                      let destination = URL(string: location, relativeTo: base)?.absoluteURL else {
+                    throw RemoteAttachmentDownloadError.invalidResponse
+                }
+                let next = try RemoteAttachmentReference(url: destination.absoluteString, alt: reference.alt)
+                guard visited.insert(next.url).inserted else { throw RemoteAttachmentDownloadError.tooManyRedirects }
+                try Task.checkCancellation()
+                guard try await approveRedirect(current, next) else { throw CancellationError() }
+                try Task.checkCancellation()
+                current = next
+                redirects += 1
+            }
+        }
+    }
 }
 
 public struct RemoteAttachmentDownloader: RemoteAttachmentDownloading {

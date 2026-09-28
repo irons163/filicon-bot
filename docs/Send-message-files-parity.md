@@ -564,3 +564,9 @@ AVAssetWriter 產生真正 MP4／MOV 小型影片，驗證 metadata；另測拒�
 依 pfw-testing 使用隔離 AppModel、注入下載器與 AVAssetWriter 產生的真正 MP4／MOV bytes，新增兩種格式各成功／取消共四個情境。下載器刻意宣告 text/html，來源 URL 刻意使用 .png；App 必須依媒體內容建立正確 video metadata、保留 alt、驗證副本完整 bytes，並分類至 audiovisual 檢視器。關閉預覽刪除副本但保留 fixture 原檔；下載途中取消不得留下可見預覽。
 
 定向測試 exit 0（remote-video-app-target.log），完整 Swift 測試套件 exit 0（remote-video-app-full.log），git diff --check 通過。這批只新增測試，未另跑原生建置；相同 production source 已於第五十二階段通過原生 Debug build 與簽章驗證。測試驗證到檢視器分類與副本生命週期，不等同實機影片播放驗收；未啟動使用者 App／Xcode、未使用外網或真實聊天資料。
+
+## 第五十四階段：逐站轉址確認下載介面（2026-09-28）
+
+RemoteAttachmentDownloading 新增 downloadFollowingReviewedRedirects；底層原有 download 仍不自動轉址。新介面解析相對 Location、驗證 HTTPS 與無帳密、拒絕缺失／控制字元／錯誤 percent encoding／超長 Location，並逐站將來源與目的地交由 async 決策回呼。拒絕或取消不發出下一個請求；最多五次轉址並拒絕重訪 URL。結果檢查下載器回傳身份後，綁回原始已保存附件 reference；不快取任何核准。
+
+離線定向測試 exit 0（remote-redirect-verified-target.log）：十種逐站決策情境、七種既有 transport 邊界與取消前不建立請求。此批提供可測試的安全下載介面，尚未接到 AppModel／聊天卡片的使用者確認 UI；不能視為完整轉址功能已完成。未另跑完整回歸或原生 build，未 push／啟動 App／修改真實資料。
