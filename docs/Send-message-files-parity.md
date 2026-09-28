@@ -686,3 +686,13 @@ AppModel 注入 group gallery authorizer；背景委派經 GroupConversationResp
 gallery-app-mailbox-target.log 全部通過；完整 gallery-app-mailbox-full.log 與原生 gallery-app-mailbox-native.log 均 exit 0，完整 package verifier／deep strict 簽章通過。未 push、未重啟 App 或 Xcode。
 
 此批完成的是單聊委派的收件代理人發佈，不是單聊主執行的 gallery 工廠。後者、內嵌縮圖及本機／混合來源仍待完成；不宣告整體 parity 完成。
+
+## 第六十六階段：App 單聊主執行圖片集（2026-09-28）
+
+單聊主執行的 SendMessage 注入 gallery transaction，核准顯示正文、所有 URL／alt、reply ID 與未下載提示；核准前後檢查來源執行、帳號及 generation。保存一則包含正文與 remoteImages 的 ChatMessage，回條使用真正保存後的 message ID／short address，並登錄 directPublicationIDs，避免回合收尾遺失已發佈訊息。
+
+持久化拋錯後查回精確 ID／正文／gallery／reply：未落盤則移除暫時 UI 訊息；已落盤則保留成功結果，無法查證則回報 uncertainCommit，不盲目重送。回覆目標必須是對話內唯一且可顯示的 user／assistant 訊息。
+
+聚焦測試擴展為 14 案例，涵蓋遠端附件及圖片集的核准、引用、拒絕、停止、切帳號、保存前故障與落盤後故障；檢查核准前無 gallery，重開後正文、順序及 reply 不變。gallery-app-direct-target.log、完整 gallery-app-direct-full.log 與原生 gallery-app-direct-native.log 均 exit 0；package verifier／deep strict 簽章及 git diff --check 通過。未 push、未重啟使用者 App／Xcode、未修改真實資料。
+
+至此 App gallery 核准入口涵蓋單聊主執行、信箱、單聊委派、前景與背景群組；仍只有 HTTPS 來源卡片及明確下載預覽，內嵌縮圖與本機／混合來源尚待補齊，整體 parity 仍未完成。

@@ -2133,6 +2133,8 @@ final class AppModel: ObservableObject {
                             account: accountScope, generation: publicationGeneration, agentID: agentIdentity?.agentID ?? id),
                         remotePublication: makeDirectRemotePublication(conversationID: id, assistantID: assistantID,
                             account: accountScope, generation: publicationGeneration),
+                        galleryPublication: makeDirectGalleryPublication(conversationID: id, assistantID: assistantID,
+                            account: accountScope, generation: publicationGeneration),
                         replyHistory: replyHistory, receiptSenderID: id, supportsReferenceNavigation: true,
                         directConversationPresentation: true,
                         publishQuestionReceipt: { [weak self] question, replyTo in
@@ -2473,6 +2475,77 @@ final class AppModel: ObservableObject {
               conversations.contains(where: { $0.id == id && $0.messages.contains(where: { $0.id == assistantID }) }) else {
             throw CancellationError()
         }
+    }
+
+    private func makeDirectGalleryPublication(conversationID id: UUID, assistantID: UUID,
+        account: String, generation: UInt64) -> AgentGalleryPublicationTransaction {
+        AgentGalleryPublicationTransaction(conversationID: id, senderID: id,
+            validateScope: { [weak self] in
+                guard let self else { throw CancellationError() }
+                try await self.checkDirectFileScope(id, assistantID: assistantID, account: account, generation: generation)
+            }, authorize: { [weak self] review, call, context in
+                guard let self else { throw CancellationError() }
+                try await self.authorizeDirectGallery(review, call: call, context: context,
+                    assistantID: assistantID, account: account, generation: generation)
+            }, commit: { [weak self] review, _, _ in
+                guard let self else { throw CancellationError() }
+                let saved = try await self.commitDirectGallery(review, assistantID: assistantID, account: account, generation: generation)
+                return .init(review: review, message: saved)
+            })
+    }
+
+    private func authorizeDirectGallery(_ review: AgentGalleryPublicationTransaction.Review,
+        call: NormalizedToolCall, context: ToolContext, assistantID: UUID, account: String, generation: UInt64) async throws {
+        let id = review.conversationID
+        try checkDirectFileScope(id, assistantID: assistantID, account: account, generation: generation)
+        guard review.senderID == id, context.conversationID == id else { throw AgentMessagingError.scopeMismatch }
+        let fence = ApprovalFence(accountID: account, agentID: id.uuidString.lowercased(), runID: context.runID, generation: generation)
+        await autoReviewBroker.activate(fence)
+        let images = review.gallery.images.enumerated().map { index, image in
+            "\(index + 1). \(image.url)" + (image.alt.map { "\n\($0)" } ?? "")
+        }.joined(separator: "\n\n")
+        let details = review.text + "\n\n" + images
+            + (review.replyTo.map { "\n\(l10n("Reply")): \($0.uuidString)" } ?? "")
+            + "\n" + l10n("Open external link. Content has not been downloaded or verified.")
+        let action = AutoReviewAction(summary: l10n("Image"),
+            target: .resource(kind: "conversation", identifier: id.uuidString), risks: [.sensitive],
+            context: .init(fence: fence, conversationID: id, toolCallID: call.id.rawValue,
+                metadata: ["tool": "SendMessage", "agentGalleryPublication": "true", "agentMessage": details]))
+        let pending = PendingApproval(action: action, reason: "Approval required", expiresAt: Date().addingTimeInterval(300))
+        try await autoReviewBroker.waitForApprovalToExecute(pending) { [weak self] in await self?.registerAutoReviewApproval($0) }
+        try checkDirectFileScope(id, assistantID: assistantID, account: account, generation: generation)
+    }
+
+    private func commitDirectGallery(_ review: AgentGalleryPublicationTransaction.Review,
+        assistantID: UUID, account: String, generation: UInt64) async throws -> RoomMessage {
+        let id = review.conversationID
+        try checkDirectFileScope(id, assistantID: assistantID, account: account, generation: generation)
+        guard review.senderID == id, let ci = conversations.firstIndex(where: { $0.id == id }) else { throw CancellationError() }
+        if let reply = review.replyTo {
+            let targets = conversations[ci].messages.filter { $0.id == reply }
+            guard targets.count == 1, let target = targets.first,
+                  target.role == .user || target.role == .assistant,
+                  !target.text.isEmpty || !target.attachments.isEmpty || target.remoteAttachment != nil || target.remoteImages != nil else { throw GroupReplyError.unavailable }
+        }
+        let message = ChatMessage(role: .assistant, text: review.text, replyToMessageID: review.replyTo, remoteImages: review.gallery)
+        conversations[ci].messages.append(message)
+        do { try await persistOrThrow(conversationID: id) }
+        catch {
+            let durable: Conversation?
+            do { durable = try await store.conversation(id: id) }
+            catch { throw AgentGalleryPublicationTransaction.Failure.uncertainCommit }
+            if durable?.messages.contains(where: { $0.id == message.id && $0.text == review.text && $0.remoteImages == review.gallery && $0.replyToMessageID == review.replyTo }) != true {
+                if let index = conversations.firstIndex(where: { $0.id == id }) {
+                    conversations[index].messages.removeAll { $0.id == message.id }
+                }
+                throw error
+            }
+        }
+        directPublicationIDs[assistantID]?.append(message.id)
+        var receipt = RoomMessage(id: message.id, groupID: id, senderID: id, text: review.text, remoteImages: review.gallery)
+        receipt.replyToMessageID = review.replyTo
+        receipt.shortAddress = conversations.first(where: { $0.id == id })?.messages.first(where: { $0.id == message.id })?.shortAddress
+        return receipt
     }
 
     private func makeDirectRemotePublication(conversationID id: UUID, assistantID: UUID,

@@ -225,8 +225,8 @@ private struct GroupFileAppProvider: AIProvider {
         }
     }
 
-    @Test(arguments: ["approve", "reply", "deny", "stop", "account", "direct-message-reserve", "direct-message-late"])
-    func directMainPublishesReviewedRemote(mode: String) async throws {
+    @Test(arguments: ["approve", "reply", "deny", "stop", "account", "direct-message-reserve", "direct-message-late"], [false, true])
+    func directMainPublishesReviewedRemote(mode: String, gallery: Bool) async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-direct-remote-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }
         let fault = GroupFileQuotaFault(groupsURL: root.appending(path: "unused.json"), directCheckpointTarget: 1)
@@ -236,9 +236,11 @@ private struct GroupFileAppProvider: AIProvider {
         let reference = try RemoteAttachmentReference(url: "https://example.com/report?sig=a%2Bb", alt: "報表說明")
         let priorReference = try RemoteAttachmentReference(url: "https://example.com/prior")
         let prior = ChatMessage(role: .assistant, text: "", shortAddress: "t0s0", remoteAttachment: priorReference)
+        let expectedGallery = try RemoteImageGallery(images: [reference,
+            RemoteAttachmentReference(url: reference.url + "2", alt: "Second design")])
         await model.registry.register(GroupFileAppProvider(url: reference.url,
             replyTo: mode == "reply" ? "t0s0" : nil,
-            expectedFileSuccess: ["approve", "reply", "direct-message-late"].contains(mode)))
+            expectedFileSuccess: ["approve", "reply", "direct-message-late"].contains(mode), gallery: gallery))
         let id = try #require(model.selection)
         let ci = try #require(model.conversations.firstIndex(where: { $0.id == id }))
         model.conversations[ci].providerID = "group-file-app"
@@ -250,8 +252,13 @@ private struct GroupFileAppProvider: AIProvider {
         model.draft = "Publish report"
         model.send()
         let approval = try await pending(model)
-        expectNoDifference(approval.action.context.metadata["agentRemotePublication"], "true")
+        expectNoDifference(approval.action.context.metadata[gallery ? "agentGalleryPublication" : "agentRemotePublication"], "true")
         #expect(approval.action.context.metadata["agentMessage"]?.contains(reference.url) == true)
+        if gallery {
+            #expect(approval.action.context.metadata["agentMessage"]?.contains("Compare designs") == true)
+            #expect(approval.action.context.metadata["agentMessage"]?.contains(reference.url + "2") == true)
+            #expect(model.conversations[ci].messages.compactMap(\.remoteImages).isEmpty)
+        }
         expectNoDifference(model.conversations[ci].messages.compactMap(\.remoteAttachment), mode == "reply" ? [priorReference] : [])
         if mode.hasPrefix("direct-message-") { fault.arm(mode) }
         if mode == "stop" { model.cancel() }
@@ -264,6 +271,15 @@ private struct GroupFileAppProvider: AIProvider {
         #expect(!model.running.contains(id))
         let store = ConversationStore(fileURL: root.appending(path: "conversations.json"))
         let saved = try #require(try await store.conversation(id: id))
+        if gallery {
+            let publications = saved.messages.filter { $0.remoteImages != nil }
+            let succeeds = ["approve", "reply", "direct-message-late"].contains(mode)
+            expectNoDifference(publications.compactMap(\.remoteImages), succeeds ? [expectedGallery] : [])
+            expectNoDifference(publications.map(\.text), succeeds ? ["Compare designs"] : [])
+            if mode == "reply" { expectNoDifference(publications.first?.replyToMessageID, prior.id) }
+            if mode.hasPrefix("direct-message-") { #expect(fault.didTrigger) }
+            return
+        }
         let attachments = saved.messages.compactMap(\.remoteAttachment)
         expectNoDifference(attachments, mode == "reply" ? [priorReference, reference] : (["approve", "direct-message-late"].contains(mode) ? [reference] : []))
         if mode == "reply" {
