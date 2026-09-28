@@ -417,7 +417,11 @@ private struct AttachmentAVPlayerView: View {
     @Environment(\.locale) private var uiLocale
     let player: AVPlayer
 
-    init(fileURL: URL) { player = AVPlayer(url: fileURL) }
+    init(fileURL: URL) {
+        let asset = AVURLAsset(url: fileURL,
+            options: [AVURLAssetReferenceRestrictionsKey: AVAssetReferenceRestrictions.forbidAll.rawValue])
+        player = AVPlayer(playerItem: AVPlayerItem(asset: asset))
+    }
 
     var body: some View {
         let _ = uiLocale.identifier

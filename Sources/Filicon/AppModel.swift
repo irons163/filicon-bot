@@ -3024,12 +3024,20 @@ final class AppModel: ObservableObject {
         try await validate()
         attachmentPreviewGeneration += 1
         let generation = attachmentPreviewGeneration
-        let download = try await remoteAttachmentDownloader.download(reference, maximumBytes: RemoteAttachmentPreviewPreparation.maximumBytes)
+        let download = try await remoteAttachmentDownloader.download(reference, maximumBytes: RemoteAttachmentVideoPreparation.maximumBytes)
         guard download.reference == reference else { throw AttachmentPreviewError.integrityMismatch }
         try await validate()
-        let metadata = try await Task.detached {
-            try RemoteAttachmentPreviewPreparation.metadata(for: download.data, reference: reference)
-        }.value
+        let preparation = Task.detached {
+            if RemoteAttachmentVideoPreparation.isCandidate(download.data) {
+                return try await RemoteAttachmentVideoPreparation.metadata(for: download.data, reference: reference)
+            }
+            return try RemoteAttachmentPreviewPreparation.metadata(for: download.data, reference: reference)
+        }
+        let metadata = try await withTaskCancellationHandler {
+            try await preparation.value
+        } onCancel: {
+            preparation.cancel()
+        }
         try await validate()
         guard generation == attachmentPreviewGeneration else { throw CancellationError() }
         let item = try attachmentPreviewMaterializer.materialize(data: download.data, metadata: metadata)

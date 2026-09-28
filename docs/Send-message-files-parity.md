@@ -548,3 +548,13 @@ RemoteAttachmentPreviewPreparation 依 bytes 分流 PDF／圖片；PDF 要求可
 建置期間方法改名曾造成新舊來源混合而失敗，已以一致來源重跑；驗證結果另記。影片、轉址確認與文字內 URL 圖片仍未完成。未實際下載外網或啟動使用者 App，未 push、未改真實帳號資料。
 
 加密 fixture 首輪僅設定 user password 未形成鎖定文件；改以 PDFKit 明確 owner／user password 並先斷言 isLocked 後，鎖定拒絕測試通過。最終 PDF 測試與 App 預覽／七語系 render exit 0（remote-pdf-verified-target.log），原生 Debug build、deep strict 簽章通過（remote-pdf-native.log）。本批未另跑完整回歸；不宣稱 PDF 內容經惡意程式掃描或所有 PDF 變體已驗收。
+
+## 第五十二階段：遠端 MP4／MOV 預覽（2026-09-28）
+
+新增 RemoteAttachmentVideoPreparation，在隔離 0700 暫存目錄檢查 ISO media bytes，可播放性、有限且正值的最長 24 小時長度、最多 16 軌、影片尺寸單邊 16384／6400 萬像素。下載總上限提升至既有影片級別 200 MiB；圖片／PDF 準備仍保留各自 32 MiB 限制。HEIF／HEIC 圖片品牌不進入影片路徑。metadata 使用真正解析結果與 SHA-256，不使用 URL 副檔名／伺服器 MIME 判定成功。
+
+驗證與既有 AVPlayer 都以 forbidAll 限制外部媒體引用；不把播放清單當成單一可自由存取網路的附件。取消預覽傳遞至 detached 準備工作及 asset.cancelLoading，暫存驗證檔在成功／失敗離開時清理。三種聊天共用入口接入此準備流程，既有檢視器負責本機影片播放。
+
+AVAssetWriter 產生真正 MP4／MOV 小型影片，驗證 metadata；另測拒絕播放清單／偽造容器、HEIF 圖片分流。定向影片、既有 App 圖片／PDF 與七語系 render 測試 exit 0（remote-video-verified-target.log），原生 Debug build 與 deep strict 簽章通過（remote-video-verified-native.log）。未另跑完整回歸，尚未以 App 層影片 fixture 驗證整條播放路徑或實機播放，不能由服務測試推論所有媒體格式已驗收。
+
+轉址確認、文字內 URL 圖片與其他原版媒體／功能差異仍待補。沒有外網下載、App／Xcode 啟動、push 或真實帳號資料變更。
