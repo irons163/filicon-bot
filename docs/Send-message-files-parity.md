@@ -510,3 +510,11 @@ RemoteAttachmentCardTests 的描述／URL／長度斷言與七語系 × 深淺�
 結果明確是未驗證 bytes 加伺服器宣告 MIME，不聲稱媒體安全或內容類型已驗證。尚未接到 UI、沒有自動載入，也不以這層宣称原版預覽完成；後續須內容辨識、預覽副本生命週期、帳號／訊息 scope 與轉址確認流程。
 
 離線 URLProtocol 測試涵蓋成功、HTTP 錯誤、302、宣告過大、串流超量、空內容、非法上限與啟動前取消；驗證沒有 Authorization／Cookie headers，共八案例通過（remote-download-final-target.log）。原生 Debug build 與 deep strict 簽章通過（remote-download-native.log）。未重跑全套、未實際網路請求、未啟動 App／Xcode、未改真實帳號資料。
+
+## 第四十八階段：遠端圖片預覽內容辨識（2026-09-28）
+
+新增 RemoteAttachmentImagePreparation，獨立於模型輸入的單幀 PNG／JPEG 限制。以 ImageIO 解析 bytes 決定 PNG、JPEG、GIF、TIFF、BMP、WebP、HEIC／HEIF 類型，不信任 URL 或宣告 MIME。先驗證完整來源、最多 32 MiB、200 幀、單邊 16384、單幀 6400 萬與總計 1.28 億像素，再逐幀檢查解碼；保留原始多幀 bytes。輸出 SHA-256、固定安全副檔名、實際類型與原始描述，供既有 materializer／integrity 機制使用。此為有界解碼驗證，不是惡意內容掃描。
+
+PNG／JPEG／雙幀 GIF fixtures 驗證格式、digest 與描述，另拒絕 HTML／SVG 偽裝、空資料、截斷 PNG、201 幀 GIF 與超寬 PNG。首輪測試發現 ImageIO 合併相同 GIF 影格，fixture 已改交替色與明確 delay，不放寬正式限制；修正後定向測試通過（remote-image-preparation-fixed-target.log）。原生 Debug build、deep strict 簽章通過（remote-image-preparation-native.log）。未重跑全套。
+
+尚未接線預覽 UI；影片／PDF、轉址確認、scope 及暫存副本生命週期仍待完成。沒有網路存取、App／Xcode 啟動、push 或真實資料修改。
