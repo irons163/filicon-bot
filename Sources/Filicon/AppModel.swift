@@ -263,6 +263,7 @@ final class AppModel: ObservableObject {
     private let agentImageStore: AgentImageStore
     private let attachmentLifecycle: AttachmentLifecycle?
     private let attachmentPreviewMaterializer = AttachmentPreviewMaterializer()
+    var remoteAttachmentDownloader: any RemoteAttachmentDownloading = RemoteAttachmentDownloader()
     private let draftStore: ComposerDraftStore
     private let quotaLedger: StorageQuotaLedger?
     private let quotaWriter: AppQuotaWriter?
@@ -2987,6 +2988,53 @@ final class AppModel: ObservableObject {
                 errorMessage = error.localizedDescription
             }
         }
+    }
+
+    enum RemoteAttachmentLocation {
+        case direct(UUID, UUID)
+        case group(UUID, UUID)
+        case mailbox(UUID, UUID)
+    }
+
+    func previewRemoteImage(_ reference: RemoteAttachmentReference, at location: RemoteAttachmentLocation) async throws {
+        let accountGeneration = autoReviewAccountGeneration
+        @MainActor func validate() async throws {
+            guard !agentMessagingAccountTransition, accountGeneration == autoReviewAccountGeneration else { throw CancellationError() }
+            let actual: RemoteAttachmentReference?
+            switch location {
+            case let .direct(conversationID, messageID):
+                guard selection == conversationID else { throw CancellationError() }
+                actual = conversations.first { $0.id == conversationID }?.messages.first { $0.id == messageID }?.remoteAttachment
+            case let .group(groupID, messageID):
+                guard selectedGroupID == groupID, let groupService else { throw CancellationError() }
+                actual = await groupService.messages(groupID: groupID).first { $0.id == messageID }?.remoteAttachment
+            case let .mailbox(incomingID, messageID):
+                guard let agentMessenger else { throw CancellationError() }
+                actual = await agentMessenger.allMessages().first { $0.id == incomingID }?.delivery?.publications?.first { $0.id == messageID }?.remoteAttachment
+            }
+            guard actual == reference, !agentMessagingAccountTransition,
+                  accountGeneration == autoReviewAccountGeneration else { throw CancellationError() }
+            switch location {
+            case let .direct(id, _): guard selection == id else { throw CancellationError() }
+            case let .group(id, _): guard selectedGroupID == id else { throw CancellationError() }
+            case .mailbox: break
+            }
+            try Task.checkCancellation()
+        }
+        try await validate()
+        attachmentPreviewGeneration += 1
+        let generation = attachmentPreviewGeneration
+        let download = try await remoteAttachmentDownloader.download(reference, maximumBytes: RemoteAttachmentImagePreparation.maximumBytes)
+        guard download.reference == reference else { throw AttachmentPreviewError.integrityMismatch }
+        try await validate()
+        let metadata = try await Task.detached {
+            try RemoteAttachmentImagePreparation.metadata(for: download.data, reference: reference)
+        }.value
+        try await validate()
+        guard generation == attachmentPreviewGeneration else { throw CancellationError() }
+        let item = try attachmentPreviewMaterializer.materialize(data: download.data, metadata: metadata)
+        if let previous = attachmentPreview { attachmentPreviewMaterializer.remove(previous) }
+        attachmentPreview = item
     }
 
     func dismissAttachmentPreview() {

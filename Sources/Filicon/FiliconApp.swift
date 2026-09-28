@@ -1525,7 +1525,9 @@ struct TranscriptMessageView: View {
                 }
             }
             if let reference = message.remoteAttachment {
-                RemoteAttachmentCard(reference: reference)
+                RemoteAttachmentCard(reference: reference) {
+                    try await model.previewRemoteImage(reference, at: .direct(conversation.id, message.id))
+                }
             }
             if !message.attachments.isEmpty {
                 ScrollView(.horizontal) {

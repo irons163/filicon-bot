@@ -1723,3 +1723,5 @@
 "This saves the reviewed file in this group. It does not add responders or automatically send the file to other models." = "Le fichier approuvé sera enregistré dans ce groupe. Aucun participant ne sera ajouté et le fichier ne sera pas automatiquement envoyé à d’autres modèles.";
 "Remote attachment" = "Pièce jointe distante";
 "Open external link. Content has not been downloaded or verified." = "Ouvrir le lien externe. Le contenu n’a pas été téléchargé ni vérifié.";
+"Download image preview" = "Télécharger un aperçu de l’image";
+"Image preview unavailable. You can open the external link instead." = "Aperçu de l’image indisponible. Vous pouvez ouvrir le lien externe.";

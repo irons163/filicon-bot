@@ -518,3 +518,15 @@ RemoteAttachmentCardTests 的描述／URL／長度斷言與七語系 × 深淺�
 PNG／JPEG／雙幀 GIF fixtures 驗證格式、digest 與描述，另拒絕 HTML／SVG 偽裝、空資料、截斷 PNG、201 幀 GIF 與超寬 PNG。首輪測試發現 ImageIO 合併相同 GIF 影格，fixture 已改交替色與明確 delay，不放寬正式限制；修正後定向測試通過（remote-image-preparation-fixed-target.log）。原生 Debug build、deep strict 簽章通過（remote-image-preparation-native.log）。未重跑全套。
 
 尚未接線預覽 UI；影片／PDF、轉址確認、scope 及暫存副本生命週期仍待完成。沒有網路存取、App／Xcode 啟動、push 或真實資料修改。
+
+## 第四十九階段：三種聊天的遠端圖片預覽入口（2026-09-28）
+
+RemoteAttachmentCard 新增明確的「下載圖片預覽」動作，按下才下載，顯示進度、取消與失敗提示；七語系同步。單聊、群組與信箱發布列皆傳入 host callback。依 pfw-modern-swiftui 保留無 callback 的唯讀卡片與既有外部連結，不讓 render 自動載入網路。
+
+AppModel 在下載前後及圖片辨識後核對帳號 generation、已保存訊息的精確 reference，以及單聊／群組選取範圍。預覽 generation 避免關閉／取代後晚到結果重新開啟；下載回傳 reference 不符即拒絕。使用既有 materializer 建立 SHA-256 驗證副本，替換及關閉時沿用清理。解碼在 detached task 執行，不阻塞主介面；結果回來仍檢查取消。
+
+隔離 AppModel 六案例驗證成功、訊息移除、切換對話、關閉、錯誤 reference、非法 bytes；成功核對本機副本 bytes／真正 MIME，關閉後檔案消失。七語系 × 深淺色離屏 render 與下載／openURL spy 通過（remote-image-ui-final-target.log）。原生 Debug build、deep strict 簽章通過（remote-image-ui-native.log）。完整回歸另記。
+
+群組／信箱已接線，但尚須額外 host-level scope 情境測試；影片／PDF 與轉址確認仍未完成。未請求實際外網、未啟動 App／Xcode、未 push 或修改真實帳號資料。
+
+完整非平行 Swift 回歸 exit 0（remote-image-ui-full.log），含最後加入的 render 不觸發下載斷言。

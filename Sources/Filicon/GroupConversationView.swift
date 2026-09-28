@@ -221,6 +221,7 @@ struct GroupConversationView: View {
             onShowReply: { threadPresentation.reveal($0, in: threads) },
             onReply: threads.canReply(to: message.id) ? { beginReply(to: message.id) } : nil,
             onOpenFile: { model.openGroupMessageFile($0, messageID: message.id, groupID: group.id) },
+            onPreviewRemote: { reference in try await model.previewRemoteImage(reference, at: .group(group.id, message.id)) },
             onReaction: { Task { await model.toggleGroupReaction(groupID: group.id, messageID: message.id, emoji: "👍") } }
         )
     }
@@ -564,6 +565,7 @@ struct GroupMessageBubble: View {
     var onShowReply: ((UUID) -> Void)?
     var onReply: (() -> Void)?
     var onOpenFile: ((AttachmentMetadata) -> Void)?
+    var onPreviewRemote: ((RemoteAttachmentReference) async throws -> Void)?
     let onReaction: () -> Void
     @State private var hovering = false
     private var isUser: Bool { message.senderID == nil }
@@ -594,7 +596,7 @@ struct GroupMessageBubble: View {
                     CursorAgentReferenceCard(reference: reference)
                 }
                 if let reference = message.remoteAttachment {
-                    RemoteAttachmentCard(reference: reference)
+                    RemoteAttachmentCard(reference: reference, onPreview: onPreviewRemote.map { action in { try await action(reference) } })
                 }
                 if !message.text.isEmpty && message.question == nil && message.cursorAgent == nil {
                     Group {

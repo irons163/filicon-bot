@@ -1723,3 +1723,5 @@
 "This saves the reviewed file in this group. It does not add responders or automatically send the file to other models." = "這會將已核准的檔案儲存在此群組，不會新增回覆者或自動將檔案傳給其他模型。";
 "Remote attachment" = "遠端附件";
 "Open external link. Content has not been downloaded or verified." = "開啟外部連結。內容尚未下載或驗證。";
+"Download image preview" = "下載圖片預覽";
+"Image preview unavailable. You can open the external link instead." = "無法預覽圖片。你可以改為開啟外部連結。";
