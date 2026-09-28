@@ -2097,7 +2097,8 @@ final class AppModel: ObservableObject {
                     } ?? []
                     let replyHistory = requestMessages.filter { $0.role == .user || $0.role == .assistant }.map {
                         var message = RoomMessage(id: $0.id, groupID: id, senderID: $0.role == .user ? nil : id,
-                            text: $0.text, createdAt: $0.createdAt, remoteAttachment: $0.remoteAttachment)
+                            text: $0.text, createdAt: $0.createdAt, remoteAttachment: $0.remoteAttachment,
+                            remoteImages: $0.remoteImages)
                         message.images = $0.attachments.filter { $0.kind == .image }
                         message.files = $0.attachments.filter { $0.kind != .image }
                         message.shortAddress = $0.shortAddress
@@ -5509,7 +5510,7 @@ final class AppModel: ObservableObject {
             guard canonical.questionResponse == nil, canonical.secretResponse == nil,
                   message.secretRequest == nil, message.question == nil, message.cursorAgent == nil,
                   message.files?.isEmpty != false,
-                  message.remoteAttachment == nil,
+                  message.remoteAttachment == nil, message.remoteImages == nil,
                   delivery.state == .running, message.id == canonical.id,
                   message.text == canonical.text,
                   message.images ?? [] == canonical.images ?? [] else { throw AgentMessagingError.scopeMismatch }
@@ -5625,6 +5626,16 @@ final class AppModel: ObservableObject {
         let attachments = images + files
         if message.remoteAttachment != nil {
             guard source.kind == .publication, message.text.isEmpty, attachments.isEmpty,
+                  message.remoteImages == nil,
+                  message.question == nil, message.secretRequest == nil, message.cursorAgent == nil else {
+                throw AgentMessagingError.scopeMismatch
+            }
+        }
+        if message.remoteImages != nil {
+            guard source.kind == .publication,
+                  !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  message.text.count <= 8_000, message.text.utf8.count <= 32_000,
+                  message.remoteAttachment == nil, attachments.isEmpty,
                   message.question == nil, message.secretRequest == nil, message.cursorAgent == nil else {
                 throw AgentMessagingError.scopeMismatch
             }
@@ -5641,6 +5652,7 @@ final class AppModel: ObservableObject {
         if let saved = stored?.messages.first(where: { $0.id == message.id }) {
             guard saved.agentMessageSource == source, saved.text == message.text,
                   saved.remoteAttachment == message.remoteAttachment,
+                  saved.remoteImages == message.remoteImages,
                   saved.attachments == attachments,
                   saved.transcriptCards.map(\.payload) == cards.map(\.payload),
                   saved.transcriptCards.map(\.id) == cards.map(\.id),
@@ -5705,6 +5717,7 @@ final class AppModel: ObservableObject {
             createdAt: message.createdAt, agentMessageSource: source)
         projected.attachments = attachments
         projected.remoteAttachment = message.remoteAttachment
+        projected.remoteImages = message.remoteImages
         projected.transcriptCards = cards
         let position = conversations[index].messages.firstIndex { $0.createdAt > projected.createdAt }
             ?? conversations[index].messages.endIndex

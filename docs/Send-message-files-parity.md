@@ -606,3 +606,15 @@ ReviewedGroupImageGallery 將 review 綁到 lifetime 與 message ID；GroupServi
 新增 13 種交易情境及 6 種真實群組儲存情境，既有 group remote 測試一併通過（gallery-group-target.log）；原生 build gallery-group-native.log 與 deep strict 簽章驗證通過。模型工具、App 核准入口、單聊／信箱與 gallery UI 尚未接線，不宣告功能已完整開放。未 push、未啟動使用者 App／Xcode、未修改真實資料。
 
 完整回歸 gallery-group-full.log exit 0，git diff --check 通過。
+
+## 第五十九階段：信箱圖片集核准與跨對話保存（2026-09-28）
+
+新增 ReviewedMailboxImageGallery，將文字與有序圖片集綁到單一 incoming delivery、目的地、作者、message ID、reply 與 lifetime。一般 publish 與 finalPublication 拒絕夾帶未核准 remoteImages；核准發布沿用一次原子保存、失敗不改記憶體、同 ID 精確重送及兩則發布上限。
+
+directPeerTranscript 驗證圖片集不能混合單一附件、既有圖片／檔案或互動卡。AppModel 的單聊歷史與跨代理人訊息投影保留 remoteImages，重播比對涵蓋完整圖片集，incoming 不得夾帶圖片集。
+
+新增真實臨時信箱測試，涵蓋一般／最終報告繞過、錯誤 delivery／群組／作者、空白文字、保存失敗、精確重送、改內容重用 ID、撤銷，以及重開後跨對話 transcript 的文字、順序／alt／簽名 URL 與 reply 保存。初次測試因同步斷言內使用 await 編譯失敗，改先取得 actor 結果後比對。修正後 gallery-mailbox-verified-target.log：30 tests／1 suite 通過。原生 gallery-mailbox-native.log 與 deep strict 簽章驗證通過。
+
+此階段仍未將 gallery 接入模型工具、App 核准入口及 UI；不宣告完整功能已開放。App 投影新增欄位尚需專用端到端圖片集測試，現有回歸不能替代此驗收。未 push、未啟動使用者 App／Xcode、未修改真實資料。
+
+完整回歸 gallery-mailbox-full.log exit 0，git diff --check 通過。

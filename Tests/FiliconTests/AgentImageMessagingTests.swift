@@ -1073,6 +1073,69 @@ struct AgentImageMessagingTests {
         }
     }
 
+    @Test func reviewedMailboxGalleryPreservesAtomicContentAndRejectsBypasses() async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let binding = DirectConversationAgentBinding(accountID: "local", agentID: f.sender.id)
+        let inbound = AgentMessage(senderID: f.sender.id, recipientID: f.recipient.id, text: "Images",
+            delivery: .init(chainID: UUID(), originConversationID: f.origin, directOriginBinding: binding))
+        try await f.messenger.send(inbound)
+        try await f.messenger.updateDelivery(id: inbound.id, state: .running)
+        let gallery = try RemoteImageGallery(images: [
+            RemoteAttachmentReference(url: "https://example.com/first?sig=a%2Bb", alt: "第一張"),
+            RemoteAttachmentReference(url: "https://example.com/second", alt: "第二張")
+        ])
+        let lifetime = AgentPublicationLifetime()
+        let reviewed = ReviewedMailboxImageGallery(text: "Two designs", gallery: gallery,
+            incomingID: inbound.id, originID: f.origin, senderID: f.recipient.id,
+            messageID: UUID(), replyToMessageID: inbound.id, lifetime: lifetime)
+        await #expect(throws: AgentPublicationError.invalid) {
+            try await f.messenger.publish(reviewed.publication, replyingTo: inbound.id, lifetime: lifetime)
+        }
+        let unreviewedReport = RoomMessage(groupID: f.origin, senderID: f.recipient.id,
+            text: "Final report", remoteImages: gallery)
+        await #expect(throws: AgentPublicationError.invalid) {
+            try await f.messenger.updateDelivery(id: inbound.id, state: .completed,
+                response: unreviewedReport.text, finalPublication: unreviewedReport)
+        }
+        for (incoming, origin, sender, text) in [
+            (UUID(), f.origin, f.recipient.id, "Designs"),
+            (inbound.id, UUID(), f.recipient.id, "Designs"),
+            (inbound.id, f.origin, f.sender.id, "Designs"),
+            (inbound.id, f.origin, f.recipient.id, " \n")
+        ] {
+            let invalid = ReviewedMailboxImageGallery(text: text, gallery: gallery, incomingID: incoming,
+                originID: origin, senderID: sender, messageID: UUID(), lifetime: lifetime)
+            await #expect(throws: AgentPublicationError.invalid) { try await f.messenger.publishImageGallery(invalid) }
+        }
+        let file = f.root.appending(path: "messages.json"), backup = f.root.appending(path: "gallery.backup")
+        try FileManager.default.moveItem(at: file, to: backup)
+        try FileManager.default.createDirectory(at: file, withIntermediateDirectories: false)
+        await #expect(throws: (any Error).self) { try await f.messenger.publishImageGallery(reviewed) }
+        let unsaved = await f.messenger.allMessages()
+        expectNoDifference(unsaved.first?.delivery?.publications, nil)
+        try FileManager.default.removeItem(at: file)
+        try FileManager.default.moveItem(at: backup, to: file)
+        let saved = try await f.messenger.publishImageGallery(reviewed)
+        let replay = try await f.messenger.publishImageGallery(reviewed)
+        expectNoDifference(replay, saved)
+        expectNoDifference(saved.remoteImages, gallery)
+        expectNoDifference(saved.text, "Two designs")
+        #expect(saved.shortAddress != nil)
+        let changed = ReviewedMailboxImageGallery(text: "Changed", gallery: gallery, incomingID: inbound.id,
+            originID: f.origin, senderID: f.recipient.id, messageID: saved.id, lifetime: lifetime)
+        await #expect(throws: AgentPublicationError.invalid) { try await f.messenger.publishImageGallery(changed) }
+        lifetime.close()
+        await #expect(throws: CancellationError.self) { try await f.messenger.publishImageGallery(reviewed) }
+        try await f.messenger.updateDelivery(id: inbound.id, state: .completed)
+        let reopened = try AgentMessenger(service: f.agents, storeURL: file)
+        let transcript = try await reopened.directPeerTranscript(originID: f.origin, binding: binding)
+        let restored = try #require(transcript.first(where: { $0.message.id == saved.id }))
+        expectNoDifference(restored.message.remoteImages, gallery)
+        expectNoDifference(restored.message.text, saved.text)
+        expectNoDifference(restored.message.replyToMessageID, inbound.id)
+        expectNoDifference(transcript.filter { $0.message.id == saved.id }.count, 1)
+    }
+
     @Test func oldTextPublicationsAndRoomMessagesDecodeWithoutImages() throws {
         let delivery = AgentMessageDelivery(chainID: UUID(), originConversationID: UUID(), state: .completed, response: "Old reply")
         let encoded = try JSONEncoder().encode(delivery)

@@ -40,6 +40,24 @@ public struct ReviewedMailboxRemoteAttachment: Sendable {
     }
 }
 
+/// Host-only review of one complete text/gallery publication, not download permission.
+public struct ReviewedMailboxImageGallery: Sendable {
+    public let incomingID: UUID
+    public let publication: RoomMessage
+    public let lifetime: AgentPublicationLifetime
+
+    public init(text: String, gallery: RemoteImageGallery, incomingID: UUID, originID: UUID,
+                senderID: UUID, messageID: UUID, replyToMessageID: UUID? = nil,
+                lifetime: AgentPublicationLifetime) {
+        self.incomingID = incomingID
+        self.lifetime = lifetime
+        var message = RoomMessage(id: messageID, groupID: originID, senderID: senderID,
+                                  text: text, remoteImages: gallery)
+        message.replyToMessageID = replyToMessageID
+        self.publication = message
+    }
+}
+
 /// A canonical transcript candidate, never an execution or permission request.
 public struct AgentPeerTranscriptEntry: Hashable, Sendable {
     public let source: AgentMessageSource
@@ -169,6 +187,12 @@ public actor AgentMessenger {
         try publishValidated(remote.publication, replyingTo: remote.incomingID,
                              lifetime: remote.lifetime, reviewedRemote: remote)
         return addressedReceipt(remote.publication)
+    }
+
+    public func publishImageGallery(_ gallery: ReviewedMailboxImageGallery) throws -> RoomMessage {
+        try publishValidated(gallery.publication, replyingTo: gallery.incomingID,
+                             lifetime: gallery.lifetime, reviewedGallery: gallery)
+        return addressedReceipt(gallery.publication)
     }
 
     /// The host supplies account/scope; the model supplies only question content.
@@ -373,7 +397,14 @@ public actor AgentMessenger {
 
     private func publishValidated(_ publication: RoomMessage, replyingTo id: UUID, lifetime: AgentPublicationLifetime,
                                   reviewedFile: ReviewedMailboxFile? = nil,
-                                  reviewedRemote: ReviewedMailboxRemoteAttachment? = nil) throws {
+                                  reviewedRemote: ReviewedMailboxRemoteAttachment? = nil,
+                                  reviewedGallery: ReviewedMailboxImageGallery? = nil) throws {
+        if let reviewedGallery {
+            guard reviewedFile == nil, reviewedRemote == nil, reviewedGallery.incomingID == id,
+                  reviewedGallery.publication == publication,
+                  !publication.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  publication.text.utf8.count <= 32_000 else { throw AgentPublicationError.invalid }
+        } else if publication.remoteImages != nil { throw AgentPublicationError.invalid }
         if let reviewedRemote {
             guard reviewedFile == nil, reviewedRemote.incomingID == id,
                   reviewedRemote.publication == publication else { throw AgentPublicationError.invalid }
@@ -447,7 +478,8 @@ public actor AgentMessenger {
                   report.senderID == previous.recipientID, report.text == response,
                   !report.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                   report.question == nil, report.secretRequest == nil, report.cursorAgent == nil,
-                  report.images?.isEmpty != false, report.files?.isEmpty != false, report.remoteAttachment == nil, report.toolActivities.isEmpty,
+                  report.images?.isEmpty != false, report.files?.isEmpty != false, report.remoteAttachment == nil,
+                  report.remoteImages == nil, report.toolActivities.isEmpty,
                   report.memberOutcome == nil, report.shortAddress == nil,
                   report.replyToMessageID == nil, report.questionReplyTo == nil,
                   !containsMessageID(report.id) else { throw AgentPublicationError.invalid }
@@ -546,6 +578,15 @@ public actor AgentMessenger {
                       message.memberOutcome == nil, message.questionReplyTo == nil else { return }
                 if message.remoteAttachment != nil {
                     guard kind == .publication, message.text.isEmpty,
+                          message.remoteImages == nil,
+                          (message.images ?? []).isEmpty, (message.files ?? []).isEmpty,
+                          message.question == nil, message.secretRequest == nil, message.cursorAgent == nil else { return }
+                }
+                if message.remoteImages != nil {
+                    guard kind == .publication,
+                          !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                          message.text.count <= 8_000, message.text.utf8.count <= 32_000,
+                          message.remoteAttachment == nil,
                           (message.images ?? []).isEmpty, (message.files ?? []).isEmpty,
                           message.question == nil, message.secretRequest == nil, message.cursorAgent == nil else { return }
                 }
