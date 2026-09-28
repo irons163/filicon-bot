@@ -715,7 +715,9 @@ struct GroupReplyPreview: View {
                     Text(l10n("Replying to")).font(.caption2)
                     if let original {
                         Text(author).font(.caption.weight(.semibold)).lineLimit(1)
-                        Text(original.text.isEmpty && !(original.images ?? []).isEmpty ? l10n("Image") : String(original.text.prefix(240))).font(.caption).lineLimit(3)
+                        Text(verbatim: original.text.isEmpty
+                            ? original.remoteAttachment?.replyPreviewText ?? original.files?.first?.filename ?? (!(original.images ?? []).isEmpty ? l10n("Image") : "")
+                            : String(original.text.prefix(240))).font(.caption).lineLimit(3)
                             .multilineTextAlignment(.leading)
                     } else { Text(l10n("Original message unavailable")).font(.caption) }
                 }

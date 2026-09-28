@@ -429,6 +429,7 @@ struct MailboxReplyPreview: View {
                     Text(verbatim: original.text).font(.callout).textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
                     if let images = original.images, !images.isEmpty { AgentMessageImagePreviews(images: images) }
+                    if let remote = original.remoteAttachment { RemoteAttachmentCard(reference: remote) }
                     ForEach(original.files ?? []) { file in
                         Label(file.filename, systemImage: "doc").font(.caption)
                     }
@@ -437,7 +438,7 @@ struct MailboxReplyPreview: View {
                         Label(l10n("Replying to"), systemImage: "arrowshape.turn.up.left").font(.caption2)
                         Text(verbatim: author).font(.caption.weight(.semibold)).lineLimit(1)
                         Text(verbatim: original.text.isEmpty
-                            ? original.files?.first?.filename ?? (!(original.images ?? []).isEmpty ? l10n("Image") : "")
+                            ? original.remoteAttachment?.replyPreviewText ?? original.files?.first?.filename ?? (!(original.images ?? []).isEmpty ? l10n("Image") : "")
                             : String(original.text.prefix(240)))
                             .font(.caption).lineLimit(3)
                     }

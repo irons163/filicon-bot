@@ -133,6 +133,9 @@ struct ReplyPreviewPresentation: Equatable, Sendable {
         if let attachment = message.attachments.first {
             return .init(kind: .attachment, label: role, detail: attachment.filename, symbolName: "paperclip")
         }
+        if let remote = message.remoteAttachment {
+            return .init(kind: .attachment, label: role, detail: remote.replyPreviewText, symbolName: "link")
+        }
         let reasoning = message.reasoningText.trimmingCharacters(in: .whitespacesAndNewlines)
         if !reasoning.isEmpty {
             return .init(kind: .reasoning, label: role, detail: l10n("Reasoning"), symbolName: "brain")
@@ -150,6 +153,12 @@ struct ReplyPreviewPresentation: Equatable, Sendable {
 
     private static func oneLine(_ value: String) -> String {
         String(value.split(whereSeparator: \.isNewline).joined(separator: " ").prefix(240))
+    }
+}
+
+extension RemoteAttachmentReference {
+    var replyPreviewText: String {
+        String((alt ?? url).split(whereSeparator: \.isNewline).joined(separator: " ").prefix(240))
     }
 }
 

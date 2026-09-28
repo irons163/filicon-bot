@@ -8,6 +8,16 @@ import FiliconDomain
 
 @Suite("Remote attachment card rendering", .timeLimit(.minutes(1)))
 @MainActor struct RemoteAttachmentCardTests {
+    @Test func replySummaryUsesDescriptionOrExactLocator() throws {
+        for alt in [nil, "報表 **plain text**", String(repeating: "文", count: 300)] as [String?] {
+            let reference = try RemoteAttachmentReference(url: "https://example.com/report?sig=a%2Bb", alt: alt)
+            let preview = ReplyPreviewPresentation.make(for: ChatMessage(role: .assistant, text: "", remoteAttachment: reference))
+            expectNoDifference(preview.kind, .attachment)
+            expectNoDifference(preview.symbolName, "link")
+            expectNoDifference(preview.detail, String((alt ?? reference.url).prefix(240)))
+        }
+    }
+
     @Test(arguments: ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"], [false, true])
     func renderDoesNotOpenURL(language: String, dark: Bool) throws {
         try FiliconLocalization.$languageOverride.withValue(language) {
@@ -30,6 +40,20 @@ import FiliconDomain
 
             let publication = ReviewedMailboxRemoteAttachment(reference: reference, incomingID: UUID(),
                 originID: UUID(), senderID: UUID(), messageID: UUID(), lifetime: AgentPublicationLifetime()).publication
+            let replies = NSHostingView(rootView: VStack {
+                GroupReplyPreview(original: publication, author: "Agent", onOpen: {})
+                MailboxReplyPreview(original: publication, author: "Agent", onOpen: {})
+            }.padding(16).frame(width: 360)
+                .environment(\.openURL, OpenURLAction { _ in
+                    Issue.record("Reply previews must not open remote content"); return .handled
+                }).environment(\.colorScheme, dark ? .dark : .light))
+            let replySize = replies.fittingSize
+            expectNoDifference(replySize.width, 360)
+            #expect(replySize.height > 80 && replySize.height < 450)
+            replies.frame = .init(origin: .zero, size: replySize)
+            replies.layoutSubtreeIfNeeded()
+            let replyBitmap = try #require(replies.bitmapImageRepForCachingDisplay(in: replies.bounds))
+            replies.cacheDisplay(in: replies.bounds, to: replyBitmap)
             let mailbox = NSHostingView(rootView: AgentPublishedResponses(publications: [publication])
                 .padding(16).frame(width: 360)
                 .environment(\.openURL, OpenURLAction { _ in

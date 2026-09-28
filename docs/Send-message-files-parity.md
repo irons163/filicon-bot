@@ -494,3 +494,11 @@ App 核准測試擴為信箱／單聊 × 同意、拒絕、停止、帳號切換
 引用索引四項測試通過（remote-direct-reference-target.log）；App 發布測試擴為七案例，新增以 t0s0 回覆既有純遠端附件，核對核准前無新增發布與重開資料庫後 replyToMessageID（remote-direct-reference-app.log）。原生 Debug build、deep strict 簽章通過（remote-direct-reference-native.log）。此小批未另重跑完整回歸，上一階段完整回歸已通過。
 
 尚不代表媒體下載／預覽或原版全部功能對齊；未 push、重啟 App／Xcode 或修改真實資料。
+
+## 第四十六階段：遠端附件回覆摘要（2026-09-28）
+
+重新核對 reference send-message-tool.ts 的獨立 attachment 與文字 images 契約，原版媒體呈現仍是未完成需求。本次修正現有遠端附件在單聊、群組、信箱回覆預覽中顯示為空白／Empty message 的缺口：摘要取純文字描述或精確 URL，最多 240 字元；信箱展開可見既有遠端卡片。群組 file-only 引用亦顯示檔名。依 pfw-modern-swiftui 使用既有視圖與純文字，不將描述當 Markdown 或自動開啟連結。
+
+RemoteAttachmentCardTests 的描述／URL／長度斷言與七語系 × 深淺色離屏 bitmap 渲染通過，包含群組與信箱引用，openURL spy 驗證渲染不開啟網址（remote-reply-preview-target.log）。原生 Debug build 及 deep strict 簽章通過（remote-reply-preview-native.log）。未另重跑完整回歸，未啟動使用者 App，未下載遠端內容或修改真實資料。
+
+後續仍須原版媒體展示、文字內 URL 圖片與其網路政策；本批不以 locator／摘要替代這些差異。

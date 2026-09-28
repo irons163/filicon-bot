@@ -1455,7 +1455,7 @@ struct TranscriptMessageView: View {
                         Image(systemName: preview.symbolName).foregroundStyle(FiliconTheme.textTertiary)
                         VStack(alignment: .leading, spacing: 1) {
                             Text(preview.label).font(.caption2.bold()).foregroundStyle(FiliconTheme.textSecondary)
-                            Text(preview.detail).lineLimit(1).font(.caption).foregroundStyle(FiliconTheme.textTertiary)
+                            Text(verbatim: preview.detail).lineLimit(1).font(.caption).foregroundStyle(FiliconTheme.textTertiary)
                         }
                         Spacer(minLength: 0)
                         Image(systemName: "arrow.up.left").font(.caption2).foregroundStyle(FiliconTheme.textTertiary)
