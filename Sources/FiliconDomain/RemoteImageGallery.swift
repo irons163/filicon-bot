@@ -1,12 +1,12 @@
 import Foundation
 
-/// Ordered image locators accompanying text. This does not certify remote bytes as images.
+/// Ordered image occurrences accompanying text. A URL may appear more than
+/// once, with independent descriptions. This does not certify remote bytes.
 public struct RemoteImageGallery: Codable, Hashable, Sendable {
     public let images: [RemoteAttachmentReference]
     public enum ValidationError: Error, Equatable, Sendable { case invalidCount, duplicateURL }
     public init(images: [RemoteAttachmentReference]) throws {
-        guard (1...4).contains(images.count) else { throw ValidationError.invalidCount }
-        guard Set(images.map(\.url)).count == images.count else { throw ValidationError.duplicateURL }
+        guard !images.isEmpty else { throw ValidationError.invalidCount }
         self.images = images
     }
     private enum CodingKeys: String, CodingKey { case images }

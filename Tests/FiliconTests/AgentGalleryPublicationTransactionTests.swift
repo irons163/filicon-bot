@@ -114,7 +114,7 @@ struct AgentGalleryPublicationTransactionTests {
         let call = try NormalizedToolCall(id: "gallery", name: "SendMessage", argumentsJSON: JSONSerialization.data(withJSONObject: args))
         let context = ToolContext(conversationID: origin)
         let result = try await tool.execute(call, context: context)
-        let succeeds = ["success", "legacy", "local"].contains(mode)
+        let succeeds = ["success", "legacy", "local", "duplicate"].contains(mode)
         expectNoDifference(result.isError, !succeeds)
         let schema = try #require(JSONSerialization.jsonObject(with: tool.descriptor.inputSchema) as? [String: Any])
         let properties = try #require(schema["properties"] as? [String: Any])

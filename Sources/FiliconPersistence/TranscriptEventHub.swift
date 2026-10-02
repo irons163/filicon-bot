@@ -279,13 +279,19 @@ public actor TranscriptEventHub {
     }
 
     private static func validate(_ message: ChatMessage) throws {
+        // Only exact ordered image metadata permits repeated sources. Ordinary
+        // attachments and bounded turn-memory evidence remain source-unique.
+        if let layout = message.imageGalleryLayout,
+           !layout.matches(attachments: message.attachments, remoteGallery: message.remoteImages) {
+            throw TranscriptHubError.malformed("invalid ordered image gallery for message \(message.id)")
+        }
         var attachmentIDs = Set<String>()
         for attachment in message.attachments {
             guard !attachment.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                   !attachment.filename.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                   !attachment.mimeType.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                   attachment.byteCount >= 0,
-                  attachmentIDs.insert(attachment.id).inserted else {
+                  attachmentIDs.insert(attachment.id).inserted || message.imageGalleryLayout != nil else {
                 throw TranscriptHubError.malformed("invalid or duplicate attachment metadata for message \(message.id)")
             }
         }

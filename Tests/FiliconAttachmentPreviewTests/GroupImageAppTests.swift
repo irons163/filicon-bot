@@ -259,11 +259,11 @@ private struct GroupImageProvider: AIProvider {
             try await withUIRenderTurn(language: language) {
                 if language != "en" { #expect(FiliconLocalization.string(title) != title) }
                 let host = NSHostingView(rootView: VStack(alignment: .leading, spacing: 20) {
-                    AgentMessageImageGallery(images: f.images) { image in
+                    AgentMessageImageGallery(images: f.images) { _, image in
                         AgentMessageImagePreviewContent(image: image, preview: preview, expanded: true)
                     }
                     GroupImageDraftPreview(onRemove: {}) {
-                        AgentMessageImageGallery(images: galleryImages) { image in
+                        AgentMessageImageGallery(images: galleryImages) { _, image in
                             AgentMessageImagePreviewContent(image: image, preview: preview, compact: true)
                         }
                     }

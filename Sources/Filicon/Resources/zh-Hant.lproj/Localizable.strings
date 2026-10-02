@@ -55,6 +55,7 @@
 "Images will be sent to the selected recipient's configured model." = "圖片將傳送至所選收件代理人設定的模型。";
 "Choose a valid, single-frame PNG or JPEG image." = "請選擇有效的單幀 PNG 或 JPEG 圖片。";
 "Use at most 4 images, 5 MB each and 12 MB total." = "最多 4 張圖片，每張 5 MB，總計 12 MB。";
+"Use images up to 5 MB each and 12 MB total." = "圖片每張最多 5 MB，總計最多 12 MB。";
 "This image is not available in the current request." = "本次請求中沒有可用的這張圖片。";
 "The recipient model does not support image input. No image was sent to the model." = "收件代理人的模型不支援圖片輸入，未將圖片送入模型。";
 "Image messages are currently supported only for a single peer, not groups." = "目前圖片訊息僅支援單一代理人，不支援群組。";

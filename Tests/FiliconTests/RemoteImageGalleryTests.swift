@@ -22,10 +22,17 @@ struct RemoteImageGalleryTests {
         expectNoDifference(direct.remoteImages, nil)
     }
 
-    @Test func rejectsInvalidCountsAndDuplicateSourcesOnDecode() throws {
+    @Test func preservesRepeatedSourcesButRejectsEmptyOrInvalidLocatorsOnDecode() throws {
         let url = "https://example.com/image"
-        for images in [[], Array(repeating: ["url": url], count: 5),
-                       [["url": url, "alt": "A"], ["url": url, "alt": "B"]]] as [[[String: String]]] {
+        for images in [Array(repeating: ["url": url], count: 5),
+                       [["url": url, "alt": "A"], ["url": url, "alt": "B"]]] {
+            let data = try JSONSerialization.data(withJSONObject: ["images": images])
+            let decoded = try JSONDecoder().decode(RemoteImageGallery.self, from: data)
+            expectNoDifference(decoded.images.map(\.url), images.map { $0["url"]! })
+            expectNoDifference(decoded.images.map(\.alt), images.map { $0["alt"] })
+        }
+        for images in [[], [["url": "http://example.com/image"]],
+                       [["url": "file:///tmp/image.png"]], [["url": url, "alt": "\n"]]] as [[[String: String]]] {
             let data = try JSONSerialization.data(withJSONObject: ["images": images])
             #expect(throws: (any Error).self) { try JSONDecoder().decode(RemoteImageGallery.self, from: data) }
         }

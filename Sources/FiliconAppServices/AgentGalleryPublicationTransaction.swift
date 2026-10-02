@@ -157,22 +157,11 @@ public actor AgentGalleryPublicationTransaction {
         guard context.conversationID == conversationID, call.name == "SendMessage" else { throw Failure.unavailable }
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               text.count <= 8_000, text.utf8.count <= 32_000 else { throw Failure.invalidText }
-        guard (1...4).contains(images.count),
+        guard !images.isEmpty,
               images.reduce(0, { total, image in
                   if case let .local(local) = image { return total + local.file.bytes.count }
                   return total
-              }) <= 12 * 1_024 * 1_024 else { throw Failure.invalidGallery }
-        let remoteURLs = images.compactMap { image -> String? in
-            if case let .remote(reference) = image { return reference.url }
-            return nil
-        }
-        let localDigests = images.compactMap { image -> String? in
-            if case let .local(local) = image { return local.file.digest }
-            return nil
-        }
-        guard Set(remoteURLs).count == remoteURLs.count, Set(localDigests).count == localDigests.count else {
-            throw Failure.invalidGallery
-        }
+              }) <= AgentImageStore.maximumGalleryBytes else { throw Failure.invalidGallery }
         let remoteReferences = images.compactMap { image -> RemoteAttachmentReference? in
             if case let .remote(reference) = image { return reference }
             return nil

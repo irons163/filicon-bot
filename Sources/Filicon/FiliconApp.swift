@@ -1533,11 +1533,11 @@ struct TranscriptMessageView: View {
                 OrderedImageGalleryView(layout: layout,
                     images: message.attachments.filter { $0.kind == .image }, remoteGallery: message.remoteImages,
                     onThumbnail: { reference, review in
-                        try await model.remoteGalleryThumbnail(reference, at: .direct(conversation.id, message.id), approveRedirect: review)
+                        try await model.remoteGalleryPreview(reference, at: .direct(conversation.id, message.id), approveRedirect: review)
                     })
             } else if let gallery = message.remoteImages {
                 RemoteImageGalleryView(gallery: gallery, onThumbnail: { reference, review in
-                    try await model.remoteGalleryThumbnail(reference, at: .direct(conversation.id, message.id), approveRedirect: review)
+                    try await model.remoteGalleryPreview(reference, at: .direct(conversation.id, message.id), approveRedirect: review)
                 })
             }
             let visibleAttachments = message.imageGalleryLayout == nil

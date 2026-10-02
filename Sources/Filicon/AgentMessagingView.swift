@@ -249,7 +249,7 @@ struct AgentMessagingView: View {
             onPreviewRemote: { message, reference, review in
                 try await model.previewRemoteAttachment(reference, at: .mailbox(incoming.id, message.id), approveRedirect: review)
             }, onThumbnail: { message, reference, review in
-                try await model.remoteGalleryThumbnail(reference, at: .mailbox(incoming.id, message.id), approveRedirect: review)
+                try await model.remoteGalleryPreview(reference, at: .mailbox(incoming.id, message.id), approveRedirect: review)
             })
     }
 
@@ -361,7 +361,7 @@ struct AgentPublishedResponses: View {
     var secretEnabled: (RoomMessage) -> Bool = { _ in false }
     var onOpenFile: ((RoomMessage, AttachmentMetadata) -> Void)?
     var onPreviewRemote: ((RoomMessage, RemoteAttachmentReference, @escaping RemoteRedirectReview) async throws -> Void)?
-    var onThumbnail: ((RoomMessage, RemoteAttachmentReference, @escaping RemoteRedirectReview) async throws -> Data)?
+    var onThumbnail: ((RoomMessage, RemoteAttachmentReference, @escaping RemoteRedirectReview) async throws -> RemoteGalleryPreview)?
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Label(l10n("Published response"), systemImage: "bubble.left.and.text.bubble.right").font(.caption).foregroundStyle(.secondary)
@@ -478,26 +478,30 @@ struct AgentMessageImagePreviews: View {
     var compact = false
     var expandsSingleImage = true
     var viewingGallery: [AttachmentMetadata]?
+    var viewingGalleryIndex: Int?
     var body: some View {
-        AgentMessageImageGallery(images: images) { image in
+        AgentMessageImageGallery(images: images) { index, image in
             AgentMessageImagePreview(image: image, compact: compact,
                 expanded: expandsSingleImage && images.count == 1,
-                onOpen: { model.openAgentMessageImage(image, gallery: viewingGallery ?? images) })
+                onOpen: {
+                    model.openAgentMessageImage(image, gallery: viewingGallery ?? images,
+                        selectedIndex: viewingGalleryIndex ?? (viewingGallery == nil ? index : nil))
+                })
         }
     }
 }
 
 struct AgentMessageImageGallery<Content: View>: View {
     let images: [AttachmentMetadata]
-    @ViewBuilder var content: (AttachmentMetadata) -> Content
+    @ViewBuilder var content: (Int, AttachmentMetadata) -> Content
 
     var body: some View {
         if images.count == 1, let image = images.first {
-            content(image)
+            content(0, image)
         } else if !images.isEmpty {
             LazyVGrid(columns: [GridItem(.flexible(), alignment: .topLeading),
                                 GridItem(.flexible(), alignment: .topLeading)], alignment: .leading, spacing: 12) {
-                ForEach(images) { image in content(image) }
+                ForEach(Array(images.enumerated()), id: \.offset) { index, image in content(index, image) }
             }
             .frame(maxWidth: 560, alignment: .leading)
         }
@@ -520,7 +524,7 @@ private struct AgentMessageImagePreview: View {
     private func loadPreview() async {
         preview = nil; failed = false
         do {
-            let bytes = try await model.agentMessageImageData(image)
+            let bytes = try await model.agentMessageImageThumbnailData(image)
             try Task.checkCancellation()
             preview = NSImage(data: bytes); failed = preview == nil
         } catch is CancellationError {} catch { failed = true }

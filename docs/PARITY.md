@@ -1,6 +1,6 @@
 # Filicon / Grok Bot 0.18 功能 parity matrix（current implementation）
 
-2026-10-02 媒體增量：本機獨立檔案、HTTPS 附件 locator、local／HTTPS 混合文字圖片集已接入 direct、前景／背景群組、mailbox 與 direct peer，包含不可變 bytes 的完整核准、配額、順序保存、重開與撤銷隔離測試。解除系統鎖定後，完整串行回歸及原生封裝驗證通過；另重現並修正內嵌縮圖與獨立預覽共用排他編號造成的取消衝突，各卡保有獨立任務，scope／redirect 檢查不變。遠端需明確下載後才顯示內嵌縮圖，不能把 locator 當已驗證內容或網路權限。超過四張、其他圖片格式、大檔、動畫／快取、完整 crash／UI lifecycle 及真實外部服務驗收仍保留；詳見 [傳檔第六十九至七十階段](Send-message-files-parity.md)。
+2026-10-02 媒體增量：本機獨立檔案、HTTPS 附件 locator、local／HTTPS 混合文字圖片集已接入 direct、前景／背景群組、mailbox 與 direct peer，包含不可變 bytes 的完整核准、配額、順序保存、重開與撤銷隔離測試。第七十一階段補上遠端 GIF／APNG／WebP 有界內嵌播放；第七十二階段移除人類可見、經審核圖庫的四張限制及 viewer 前 50 張截斷，補上有界本機縮圖；第七十三階段支援重複來源的獨立位置／說明／精確 viewer 選取，修正 SQLite 已保存後 transcript 副本仍拒絕重複來源的漏點。系統存取恢復後，最新完整串行回歸 135 XCTest＋1,577 Swift Testing、原生建置、封裝及七語各 1,723 keys／0 missing 通過，包含原有 116、增加大量圖片 30 與重複圖片 40 個 canonical App 案例，以及 group／mailbox 動畫保存重開；這是本批回歸證據，不是全功能對等。模型輸入／SendToAgent 四張、本機 5／12 MiB、工具 40,000-byte 預算與完整核准不變；重複圖片各自計入 publication bytes，CAS／磁碟 quota 只計一個實體 blob。每張遠端卡保有獨立任務及 scope／redirect 檢查，需明確下載後才顯示；locator 不等於已驗證內容或網路權限。其他本機圖片／動畫格式、大檔、alias 獨立媒體搜尋、快取、完整 crash／UI lifecycle、最低實際 macOS 及真實外部服務驗收仍保留；詳見 [傳檔第六十九至七十三階段](Send-message-files-parity.md)。
 
 完成驗收入口：見 [Parity-completion-audit.md](Parity-completion-audit.md)。本表 43 個歷史 complete 並非今日逐項端到端驗證；尚未重驗者不構成整體完成證明。下方矩陣及日期段落保留歷史證據，當前狀態須對照各分類的後續核對紀錄，不能把已接線功能再次列為缺失。自身 `hidden_from_sidebar` 的核准／持久化／UI／模型接線已於 `a57e545` 完成隔離驗證。圖片頭像的來源、預覽、提交與人工配額已接線，剩餘邊界見 [Avatar-image-parity.md](Avatar-image-parity.md) 第七至十階段；媒體最新狀態與未驗收邊界見上段及 [Send-message-files-parity.md](Send-message-files-parity.md)。
 

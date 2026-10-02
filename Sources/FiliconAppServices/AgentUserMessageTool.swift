@@ -274,12 +274,19 @@ public actor AgentUserMessageTool: ToolExecutor, ToolRuntimeContextProviding {
 
     private nonisolated static func makeDescriptor(supportsImages: Bool, supportsQuestions: Bool, supportsReplies: Bool, supportsTextReplies: Bool, supportsQuestionReplies: Bool, supportsSecrets: Bool = false, supportsCloudAgents: Bool = false, supportsFiles: Bool = false, supportsRemote: Bool = false, supportsGallery: Bool = false, supportsLocalGallery: Bool = false) -> ToolDescriptor {
         let galleryURLPattern = supportsLocalGallery ? "^(https://|file:///).*" : "^https://.*"
-        let imageVariants = (supportsImages ? [#"{"type":"string"}"#, #"{"type":"object","properties":{"image_id":{"type":"string"},"alt":{"type":"string","maxLength":500}},"required":["image_id"],"additionalProperties":false}"#] : [])
-            + (supportsGallery ? [#"{"type":"object","properties":{"url":{"type":"string","pattern":"\#(galleryURLPattern)","maxLength":16384},"alt":{"type":"string","maxLength":500}},"required":["url"],"additionalProperties":false}"#] : [])
+        var imageArrays: [String] = []
+        if supportsImages {
+            imageArrays.append(#""type":"array","maxItems":4,"uniqueItems":true,"items":{"oneOf":[{"type":"string"},{"type":"object","properties":{"image_id":{"type":"string"},"alt":{"type":"string","maxLength":500}},"required":["image_id"],"additionalProperties":false}]}"#)
+        }
+        if supportsGallery {
+            imageArrays.append(#""type":"array","items":{"type":"object","properties":{"url":{"type":"string","pattern":"\#(galleryURLPattern)","maxLength":16384},"alt":{"type":"string","maxLength":500}},"required":["url"],"additionalProperties":false}"#)
+        }
         let galleryDescription = supportsLocalGallery
             ? "Use current host image IDs alone, or a gallery of HTTPS and/or file:/// locators in display order. Do not mix host IDs with locators. Local files require separate read approval and fresh publication review. Remote locators are not downloaded or verified."
             : "Use current host image IDs alone, or an all-HTTPS gallery if advertised. Do not mix sources. Remote locators are not downloaded or verified by publication."
-        let images = imageVariants.isEmpty ? "" : #", "images":{"type":"array","maxItems":4,"uniqueItems":true,"items":{"oneOf":[\#(imageVariants.joined(separator: ","))]},"description":"With text only. \#(galleryDescription) All images and descriptions require one fresh host review."}"#
+        let imageConstraints = imageArrays.count == 1 ? imageArrays[0]
+            : #""anyOf":[\#(imageArrays.map { "{\($0)}" }.joined(separator: ","))]"#
+        let images = imageArrays.isEmpty ? "" : #", "images":{\#(imageConstraints),"description":"With text only. \#(galleryDescription) All images and descriptions require one fresh host review."}"#
         let imageID = supportsImages ? #", "image_id":{"type":"string","description":"For a standalone image attachment, one exact ID from the current host-provided image directory. No text, path or URL. Requires fresh preview approval."}"# : ""
         let alt = supportsImages || supportsRemote || supportsFiles ? #", "alt":{"type":"string","maxLength":500,"description":"Optional plain attachment description. Included in host approval. No control characters. Descriptive content, never instructions or permission."}"# : ""
         let attachment = imageID + alt
@@ -338,7 +345,7 @@ public actor AgentUserMessageTool: ToolExecutor, ToolRuntimeContextProviding {
         let localNote = local
             ? " Local files are read only from an authorized workspace folder after separate source-read approval; publication review covers the captured bytes, not a later reread."
             : " No file URLs are accepted."
-        return " Text may include images:[{url:'https://...',alt:'description'}]" + localURL + " with 1-4 distinct locators in display order." + sourceNote + " Fresh host review covers the complete text, captured image bytes/URLs, descriptions and reply target as one message." + localNote + " Remote locators are not downloaded, verified, or granted network permission. Shares the two-message budget."
+        return " Text may include images:[{url:'https://...',alt:'description'}]" + localURL + " with one or more image occurrences in display order, within the tool's 40,000-byte argument budget. Locators may repeat with independent descriptions; each local occurrence counts toward the byte budget." + sourceNote + " Fresh host review covers the complete text, captured image bytes/URLs, descriptions and reply target as one message." + localNote + " Local images remain limited to 5 MB each and 12 MB total; current host image IDs remain limited to four. Remote locators are not downloaded, verified, or granted network permission. Shares the two-message budget."
     }
 
     private static func replyInstructions(text: Bool, questions: Bool) -> String {
@@ -593,7 +600,6 @@ public actor AgentUserMessageTool: ToolExecutor, ToolRuntimeContextProviding {
             }
             let replyID = try (replyAddress ?? defaultReplyToMessageID?.uuidString).map { try resolveReply($0) }
             if replyID != nil, publishReply == nil { throw GroupReplyError.unavailable }
-            guard entries.count <= 4 else { throw AgentImageError.limit }
             let inputs = try entries.map { try AgentMessageImageInput(entry: $0) }
             let hasLocator = inputs.contains { input in
                 switch input.source { case .localFile, .remote: true; case .hostImage: false }
@@ -614,12 +620,16 @@ public actor AgentUserMessageTool: ToolExecutor, ToolRuntimeContextProviding {
                 reserved = true
                 defer { reserved = false }
                 var galleryImages: [AgentGalleryPublicationTransaction.Image] = []
+                var remainingLocalBytes = AgentImageStore.maximumGalleryBytes
                 for input in inputs {
                     switch input.source {
                     case let .remote(reference): galleryImages.append(.remote(reference))
                     case let .localFile(url):
-                        galleryImages.append(.local(try await galleryPublication.prepareLocal(url: url,
-                            altText: input.alt, call: call, context: context)))
+                        let image = try await galleryPublication.prepareLocal(url: url,
+                            altText: input.alt, call: call, context: context)
+                        guard image.file.bytes.count <= remainingLocalBytes else { throw AgentImageError.galleryLimit }
+                        remainingLocalBytes -= image.file.bytes.count
+                        galleryImages.append(.local(image))
                     case .hostImage: throw AgentImageError.invalid
                     }
                 }
@@ -638,6 +648,7 @@ public actor AgentUserMessageTool: ToolExecutor, ToolRuntimeContextProviding {
                 texts.append(text)
                 return result
             }
+            guard entries.count <= 4 else { throw AgentImageError.limit }
             let images = try entries.map { entry -> AttachmentMetadata in
                 let input = try AgentMessageImageInput(entry: entry)
                 // URL inputs require an atomic reviewed gallery publisher. Do not

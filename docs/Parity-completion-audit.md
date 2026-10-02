@@ -1,6 +1,6 @@
 # 完成驗收入口（2026-09-27）
 
-2026-10-02 增量：本機獨立傳檔、HTTPS 附件 locator 及文字內 local／HTTPS 混合圖片集已接入 direct、前景／背景群組、mailbox 與 direct peer；有完整核准、配額、重開及撤銷隔離測試。另已重現並修正 mixed peer 復原排除、非 gallery 訊息夾帶 layout，以及多張內嵌縮圖／獨立預覽互相取消；解除系統鎖定後，最終完整串行回歸（135 XCTest＋1,513 Swift Testing）、原生建置及封裝驗證通過。下方日期段落是歷史進度，不能以「尚未接線」覆蓋後續實作；最新媒體邊界與驗證見 [傳檔第六十九至七十階段](Send-message-files-parity.md)。所有分類仍須逐項驗收，不宣稱全功能對等。
+2026-10-02 增量：本機獨立傳檔、HTTPS 附件 locator 及文字內 local／HTTPS 混合圖片集已接入 direct、前景／背景群組、mailbox 與 direct peer；有完整核准、配額、重開及撤銷隔離測試。第七十一階段新增 GIF／APNG／WebP 有界內嵌播放；第七十二階段移除經審核圖庫的四張限制與 viewer 前 50 張截斷，新增有界本機縮圖；第七十三階段支援重複來源的獨立位置與說明，並修正直接對話 transcript 副本仍拒絕重複附件的實際缺陷。受保護儲存探針恢復正常後，最新全專案串行測試 exit 0（135 XCTest＋1,577 Swift Testing）；原生建置、封裝簽章／entitlements、七語各 1,723 keys／0 missing 通過。canonical App 路徑的原有 116、增加大量圖片 30、重複圖片 40 案例及 group／mailbox GIF／APNG 保存重開均通過；未移除檔案保護、未重啟 App／Xcode、未修改真實帳號或群組。模型輸入／SendToAgent 四張、本機 5／12 MiB 與工具參數預算不變。下方日期段落是歷史進度，不能以「尚未接線」覆蓋後續實作；最新媒體證據與本機格式、大檔、alias 搜尋、快取、完整 crash／UI lifecycle 等邊界見 [傳檔第六十九至七十三階段](Send-message-files-parity.md)。所有 48 分類仍須逐項驗收，不以本批回歸綠燈宣稱全功能對等。
 
 本檔不取代使用者要求或縮小 parity 範圍。基準 Filicon `a7ca268`、reference `a9f633e09d49a85829b8236331b9e21f7e612634`；工作樹檢查為乾淨。沒有啟動 App、使用外部帳號或重新驗證 release。
 
@@ -100,7 +100,7 @@ App fixture 覆蓋隱藏／恢復、合併修改及單改可見性保留通知�
 ## 必須保留的其他分類
 
 - 圖片頭像：模型主機／box 來源、獨立讀取與圖片預覽核准、提交、direct／mailbox／remote fixture，以及人工匯入前配額已接線（截至 `549f96f`）。見 [Avatar-image-parity.md](Avatar-image-parity.md) 第七至十階段；CAS 回收／崩潰復原、完整 SVG 範圍、最低 macOS 與真實遠端服務驗收仍保留，不能標為整體完成。
-- 檔案／媒體：`SendMessage` 的本機獨立檔案、HTTPS locator 與本機／遠端文字圖片集已接入上述五條 App 路徑，隔離測試不等同真實服務驗收。大檔、其他圖片格式、動畫／快取與完整 crash／UI lifecycle 邊界仍保留，見 [Send-message-files-parity.md](Send-message-files-parity.md)。reference composition 未注入 box resolver，不能把可選介面當成遠端端到端證據；保存 HTTPS locator 也不是授予下載權限。
+- 檔案／媒體：`SendMessage` 的本機獨立檔案、HTTPS locator 與本機／遠端文字圖片集已接入上述五條 App 路徑，隔離測試不等同真實服務驗收。遠端有界動畫、四張以上的經審核圖庫與重複來源的獨立說明已實作；第七十三階段系統存取恢復後，本批受保護 store 重開及完整串行回歸通過。大檔、其他本機圖片／動畫格式、alias 獨立媒體搜尋、快取與完整 crash／UI lifecycle 邊界仍保留，見 [Send-message-files-parity.md](Send-message-files-parity.md)。reference composition 未注入 box resolver，不能把可選介面當成遠端端到端證據；保存 HTTPS locator 也不是授予下載權限。
 
 - 記憶：最新保存／搜尋／synthesis／episode／project recall 證據見 `Memory-archive-parity.md`；跨 epoch snapshot 是未接線參考設計，見 `Memory-snapshot-audit.md`，不能自行換成永久 cache。
 - 協作／訊息：AGENT-02／04 的歷史缺項需與 `Agent-collaboration-parity.md` 後續進度及 current source 逐項對照；不能用舊行的「缺」覆蓋已完成的接線，也不能以有 UI 就宣稱工具／背景路徑完成。

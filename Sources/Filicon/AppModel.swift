@@ -3051,10 +3051,14 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func openAgentMessageImage(_ metadata: AttachmentMetadata, gallery: [AttachmentMetadata]) {
-        guard !agentMessagingAccountTransition, gallery.count <= 4, gallery.contains(metadata) else { return }
+    func openAgentMessageImage(_ metadata: AttachmentMetadata, gallery: [AttachmentMetadata], selectedIndex: Int? = nil) {
+        let index = selectedIndex ?? gallery.firstIndex(of: metadata)
+        guard !agentMessagingAccountTransition, let index,
+              gallery.indices.contains(index), gallery[index] == metadata else { return }
+        do { try AgentImageStore.validatePublishedGalleryMetadata(gallery) }
+        catch { errorMessage = FiliconLocalization.string(error.localizedDescription); return }
         let accountGeneration = autoReviewAccountGeneration
-        openAttachmentGallery(metadata, gallery: gallery) { candidate in
+        openAttachmentGallery(metadata, gallery: gallery, maximumFiles: nil, selectedIndex: index) { candidate in
             guard accountGeneration == self.autoReviewAccountGeneration else { throw CancellationError() }
             return try await self.agentMessageImageData(candidate)
         }
@@ -3106,7 +3110,9 @@ final class AppModel: ObservableObject {
     }
 
     private func openAttachmentGallery(_ metadata: AttachmentMetadata, gallery: [AttachmentMetadata],
+                                       maximumFiles: Int? = 50, selectedIndex: Int? = nil,
                                        load: @escaping @MainActor (AttachmentMetadata) async throws -> Data) {
+        let selection = selectedIndex ?? gallery.firstIndex(where: { $0.id == metadata.id })
         attachmentPreviewGeneration += 1
         let generation = attachmentPreviewGeneration
         Task {
@@ -3114,17 +3120,17 @@ final class AppModel: ObservableObject {
                 var files: [AttachmentPreviewFile] = []
                 var selectedFileID: UUID?
                 do {
-                    for candidate in gallery.prefix(50) {
+                    for (index, candidate) in gallery.prefix(maximumFiles ?? gallery.count).enumerated() {
                         do {
                             let data = try await load(candidate)
                             let materialized = try attachmentPreviewMaterializer.materialize(data: data, metadata: candidate)
                             guard let file = materialized.files.first else { continue }
                             files.append(file)
-                            if candidate.id == metadata.id { selectedFileID = file.id }
+                            if index == selection { selectedFileID = file.id }
                         } catch {
                             // A stale sibling must not prevent the selected, CAS-verified
                             // attachment from opening. The selected file still fails closed.
-                            if candidate.id == metadata.id { throw error }
+                            if index == selection { throw error }
                         }
                     }
                 } catch {
@@ -3166,14 +3172,19 @@ final class AppModel: ObservableObject {
 
     func remoteGalleryThumbnail(_ reference: RemoteAttachmentReference, at location: RemoteAttachmentLocation,
                                 approveRedirect: @escaping RemoteRedirectReview) async throws -> Data {
-        guard let data = try await prepareRemotePreview(reference, at: location, inline: true, approveRedirect: approveRedirect) else {
+        try await remoteGalleryPreview(reference, at: location, approveRedirect: approveRedirect).frames[0].data
+    }
+
+    func remoteGalleryPreview(_ reference: RemoteAttachmentReference, at location: RemoteAttachmentLocation,
+                              approveRedirect: @escaping RemoteRedirectReview) async throws -> RemoteAttachmentImagePreparation.InlinePreview {
+        guard let preview = try await prepareRemotePreview(reference, at: location, inline: true, approveRedirect: approveRedirect) else {
             throw AttachmentPreviewError.integrityMismatch
         }
-        return data
+        return preview
     }
 
     private func prepareRemotePreview(_ reference: RemoteAttachmentReference, at location: RemoteAttachmentLocation,
-                                      inline: Bool, approveRedirect: @escaping RemoteRedirectReview) async throws -> Data? {
+                                      inline: Bool, approveRedirect: @escaping RemoteRedirectReview) async throws -> RemoteAttachmentImagePreparation.InlinePreview? {
         let accountGeneration = autoReviewAccountGeneration
         @MainActor @Sendable func validate() async throws -> Bool {
             guard !agentMessagingAccountTransition, accountGeneration == autoReviewAccountGeneration else { throw CancellationError() }
@@ -3227,10 +3238,10 @@ final class AppModel: ObservableObject {
             }
         guard download.reference == reference else { throw AttachmentPreviewError.integrityMismatch }
         guard try await validate() == imageGallery else { throw CancellationError() }
-        let preparation = Task.detached { () async throws -> (AttachmentMetadata, Data?) in
+        let preparation = Task.detached { () async throws -> (AttachmentMetadata, RemoteAttachmentImagePreparation.InlinePreview?) in
             if inline {
-                let thumbnail = try RemoteAttachmentImagePreparation.thumbnail(for: download.data, reference: reference)
-                return (thumbnail.original, thumbnail.data)
+                let preview = try RemoteAttachmentImagePreparation.inlinePreview(for: download.data, reference: reference)
+                return (preview.original, preview)
             }
             if imageGallery {
                 return (try RemoteAttachmentImagePreparation.metadata(for: download.data, reference: reference), nil)
@@ -4320,6 +4331,14 @@ final class AppModel: ObservableObject {
         let loaded = try await agentImageStore.load([image])
         guard generation == autoReviewAccountGeneration, !agentMessagingAccountTransition,
               let bytes = loaded.first?.data else { throw CancellationError() }
+        return bytes
+    }
+
+    func agentMessageImageThumbnailData(_ image: AttachmentMetadata) async throws -> Data {
+        let generation = autoReviewAccountGeneration
+        guard !agentMessagingAccountTransition else { throw CancellationError() }
+        let bytes = try await agentImageStore.thumbnail(for: image)
+        guard generation == autoReviewAccountGeneration, !agentMessagingAccountTransition else { throw CancellationError() }
         return bytes
     }
 
@@ -5985,7 +6004,9 @@ final class AppModel: ObservableObject {
                 }
             } else if !images.isEmpty { throw AgentMessagingError.scopeMismatch }
         }
-        guard Set(attachments.map(\.id)).count == attachments.count else { throw AgentMessagingError.scopeMismatch }
+        if message.imageGalleryLayout == nil {
+            guard Set(attachments.map(\.id)).count == attachments.count else { throw AgentMessagingError.scopeMismatch }
+        }
         var cards: [TranscriptCard] = []
         if let reference = message.cursorAgent {
             guard source.kind == .publication, message.text == reference.summary,
@@ -6008,7 +6029,9 @@ final class AppModel: ObservableObject {
         }
         if !images.isEmpty {
             guard let attachmentLifecycle else { throw AgentImageError.unavailable }
-            let loaded = try await agentImageStore.load(images)
+            let loaded: [InferenceAttachment]
+            if message.imageGalleryLayout != nil { loaded = try await agentImageStore.loadPublishedGallery(images) }
+            else { loaded = try await agentImageStore.load(images) }
             try checkScope()
             for attachment in loaded {
                 let saved = try await attachmentStore.ingest(data: attachment.data,

@@ -116,6 +116,20 @@ private struct SavedLocalGallery: Equatable {
         try await exercise(mode: mode, scenario: scenario)
     }
 
+    @Test(arguments: [5, 17, 100],
+        ["local-direct", "mixed-direct", "local-group", "mixed-group", "local-background", "mixed-background",
+         "local-mailbox", "mixed-mailbox", "local-peer", "mixed-peer"])
+    func largerGalleriesUseEveryCanonicalAppRoute(count: Int, scenario: String) async throws {
+        try await exercise(mode: "approve", scenario: scenario, galleryCount: count)
+    }
+
+    @Test(arguments: ["approve", "read-deny", "deny", "account"],
+        ["local-direct", "mixed-direct", "local-group", "mixed-group", "local-background", "mixed-background",
+         "local-mailbox", "mixed-mailbox", "local-peer", "mixed-peer"])
+    func repeatedSourcesUseCanonicalPublicationAndKeepApprovalFences(mode: String, scenario: String) async throws {
+        try await exercise(mode: mode, scenario: scenario, galleryCount: 5, repeatedSources: true)
+    }
+
     @Test(arguments: ["members", "destination-stop"],
         ["local-group", "mixed-group", "local-background", "mixed-background"])
     func groupRevocationPreventsLocalGalleryPublication(mode: String, scenario: String) async throws {
@@ -135,30 +149,54 @@ private struct SavedLocalGallery: Equatable {
         try await exercise(mode: mode, scenario: scenario)
     }
 
-    private func exercise(mode: String, scenario: String) async throws {
+    private func exercise(mode: String, scenario: String, galleryCount: Int? = nil, repeatedSources: Bool = false) async throws {
         let route = String(scenario.split(separator: "-").last!), mixed = scenario.hasPrefix("mixed-")
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-local-gallery-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }
         let workspace = root.appending(path: "workspace")
         try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
-        let bytes = try [png(red: 0, blue: 1), png(red: 1, blue: 0)]
-        let sources = [workspace.appending(path: mode == "misleading-name" ? "初稿 image.txt" : "初稿 image.png"),
-            workspace.appending(path: mode == "misleading-name" ? "second" : "second.png")]
+        let localCount = galleryCount.map { mixed ? $0 / 2 : $0 } ?? 2
+        let bytes = try repeatedSources ? Array(repeating: png(index: 0), count: localCount)
+            : galleryCount == nil ? [png(red: 0, blue: 1), png(red: 1, blue: 0)]
+            : (0..<localCount).map { try png(index: $0) }
+        let sources = galleryCount == nil
+            ? [workspace.appending(path: mode == "misleading-name" ? "初稿 image.txt" : "初稿 image.png"),
+               workspace.appending(path: mode == "misleading-name" ? "second" : "second.png")]
+            : (0..<localCount).map { workspace.appending(path: repeatedSources ? "same.png" : "image-\($0).png") }
         for (source, data) in zip(sources, bytes) { try data.write(to: source) }
         let prepared = try zip(sources, bytes).enumerated().map { index, pair in
             try PreparedAgentGalleryImage(bytes: pair.1, filename: pair.0.lastPathComponent, altText: "Local \(index + 1)")
         }
-        let remote = try RemoteImageGallery(images: [
-            RemoteAttachmentReference(url: "https://example.com/a?signature=a%2Bb", alt: "Remote A"),
-            RemoteAttachmentReference(url: "https://example.com/b", alt: "Remote B")])
+        let remote = try RemoteImageGallery(images: galleryCount.map { count in
+            try (0..<((count + 1) / 2)).map {
+                try RemoteAttachmentReference(url: "https://example.com/image-\(repeatedSources ? 0 : $0)?signature=a%2Bb", alt: "Remote \($0)")
+            }
+        } ?? [RemoteAttachmentReference(url: "https://example.com/a?signature=a%2Bb", alt: "Remote A"),
+              RemoteAttachmentReference(url: "https://example.com/b", alt: "Remote B")])
         let inputs = sources.enumerated().map { ["url": $0.element.absoluteString, "alt": "Local \($0.offset + 1)"] }
-        let imageInputs = mixed
-            ? [["url": remote.images[0].url, "alt": "Remote A"], inputs[0],
-               ["url": remote.images[1].url, "alt": "Remote B"], inputs[1]] : inputs
-        let layout = try ImageGalleryLayout(items: mixed
-            ? [.remote(remote.images[0]), .attachment(prepared[0].file.digest),
-               .remote(remote.images[1]), .attachment(prepared[1].file.digest)]
-            : prepared.map { .attachment($0.file.digest) })
+        let imageInputs: [[String: String]]
+        let layoutItems: [ImageGalleryLayout.Item]
+        if let galleryCount, mixed {
+            imageInputs = (0..<galleryCount).map { index in
+                if index.isMultiple(of: 2) {
+                    let reference = remote.images[index / 2]
+                    return ["url": reference.url, "alt": reference.alt!]
+                }
+                return inputs[index / 2]
+            }
+            layoutItems = (0..<galleryCount).map { index in
+                index.isMultiple(of: 2) ? .remote(remote.images[index / 2]) : .attachment(prepared[index / 2].file.digest)
+            }
+        } else {
+            imageInputs = mixed
+                ? [["url": remote.images[0].url, "alt": "Remote A"], inputs[0],
+                   ["url": remote.images[1].url, "alt": "Remote B"], inputs[1]] : inputs
+            layoutItems = mixed
+                ? [.remote(remote.images[0]), .attachment(prepared[0].file.digest),
+                   .remote(remote.images[1]), .attachment(prepared[1].file.digest)]
+                : prepared.map { .attachment($0.file.digest) }
+        }
+        let layout = try ImageGalleryLayout(items: layoutItems)
         let grants = WorkspaceAuthorizationStore(fileURL: root.appending(path: "grants.json"))
         try await grants.authorize(workspace)
         let generation = UUID(), key = Data(repeating: 13, count: 32)
@@ -278,11 +316,11 @@ private struct SavedLocalGallery: Equatable {
         let imageStore = AgentImageStore(rootURL: root.appending(path: "agent-message-images"))
         let inventory = try await imageStore.storageInventory()
         var expectedImageSizes: [String: Int64] = [:]
-        if succeeds { expectedImageSizes = Dictionary(uniqueKeysWithValues: prepared.map { ($0.file.digest, Int64($0.file.bytes.count)) }) }
+        if succeeds { expectedImageSizes = prepared.reduce(into: [:]) { $0[$1.file.digest] = Int64($1.file.bytes.count) } }
         else if mode == "preview-late" || (mode == "blob-late" && route != "direct") {
             expectedImageSizes[prepared[0].file.digest] = Int64(prepared[0].file.bytes.count)
         } else if mode.hasPrefix("message-") {
-            expectedImageSizes = Dictionary(uniqueKeysWithValues: prepared.map { ($0.file.digest, Int64($0.file.bytes.count)) })
+            expectedImageSizes = prepared.reduce(into: [:]) { $0[$1.file.digest] = Int64($1.file.bytes.count) }
         }
         expectNoDifference(inventory, AttachmentStoreInventory(active: expectedImageSizes, quarantined: [:], temporaryFiles: []))
         if mode != "quota-unavailable" {
@@ -321,6 +359,7 @@ private struct SavedLocalGallery: Equatable {
         }
         expectNoDifference(snapshots.count, succeeds ? 1 : 0)
         if let saved = snapshots.first {
+            expectNoDifference(saved.images.count, prepared.count)
             let expectedImages = zip(prepared, saved.images).map { image, actual in
                 AttachmentMetadata(id: image.file.digest, filename: image.file.filename, mimeType: image.mimeType,
                     byteCount: Int64(image.file.bytes.count), kind: .image, createdAt: actual.createdAt, altText: image.altText)
@@ -330,7 +369,7 @@ private struct SavedLocalGallery: Equatable {
             expectNoDifference(saved.remote, mixed ? remote : nil)
             expectNoDifference(saved.layout, layout)
             let imageStore = AgentImageStore(rootURL: root.appending(path: "agent-message-images"))
-            let loaded = try await imageStore.load(saved.images)
+            let loaded = try await imageStore.loadPublishedGallery(saved.images)
             expectNoDifference(loaded.map(\.data), bytes)
             if route == "direct" || route == "peer" {
                 if route == "peer" {
@@ -402,6 +441,20 @@ private struct SavedLocalGallery: Equatable {
         let output = try #require(CGImageDestinationCreateWithData(data, "public.png" as CFString, 1, nil))
         CGImageDestinationAddImage(output, try #require(context.makeImage()), nil)
         #expect(CGImageDestinationFinalize(output))
+        return data as Data
+    }
+
+    private func png(index: Int) throws -> Data {
+        let bytes = Data([UInt8(index + 1), 0, 0, 255])
+        let provider = try #require(CGDataProvider(data: bytes as CFData))
+        let image = try #require(CGImage(width: 1, height: 1, bitsPerComponent: 8, bitsPerPixel: 32,
+            bytesPerRow: 4, space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
+            provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent))
+        let data = NSMutableData()
+        let output = try #require(CGImageDestinationCreateWithData(data, "public.png" as CFString, 1, nil))
+        CGImageDestinationAddImage(output, image, nil)
+        try #require(CGImageDestinationFinalize(output))
         return data as Data
     }
 }

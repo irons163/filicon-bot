@@ -751,3 +751,67 @@ UI 單張放大、多張兩欄以 row-major 排列。本機圖片可開啟同一
 `gallery-concurrency-red-verified.log` 在 production 修正前得到 4 tests／1 suite、12 issues 的預期重現；第一次 fixture 編譯因 internal download initializer，改為 test target 的 `@testable import`，沒有更改 production 可見性。修正後 `gallery-concurrency-green.log` 的 20 tests／3 suites 通過，包含既有下載安全與卡片／轉址測試。最終 `gallery-concurrency-full.log` exit 0：135 XCTest＋1,513 Swift Testing（核心 797、App 493）。原生 `gallery-concurrency-native.log` build succeeded，`gallery-concurrency-native-package.log` 的四個執行檔、XPC entitlements 和 deep strict 簽章通過。依 pfw-testing／pfw-custom-dump，fixture 不連線外部服務、不修改真實帳號／群組資料；未 push、未啟動或重啟使用者 App／Xcode。
 
 本輪只補此取消衝突，沒有將上一階段的四張／格式／大檔、縮圖快取／動畫、崩潰／跨程序、最低 macOS 或真實服務驗收標為完成。
+
+## 第七十一階段：遠端圖片集有界動畫播放（2026-10-02，待解鎖完整回歸）
+
+reference `a9f633e09d49a85829b8236331b9e21f7e612634` 的 `frontend/src/recovered/features/conversation/workspace/transcript.tsx` 使用有序 `<img>` 呈現 `SendMessageTextImages`；Filicon 原本只顯示第一幀 PNG，不能據此宣稱動畫呈現對等。本批將 direct、群組及 mailbox 的遠端圖片集下載入口接到完整 GIF／APNG／WebP 顯示序列，混合圖片集的遠端格沿用同一路徑。這不是開放本機動畫匯入或增加模型 vision 權限。
+
+只有人類明確下載後才準備顯示。原始 bytes、SHA-256、實際 MIME、alt 與獨立 viewer 的內容保持不變；下載不信任副檔名或伺服器 MIME，仍逐次核准 redirect、重驗精確保存的 URL／alt、當前對話／群組、帳號 generation 與任務取消。內嵌不寫暫存檔、不自動連網、不記憶網路授權。格式準備在可取消的 off-main 任務，View 只讀經驗證的有界 PNG 幀。
+
+顯示最大邊預設 640、可指定 1…1024，完整序列共用 8 Mp 解碼像素及 32 MiB 編碼預算；長動畫進一步縮小，不靠丟掉後續幀冒充完整序列。原始 32 MiB、最多 200 幀、每幀 16,384 邊長／64 Mp、整份 128 Mp 驗證上限保留。16-bit gray/alpha 的原生縮圖實測只留下第一列，已改從非快取原始 CGImage 逐幀繪入有界 RGBA canvas，再準備縮圖；原始單幀解碼仍可能高於顯示預算，不宣稱整個解碼過程僅占 8 Mp。
+
+GIF 的原始循環區塊使用首次播放加 repetitions，APNG／WebP 使用 total plays；零代表持續播放，缺少次數則播放一次。現代 ImageIO 已將 NETSCAPE 次數正規化，再加一會多播一輪，且實測忽略 ANIMEXTS。改為讀取已驗證 GIF 的有界結構：跳過色表、註解與 LZW 子區塊，只辨認真正 application block 的 NETSCAPE2.0／ANIMEXTS1.0，不以全文搜尋誤認像素或註解裡的字串；保留取消檢查，沒有可解碼幀的輸入回報無效圖片，而非假稱超出解碼上限。格式與平台差異參見 [WebKit 循環次數修正](https://bugs.webkit.org/show_bug.cgi?id=216018)、[WebKit ImageIO 次數讀取](https://github.com/WebKit/WebKit/blob/main/Source/WebCore/platform/graphics/cg/ImageDecoderCG.cpp)、[Blink GIF application 區塊](https://chromium.googlesource.com/chromium/blink.git/+/master/Source/platform/image-decoders/gif/GIFImageReader.cpp)；沒有搬用外部解碼器或測試圖片。
+
+依各格式延遲排列，零延遲用 100 ms、其他正延遲至少 20 ms，避免忙迴圈。逐幀邊界的 lazy Timeline 不持續 60 Hz 喚醒，有限播放結束保留最後一幀。靜態／多頁 TIFF 不當動畫播放；Reduce Motion 或 scene inactive／background 顯示第一幀，不排播放時鐘。卡片離開、reference 變動、取消或替換時撤銷 generation，晚到結果／錯誤不得恢復舊播放；失敗可見且可重試。
+
+APNG 不使用 ImageIO 的預設封面作動畫第一幀。新增 bounded chunk parser、CRC、fcTL／fdAT 順序及 offset 檢查，按 SOURCE／OVER、區域清除／恢復前一狀態組合；首幀 PREVIOUS 按透明背景處理。所有幀及非動畫封面的 zlib stream 必須完整，逐 scanline 檢查 0…4 filter、精確解壓長度、校驗與無多餘尾端；包括 Adam7 與合法色深，不能借另一幀的有效像素接受損壞後續幀。非零起始索引的 Data 切片經正規化，不假設傳入 Data 的下標必從零開始。格式語義來源：[GIF89a](https://www.w3.org/Graphics/GIF/spec-gif89a.txt)、[PNG 第三版](https://www.w3.org/TR/png-3/)、[WebP RIFF](https://developers.google.com/speed/webp/docs/riff_container)；封裝仍用 SDK zlib，沒有新增套件。
+
+新增核心 24 項測試，含三格式次數／延遲、200 幀 aggregate 像素、delta／disposal／半透明合成、15 種色彩／色深 × 非交錯／Adam7、16-bit gray/alpha 全列及半透明、靜態封面排除、八種方向、12 種惡意 APNG、截斷後續幀、切片索引及取消。GIF 另用手寫原始區塊驗證兩種標記 × 0／1／2／65,535 repetitions、沒有循環標記、尾端 application 區塊、註解／未知 application 的偽標記、非零起始索引及四種損壞子區塊，不只使用原生 writer 產生的正規化次數。新增 App 6 項測試，涵蓋七語 × 320／620 pt 的第一／第二／暫停真實像素、Reduce Motion／scene、有限排程、AsyncStream gated 取消／替換／失敗重試、direct／group／mailbox canonical 保存內容及原始 modal bytes／切帳號拒絕。渲染 `.build/validation/gallery-animation-{first,second,paused}.png` 均已重新目視檢查，不取代整個 App、真實 UI 或全部語系人工驗收。依 pfw-testing／pfw-custom-dump 使用隔離 fixture、完整 metadata／幀比較及明確 suspension gate，不連線外部服務、不修改真實資料。
+
+驗證歷程保留真實失敗：`gallery-animation-edge-probe-repair.log` 重現 APNG 封面／損壞後續幀問題；`gallery-animation-final-coverage.log` 的全列像素斷言再抓到 16-bit gray/alpha 掉行，不能用單一像素成功取代。修正後 `gallery-animation-slice-final-focused.log` 核心 23 tests／2 suites 通過，但後續補驗的 `gallery-animation-raw-gif-loop-red.log` 以 2 tests／14 issues 重現多播與 ANIMEXTS 被忽略，不以先前綠燈掩蓋。`gallery-animation-raw-loop-final-focused.log` 再發現三種損壞 GIF 被誤分類為 decodeLimit；修正後最終 `gallery-animation-final-gif-green.log` exit 0，核心 28 tests／2 suites（24 新增＋4 既有）及 App 5 tests／1 suite 通過。
+
+群組／mailbox 路徑仍未通過：先前 App 23 tests／3 suites 整體 exit 1，四個 group／mailbox 案例重讀隔離 `agents.json` 遭 NSCocoaErrorDomain 257／POSIX EPERM；`gallery-animation-route-probe-fixed.log` 的獨立 store 重開檢查明確定位失敗。最新系統檢查仍回報 `CGSSessionScreenIsLocked=Yes`。最終局部綠燈刻意不含受保護 store 路徑，不能當作 App 全綠；未降低檔案保護或修改系統權限，完整串行回歸仍待再次解鎖。
+
+最終 production source 的 `gallery-animation-final-gif-native.log` build succeeded；`gallery-animation-final-gif-native-package.log` 的版本、四個執行檔、App／XPC entitlements 與 deep strict 簽章通過。產物與診斷日誌不提交。待解鎖後補驗完整回歸再提交；未 push、未啟動或重啟使用者 App／Xcode。四張以上、大型本機媒體、其他本機圖片／動畫格式、遠端快取、完整窗口／崩潰／跨程序 receipt、最低實際 macOS 與真實外部服務驗收仍保留，不以本批代替全部 parity 完成。
+
+本輪收到解鎖回報後再次執行 `gallery-animation-unlock-playback.log`：五項播放／生命週期測試及 direct GIF／APNG 案例通過，但第六項的四個 group／mailbox 保存內容重開案例仍遭 `agents.json` 257／EPERM，整體 exit 1；系統同時仍回報 `CGSSessionScreenIsLocked=Yes`。這是實際重試结果，不能把「已解鎖」回報直接當成受保護儲存已可讀的測試證據。
+
+## 第七十二階段：移除經審核圖庫的任意張數限制（2026-10-02，待解鎖完整回歸）
+
+重新核對 reference 同一 commit 的 `source/host/runner/tools/send-message-schema.ts`：`images` 是 optional array，沒有 `maxItems`；`send-message-tool.ts` 依原順序 resolve 全部圖片，transcript 使用全部項目呈現。Filicon 的 `RemoteImageGallery`、`ImageGalleryLayout`、交易及工具先前共用四張限制，這是已確認差異。現在只對經 host 完整核准的人類可見 publication 移除該限制，不換成八張或十六張等另一個任意上限。
+
+工具 schema 分開描述 current host image ID（仍最多四張）及 local／HTTPS locator gallery（沒有任意張數上限）；執行器仍拒絕混用 IDs／locators，並保留 40,000-byte arguments、完整正文／alt／reply 核准、兩則訊息預算、精確來源及帳號重驗、同 call 重播／不同 payload 拒絕。每張本機 captured PNG／JPEG 仍最多 5 MiB、整個 gallery 本機 bytes 共 12 MiB；擷取時逐張扣除剩餘預算，超出後不再讀後續來源、不進 publication review 或保存。未放寬格式、來源讀取、遠端 redirect、配額或 CAS 安全安裝。
+
+新增 `loadPublishedGallery`，用於精確保存 layout 已驗證的 peer 投影；人類 viewer 先使用相同的整份 metadata 驗證，再逐張呼叫原 loader。原 `load`、incoming 匯入與 `SendToAgent`／model-input directory 仍最多四張。人類開啟圖庫先驗 metadata 類型、唯一性、每張／aggregate bytes，再逐張讀取 canonical blob 並驗 hash／實際 MIME；與原版允許重複 URL 的 schema 仍有差異，這一批沒有放寬來源去重。不要把 publication loader 當成模型可任意讀檔／增加 vision 輸入的能力，也不宣稱其他既有 history 圖片處理全面對等。
+
+另重現 shared viewer 的 `prefix(50)`，即使前述四張限制已移除，點第 100 張仍無法開啟。經驗證的 agent gallery 改為不截斷；其他既有附件入口仍保留原 50-file 政策。已驗證的原始 bytes／metadata／選取最後一張及關閉清理不變。本機訊息格改讀最大邊 640、可指定 1…1024 的 PNG 縮圖，actor 外於 UI 主執行緒準備，不能將縮圖當原始 CAS blob；這是每張顯示上限，不宣稱整個 App 有全域 thumbnail 記憶體上限或已完成完整窗口生命周期。
+
+新增核心 9 項測試：5／17／100 張 × remote／local／mixed 的完整 RoomMessage／ChatMessage／layout JSON、核准與單次保存順序、相同 call 重播、不同 payload 拒絕；publication store 重開精確 metadata／bytes，而 inference loader 拒絕四張以上；5／12 MiB 與 40,000-byte 邊界、停止後續 source 讀取、拒絕／撤銷／錯誤 order／alt／destination 回條及 uncertain replay；縮圖實際尺寸、PNG 型別、原始內容不變、損壞／錯 MIME／取消與無效 dimension 拒絕。未改用寬鬆的 hash 或 receipt 比較。
+
+新增 App 4 項測試：七語 × 320／620 pt 的 5／17／100 格兩欄真實逐格像素、17 張實際遠端卡片全部列且不自動下載／外連；5／17／100 張 canonical CAS viewer 包含全部原始 bytes、最後一張選取與每個 preview 檔案清理，以及七語 gallery 容量提示。viewer outcome 用 Combine → AsyncStream 明確事件等待，不用 sleep 猜時序；首版 AsyncPublisher iterator 不符合 Swift 6 actor isolation，改為只傳 Sendable outcome signal，沒有更改 production isolation。色彩 fixture 先遇到 Device RGB → screenshot 色彩轉換，改用相同 SDK 管線繪製的獨立 swatches 比較逐格順序，不增加容差掩蓋錯誤；遠端卡片以實際 grid 第一列的同語言字型度量檢查全部列。四張繁中渲染 `.build/validation/gallery-cardinality-{ordered,remote}-{320,620}.png` 已目視確認，並不代表整個 App 或七語皆經人工操作。
+
+另外擴充既有五條 canonical App fixture（direct／group／background／mailbox／peer），新增 5／17／100 張 × local／mixed 共 30 案例，覆蓋真正核准、配額、保存、重開、viewer store、direct 原始內容與下一次 inference、peer 投影／復原去重；原有 116 種拒絕／撤銷／故障情境未減少。這 30 案例在 `gallery-cardinality-canonical-routes.log` 全部於隔離受保護 `agents.json` 重開遭 257／EPERM，整體 1 test／1 suite、30 issues、exit 1。它們尚未完成 canonical 重開及後續 assertion，不能把前段執行過或新測試已編譯當成通過；亦未降低儲存保護、改權限或使用真實帳號資料。
+
+另用不依賴 App 或 Testing 的最小 Foundation probe 對照相同隔離暫存目錄：普通 `.atomic` 寫入後可讀且 bytes 相符；加上 production 使用的 `.completeFileProtectionUnlessOpen` 後仍可寫，但重開回傳 `NSCocoaErrorDomain 257`／`NSPOSIXErrorDomain 1`。`gallery-cardinality-protected-read-probe.log` 保留結果，probe 暫存目錄已自動清除。當下 console 使用者相同且系統仍回報螢幕鎖定；因此不是只由新 gallery fixture 造成的錯誤，也不能以去除檔案保護使回歸假通過。已請使用者確認登入桌面並在測試期間保持不鎖屏，沒有自行更改鎖定設定。
+
+實際驗證：`gallery-cardinality-red-final.log` 在修正 production 前以 5 tests／1 suite、48 issues 重現張數／schema／交易問題。首次核心 fixture 的相鄰灰階像素經色彩转换後變成同 blob，改為精確 RGBA 值，沒有放寬 production 去重；`gallery-cardinality-final-core.log` 的 12 tests／3 suites 通過。最終 `gallery-cardinality-regression.log` exit 0：核心 44 tests／6 suites＋App 14 tests／3 suites，含本批數量／縮圖／viewer／畫面、既有圖片來源與原始動畫格式、播放／取消生命週期回歸，刻意不含尚失敗的受保護 canonical 路徑。`scripts/localization_audit.py` 七語各 1,723 keys／0 missing。`gallery-cardinality-native.log` build succeeded，`gallery-cardinality-native-package.log` 版本、四個執行檔、App／XPC entitlements 與 deep strict 簽章通過。
+
+完整串行回歸仍待受保護 store 可讀後重跑，不沿用第七十階段全綠證據；補驗通過後才 commit。本輪未 push、未啟動或重啟 App／Xcode、未改真實群組／帳號。保留重複來源、大型本機媒體、其他本機圖片／動畫格式、遠端快取、完整窗口／崩潰／跨程序 receipt、最低實際 macOS 與真實外部服務驗收，不以本批局部綠燈宣稱全部 parity 完成。
+
+## 第七十三階段：重複圖片的獨立位置與說明（2026-10-02）
+
+重新核對 reference `a9f633e09d49a85829b8236331b9e21f7e612634` 的 `send-message-schema.ts`／`send-message-tool.ts`：圖片 array 沒有 uniqueness 限制，builder 保留每一次出現；`frontend/src/recovered/features/conversation/workspace/transcript.tsx` 使用 `url + index` 作為圖片 key。Filicon 先前的 URL／digest 去重會拒絕此合法輸入，UI 按第一個相同 digest 查找亦會套用錯誤說明。本批將內容身分與訊息內位置分開，取代第七十二階段仍保留的來源去重差異。
+
+經完整核准的 local／HTTPS／mixed gallery 現可保留相同來源的多次出現，各自有 filename／alt 與原順序。`ImageGalleryLayout` 驗證完整兩份 canonical array，重複 digest 必須具有相同 size／實際 MIME 且皆為圖片；新的有序 resolver 使用本機 metadata 的 occurrence index，不查找第一個相同來源。JSON／SQLite／分頁／peer 投影保存每個位置；本機與遠端 grid 使用 index 識別，不以 URL 或 hash 合併卡片。viewer 接收精確位置，連同完全相同 metadata 的重複項也能開啟第 0／2／4 張，並清除每一個獨立 materialized preview。
+
+來源讀取、完整發佈核准、scope／帳號重驗、同 call 精確重播與不同 payload 拒絕不變；不同 call 的整則訊息去重及 uncertainCommit 仍保留。locator schema 移除 uniqueness，但 current host image ID／incoming／`SendToAgent` 仍維持四張與唯一來源，不能藉此取得模型輸入或任意檔案權限。相同本機 bytes 在 CAS 只保存一個 blob，reachability 與磁碟 quota 同樣只記一次實體資料；同一圖片在 gallery 出現幾次，5 MiB／12 MiB 的 publication 準備預算仍計幾次，不以磁碟去重逃過記憶體大小限制。媒體搜尋索引仍按訊息＋blob 保留首個 filename；本批未增加每個 alias 的獨立搜尋項目。
+
+整合測試另抓到 `TranscriptEventHub.validate` 的來源去重漏點：單聊 SQLite 已保存後，derived transcript 拒絕重複附件，查證 durable outcome 也因 reconcile 失敗而回報 uncertainCommit。這不是受保護儲存 EPERM。副本現在只有精確匹配的 image layout 才允許重複來源；普通附件仍拒絕重複，衝突 MIME／size、缺少項目、非圖片或錯誤 remote layout 仍拒絕。journal、checkpoint、訂閱 append／update 與重開保留完整訊息；bounded turn-memory 仍使用唯一 content IDs，不以 gallery 重複顯示增加 recall 容量。
+
+新增核心 13 項測試，包含 2／5／17 張 × 三種來源的 JSON 與精確 resolver、重複來源／完全相同項目、不同說明、單次 CAS／reachability／quota、順序／filename／alt 回條拒絕、核准／來源拒絕／帳號撤銷、12 MiB 邊界、相同 call 不重讀與不同 call 全訊息去重、SQLite 分頁重開、真正 ConversationStore 副本與 memory 重開，以及 journal／checkpoint 注入故障復原。新增 App 6 項測試涵蓋七語 × 320／620 pt 的實際遠端卡片及本機 grid 索引／說明標記、精確選取／原始 bytes／temp 清理、非法位置無副作用、精確已保存 remote alt 與拒絕未審核 alias。四張繁中 `.build/validation/gallery-repeat-{remote,local}-{320,620}.png` 已目視確認；本機 grid 產圖是位置標記 fixture，不冒充完整 App 或原始圖片縮圖的人工驗收。另擴充五條 canonical App fixture 共 40 個 local／mixed 核准、讀取拒絕、發佈拒絕與帳號撤銷案例，保留先前 116 及大量圖片 30 案例。
+
+真實失敗與修正證據：首版 fixture 的 internal download initializer／不可修改的 metadata 欄位編譯錯誤均改測試本身，不放寬 production 可見性或 immutable 欄位。`gallery-repeat-red-verified.log` 在去重修正前以 8 tests／1 suite、31 issues 重現；後續 `gallery-repeat-canonical-routes.log` 得到 80 issues，其中 74 為受保護 agents.json EPERM，另 6 是單聊 transcript 導致的失敗，不把所有錯誤推給環境。獨立 `gallery-repeat-transcript-red-verified.log` 以 3 tests／16 issues 重現副本漏點；修正後 `gallery-repeat-transcript-green.log` 16 XCTest＋13 核心／6 App Swift Testing 通過。最終局部 `gallery-repeat-regression.log` 16 XCTest＋核心 57／App 32 項通過；先前最終 canonical 重跑仍有 74 EPERM，但不再有六個單聊工具 assertion 失敗。
+
+本輪後段系統存取恢復，`gallery-repeat-unlocked-probe.log` 的普通與 `.completeFileProtectionUnlessOpen` 寫入／重開 bytes 都相符；沒有移除保護或更改鎖定設定。`gallery-repeat-unlocked-canonical.log` exit 0，12 tests／2 suites 通過，包含全部 116 個原有拒絕／撤銷／故障案例、30 個大量圖片、40 個重複圖片與 group／mailbox GIF／APNG 保存內容重開。最終 `gallery-repeat-unlocked-full.log` 全專案串行測試 exit 0：135 XCTest（7 bundles）、1,577 Swift Testing，其中核心 target 843 tests／97 suites、App target 511 tests／73 suites，零測試失敗；不能沿用解鎖前局部綠燈代替這次 gate。`gallery-repeat-final-native.log` build succeeded，`gallery-repeat-final-native-package.log` 的四個執行檔、App／XPC entitlements 與 deep strict 簽章通過；七語各 1,723 keys／0 missing，diff check 通過。
+
+依 pfw-testing／pfw-custom-dump 使用隔離來源、固定時間／身分及完整順序／bytes 斷言，await 的 actor 值先取得再比較；SwiftUI skill 引導用位置身分與 action helper，沒有增加依賴或外部網路。未 push、未啟動或重啟使用者 App／Xcode、未改真實群組／帳號。仍保留大型本機媒體、其他本機圖片／動畫格式、遠端快取、完整窗口／跨程序 receipt、最低實際 macOS 及真實外部服務驗收；本批 journal 故障案例不是所有 crash 或跨程序發佈邊界的完成證明。

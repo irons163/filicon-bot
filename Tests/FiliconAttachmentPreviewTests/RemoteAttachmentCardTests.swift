@@ -78,7 +78,7 @@ struct RemotePreviewFixture: RemoteAttachmentDownloading {
             let remote = try RemoteAttachmentReference(url: "https://example.com/design?sig=exact", alt: "Remote 設計")
             let view = VStack(alignment: .leading, spacing: 12) {
                 Text(l10n("Image"))
-                OrderedImageGalleryLayout(items: [.attachment(metadata.id), .remote(remote)]) { item in
+                OrderedImageGalleryLayout(items: [.attachment(metadata.id), .remote(remote)]) { _, item in
                     switch item {
                     case .attachment:
                         AgentMessageImagePreviewContent(image: metadata, preview: image, compact: true)
@@ -110,7 +110,7 @@ struct RemotePreviewFixture: RemoteAttachmentDownloading {
             let items: [ImageGalleryLayout.Item] = [
                 .attachment("blue"), .remote(try RemoteAttachmentReference(url: "https://example.com/red")),
                 .attachment("orange"), .remote(try RemoteAttachmentReference(url: "https://example.com/green"))]
-            let view = OrderedImageGalleryLayout(items: items) { item in
+            let view = OrderedImageGalleryLayout(items: items) { _, item in
                 VStack(alignment: .leading, spacing: 6) {
                     galleryColor(item).frame(height: 150)
                     Text(l10n("Image")).font(.caption)
@@ -151,7 +151,7 @@ struct RemotePreviewFixture: RemoteAttachmentDownloading {
         let preview = NSImage(cgImage: try #require(context.makeImage()), size: CGSize(width: 240, height: 120))
         let metadata = AttachmentMetadata(id: String(repeating: "a", count: 64), filename: "design.png",
             mimeType: "image/png", byteCount: 100, kind: .image)
-        let view = OrderedImageGalleryLayout(items: [.attachment("blue")]) { _ in
+        let view = OrderedImageGalleryLayout(items: [.attachment("blue")]) { _, _ in
             AgentMessageImagePreviewContent(image: metadata, preview: preview, compact: true, expanded: true)
         }.padding(16).frame(width: width, alignment: .leading).background(Color.white)
         let renderer = ImageRenderer(content: view)
