@@ -103,7 +103,7 @@ enum TranscriptCardPresenter {
             if let name = value.name { fields.append((l10n("Name"), name)) }
             if let channel = value.channel { fields.append((l10n("Channel"), channel)) }
             if let automation = value.automation { fields.append((l10n("Automation"), automation)) }
-            return .init(kind: .timeline, title: humanized(value.eventKind), subtitle: l10n("Timeline · \(status)"), symbolName: "point.3.connected.trianglepath.dotted", detail: value.detail, fields: fields, longTextTitle: nil, longText: nil)
+            return .init(kind: .timeline, title: humanized(value.eventKind), subtitle: l10n("Timeline · \(status)"), symbolName: "point.3.connected.trianglepath.dotted", detail: FiliconLocalization.string(value.detail), fields: fields, longTextTitle: nil, longText: nil)
         case .cloudAgent(let value):
             var fields = [(l10n("Agent"), value.agentID)]
             if let bcID = value.bcID { fields.append((l10n("BC ID"), bcID)) }

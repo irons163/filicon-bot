@@ -1,4 +1,5 @@
 "Waiting for your answer" = "답변을 기다리는 중";
+"A background session belongs to another account. Revoke it in that account before switching session type." = "백그라운드 세션이 다른 계정에 속해 있습니다. 세션 유형을 변경하기 전에 해당 계정에서 승인을 취소하세요.";
 "Your answer" = "답변";
 "Send answer" = "답변 보내기";
 "Answered" = "답변 완료";
@@ -288,7 +289,7 @@
 "Connectors: {0}" = "커넥터: {0}";
 "Continue" = "계속하기";
 "Continue sign-in in your browser." = "브라우저에서 계속 로그인하십시오.";
-"Conversation" = "연구분야";
+"Conversation" = "대화";
 "Conversation defaults" = "대화 기본 설정";
 "Conversation recovery requires attention: {0}" = "반전 회복은 주의를 요구합니다: {0}";
 "Conversation title or text" = "대화 제목 또는 텍스트";
@@ -1749,3 +1750,16 @@
 "Routine" = "루틴";
 "Open group" = "그룹 열기";
 "Group" = "그룹";
+"Background agent session" = "백그라운드 에이전트 세션";
+"Allow saved facts for this background agent" = "이 백그라운드 에이전트의 저장된 사실 사용 허용";
+"Approve agent session" = "에이전트 세션 승인";
+"Revoke agent session" = "에이전트 세션 철회";
+"Text-only · no background session consent" = "텍스트 전용 · 승인된 백그라운드 세션 없음";
+"Open conversation" = "대화 열기";
+"Scheduled, event and manual runs will use this exact agent conversation and shared tool runner. Its text history will be sent to the reviewed model provider; attachments are not automatically forwarded. Tools and peer messages still require their existing approvals. Busy conversations and pending questions are not interrupted or retried. Changes to the routine, account, binding, persona or model require another review." = "예약, 이벤트 및 수동 실행은 이 에이전트의 지정된 대화와 공용 도구 실행기를 사용합니다. 텍스트 기록은 검토한 모델 제공업체에 전송되며 첨부 파일은 자동 전달되지 않습니다. 도구와 동료 메시지에는 기존 승인이 계속 필요합니다. 작업 중이거나 응답을 기다리는 대화는 중단하거나 재시도하지 않습니다. 루틴, 계정, 연결, 역할 지침 또는 모델이 변경되면 다시 검토해야 합니다.";
+"Independent consent: this agent may send its permitted private, shared user and joined-project facts to its configured model provider during this routine. Delegated agents do not inherit memory consent. This does not authorize publishing unrelated facts or collecting memory suggestions, episodes or synthesis from routine wakes. Off disables memory recall, search and changes for this run." = "별도 동의: 이 에이전트는 루틴 실행 중에 허용된 비공개 사실, 사용자 공유 사실 및 참여 프로젝트의 사실을 설정된 모델 제공업체에 전송할 수 있습니다. 위임받은 에이전트는 메모리 동의를 상속하지 않습니다. 이는 관련 없는 사실의 공개나 루틴 호출로부터 메모리 제안, 에피소드 또는 종합 기억을 수집하도록 허용하지 않습니다. 끄면 이 실행에서 메모리 회상, 검색 및 변경이 비활성화됩니다.";
+"Agent run finished. Open the conversation to review replies, tool results and questions." = "에이전트 실행이 종료되었습니다. 대화를 열어 응답, 도구 결과 및 질문을 확인하세요.";
+"The background agent session is unavailable." = "백그라운드 에이전트 세션을 사용할 수 없습니다.";
+"Review the background agent session again after changing the routine, account, conversation, agent or model." = "루틴, 계정, 대화, 에이전트 또는 모델을 변경한 후 백그라운드 에이전트 세션을 다시 검토하세요.";
+"The background conversation is already working or awaiting a reply. This run was not started or retried." = "백그라운드 대화가 작업 중이거나 응답을 기다리고 있습니다. 이 실행은 시작되거나 재시도되지 않았습니다.";
+"Revoke the existing background session before choosing a different session type." = "다른 세션 유형을 선택하기 전에 기존 백그라운드 세션을 철회하세요.";

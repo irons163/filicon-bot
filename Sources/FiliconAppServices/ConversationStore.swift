@@ -128,12 +128,14 @@ public actor ConversationStore {
     public func upsert(
         _ conversation: Conversation,
         replacingLoadedMessageIDs: Set<UUID>,
-        historyComplete: Bool
+        historyComplete: Bool,
+        expectedBinding: DirectConversationAgentBinding? = nil,
+        commit: ConversationCommitGuard = { try $0() }
     ) async throws {
         let repository = try resolveRepository()
         try await importLegacyIfNeeded(into: repository)
         guard !historyComplete, let canonical = try await repository.conversation(id: conversation.id) else {
-            try await repository.upsert(conversation)
+            try await repository.upsert(conversation, expectedBinding: expectedBinding, commit: commit)
             try await transcriptService.reconcile(conversation)
             return
         }
@@ -143,7 +145,7 @@ public actor ConversationStore {
         merged.messageAddressReservations.merge(canonical.messageAddressReservations) { _, saved in saved }
         let unseen = canonical.messages.filter { !replacingLoadedMessageIDs.contains($0.id) }
         merged.messages = Self.mergeChronologically(older: unseen, newer: conversation.messages)
-        try await repository.upsert(merged)
+        try await repository.upsert(merged, expectedBinding: expectedBinding, commit: commit)
         try await transcriptService.reconcile(merged)
     }
 

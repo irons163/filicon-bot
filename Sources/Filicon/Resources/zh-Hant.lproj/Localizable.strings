@@ -1,4 +1,5 @@
 "Waiting for your answer" = "等待你的回答";
+"A background session belongs to another account. Revoke it in that account before switching session type." = "背景執行授權屬於另一個帳號。切換執行類型前，請先回到該帳號撤銷授權。";
 "Your answer" = "你的回答";
 "Send answer" = "送出回答";
 "Answered" = "已回答";
@@ -1749,3 +1750,16 @@
 "Routine" = "排程";
 "Open group" = "開啟群組";
 "Group" = "群組";
+"Background agent session" = "背景代理人對話";
+"Allow saved facts for this background agent" = "允許此背景代理人使用已儲存事實";
+"Approve agent session" = "核准代理人對話";
+"Revoke agent session" = "撤銷代理人對話";
+"Text-only · no background session consent" = "純文字 · 尚未核准背景對話";
+"Open conversation" = "開啟對話";
+"Scheduled, event and manual runs will use this exact agent conversation and shared tool runner. Its text history will be sent to the reviewed model provider; attachments are not automatically forwarded. Tools and peer messages still require their existing approvals. Busy conversations and pending questions are not interrupted or retried. Changes to the routine, account, binding, persona or model require another review." = "排程、事件與手動執行會使用這個指定的代理人對話與共用工具執行器。文字歷史會傳送給已審閱的模型供應商；不會自動轉送附件。工具與同儕訊息仍須遵循既有核准流程。忙碌或等待回答的對話不會被打斷或重試。變更排程、帳號、綁定、角色指示或模型後須重新審閱。";
+"Independent consent: this agent may send its permitted private, shared user and joined-project facts to its configured model provider during this routine. Delegated agents do not inherit memory consent. This does not authorize publishing unrelated facts or collecting memory suggestions, episodes or synthesis from routine wakes. Off disables memory recall, search and changes for this run." = "獨立核准：此代理人可於本排程將其有權使用的私人事實、使用者共用事實及已加入專案的事實傳送給設定的模型供應商。被委派的代理人不會繼承記憶授權。這不代表允許發布無關事實，或從排程喚醒蒐集記憶建議、片段或綜合記憶。關閉後，此次執行無法回憶、搜尋或變更記憶。";
+"Agent run finished. Open the conversation to review replies, tool results and questions." = "代理人執行已結束。開啟對話查看回覆、工具結果與問題。";
+"The background agent session is unavailable." = "背景代理人對話無法使用。";
+"Review the background agent session again after changing the routine, account, conversation, agent or model." = "變更排程、帳號、對話、代理人或模型後，請重新審閱背景代理人對話。";
+"The background conversation is already working or awaiting a reply. This run was not started or retried." = "背景對話正在工作或等待回答。此次執行未啟動，也未重試。";
+"Revoke the existing background session before choosing a different session type." = "請先撤銷現有的背景對話，再選擇不同的對話類型。";

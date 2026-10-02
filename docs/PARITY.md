@@ -1,8 +1,12 @@
 # Filicon / Grok Bot 0.18 功能 parity matrix（current implementation）
 
-2026-10-03 排程群組接線增量：經人類明確審核的既有 routine／既有群組現已使用真正 shared runner、持久群組 seed／publication／互動卡及實際 run ID，三條 manual／scheduled／event 入口共用。背景 saved facts 另有預設關閉、限已審核成員的獨立同意；原有工具核准不放寬，忙碌／等待問題的群組不被打斷，撤銷／切帳號／定義修改與晚到核准均重驗。舊段落中的 automation 全為 text-only 是此前狀態；目前未綁定 routine 與 workflow prompt 仍為 text-only。一般代理人 background session、workflow action／runner、費用彙整、外部平台及全 48 分類驗收仍保留，AGENT-01／02／04、AUTO-03 整體不改為 complete。詳見 [完成驗收入口的「經審核 routine 的既有群組 session」](Parity-completion-audit.md)。
+2026-10-03 一般代理人排程接線增量：人類現在可將 routine 綁定至該代理人的既有單獨聊天，使用相同持久對話、persona／模型及 shared tool runner。背景喚醒是暫時 host 資料，不偽造人類訊息、不自動轉送歷史附件；SendMessage、問題卡片、SendToAgent 及本機工具保留真實核准。背景 saved facts 仍須獨立 opt-in，委派不繼承。過期審核／忙碌對話拒絕執行，撤銷／切帳號／刪除／身分變更及最後 SQLite 寫入均有 fence。一般及群組 session 不可互相默默取代；workflow prompt／action、費用彙整、雲端／外部平台及全 48 分類驗收仍保留，整體 partial 不上調。詳見 [完成驗收入口的「經審核 routine 的既有單獨聊天」](Parity-completion-audit.md)。
 
-本批最終串行回歸 exit 0：135 XCTest＋1,660 Swift Testing（核心 882／101 suites、App 546／76 suites；兩項 opt-in live Codex 測試略過），原生建置／封裝簽章與七語各 1,740 keys／0 missing 通過；不取代 live 帳號、release 或其餘分類驗收。
+本批最後串行 gate `routine-direct-session-full-post-translation.log` exit 0：135 XCTest＋1,682 Swift Testing（210 suites；核心 887／103、App 563／78，兩項 opt-in live Codex 測試略過）。原生建置／封裝簽章、七語各 1,754 keys／0 missing 與 14 個明暗 render 通過；最後修正既有日文／韓文 Conversation 誤譯並補語意斷言。驗收僅限隔離 fixtures，不取代 live 帳號、release 或其他分類驗收。
+
+2026-10-03 排程群組接線增量（前一批）：經人類明確審核的既有 routine／既有群組現已使用真正 shared runner、持久群組 seed／publication／互動卡及實際 run ID，三條 manual／scheduled／event 入口共用。背景 saved facts 另有預設關閉、限已審核成員的獨立同意；原有工具核准不放寬，忙碌／等待問題的群組不被打斷，撤銷／切帳號／定義修改與晚到核准均重驗。舊段落中的 automation 全為 text-only 是此前狀態；目前未綁定 routine 與 workflow prompt 仍為 text-only。當時尚缺的一般代理人本機分支由上方新批次補上；workflow action／runner、費用彙整、外部平台及全 48 分類驗收仍保留，AGENT-01／02／04、AUTO-03 整體不改為 complete。詳見 [完成驗收入口的「經審核 routine 的既有群組 session」](Parity-completion-audit.md)。
+
+前一批群組最終串行回歸 exit 0：135 XCTest＋1,660 Swift Testing（核心 882／101 suites、App 546／76 suites；兩項 opt-in live Codex 測試略過），原生建置／封裝簽章與七語各 1,740 keys／0 missing 通過；不取代 live 帳號、release 或其餘分類驗收。
 
 2026-10-03 共用 runner 增量：普通 ToolLoop 每一步必須明確 toolUse 且正常 EOF 後才能執行工具；截斷、取消、缺少完成、stop 與工具矛盾、完成後追加內容／呼叫及晚到錯誤均拒絕。互動 provider 在 stop 送到 consumer 前封閉新 callback；plain TurnCoordinator 與 TextOnlyInference 共用完成判定。Gemini 不再用「曾出現工具」掩蓋 length／cancelled／unknown。聚焦 124 tests／9 suites、完整串行回歸 exit 0：135 XCTest＋1,640 Swift Testing（核心 877、App 532；兩項 opt-in live Codex 測試略過）、原生建置／封裝簽章、七語各 1,724 keys／0 missing 通過。這是背景共用 runner 接線前的執行安全修正，尚未接上完整 background session／group runner 或擴大記憶 audience，不上調整體 partial。詳見 [完成驗收入口的「共用 runner 完成」](Parity-completion-audit.md)。
 

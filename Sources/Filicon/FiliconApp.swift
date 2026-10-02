@@ -1925,6 +1925,7 @@ struct RoutineAutomationWorkspaceView: View {
     @State private var listeners = [AutomationListenerDraft()]
     @State private var editSession: RoutineEditSession?
     @State private var groupSessionEdit: RoutineGroupSessionEdit?
+    @State private var directSessionEdit: RoutineDirectSessionEdit?
     var body: some View {
         let _ = uiLocale.identifier
         Form {
@@ -1988,6 +1989,11 @@ struct RoutineAutomationWorkspaceView: View {
                                 Button(l10n("Background group session")) {
                                     groupSessionEdit = model.beginRoutineGroupSessionEdit(automation)
                                 }
+                                .disabled(model.automationDirectBindings.contains { $0.automationID == automation.id })
+                                Button(l10n("Background agent session")) {
+                                    directSessionEdit = model.beginRoutineDirectSessionEdit(automation)
+                                }
+                                .disabled(model.automationGroupBindings.contains { $0.automationID == automation.id })
                                 if let binding = model.automationGroupBindings.first(where: {
                                     $0.automationID == automation.id && $0.accountID == (model.settings.accountScope ?? "local")
                                 }) {
@@ -2000,8 +2006,22 @@ struct RoutineAutomationWorkspaceView: View {
                                             Task { await model.revokeRoutineGroupSession(binding) }
                                         }
                                     }
+                                } else if let binding = model.automationDirectBindings.first(where: {
+                                    $0.automationID == automation.id && $0.accountID == (model.settings.accountScope ?? "local")
+                                }) {
+                                    Text(binding.conversationTitle).font(.caption)
+                                    HStack {
+                                        Button(l10n("Open conversation")) { model.selectRoute(.conversation(binding.conversationID)) }
+                                        Button(l10n("Revoke agent session"), role: .destructive) {
+                                            Task { await model.revokeRoutineDirectSession(binding) }
+                                        }
+                                    }
+                                } else if model.automationGroupBindings.contains(where: { $0.automationID == automation.id })
+                                    || model.automationDirectBindings.contains(where: { $0.automationID == automation.id }) {
+                                    Text(l10n("A background session belongs to another account. Revoke it in that account before switching session type."))
+                                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                                 } else {
-                                    Text(l10n("Text-only · no group session consent")).font(.caption).foregroundStyle(.secondary)
+                                    Text(l10n("Text-only · no background session consent")).font(.caption).foregroundStyle(.secondary)
                                 }
                             }
                             if let runs = model.automationHistory[automation.id], !runs.isEmpty {
@@ -2043,6 +2063,9 @@ struct RoutineAutomationWorkspaceView: View {
             }
             .sheet(item: $groupSessionEdit) { edit in
                 RoutineGroupSessionView(edit: edit).environmentObject(model)
+            }
+            .sheet(item: $directSessionEdit) { edit in
+                RoutineDirectSessionView(edit: edit).environmentObject(model)
             }
     }
 

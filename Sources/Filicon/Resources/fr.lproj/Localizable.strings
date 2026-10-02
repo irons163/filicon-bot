@@ -1,4 +1,5 @@
 "Waiting for your answer" = "En attente de votre réponse";
+"A background session belongs to another account. Revoke it in that account before switching session type." = "Une session en arrière-plan appartient à un autre compte. Révoquez-la dans ce compte avant de changer de type de session.";
 "Your answer" = "Votre réponse";
 "Send answer" = "Envoyer la réponse";
 "Answered" = "Réponse envoyée";
@@ -1749,3 +1750,16 @@
 "Routine" = "Routine";
 "Open group" = "Ouvrir le groupe";
 "Group" = "Groupe";
+"Background agent session" = "Session d’agent en arrière-plan";
+"Allow saved facts for this background agent" = "Autoriser les faits enregistrés pour cet agent en arrière-plan";
+"Approve agent session" = "Approuver la session d’agent";
+"Revoke agent session" = "Révoquer la session d’agent";
+"Text-only · no background session consent" = "Texte seul · aucune session en arrière-plan approuvée";
+"Open conversation" = "Ouvrir la conversation";
+"Scheduled, event and manual runs will use this exact agent conversation and shared tool runner. Its text history will be sent to the reviewed model provider; attachments are not automatically forwarded. Tools and peer messages still require their existing approvals. Busy conversations and pending questions are not interrupted or retried. Changes to the routine, account, binding, persona or model require another review." = "Les exécutions planifiées, événementielles et manuelles utiliseront cette conversation précise et le moteur d’outils partagé. Son historique textuel sera envoyé au fournisseur du modèle examiné ; les pièces jointes ne seront pas transmises automatiquement. Les outils et les messages aux autres agents exigent toujours leurs approbations habituelles. Les conversations occupées ou en attente de réponse ne sont ni interrompues ni relancées. Toute modification de la routine, du compte, de l’association, du rôle ou du modèle exige un nouvel examen.";
+"Independent consent: this agent may send its permitted private, shared user and joined-project facts to its configured model provider during this routine. Delegated agents do not inherit memory consent. This does not authorize publishing unrelated facts or collecting memory suggestions, episodes or synthesis from routine wakes. Off disables memory recall, search and changes for this run." = "Consentement indépendant : cet agent peut envoyer ses faits privés autorisés, les faits partagés de l’utilisateur et ceux des projets auxquels il participe au fournisseur de son modèle pendant cette routine. Les agents délégués n’héritent pas de ce consentement. Cela n’autorise ni la publication de faits sans rapport ni la collecte de suggestions, d’épisodes ou de synthèses de mémoire à partir de ces réveils. Désactiver empêche le rappel, la recherche et les modifications de mémoire pour cette exécution.";
+"Agent run finished. Open the conversation to review replies, tool results and questions." = "L’exécution de l’agent est terminée. Ouvrez la conversation pour consulter les réponses, les résultats des outils et les questions.";
+"The background agent session is unavailable." = "La session d’agent en arrière-plan est indisponible.";
+"Review the background agent session again after changing the routine, account, conversation, agent or model." = "Réexaminez la session d’agent en arrière-plan après toute modification de la routine, du compte, de la conversation, de l’agent ou du modèle.";
+"The background conversation is already working or awaiting a reply. This run was not started or retried." = "La conversation en arrière-plan travaille déjà ou attend une réponse. Cette exécution n’a pas été démarrée ni relancée.";
+"Revoke the existing background session before choosing a different session type." = "Révoquez la session en arrière-plan existante avant de choisir un autre type de session.";

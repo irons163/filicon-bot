@@ -2,6 +2,10 @@ import Foundation
 import FiliconDomain
 import CSQLite
 
+/// Synchronous host fence around the final database write, not an async check
+/// before a storage/quota hop. The supplied operation must be called once.
+public typealias ConversationCommitGuard = @Sendable (_ operation: () throws -> Void) throws -> Void
+
 public enum BoundConversationLookupError: Error, Equatable, Sendable {
     case ambiguous
     case invalidAccount
@@ -142,11 +146,18 @@ public actor ConversationRepository {
         try load().first { $0.id == id }
     }
 
-    public func upsert(_ conversation: Conversation) throws {
+    public func upsert(_ conversation: Conversation, expectedBinding: DirectConversationAgentBinding? = nil,
+                       commit: ConversationCommitGuard = { try $0() }) throws {
         var values = try load()
+        if let expectedBinding {
+            guard let current = values.first(where: { $0.id == conversation.id }),
+                  current.agentBinding == expectedBinding, conversation.agentBinding == expectedBinding,
+                  current.providerID == conversation.providerID, current.modelID == conversation.modelID,
+                  current.reasoningEffort == conversation.reasoningEffort else { throw CancellationError() }
+        }
         if let index = values.firstIndex(where: { $0.id == conversation.id }) { values[index] = conversation }
         else { values.append(conversation) }
-        try save(values)
+        try commit { try save(values) }
     }
 
     public func delete(id: UUID) throws {
