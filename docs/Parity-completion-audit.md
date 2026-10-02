@@ -1,6 +1,6 @@
 # 完成驗收入口（2026-09-27）
 
-2026-10-02 增量：本機獨立傳檔、HTTPS 附件 locator 及文字內 local／HTTPS 混合圖片集已接入 direct、前景／背景群組、mailbox 與 direct peer；有完整核准、配額、重開及撤銷隔離測試。另已重現並修正 mixed peer 復原排除與非 gallery 訊息夾帶 layout；解除系統鎖定後，最終完整串行回歸（135 XCTest＋1,508 Swift Testing）、原生建置及封裝驗證通過。下方日期段落是歷史進度，不能以「尚未接線」覆蓋後續實作；最新媒體邊界與驗證見 [傳檔第六十九階段](Send-message-files-parity.md)。所有分類仍須逐項驗收，不宣稱全功能對等。
+2026-10-02 增量：本機獨立傳檔、HTTPS 附件 locator 及文字內 local／HTTPS 混合圖片集已接入 direct、前景／背景群組、mailbox 與 direct peer；有完整核准、配額、重開及撤銷隔離測試。另已重現並修正 mixed peer 復原排除、非 gallery 訊息夾帶 layout，以及多張內嵌縮圖／獨立預覽互相取消；解除系統鎖定後，最終完整串行回歸（135 XCTest＋1,513 Swift Testing）、原生建置及封裝驗證通過。下方日期段落是歷史進度，不能以「尚未接線」覆蓋後續實作；最新媒體邊界與驗證見 [傳檔第六十九至七十階段](Send-message-files-parity.md)。所有分類仍須逐項驗收，不宣稱全功能對等。
 
 本檔不取代使用者要求或縮小 parity 範圍。基準 Filicon `a7ca268`、reference `a9f633e09d49a85829b8236331b9e21f7e612634`；工作樹檢查為乾淨。沒有啟動 App、使用外部帳號或重新驗證 release。
 

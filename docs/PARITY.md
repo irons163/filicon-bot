@@ -1,6 +1,6 @@
 # Filicon / Grok Bot 0.18 功能 parity matrix（current implementation）
 
-2026-10-02 媒體增量：本機獨立檔案、HTTPS 附件 locator、local／HTTPS 混合文字圖片集已接入 direct、前景／背景群組、mailbox 與 direct peer，包含不可變 bytes 的完整核准、配額、順序保存、重開與撤銷隔離測試。解除系統鎖定後，最終完整串行回歸及原生封裝驗證通過。遠端需明確下載後才顯示內嵌縮圖，不能把 locator 當已驗證內容或網路權限。超過四張、其他圖片格式、大檔、動畫／快取、完整 crash／UI lifecycle 及真實外部服務驗收仍保留；詳見 [傳檔第六十九階段](Send-message-files-parity.md)。
+2026-10-02 媒體增量：本機獨立檔案、HTTPS 附件 locator、local／HTTPS 混合文字圖片集已接入 direct、前景／背景群組、mailbox 與 direct peer，包含不可變 bytes 的完整核准、配額、順序保存、重開與撤銷隔離測試。解除系統鎖定後，完整串行回歸及原生封裝驗證通過；另重現並修正內嵌縮圖與獨立預覽共用排他編號造成的取消衝突，各卡保有獨立任務，scope／redirect 檢查不變。遠端需明確下載後才顯示內嵌縮圖，不能把 locator 當已驗證內容或網路權限。超過四張、其他圖片格式、大檔、動畫／快取、完整 crash／UI lifecycle 及真實外部服務驗收仍保留；詳見 [傳檔第六十九至七十階段](Send-message-files-parity.md)。
 
 完成驗收入口：見 [Parity-completion-audit.md](Parity-completion-audit.md)。本表 43 個歷史 complete 並非今日逐項端到端驗證；尚未重驗者不構成整體完成證明。下方矩陣及日期段落保留歷史證據，當前狀態須對照各分類的後續核對紀錄，不能把已接線功能再次列為缺失。自身 `hidden_from_sidebar` 的核准／持久化／UI／模型接線已於 `a57e545` 完成隔離驗證。圖片頭像的來源、預覽、提交與人工配額已接線，剩餘邊界見 [Avatar-image-parity.md](Avatar-image-parity.md) 第七至十階段；媒體最新狀態與未驗收邊界見上段及 [Send-message-files-parity.md](Send-message-files-parity.md)。
 

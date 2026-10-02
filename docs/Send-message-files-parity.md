@@ -1,6 +1,6 @@
 # SendMessage 檔案與媒體交付核對
 
-2026-09-27 首次核對；來源基準 Filicon `549f96f`、reference `grok-bot-0.18-reconstructed` `a9f633e09d49a85829b8236331b9e21f7e612634`。2026-10-02 更新（接續 `c34f3e6`，解除系統鎖定後最終完整串行回歸及原生封裝驗證通過）：本機獨立檔案、HTTPS 附件 locator，以及文字內本機／HTTPS 混合圖片集已接入 direct／前景與背景 group／mailbox／direct peer。圖片發佈需完整核准；本機保存捕捉的 bytes，遠端保持未驗證 locator，明確下載後才有內嵌縮圖。大檔、動畫內嵌播放、完整 crash／UI lifecycle 及真實外部服務驗收仍保留。以下「Filicon 現況」及早期階段是歷史紀錄，最新進展見第六十九階段；不代表全部 parity 已重驗。
+2026-09-27 首次核對；來源基準 Filicon `549f96f`、reference `grok-bot-0.18-reconstructed` `a9f633e09d49a85829b8236331b9e21f7e612634`。2026-10-02 更新（混合圖片集已提交 `a22bc4e`，解除系統鎖定後最終完整串行回歸及原生封裝驗證通過）：本機獨立檔案、HTTPS 附件 locator，以及文字內本機／HTTPS 混合圖片集已接入 direct／前景與背景 group／mailbox／direct peer。另修正內嵌縮圖的獨立取消生命週期。圖片發佈需完整核准；本機保存捕捉的 bytes，遠端保持未驗證 locator，明確下載後才有內嵌縮圖。大檔、動畫內嵌播放、完整 crash／UI lifecycle 及真實外部服務驗收仍保留。以下「Filicon 現況」及早期階段是歷史紀錄，最新進展見第六十九至七十階段；不代表全部 parity 已重驗。
 
 ## 來源證據
 
@@ -739,3 +739,15 @@ UI 單張放大、多張兩欄以 row-major 排列。本機圖片可開啟同一
 解鎖後最終驗證：`mixed-gallery-unlocked-access.log` 的既有 PNG／JPEG 保護檔案測試與 remote／local／mixed 信箱重開案例全部通過；完整 `mixed-gallery-unlocked-full.log` exit 0，135 項 XCTest、1,508 項 Swift Testing（核心 797、App 接線 488），包括本批 116 種參數化 App 案例。沒有降低檔案保護或修改系統權限。最終 production source 與前述 `mixed-gallery-recovery-native.log` 的成功原生建置一致；重新執行 `mixed-gallery-unlocked-native-package.log`，四個執行檔、XPC entitlements 與 deep strict 簽章均通過。先前失敗紀錄保留為歷史，不以較早 quota 版成功代替本次最終回歸。未 push、未啟動或重啟使用者 App／Xcode、未改真實帳號或群組資料。依 pfw-testing／pfw-custom-dump 保留隔離依賴、完整 metadata／bytes／順序斷言與拒絕／撤銷驗證。
 
 尚未完成：四張以上／較大本機媒體、其他圖片格式、遠端縮圖快取／動畫內嵌、完整窗口／取消／崩潰復原及跨程序 receipt 邊界、最低 macOS 與真實遠端服務驗收。四張限制仍是 Filicon 相對 reference schema／builder 的已確認差異，不以提高成另一個任意上限宣稱完全對等。這些仍屬原需求範圍，不以本批局部完成取代全功能 parity。
+
+## 第七十階段：內嵌縮圖獨立取消生命週期（2026-10-02）
+
+檢查發現 `prepareRemotePreview` 讓每次內嵌縮圖也遞增獨立 viewer 的全域 `attachmentPreviewGeneration`。因此兩張圖同時下載、其中一張遇到轉址核准，或內嵌圖與 modal viewer 交錯完成時，合法的較早請求會被另一個預覽取消。這是 Filicon 的可重現生命週期缺陷，不是網路核准不足；reference 的文字圖片集逐張呈現，並不以單一 modal 生命週期互斥所有圖片。
+
+現在只有獨立 viewer 使用排他 generation；內嵌卡片沿用自身 `Task` 的取消、view 消失／reference 變動清理及精確保存訊息驗證。每個 await 後仍檢查帳號 generation、目前對話／群組、保存的 URL／alt 和任務取消；每次轉址仍需明確核准。沒有自動下載、快取核准或放寬 scope。新的內嵌圖不使舊 modal 失效，modal 的關閉／較新 modal 仍使舊 modal completion 失效。
+
+新增 5 項測試、16 種隔離案例，使用明確 AsyncStream suspension gate 與模擬下載，非真實網路或 sleep 時序猜測。涵蓋兩張圖正／反完成順序、各自轉址核准與完整 URL 呼叫順序、取消任一圖不影響另一圖、modal 開始／完成／關閉／先開始等交錯、modal 舊結果拒絕，以及內嵌的切帳號／切對話／圖片移除／直接取消。比較完整縮圖 bytes，獨立預覽另核對實際檔案 bytes／alt；未產生內嵌預覽暫存檔。
+
+`gallery-concurrency-red-verified.log` 在 production 修正前得到 4 tests／1 suite、12 issues 的預期重現；第一次 fixture 編譯因 internal download initializer，改為 test target 的 `@testable import`，沒有更改 production 可見性。修正後 `gallery-concurrency-green.log` 的 20 tests／3 suites 通過，包含既有下載安全與卡片／轉址測試。最終 `gallery-concurrency-full.log` exit 0：135 XCTest＋1,513 Swift Testing（核心 797、App 493）。原生 `gallery-concurrency-native.log` build succeeded，`gallery-concurrency-native-package.log` 的四個執行檔、XPC entitlements 和 deep strict 簽章通過。依 pfw-testing／pfw-custom-dump，fixture 不連線外部服務、不修改真實帳號／群組資料；未 push、未啟動或重啟使用者 App／Xcode。
+
+本輪只補此取消衝突，沒有將上一階段的四張／格式／大檔、縮圖快取／動畫、崩潰／跨程序、最低 macOS 或真實服務驗收標為完成。

@@ -3205,14 +3205,24 @@ final class AppModel: ObservableObject {
         }
         let imageGallery = try await validate()
         guard !inline || imageGallery else { throw AttachmentPreviewError.integrityMismatch }
-        attachmentPreviewGeneration += 1
-        let generation = attachmentPreviewGeneration
+        // A modal viewer is exclusive, but each inline card owns its own
+        // cancellable task. Starting a sibling thumbnail must not invalidate
+        // another card or an unrelated modal viewer. Scope and cancellation
+        // are still rechecked after every suspension for both kinds of preview.
+        let generation: Int?
+        if inline { generation = nil }
+        else {
+            attachmentPreviewGeneration += 1
+            generation = attachmentPreviewGeneration
+        }
         let download = try await remoteAttachmentDownloader.downloadFollowingReviewedRedirects(reference,
             maximumBytes: imageGallery ? RemoteAttachmentImagePreparation.maximumBytes : RemoteAttachmentVideoPreparation.maximumBytes) { source, destination in
                 guard try await validate() == imageGallery else { throw CancellationError() }
                 let approved = try await approveRedirect(source, destination)
                 guard try await validate() == imageGallery else { throw CancellationError() }
-                guard await self.attachmentPreviewGeneration == generation else { throw CancellationError() }
+                if let generation {
+                    guard await self.attachmentPreviewGeneration == generation else { throw CancellationError() }
+                }
                 return approved
             }
         guard download.reference == reference else { throw AttachmentPreviewError.integrityMismatch }
@@ -3236,7 +3246,9 @@ final class AppModel: ObservableObject {
             preparation.cancel()
         }
         guard try await validate() == imageGallery else { throw CancellationError() }
-        guard generation == attachmentPreviewGeneration else { throw CancellationError() }
+        if let generation {
+            guard generation == attachmentPreviewGeneration else { throw CancellationError() }
+        }
         if inline { return thumbnail }
         let item = try attachmentPreviewMaterializer.materialize(data: download.data, metadata: metadata)
         if let previous = attachmentPreview { attachmentPreviewMaterializer.remove(previous) }
