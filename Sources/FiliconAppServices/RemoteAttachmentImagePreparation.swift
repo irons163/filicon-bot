@@ -1,6 +1,7 @@
 import CryptoKit
 import Foundation
 import ImageIO
+import FiliconAgents
 import FiliconDomain
 import zlib
 
@@ -91,12 +92,17 @@ public enum RemoteAttachmentImagePreparation {
             let frame = preview.frames[0]
             return Thumbnail(data: frame.data, width: frame.width, height: frame.height, original: original)
         }
-        guard let source = CGImageSourceCreateWithData(data as CFData,
-            [kCGImageSourceShouldCache: false] as CFDictionary) else {
-            throw RemoteAttachmentImageError.unsupportedOrInvalid
+        let image: CGImage
+        if original.mimeType == "image/svg+xml" {
+            image = try vectorForDisplay(data, maximumDimension: maximumDimension)
+        } else {
+            guard let source = CGImageSourceCreateWithData(data as CFData,
+                [kCGImageSourceShouldCache: false] as CFDictionary) else {
+                throw RemoteAttachmentImageError.unsupportedOrInvalid
+            }
+            image = try imageForDisplay(source, index: 0, dimension: maximumDimension,
+                grayAlpha16: original.mimeType == "image/png" && hasGrayAlpha16PNGHeader(data))
         }
-        let image = try imageForDisplay(source, index: 0, dimension: maximumDimension,
-            grayAlpha16: original.mimeType == "image/png" && hasGrayAlpha16PNGHeader(data))
         let output = NSMutableData()
         guard let destination = CGImageDestinationCreateWithData(output, "public.png" as CFString, 1, nil) else {
             throw RemoteAttachmentImageError.unsupportedOrInvalid
@@ -127,6 +133,11 @@ public enum RemoteAttachmentImagePreparation {
         guard (1...1_024).contains(maximumDimension) else { throw RemoteAttachmentImageError.decodeLimit }
         if original.mimeType == "image/png", let animation = try pngAnimation(data) {
             return try preparePNGAnimation(animation, original: original, maximumDimension: maximumDimension)
+        }
+        if original.mimeType == "image/svg+xml" {
+            let thumbnail = try prepareThumbnail(for: data, original: original, maximumDimension: maximumDimension)
+            return InlinePreview(frames: [.init(data: thumbnail.data, width: thumbnail.width,
+                height: thumbnail.height, duration: 0)], original: original, playCount: 1)
         }
         guard let source = CGImageSourceCreateWithData(data as CFData,
             [kCGImageSourceShouldCache: false] as CFDictionary) else {
@@ -295,6 +306,11 @@ public enum RemoteAttachmentImagePreparation {
                                          createdAt: Date) throws -> AttachmentMetadata {
         try Task.checkCancellation()
         guard !data.isEmpty, data.count <= maximumBytes else { throw RemoteAttachmentImageError.byteLimit }
+        if StaticSVGImagePreparation.isXML(data) {
+            _ = try vectorForDisplay(data, maximumDimension: 1_024)
+            return makeMetadata(for: data, format: ("svg", "image/svg+xml"), filename: filename,
+                altText: altText, createdAt: createdAt)
+        }
         guard let source = CGImageSourceCreateWithData(data as CFData,
             [kCGImageSourceShouldCache: false] as CFDictionary),
               CGImageSourceGetStatus(source) == .statusComplete,
@@ -340,6 +356,23 @@ public enum RemoteAttachmentImagePreparation {
                 throw RemoteAttachmentImageError.unsupportedOrInvalid
             }
         }
+        return makeMetadata(for: data, format: format, filename: filename, altText: altText, createdAt: createdAt)
+    }
+
+    private static func vectorForDisplay(_ data: Data, maximumDimension: Int) throws -> CGImage {
+        guard data.count <= StaticSVGImagePreparation.maximumSourceBytes else { throw RemoteAttachmentImageError.byteLimit }
+        try Task.checkCancellation()
+        do {
+            let image = try StaticSVGImagePreparation.image(for: data, maximumDimension: maximumDimension)
+            try Task.checkCancellation()
+            return image
+        } catch is CancellationError { throw CancellationError() }
+        catch AgentAvatarStoreError.unsafeDimensions { throw RemoteAttachmentImageError.decodeLimit }
+        catch { throw RemoteAttachmentImageError.unsupportedOrInvalid }
+    }
+
+    private static func makeMetadata(for data: Data, format: (extension: String, mime: String),
+        filename: String?, altText: String?, createdAt: Date) -> AttachmentMetadata {
         let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
         return AttachmentMetadata(id: digest, filename: filename ?? "remote-image.\(format.extension)",
             mimeType: format.mime, byteCount: Int64(data.count), kind: .image,

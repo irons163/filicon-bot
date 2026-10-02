@@ -130,19 +130,19 @@ private struct SavedLocalGallery: Equatable {
         try await exercise(mode: mode, scenario: scenario, galleryCount: 5, repeatedSources: true)
     }
 
-    @Test(arguments: ["gif", "apng", "webp", "tiff", "bmp", "heic", "avif", "ico"],
+    @Test(arguments: ["gif", "apng", "webp", "tiff", "bmp", "heic", "avif", "ico", "svg"],
         ["local-direct", "mixed-direct", "local-group", "mixed-group", "local-background", "mixed-background",
          "local-mailbox", "mixed-mailbox", "local-peer", "mixed-peer"])
     func decodedLocalFormatsUseEveryCanonicalAppRoute(type: String, scenario: String) async throws {
         try await exercise(mode: "approve", scenario: scenario, format: type)
     }
 
-    @Test(arguments: ["gif", "apng", "webp"].flatMap { type in
+    @Test(arguments: ["gif", "apng", "webp", "svg"].flatMap { type in
         ["read-deny", "deny", "account", "source-changed"].map { "\(type):\($0)" }
     },
         ["local-direct", "mixed-direct", "local-group", "mixed-group", "local-background", "mixed-background",
          "local-mailbox", "mixed-mailbox", "local-peer", "mixed-peer"])
-    func localAnimationsKeepCaptureAndApprovalFences(sample: String, scenario: String) async throws {
+    func localFormatsKeepCaptureAndApprovalFences(sample: String, scenario: String) async throws {
         let parts = sample.components(separatedBy: ":")
         try await exercise(mode: parts[1], scenario: scenario, format: parts[0])
     }

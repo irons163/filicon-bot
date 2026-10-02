@@ -136,8 +136,8 @@ public struct AgentAvatarStore: Sendable {
             throw AgentAvatarStoreError.invalidCrop
         }
         guard data.count < Self.maximumInputBytes else { throw AgentAvatarStoreError.fileTooLarge }
-        if StaticSVGAvatar.isXML(data) {
-            guard let output = render(try StaticSVGAvatar.normalizedImage(data), crop: crop) else {
+        if StaticSVGImagePreparation.isXML(data) {
+            guard let output = render(try StaticSVGImagePreparation.image(for: data), crop: crop) else {
                 throw AgentAvatarStoreError.invalidImage
             }
             return try preparedImage(output, sourceByteCount: data.count, shape: shape)

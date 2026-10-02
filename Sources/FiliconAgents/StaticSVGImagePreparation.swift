@@ -1,11 +1,13 @@
 import AppKit
 import Foundation
 
-/// Static, self-contained vector avatars. Validate before handing bytes to
+/// Static, self-contained vector images. Validate before handing bytes to
 /// AppKit: no scripts, stylesheets, entity declarations or resource loaders.
 /// Unsupported SVG features are rejected, never silently stripped.
-enum StaticSVGAvatar {
-    static func isXML(_ data: Data) -> Bool {
+public enum StaticSVGImagePreparation {
+    public static let maximumSourceBytes = 5 * 1_024 * 1_024
+
+    public static func isXML(_ data: Data) -> Bool {
         // Do not let UTF-16/32 XML bypass the UTF-8 preflight into ImageIO.
         let prefix = Array(data.prefix(4))
         if prefix.starts(with: [0xFF, 0xFE]) || prefix.starts(with: [0xFE, 0xFF])
@@ -15,8 +17,9 @@ enum StaticSVGAvatar {
         return text.trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: "\u{FEFF}"))).hasPrefix("<")
     }
 
-    static func normalizedImage(_ data: Data) throws -> CGImage {
-        guard data.count <= AgentAvatarChange.maximumImageSourceBytes,
+    public static func image(for data: Data, maximumDimension: Int = 1_024) throws -> CGImage {
+        guard (1...1_024).contains(maximumDimension) else { throw AgentAvatarStoreError.unsafeDimensions }
+        guard data.count <= maximumSourceBytes,
               let text = String(data: data, encoding: .utf8),
               !text.contains("<!"), !text.contains("\u{0000}") else { throw AgentAvatarStoreError.invalidImage }
         let delegate = Validator()
@@ -31,7 +34,7 @@ enum StaticSVGAvatar {
               image.size.width <= 20_000, image.size.height <= 20_000 else {
             throw AgentAvatarStoreError.unsafeDimensions
         }
-        let scale = min(1, 1_024 / max(image.size.width, image.size.height))
+        let scale = min(1, Double(maximumDimension) / max(image.size.width, image.size.height))
         let width = max(1, Int(ceil(image.size.width * scale)))
         let height = max(1, Int(ceil(image.size.height * scale)))
         guard let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8,

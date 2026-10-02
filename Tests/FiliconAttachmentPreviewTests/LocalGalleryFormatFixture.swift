@@ -6,6 +6,10 @@ import Testing
 enum LocalGalleryFormatFixture {
     static func bytes(type: String, index: Int = 0) throws -> Data {
         if type == "webp" { return try webP(index: index) }
+        if type == "svg" {
+            let color = index.isMultiple(of: 2) ? "red" : "blue"
+            return Data("<svg xmlns='http://www.w3.org/2000/svg' width='32' height='32'><rect width='32' height='32' fill='\(color)'/></svg>".utf8)
+        }
         let identifier: String
         switch type {
         case "gif": identifier = "com.compuserve.gif"

@@ -1,5 +1,7 @@
 # Filicon / Grok Bot 0.18 功能 parity matrix（current implementation）
 
+2026-10-03 最新 SVG 增量：第七十六階段共用既有頭像 XML 安全驗證器，接入經審核的自包含靜態 SVG 原檔保存與 bounded PNG 顯示；保留腳本、外部資源、CSS／style、動畫與未支援元素拒絕，不宣稱完整瀏覽器 SVG 對等。53 項聚焦測試通過，含實際向量顏色、原檔／alias／重開、九格式 viewer、56 個七語卡片與全部 436 個 canonical App 案例。最新完整串行 gate exit 0：135 XCTest＋1,593 Swift Testing（核心 853、App 517），原生建置／封裝簽章與七語各 1,724 keys／0 missing 通過。更廣 SVG、真實 HEIF、格式變體、獨立傳檔 MIME、完整 lifecycle／外部服務驗收仍保留；詳見 [傳檔第七十六階段](Send-message-files-parity.md)。
+
 2026-10-03 最新媒體增量：第七十五階段以真正 AVIF／ICO bytes 補上經審核本機圖庫及共用 local／remote 預覽；核對來源型別、偽 MIME／截斷拒絕、精確原檔保存／重開、八格式 viewer、42 個七語實際卡片及全部 386 個 canonical App 案例。最後完整串行 gate exit 0：135 XCTest＋1,587 Swift Testing（核心 847、App 517）；原生建置／封裝簽章、七語各 1,724 keys／0 missing 通過。strict incoming／SendToAgent 限制及既有 model history 投影不變；SVG、真實 HEIF、尚未覆蓋的格式變體、獨立傳檔 MIME、完整 lifecycle／外部服務邊界仍保留，不宣稱整體完成。詳見 [傳檔第七十五階段](Send-message-files-parity.md)。
 
 2026-10-03 媒體增量：第七十四階段將經審核的本機圖庫與嚴格 incoming／SendToAgent 圖片入口分開，已補 GIF／APNG／WebP 動畫及 TIFF／BMP／HEIC 顯示；原始 bytes、位置／說明、核准與 scope／quota／CAS 保護不變。核心 27 與 App 12 項聚焦測試通過，含新增 60 個格式、120 個動畫邊界與既有 186 個 canonical App 案例。完整回歸首輪途中 macOS 再度鎖定並保留失敗日誌；受保護探針恢復後，最後全專案串行 gate exit 0：135 XCTest＋1,586 Swift Testing，其中核心 846／97 suites、App 517／74 suites；原生建置／封裝簽章、七語各 1,724 keys／0 missing 通過。HEIF 目前僅 decoder 清單，沒有 genuine fixture 證據；原版明確列出的 SVG／AVIF／ICO、獨立檔案 MIME、快取及真實外部驗收仍保留。圖庫別名搜尋是 Filicon 已知限制，但原版 media index 不索引 text gallery，不列作已確認 parity 缺口；詳見 [傳檔第七十四階段](Send-message-files-parity.md)。

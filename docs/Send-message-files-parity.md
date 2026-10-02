@@ -851,3 +851,19 @@ reference 同一 commit 的 `source/host/runner/tools/send-message-schema.ts` �
 日誌保留未配置 SecurityKey／skill publishing 的 fail-closed App fixture 中四筆 CoreData NSXPCConnection 訊息；兩項測試本身均通過，不把它們當成真實外部服務連線成功。原生建置另有未使用 AppIntents framework 的 metadata extraction warning，不影響本次 build／package gate；不宣稱日誌完全沒有系統警告。
 
 依 Swift 測試／精確差異指引使用隔離來源、固定時間與完整 metadata／原始 bytes／狀態比較，沒有使用真實帳號或群組。SVG、真實 HEIF、AVIF 動畫／ICO 多解析度等未覆蓋變體、獨立傳檔 MIME、大檔、快取、全域記憶體、完整 crash／跨程序／窗口 lifecycle、最低實際 macOS 與外部服務驗收仍保留；不以兩種格式的靜態 fixture 宣稱所有格式變體或全部 parity 完成。
+
+## 第七十六階段：經審核的自包含靜態 SVG（2026-10-03）
+
+reference 同一 commit 的 `source/shared/media/media-extensions.ts`／`image-mime.ts` 明確包含 SVG，transcript 使用圖片 URL；Filicon 的圖庫先前仍完全拒絕 SVG。`gallery-svg-red.log` 使用真正 UTF-8 SVG 的矩形、路徑與本機漸層，以 4 tests／1 suite、4 issues 重現正常內容被拒絕；既有危險／不支援來源拒絕當時也通過，不用 PNG 改副檔名作 fixture。
+
+將既有 `StaticSVGAvatar` 提升為共用 `StaticSVGImagePreparation`，沿用同一 XML／元素／屬性驗證器；頭像仍使用原來 1,024 上限與裁切流程，不另建第二個寬鬆 SVG parser，也不新增依賴。圖庫驗證原始 UTF-8 XML 後才呼叫 AppKit，在 bitmap 建立前縮放為指定最大邊 1…1,024。SVG 有獨立 5 MiB 來源限制、64 層／4,096 元素與屬性 bytes 限制，宣告尺寸最多 20,000；這是向量的有界 rasterization，不冒充 ImageIO 的原始 bitmap 像素驗證。腳本、外部／檔案／data 資源、CSS／style、use、foreignObject、動畫、DTD／entity、非允許名稱空間或未支援元素仍拒絕，且不會靜默剝除後回報成功。
+
+本機 captured gallery、共用 local／remote metadata、縮圖與 inline 預覽保留 SVG 原始 bytes、SHA-256、MIME `image/svg+xml`、filename／alt／時間及 occurrence；顯示用 PNG 不替換 CAS 原檔。單一靜態畫面不產生播放計時；準備前後檢查取消，偽造完整 metadata 不能繞過來源驗證。strict incoming／SendToAgent、完整 source／publication review、帳號／quota／重播及既有 history 投影未改。七語錯誤清單明確寫受支援的自包含 SVG，不宣稱所有瀏覽器 SVG 功能皆接受。
+
+新增核心六項測試：三種真實向量的完整原檔／metadata／CAS／alias／重開與縮圖／PNG 逐幀一致，另驗實際中心像素的顏色及 alpha，避免空白 bitmap 也算成功；18 類危險／不支援內容、八類 encoding／DTD／複雜度／尺寸拒絕；UTF-8 BOM／宣告／前置空白／Unicode 說明與大型 viewBox 的有界尺寸；偽 MIME、取消與無效顯示尺寸、SVG 獨立來源 byte limit。原始 SVG 不被轉交成新增的模型輸入能力。
+
+`gallery-svg-integration.log` exit 0：核心 38 tests／3 suites、App 12 tests／2 suites、頭像 SVG 回歸 3 tests／1 suite 通過。九格式 modal 原檔／重開／切帳號清理，GIF／AVIF／ICO／SVG × 七語 × 320／620 pt 的 56 個實際卡片案例通過；繁中 SVG 兩種寬度均已目視確認。新增 SVG 的五條 local／mixed canonical 路徑及讀取／發佈拒絕／切帳號／來源改變，共增加 50 案例，全部 436 個 canonical App 案例通過，不操作真實帳號／群組。
+
+`gallery-svg-native.log` build succeeded，`gallery-svg-package.log` 的版本、四個執行檔、App／XPC entitlements 與 deep strict 簽章通過；七語各 1,724 keys／0 missing，diff check 通過。最後 `gallery-svg-full.log` 全專案串行 gate exit 0：135 XCTest（7 個非空 bundles）＋1,593 Swift Testing，核心 853 tests／98 suites、App 517 tests／74 suites，零測試失敗，沒有沿用上一批完整回歸作本批證據。日誌保留未配置外部服務 fail-closed fixture 的 CoreData 連線訊息及未使用 AppIntents framework 的建置 warning；不宣稱真實服務已連線或日誌完全無系統訊息。未 push、未啟動／重啟 App 或 Xcode。
+
+SVG 仍是既有驗證器支援的靜態自包含子集，不是完整瀏覽器 SVG 對等；CSS、文字／mask／clip 等未支援內容保持明確拒絕。真實 HEIF、其他格式變體、獨立傳檔 MIME、大檔／快取、全域記憶體及完整 crash／跨程序／窗口 lifecycle、最低實際 macOS／外部服務驗收仍保留。依 Swift 測試與精確差異指引使用固定時間、隔離資料、真實 vector／像素及完整原始 bytes 比較，不把局部格式進展寫成整體完成。

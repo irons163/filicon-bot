@@ -20,7 +20,7 @@ private struct LocalFormatPreviewGate: Sendable {
 
 @Suite("Local gallery formats and playback", .timeLimit(.minutes(1)))
 @MainActor struct LocalGalleryFormatsAppTests {
-    @Test(arguments: ["gif", "apng", "webp", "tiff", "bmp", "heic", "avif", "ico"])
+    @Test(arguments: ["gif", "apng", "webp", "tiff", "bmp", "heic", "avif", "ico", "svg"])
     func inlinePreviewAndModalRetainExactCapturedOriginals(type: String) async throws {
         let fixture = try await fixture(type: type)
         defer { try? FileManager.default.removeItem(at: fixture.root) }
@@ -50,7 +50,7 @@ private struct LocalFormatPreviewGate: Sendable {
     }
 
     @Test(arguments: ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"],
-        [320.0, 620.0].flatMap { width in ["gif", "avif", "ico"].map { (width: width, type: $0) } })
+        [320.0, 620.0].flatMap { width in ["gif", "avif", "ico", "svg"].map { (width: width, type: $0) } })
     func actualLocalImageCardRendersFirstFrameAndDescriptionsWithoutClipping(language: String,
         variant: (width: Double, type: String)) async throws {
         let (width, type) = variant
