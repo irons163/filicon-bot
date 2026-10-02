@@ -112,5 +112,21 @@ App fixture 覆蓋隱藏／恢復、合併修改及單改可見性保留通知�
 
 - 記憶：最新保存／搜尋／synthesis／episode／project recall 證據見 `Memory-archive-parity.md`；跨 epoch snapshot 是未接線參考設計，見 `Memory-snapshot-audit.md`，不能自行換成永久 cache。
 - 協作／訊息：AGENT-02／04 的歷史缺項需與 `Agent-collaboration-parity.md` 後續進度及 current source 逐項對照；不能用舊行的「缺」覆蓋已完成的接線，也不能以有 UI 就宣稱工具／背景路徑完成。
-- 平台事件：AUTO-03 的 Teams 使用者驗證、GitHub checks 彙整、Slack 名稱／自身身分映射等仍需逐項來源核對和平台驗收；不因 generic matcher 通過而放寬驗證政策。
+- 平台事件：AUTO-03 的 Teams 使用者驗證、GitHub CI-completed 後端契約、Slack 名稱／自身身分映射等仍有差異，詳見下節再核對。reference 未提供 checks 彙整演算法，不因 generic matcher 通過而放寬驗證政策。
 - 發佈／外部能力：UPD-03 的既有 release 是歷史證據，本目標禁止 push／真實帳號修改；不能擅自發新版本、連接帳號、安裝插件或替使用者授權。最終報告須明列尚需哪些外部驗收與決策，不把它們藏在 complete 標籤後。
+
+## 平台觸發：當前契約與後端邊界再核對（2026-10-03）
+
+Filicon `aa3a59c`，reference HEAD 仍為 `a9f633e09d49a85829b8236331b9e21f7e612634`。本節是實際 source 呼叫鏈及本批既有隔離測試結果核對，不是連線平台或執行 reconstructed App；未取得真實憑證、未連接帳號、未安裝 webhook、未改使用者資料。
+
+reference `source/host/extensions/automations/extension.ts` 的 production composition 建立 `AutomationsService` backend client、`SandAutomationCloudSync`、`createBackendRelaySources` 和 fire consumer，皆由 reference auth／backend URL 提供權限。這不是可直接移植的無帳號本機平台 runtime。`backend-relay-source.ts` 透過 `/sand/listener-subscriptions` 及 `/sand/listener-events/poll` 的 bearer-authenticated 後端取得事件／scope 狀態，再交 local hub；Filicon 不具備或借用該產品私有 backend／登入。
+
+| 分類／能力 | reference 的已確認契約 | Filicon 當前邊界與下一個必要條件 |
+| --- | --- | --- |
+| AUTO-03／GitHub CI | `sand-automation-cloud-sync.ts` 將 repo、branch、SUCCESS／FAILURE／ANY 編成 `GitCICompletedEvent`，後端 relay 交付已分類的 `ci-passed`／`ci-failed` | 本機 normalizer 只承認同 repo 的 completed push `workflow_run`；不是等同後端 CI-completed 契約。該 source 呼叫鏈沒有 all-checks 查詢／彙整演算法，proto 也僅有欄位，不能把歷史「checks 彙整」用語當成已讀過的完整實作。若補此能力，須先定義 CI 完成範圍、可信事件／查詢來源、branch／commit／重跑身分及 pending／取消語意，不能因單一 workflow success 就回報所有 checks 通過。 |
+| AUTO-03／Slack 名稱與自身反應 | relay 訂閱 channel 文字，後端回報 unresolved／bot membership；wire event 的 channelName／channelId 與 isSelf 由後端供應，cloud trigger 使用 onlyOwnerReactions | 本機入口接受明確 conversation ID 或 *，沒有可信的人類登入身分／名稱目錄，bySelf true 仍拒絕。`SlackChannelConnector.profile` 的 auth.test 回報配置 token 所屬 bot，不能冒充人類 owner。下一步須有帳號＋workspace 綁定的使用者授權／可信目錄及撤銷策略，不接受 webhook 自報 isSelf 或猜測名稱。 |
+| AUTO-03／Teams 已登入使用者限制 | cloud trigger 傳 tenant／team／channel、literal／regex 及 blockUnauthenticatedTeamsUsers；reference matcher 在 platformMatched 邊界依賴後端驗證 | Filicon outgoing HMAC 僅證明傳輸，aadObjectId 不證明登入 Filicon。預設登入限制下事件仍 fail closed；模型／人工只能保存受限定義。須補可信 tenant＋application-user 綁定、登入驗證與撤銷／帳號切換，不能把簽章、AAD 字串或 payload authenticated=true 當作該權限。 |
+
+`native-image-preview-unlocked-full.log` 中 `GitHub routine event boundaries`、`Slack routine event boundaries`、`Teams outgoing event boundaries` 三個現存 suite 均通過；包含九種 workflow conclusion、偽 self 拒絕，以及 signed webhook／AAD 不代表 application-user authentication。這些證明目前有限契約與 fail-closed 行為，不證明新平台能力已補齊。完整回歸及封裝證據見本檔最新圖片段落，沒有因 documentation 再核對修改 production 政策或重新執行 live 測試。
+
+AUTO-03 維持 partial，不能因通用 HMAC／matcher 已有就改為 complete；也不能僅見外部 proto 就聲稱原版後端實作已在 reconstructed 倉庫。此核對只涵蓋三條平台流程，其餘 48 分類、人類互動、release／最低 macOS 及真實外部驗收繼續保留，不將平台邊界縮小為圖片工作。

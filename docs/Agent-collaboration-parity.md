@@ -1,4 +1,8 @@
-# 協作能力核對紀錄（更新至 2026-09-27）
+# 協作能力核對紀錄（更新至 2026-10-03）
+
+## 平台來源再核對（2026-10-03）
+
+reference 的 GitHub CI-completed、Slack 名稱／自身反應及 Teams 登入限制由雲端契約／relay 供應，所核對的 reconstructed production 呼叫鏈未提供完整的後端 checks 彙整或人類身分驗證實作。Filicon 目前的個別 push workflow、明確 Slack ID／非 self 與 Teams fail-closed 仍是有限版本，不借用 reference 私有 backend 或 Cursor 登入。當前 composition、欄位與測試證據見 [完成驗收入口的「平台觸發」](Parity-completion-audit.md)。下方歷史的「checks 彙整尚缺」不是已取得該演算法或授權的證明，AUTO-03 維持 partial；其他協作能力仍按各節最新接線紀錄核對。
 
 ## 有界記憶整合診斷（2026-09-27）
 
