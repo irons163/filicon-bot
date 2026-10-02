@@ -411,6 +411,7 @@ public struct RoomMessage: Identifiable, Codable, Hashable, Sendable {
     /// Reviewed remote locator; never a local blob or implicit network grant.
     public internal(set) var remoteAttachment: RemoteAttachmentReference?
     public internal(set) var remoteImages: RemoteImageGallery?
+    public var imageGalleryLayout: ImageGalleryLayout?
     public var question: GroupQuestion?
     public internal(set) var secretRequest: MailboxSecretRequest?
     public var cursorAgent: CursorAgentReference?
@@ -418,7 +419,7 @@ public struct RoomMessage: Identifiable, Codable, Hashable, Sendable {
     public var replyToMessageID: UUID?
     /// Host-assigned, group-local address. Never recomputed from a bounded prompt.
     public var shortAddress: String?
-    public init(id: UUID = UUID(), groupID: UUID, senderID: UUID?, text: String, createdAt: Date = Date(), toolActivities: [RoomToolActivity] = [], memberOutcome: RoomMemberOutcome? = nil, images: [AttachmentMetadata] = [], files: [AttachmentMetadata] = [], remoteAttachment: RemoteAttachmentReference? = nil, remoteImages: RemoteImageGallery? = nil) {
+    public init(id: UUID = UUID(), groupID: UUID, senderID: UUID?, text: String, createdAt: Date = Date(), toolActivities: [RoomToolActivity] = [], memberOutcome: RoomMemberOutcome? = nil, images: [AttachmentMetadata] = [], files: [AttachmentMetadata] = [], remoteAttachment: RemoteAttachmentReference? = nil, remoteImages: RemoteImageGallery? = nil, imageGalleryLayout: ImageGalleryLayout? = nil) {
         self.id = id; self.groupID = groupID; self.senderID = senderID; self.text = text; self.createdAt = createdAt
         self.toolActivities = toolActivities
         self.memberOutcome = memberOutcome
@@ -426,9 +427,10 @@ public struct RoomMessage: Identifiable, Codable, Hashable, Sendable {
         self.files = files.isEmpty ? nil : files
         self.remoteAttachment = remoteAttachment
         self.remoteImages = remoteImages
+        self.imageGalleryLayout = imageGalleryLayout
     }
 
-    private enum CodingKeys: String, CodingKey { case id, groupID, senderID, text, createdAt, toolActivities, memberOutcome, images, files, remoteAttachment, remoteImages, question, secretRequest, cursorAgent, questionReplyTo, replyToMessageID, shortAddress }
+    private enum CodingKeys: String, CodingKey { case id, groupID, senderID, text, createdAt, toolActivities, memberOutcome, images, files, remoteAttachment, remoteImages, imageGalleryLayout, question, secretRequest, cursorAgent, questionReplyTo, replyToMessageID, shortAddress }
     public init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         id = try values.decode(UUID.self, forKey: .id)
@@ -442,6 +444,11 @@ public struct RoomMessage: Identifiable, Codable, Hashable, Sendable {
         files = try values.decodeIfPresent([AttachmentMetadata].self, forKey: .files)
         remoteAttachment = try values.decodeIfPresent(RemoteAttachmentReference.self, forKey: .remoteAttachment)
         remoteImages = try values.decodeIfPresent(RemoteImageGallery.self, forKey: .remoteImages)
+        imageGalleryLayout = try values.decodeIfPresent(ImageGalleryLayout.self, forKey: .imageGalleryLayout)
+        guard imageGalleryLayout == nil || imageGalleryLayout?.matches(attachments: images ?? [], remoteGallery: remoteImages) == true else {
+            throw DecodingError.dataCorruptedError(forKey: .imageGalleryLayout, in: values,
+                debugDescription: "Image gallery layout must match stored images")
+        }
         question = try values.decodeIfPresent(GroupQuestion.self, forKey: .question)
         secretRequest = try values.decodeIfPresent(MailboxSecretRequest.self, forKey: .secretRequest)
         cursorAgent = try values.decodeIfPresent(CursorAgentReference.self, forKey: .cursorAgent)

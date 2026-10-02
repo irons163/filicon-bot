@@ -5,6 +5,12 @@ import FiliconAgents
 import FiliconDomain
 import FiliconAppServices
 
+private func galleryTestPNG() throws -> Data {
+    let data = try #require(Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNgAAAAAgABSK+kcQAAAABJRU5ErkJggg=="))
+    expectNoDifference(try AgentImageStore.validate(data), "image/png")
+    return data
+}
+
 private actor GalleryPublicationProbe {
     var events: [String] = []
     var valid = true
@@ -17,19 +23,76 @@ private actor GalleryPublicationProbe {
 
 @Suite("Atomic reviewed text and image gallery", .timeLimit(.minutes(1)))
 struct AgentGalleryPublicationTransactionTests {
+    @Test(arguments: ["valid", "legacy", "local-order", "missing-local", "remote-url", "non-image"])
+    func persistedJSONGalleryMustMatchCanonicalImages(mode: String) throws {
+        let createdAt = Date(timeIntervalSince1970: 1_000)
+        var images = [
+            AttachmentMetadata(id: String(repeating: "a", count: 64), filename: "a.png", mimeType: "image/png",
+                byteCount: 100, kind: .image, createdAt: createdAt),
+            AttachmentMetadata(id: String(repeating: "b", count: 64), filename: "b.png", mimeType: "image/png",
+                byteCount: 100, kind: .image, createdAt: createdAt)]
+        let reference = try RemoteAttachmentReference(url: "https://example.com/image", alt: "Remote")
+        var remote = try RemoteImageGallery(images: [reference])
+        let layout = try ImageGalleryLayout(items: [.attachment(images[0].id), .remote(reference), .attachment(images[1].id)])
+        if mode == "local-order" { images.reverse() }
+        if mode == "missing-local" { images.removeLast() }
+        if mode == "remote-url" {
+            remote = try RemoteImageGallery(images: [RemoteAttachmentReference(url: "https://example.com/changed", alt: "Remote")])
+        }
+        if mode == "non-image" {
+            images[0] = .init(id: images[0].id, filename: images[0].filename, mimeType: "text/plain",
+                byteCount: images[0].byteCount, kind: .document, createdAt: createdAt)
+        }
+        let room = RoomMessage(groupID: UUID(), senderID: UUID(), text: "Reviewed gallery", createdAt: createdAt,
+            images: images, remoteImages: remote, imageGalleryLayout: mode == "legacy" ? nil : layout)
+        let chat = ChatMessage(role: .assistant, text: room.text, createdAt: createdAt,
+            attachments: images, remoteImages: remote, imageGalleryLayout: mode == "legacy" ? nil : layout)
+        let roomJSON = try JSONEncoder().encode(room), chatJSON = try JSONEncoder().encode(chat)
+        if ["valid", "legacy"].contains(mode) {
+            expectNoDifference(try JSONDecoder().decode(RoomMessage.self, from: roomJSON), room)
+            expectNoDifference(try JSONDecoder().decode(ChatMessage.self, from: chatJSON), chat)
+        } else {
+            #expect(throws: DecodingError.self) { try JSONDecoder().decode(RoomMessage.self, from: roomJSON) }
+            #expect(throws: DecodingError.self) { try JSONDecoder().decode(ChatMessage.self, from: chatJSON) }
+        }
+    }
+
     @Test(arguments: ["success", "legacy", "deny", "unavailable", "wrong-scope", "mixed", "local", "duplicate", "http", "invalid-receipt"])
     func messageToolPublishesOneReviewedGallery(mode: String) async throws {
         let origin = UUID(), sender = UUID(), messageID = UUID(), probe = GalleryPublicationProbe()
+        let preparedLocal = mode == "local"
+            ? try PreparedAgentGalleryImage(bytes: try galleryTestPNG(), filename: "a.png", altText: "Local A")
+            : nil
+        let prepareLocalImage: AgentGalleryPublicationTransaction.PrepareLocalImage?
+        if let preparedLocal {
+            prepareLocalImage = { url, alt, _, _ in
+                #expect(url == "file:///tmp/a.png")
+                #expect(alt == "Local A")
+                return preparedLocal
+            }
+        } else { prepareLocalImage = nil }
         let transaction = AgentGalleryPublicationTransaction(conversationID: mode == "wrong-scope" ? UUID() : origin,
-            senderID: sender, validateScope: {}, authorize: { review, _, _ in
+            senderID: sender, validateScope: {}, prepareLocalImage: prepareLocalImage, authorize: { review, _, _ in
                 await probe.record("review")
                 expectNoDifference(review.text, "Designs")
-                expectNoDifference(review.gallery.images.map(\.alt), ["A", "B"])
+                expectNoDifference(review.gallery?.images.map(\.alt), mode == "local" ? ["A"] : ["A", "B"])
+                if mode == "local" {
+                    expectNoDifference(review.images.count, 2)
+                    let remote = try RemoteAttachmentReference(url: "https://example.com/a", alt: "A")
+                    let expected = try ImageGalleryLayout(items: [.remote(remote), .attachment(try #require(preparedLocal).file.digest)])
+                    expectNoDifference(review.layout, Optional(expected))
+                    expectNoDifference(review.images, [.remote(remote), .local(try #require(preparedLocal))])
+                }
                 if mode == "deny" { throw AgentMessagingError.approvalRequired }
             }, commit: { review, _, _ in
                 await probe.record("save")
+                let localImages = review.localImages.map { image in
+                    AttachmentMetadata(id: image.file.digest, filename: image.file.filename, mimeType: image.mimeType,
+                        byteCount: Int64(image.file.bytes.count), kind: .image, altText: image.altText)
+                }
                 var saved = RoomMessage(id: messageID, groupID: origin, senderID: sender,
-                    text: mode == "invalid-receipt" ? "Wrong" : review.text, remoteImages: review.gallery)
+                    text: mode == "invalid-receipt" ? "Wrong" : review.text, images: localImages,
+                    remoteImages: review.gallery, imageGalleryLayout: review.layout)
                 saved.replyToMessageID = review.replyTo
                 return .init(review: review, message: saved)
             })
@@ -43,7 +106,7 @@ struct AgentGalleryPublicationTransactionTests {
         var images: [[String: String]] = [["url": "https://example.com/a", "alt": "A"],
                                         ["url": "https://example.com/b", "alt": "B"]]
         if mode == "mixed" { images[1] = ["image_id": "host-image"] }
-        if mode == "local" { images[1] = ["url": "file:///tmp/a.png"] }
+        if mode == "local" { images[1] = ["url": "file:///tmp/a.png", "alt": "Local A"] }
         if mode == "duplicate" { images[1]["url"] = images[0]["url"] }
         if mode == "http" { images[0]["url"] = "http://example.com/a" }
         var args: [String: Any] = mode == "legacy" ? ["text": "Designs"] : ["type": "text", "content": "Designs"]
@@ -51,7 +114,7 @@ struct AgentGalleryPublicationTransactionTests {
         let call = try NormalizedToolCall(id: "gallery", name: "SendMessage", argumentsJSON: JSONSerialization.data(withJSONObject: args))
         let context = ToolContext(conversationID: origin)
         let result = try await tool.execute(call, context: context)
-        let succeeds = ["success", "legacy"].contains(mode)
+        let succeeds = ["success", "legacy", "local"].contains(mode)
         expectNoDifference(result.isError, !succeeds)
         let schema = try #require(JSONSerialization.jsonObject(with: tool.descriptor.inputSchema) as? [String: Any])
         let properties = try #require(schema["properties"] as? [String: Any])
@@ -87,7 +150,7 @@ struct AgentGalleryPublicationTransactionTests {
             authorize: { review, _, _ in
                 await probe.record("approve")
                 expectNoDifference(review.text, "Compare these")
-                expectNoDifference(review.gallery, gallery)
+                expectNoDifference(review.gallery, Optional(gallery))
                 expectNoDifference(review.conversationID, destination)
                 expectNoDifference(review.replyTo, reply)
                 if mode == "deny" { throw AgentGalleryPublicationTransaction.Failure.unavailable }
@@ -95,14 +158,14 @@ struct AgentGalleryPublicationTransactionTests {
             }, commit: { review, _, _ in
                 await probe.record("commit")
                 if mode == "uncertain" { throw AgentGalleryPublicationTransaction.Failure.uncertainCommit }
-                var images = review.gallery.images
+                var images = try #require(review.gallery).images
                 if mode == "order" { images.reverse() }
                 if mode == "description" { images[0] = try RemoteAttachmentReference(url: images[0].url, alt: "Changed") }
                 var message = RoomMessage(groupID: mode == "destination" ? UUID() : review.conversationID,
                     senderID: mode == "sender" ? UUID() : review.senderID,
                     text: mode == "text" ? "Changed" : review.text,
                     remoteAttachment: mode == "mixed" ? images[0] : nil,
-                    remoteImages: try RemoteImageGallery(images: images))
+                    remoteImages: try RemoteImageGallery(images: images), imageGalleryLayout: review.layout)
                 message.replyToMessageID = mode == "reply" ? nil : review.replyTo
                 return .init(review: review, message: message)
             })

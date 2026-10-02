@@ -1,12 +1,13 @@
 # SendMessage 檔案與媒體交付核對
 
-2026-09-27 首次核對；來源基準 Filicon `549f96f`、reference `grok-bot-0.18-reconstructed` `a9f633e09d49a85829b8236331b9e21f7e612634`。2026-09-28 最新 App 基準 `356fe1b`：**本機檔案的 group／mailbox／direct 發布已接線並有隔離驗證；遠端 URL、文字內 URL 圖片、大檔與完整 crash recovery 未完成**。以下「Filicon 現況」及早期階段是當時紀錄，最新進展請見後續階段。本文件不代表全部 parity 已重驗。
+2026-09-27 首次核對；來源基準 Filicon `549f96f`、reference `grok-bot-0.18-reconstructed` `a9f633e09d49a85829b8236331b9e21f7e612634`。2026-10-02 更新（接續 `c34f3e6`，解除系統鎖定後最終完整串行回歸及原生封裝驗證通過）：本機獨立檔案、HTTPS 附件 locator，以及文字內本機／HTTPS 混合圖片集已接入 direct／前景與背景 group／mailbox／direct peer。圖片發佈需完整核准；本機保存捕捉的 bytes，遠端保持未驗證 locator，明確下載後才有內嵌縮圖。大檔、動畫內嵌播放、完整 crash／UI lifecycle 及真實外部服務驗收仍保留。以下「Filicon 現況」及早期階段是歷史紀錄，最新進展見第六十九階段；不代表全部 parity 已重驗。
 
 ## 來源證據
 
-- Reference `source/host/runner/tools/send-message-schema.ts`：文字可帶 `images:[{url,alt?}]`；獨立附件使用 `type:attachment,url`，接受 file／HTTPS scheme。
+- Reference `source/host/runner/tools/send-message-schema.ts`：文字可帶 `images:[{url,alt?}]`，此陣列沒有四張上限；獨立附件使用 `type:attachment,url`，接受 file／HTTPS scheme。
 - `source/host/runner/tools/send-message-tool.ts` 的 `resolveAttachmentSource`：file URL 先嘗試 host ingest，失敗才嘗試可選 box resolver，再退回原 URL。退回 URL 不證明檔案存在或成功交付。
 - 同檔 `buildSandSendMessage`：文字图片與獨立附件可附尺寸；HTTPS 在可選 classifier 判斷為 file 時轉成文字 URL。不能一概宣稱原版會下載每個 HTTPS 檔案。
+- Reference `frontend/src/recovered/features/conversation/workspace/transcript.tsx` 的 `SendMessageTextImages` 逐項渲染文字訊息的所有 image URL，並未接 `media-viewer.tsx` 的 fullscreen viewer；後者接在 `TranscriptAttachmentGallery` 的獨立 image／video 附件。不能把原版附件的放大／切換介面一概視為文字圖片集已可達功能，也不能把 schema 沒有數量限制誤當所有傳輸層均無限。
 - `source/host/host-runner-composition.ts` 的 `sendMessage` 組裝注入 `hooks.ingestAttachment`、可選尺寸讀取、transport 及保存 receipt；此處未注入 `resolveBoxAttachment` 或 `classifyAttachment`。box 介面存在不等於這條 production 路徑已接線。
 
 ## Filicon 現況
@@ -716,3 +717,25 @@ RemoteAttachmentImagePreparation 新增 thumbnail API：先通過既有檔案格
 完整 gallery-inline-full.log 未通過：多個既有儲存測試讀取隔離暫存 agents.json 等檔案遭 NSCocoaErrorDomain 257／POSIX EPERM，另有連帶失敗；未宣稱全部由環境造成，仍待分離重驗。此次沒有修改系統權限、重啟 App 或碰真實資料。內嵌圖片目前需明確下載，快取、動畫內嵌播放、本機／混合來源及完整 UI lifecycle 驗收仍待補。
 
 最終原生 gallery-inline-final-native.log exit 0，完整 package verifier／deep strict 簽章與 git diff --check 通過。使用者另明確要求 commit 後 push，因此本批及既有未推送提交將推送 origin/main；不改寫遠端歷史。
+
+## 第六十九階段：本機與 HTTPS 混合圖片集（2026-10-02）
+
+重新核對 reference 的文字 `images:[{url,alt}]` 有序 builder 與單張／多張呈現設計，未將未注入的 box resolver 當成已跑通功能。Filicon 現接受 1–4 張本機 file URL／HTTPS locator 混合排列，不接受混入 host image ID。本機只從已授權工作區以獨立 readFile policy 讀取；捕捉單幀 PNG／JPEG bytes、basename、SHA-256 與替代文字後，再核准整則正文、順序、圖片及 reply。每張 5 MiB、合計 12 MiB、邊長 8192／16 Mp 的限制不變；核准後不重讀來源。
+
+`ImageGalleryLayout` 保存完整順序；SQLite schema 16、新舊 JSON、分頁及 recovery 均驗證 layout 與本機 ID／遠端 URL／alt 一致。群組、背景、信箱、direct 及 peer 投影共用順序，不用個別本機／遠端陣列重排。direct 的 transcript／下一次 vision inference 與 mailbox preview store 都保有同一份 captured bytes；peer 鏡像復原不重跑模型或重複發佈。
+
+本機圖片匯入由 host-owned importer 預留 app-wide quota 後才安裝；配額不可用不宣告本機能力。direct 的主附件與 preview 是兩份實體資料，各自記帳，群組／信箱匯入同樣受保護。reconcile 掃描 `agent-message-images`，保留已安裝但未發佈的有界孤立內容記帳，不擅自刪除共用 blob。配額或訊息保存失敗不能冒充成功；direct 已落盤但晚到 quota 錯誤會查回精確 durable message，無法查證則維持 uncertainCommit。群組重匯入只改 createdAt 不能繞過同回合內容去重。
+
+captured image 的主附件與 preview 都使用 descriptor-relative／exclusive CAS 安裝，不跟隨 root／shard／blob 符號連結、不替換既有 blob，並核對既有內容等於核准 bytes。圖片 MIME 以 ImageIO 解碼結果為準；`.txt` 或無副檔名的有效 PNG 不會失去 image 類型，錯誤 MIME 不得提升文件為圖片。新增 root／shard／blob link、同尺寸損壞 blob、重匯入、MIME 與 JSON layout／metadata 不一致的拒絕測試；保留沒有 layout 的舊 JSON 相容性。
+
+UI 單張放大、多張兩欄以 row-major 排列。本機圖片可開啟同一則訊息的本機 gallery；遠端卡片不隱式下載，下載／redirect 核准與 scope 清理沿用原流程。窄卡片將 icon／標題／外連箭頭獨立為 heading，正文、URL 及七語未驗證提示使用完整卡片寬度。離屏測試涵蓋七語 × 320／620 pt，真實本機縮圖、單張寬度與四色 row-major 像素；已目視確認繁中兩種寬度，不宣稱整個 App／所有語系均已人工操作驗收。
+
+新增 116 種隔離 App 案例：五條路徑各有 local／mixed，涵蓋核准、拒絕、Stop、切帳號、來源替換、讀取拒絕、配額不可用與誤導副檔名；另驗證成員／目的地撤銷、主 blob／preview／訊息保存前後故障、已安裝內容配額重開與 reconcile、原始 bytes 重開／下一次 inference／peer 去重復原。時間精度比較只容許 SQLite Date 表示造成的微秒差，其他 metadata／bytes／layout 完整比較；不放寬 production 權限或保存判斷。
+
+最終 source 的 `mixed-gallery-final-target.log` 編譯成功，新增 CAS／MIME／JSON 測試通過，但 suite 整體 exit 1：既有圖片與隔離 App 的 agents.json 讀取出現 NSCocoaErrorDomain 257／POSIX EPERM，系統同時回報 `CGSSessionScreenIsLocked=Yes`。未降低檔案保護，也未將這次失敗列為通過，需解鎖後重跑。單獨 `mixed-gallery-final-security.log`：5 tests／2 suites 通過（含 35 個參數案例與 1 個單例），不能代替 App 整合回歸。先前 quota 版完整串行 `mixed-gallery-quota-full.log` exit 0 不取代後續安全安裝／MIME／JSON 最終 source 的完整驗證。前一輪平行 MainActor 逾時及記憶驗證請求次數失敗亦未列為通過；記憶測試 fixture 的 attempt timeout 100→500 ms 只調整隔離測試，未改 production timeout。最終 Xcode `mixed-gallery-final-native.log` build succeeded，`mixed-gallery-final-native-package.log` 與獨立 debug `mixed-gallery-final-package.log` 均 package verifier／deep strict 簽章通過。待解鎖後最終完整回歸才提交；未 push、未啟動或重啟使用者 App／Xcode、未改真實帳號或群組資料。
+
+後續檢查另實際重現 mixed gallery 已保存但 `AgentMessenger.directPeerTranscript` 沿用全 HTTPS 規則、在復原時排除本機＋遠端訊息的漏點；既有 App 案例在已存在投影上呼叫 recover 並只檢查去重，不足以證明 canonical mixed 訊息真的被讀出。新增 service 級 remote／local／mixed 三種重開測試，完整比較回傳訊息與 source，並修正 recovery 以 layout 精確匹配為邊界。純文字 final report、本機獨立檔案回條與 HTTPS 獨立回條均拒絕意外夾帶 layout，拒絕後不能重試不確定的發佈 side effect。`mixed-gallery-recovery-red-authorized.log` 先得到 4 tests／3 suites、8 issues 的預期重現；修正後 `mixed-gallery-recovery-green.log` 18 tests／4 suites（101 個含單例的案例）全部通過，含既有交易撤銷／重播與 CAS 安全測試。測試編譯初次遇到 actor property 的同步 assertion autoclosure，改為先 await 取得值，不放寬 production 隔離。重驗 Xcode `mixed-gallery-recovery-native.log` build succeeded，`mixed-gallery-recovery-native-package.log` 封裝與 deep strict 簽章通過。這些結果取代前段對該後续 source 的 build 證據，但不能代替仍待解鎖的完整 App 回歸。
+
+解鎖後最終驗證：`mixed-gallery-unlocked-access.log` 的既有 PNG／JPEG 保護檔案測試與 remote／local／mixed 信箱重開案例全部通過；完整 `mixed-gallery-unlocked-full.log` exit 0，135 項 XCTest、1,508 項 Swift Testing（核心 797、App 接線 488），包括本批 116 種參數化 App 案例。沒有降低檔案保護或修改系統權限。最終 production source 與前述 `mixed-gallery-recovery-native.log` 的成功原生建置一致；重新執行 `mixed-gallery-unlocked-native-package.log`，四個執行檔、XPC entitlements 與 deep strict 簽章均通過。先前失敗紀錄保留為歷史，不以較早 quota 版成功代替本次最終回歸。未 push、未啟動或重啟使用者 App／Xcode、未改真實帳號或群組資料。依 pfw-testing／pfw-custom-dump 保留隔離依賴、完整 metadata／bytes／順序斷言與拒絕／撤銷驗證。
+
+尚未完成：四張以上／較大本機媒體、其他圖片格式、遠端縮圖快取／動畫內嵌、完整窗口／取消／崩潰復原及跨程序 receipt 邊界、最低 macOS 與真實遠端服務驗收。四張限制仍是 Filicon 相對 reference schema／builder 的已確認差異，不以提高成另一個任意上限宣稱完全對等。這些仍屬原需求範圍，不以本批局部完成取代全功能 parity。

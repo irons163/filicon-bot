@@ -99,7 +99,8 @@ public actor AgentRemotePublicationTransaction {
         guard receipt.review == review, !messageIDs.contains(receipt.messageID) else { throw Failure.invalidReceipt }
         if let saved = receipt.savedMessage {
             guard saved.id == receipt.messageID, saved.groupID == review.conversationID,
-                  saved.senderID == review.senderID, saved.remoteAttachment == review.reference, saved.remoteImages == nil,
+                  saved.senderID == review.senderID, saved.remoteAttachment == review.reference,
+                  saved.remoteImages == nil, saved.imageGalleryLayout == nil,
                   saved.replyToMessageID == review.replyTo, saved.text.isEmpty,
                   (saved.images ?? []).isEmpty, (saved.files ?? []).isEmpty, saved.question == nil,
                   saved.secretRequest == nil, saved.cursorAgent == nil,

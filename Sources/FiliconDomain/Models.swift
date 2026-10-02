@@ -72,6 +72,7 @@ public struct ChatMessage: Identifiable, Codable, Hashable, Sendable {
     public var agentMessageSource: AgentMessageSource?
     public var remoteAttachment: RemoteAttachmentReference?
     public var remoteImages: RemoteImageGallery?
+    public var imageGalleryLayout: ImageGalleryLayout?
 
     public init(
         id: UUID = UUID(),
@@ -89,7 +90,8 @@ public struct ChatMessage: Identifiable, Codable, Hashable, Sendable {
         shortAddress: String? = nil,
         agentMessageSource: AgentMessageSource? = nil,
         remoteAttachment: RemoteAttachmentReference? = nil,
-        remoteImages: RemoteImageGallery? = nil
+        remoteImages: RemoteImageGallery? = nil,
+        imageGalleryLayout: ImageGalleryLayout? = nil
     ) {
         self.id = id
         self.role = role
@@ -107,6 +109,7 @@ public struct ChatMessage: Identifiable, Codable, Hashable, Sendable {
         self.agentMessageSource = agentMessageSource
         self.remoteAttachment = remoteAttachment
         self.remoteImages = remoteImages
+        self.imageGalleryLayout = imageGalleryLayout
     }
 
     public mutating func toggleReaction(emoji: String, actorID: String) -> Bool {
@@ -127,6 +130,7 @@ public struct ChatMessage: Identifiable, Codable, Hashable, Sendable {
         transcriptCards = []
         remoteAttachment = nil
         remoteImages = nil
+        imageGalleryLayout = nil
         deliveryStatus = .queued
         deliveryError = nil
     }
@@ -134,7 +138,7 @@ public struct ChatMessage: Identifiable, Codable, Hashable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case id, role, text, createdAt, attachments, deliveryStatus, deliveryError
         case reasoningText, toolActivities, transcriptCards, replyToMessageID, reactions, shortAddress
-        case agentMessageSource, remoteAttachment, remoteImages
+        case agentMessageSource, remoteAttachment, remoteImages, imageGalleryLayout
     }
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -153,6 +157,11 @@ public struct ChatMessage: Identifiable, Codable, Hashable, Sendable {
         agentMessageSource = try values.decodeIfPresent(AgentMessageSource.self, forKey: .agentMessageSource)
         remoteAttachment = try values.decodeIfPresent(RemoteAttachmentReference.self, forKey: .remoteAttachment)
         remoteImages = try values.decodeIfPresent(RemoteImageGallery.self, forKey: .remoteImages)
+        imageGalleryLayout = try values.decodeIfPresent(ImageGalleryLayout.self, forKey: .imageGalleryLayout)
+        guard imageGalleryLayout == nil || imageGalleryLayout?.matches(attachments: attachments, remoteGallery: remoteImages) == true else {
+            throw DecodingError.dataCorruptedError(forKey: .imageGalleryLayout, in: values,
+                debugDescription: "Image gallery layout must match stored images")
+        }
         guard agentMessageSource == nil || role == .assistant else {
             throw DecodingError.dataCorruptedError(forKey: .agentMessageSource, in: values, debugDescription: "Peer messages must have assistant role")
         }

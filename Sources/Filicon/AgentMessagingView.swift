@@ -391,13 +391,14 @@ struct AgentPublishedResponses: View {
                     } else if !publication.text.isEmpty {
                         RichMarkdownView(source: publication.text, messageReferences: references(publication))
                     }
-                    if let images = publication.images, !images.isEmpty { AgentMessageImagePreviews(images: images) }
-                    if let gallery = publication.remoteImages {
-                        RemoteImageGalleryView(gallery: gallery, onPreview: onPreviewRemote.map { action in
-                            { reference, review in try await action(publication, reference, review) }
-                        }, onThumbnail: onThumbnail.map { action in
-                            { reference, review in try await action(publication, reference, review) }
-                        })
+                    if publication.remoteImages != nil || !(publication.images ?? []).isEmpty {
+                        OrderedImageGalleryView(layout: publication.imageGalleryLayout,
+                            images: publication.images ?? [], remoteGallery: publication.remoteImages,
+                            onPreview: onPreviewRemote.map { action in
+                                { reference, review in try await action(publication, reference, review) }
+                            }, onThumbnail: onThumbnail.map { action in
+                                { reference, review in try await action(publication, reference, review) }
+                            })
                     }
                     if let reference = publication.remoteAttachment {
                         RemoteAttachmentCard(reference: reference, onPreview: onPreviewRemote.map { action in { review in try await action(publication, reference, review) } })
@@ -442,9 +443,11 @@ struct MailboxReplyPreview: View {
                 DisclosureGroup {
                     Text(verbatim: original.text).font(.callout).textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
-                    if let images = original.images, !images.isEmpty { AgentMessageImagePreviews(images: images) }
+                    if original.remoteImages != nil || !(original.images ?? []).isEmpty {
+                        OrderedImageGalleryView(layout: original.imageGalleryLayout, images: original.images ?? [],
+                            remoteGallery: original.remoteImages)
+                    }
                     if let remote = original.remoteAttachment { RemoteAttachmentCard(reference: remote) }
-                    if let gallery = original.remoteImages { RemoteImageGalleryView(gallery: gallery) }
                     ForEach(original.files ?? []) { file in
                         Label(file.filename, systemImage: "doc").font(.caption)
                     }
@@ -473,10 +476,13 @@ struct AgentMessageImagePreviews: View {
     @EnvironmentObject private var model: AppModel
     let images: [AttachmentMetadata]
     var compact = false
+    var expandsSingleImage = true
+    var viewingGallery: [AttachmentMetadata]?
     var body: some View {
         AgentMessageImageGallery(images: images) { image in
-            AgentMessageImagePreview(image: image, compact: compact, expanded: images.count == 1,
-                                     onOpen: { model.openAgentMessageImage(image, gallery: images) })
+            AgentMessageImagePreview(image: image, compact: compact,
+                expanded: expandsSingleImage && images.count == 1,
+                onOpen: { model.openAgentMessageImage(image, gallery: viewingGallery ?? images) })
         }
     }
 }
@@ -555,7 +561,7 @@ struct AgentMessageImagePreviewContent: View {
 
     private func fittedImage(_ preview: NSImage) -> some View {
         AgentImageFitLayout(imageSize: preview.size, maximumWidth: expanded ? 560 : 280,
-                            maximumHeight: compact ? 96 : expanded ? 320 : 160) {
+                            maximumHeight: expanded ? 320 : compact ? 96 : 160) {
             Image(nsImage: preview).resizable().scaledToFit()
                 .clipShape(RoundedRectangle(cornerRadius: 10))
                 .accessibilityLabel(image.altText ?? image.filename)

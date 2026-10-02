@@ -1,8 +1,8 @@
 # Filicon / Grok Bot 0.18 功能 parity matrix（current implementation）
 
-2026-09-28 背景傳檔增量：已接入群組／direct／mailbox 來源 → 背景群組的本機檔案核准與保存，取代下方「背景群組完全待接線」描述。28 種隔離情境另修正 direct 來源停止目的群組未取消的缺陷；委派重用及故障注入仍待驗收，direct／mailbox 本身傳檔尚未接線。詳見 [傳檔第十一至十二階段](Send-message-files-parity.md)。
+2026-10-02 媒體增量：本機獨立檔案、HTTPS 附件 locator、local／HTTPS 混合文字圖片集已接入 direct、前景／背景群組、mailbox 與 direct peer，包含不可變 bytes 的完整核准、配額、順序保存、重開與撤銷隔離測試。解除系統鎖定後，最終完整串行回歸及原生封裝驗證通過。遠端需明確下載後才顯示內嵌縮圖，不能把 locator 當已驗證內容或網路權限。超過四張、其他圖片格式、大檔、動畫／快取、完整 crash／UI lifecycle 及真實外部服務驗收仍保留；詳見 [傳檔第六十九階段](Send-message-files-parity.md)。
 
-完成驗收入口：見 [Parity-completion-audit.md](Parity-completion-audit.md)。本表 43 個歷史 complete 並非今日逐項端到端驗證；尚未重驗者不構成整體完成證明。自身 `hidden_from_sidebar` 的核准／持久化／UI／模型接線已於 `a57e545` 完成隔離驗證，取代下方歷史拒絕描述。圖片頭像的模型來源、預覽、提交與人工配額已接線，剩餘邊界見 [Avatar-image-parity.md](Avatar-image-parity.md) 第七至十階段。下一個已核對缺口是模型交付新產生的檔案／媒體，見 [Send-message-files-parity.md](Send-message-files-parity.md)；前景群組的本機檔案來源、發佈核准／持久化／模型入口已完成隔離驗證；背景群組、direct／mailbox、遠端來源與媒體能力仍待完成。
+完成驗收入口：見 [Parity-completion-audit.md](Parity-completion-audit.md)。本表 43 個歷史 complete 並非今日逐項端到端驗證；尚未重驗者不構成整體完成證明。下方矩陣及日期段落保留歷史證據，當前狀態須對照各分類的後續核對紀錄，不能把已接線功能再次列為缺失。自身 `hidden_from_sidebar` 的核准／持久化／UI／模型接線已於 `a57e545` 完成隔離驗證。圖片頭像的來源、預覽、提交與人工配額已接線，剩餘邊界見 [Avatar-image-parity.md](Avatar-image-parity.md) 第七至十階段；媒體最新狀態與未驗收邊界見上段及 [Send-message-files-parity.md](Send-message-files-parity.md)。
 
 最新記憶核對（2026-09-27，`94937dd`）：episodic 的獨立七語 consent、跨回合進度、六回合摘要／獨立驗證、host 來源權重與 UI、App direct／group 接線及清理復原紀錄已實作並有隔離測試。下方同日及更早「尚缺」記述為歷史進度，以 [Episodic-memory-parity.md](Episodic-memory-parity.md) 後續段落為準。整體仍 partial：四條記憶保存入口已移除 48 筆／12,000 字歷史總量限制，另已移除 8 筆 profile 保存限制，保留有界 recall／search／抽取，新增 63 筆多來源重開測試；仍不等價於參考月份 log，人類管理頁已接每頁 20 筆與七語控制項；synthesis 已對齊原版最多 512 候選與完整歷史 stale fence（原版不逐批遍歷），另有 64,000-byte 投影上限；私人／共享 profile 筆數已改 100／50；專案已按有事實／最近日期／slug 選最多三個，各池獨立 25-profile／10-recent 與 JSON bytes 預算，未入選仍可搜尋；文字與 JSON 預算差異、大資料量磁碟 I/O 仍需保留驗收邊界；月份檔案布局差異本身不等同缺少使用者功能。原版 500 是抽取掃描上限而非儲存容量。下一階段明確驗收見 [Memory-archive-parity.md](Memory-archive-parity.md)。復原紀錄自身無法落盤與 UI 事件尚未送达 service 就崩潰的邊界、真實模型／UI／外部服務驗收仍保留。
 

@@ -99,6 +99,68 @@ private func forwardImage(_ target: UUID, ids: [String], id: ToolCallID = "forwa
 
 @Suite("Peer image storage and delivery", .timeLimit(.minutes(1)))
 struct AgentImageMessagingTests {
+    @Test(arguments: ["valid", "misleading", "root-link", "shard-link", "blob-link", "corrupt-existing"])
+    func capturedGalleryStorageRejectsUnsafeCAS(mode: String) async throws {
+        let manager = FileManager.default
+        let root = manager.temporaryDirectory.appending(path: "filicon-captured-gallery-\(UUID())")
+        defer { try? manager.removeItem(at: root) }
+        let imageRoot = root.appending(path: "images"), outside = root.appending(path: "outside")
+        try manager.createDirectory(at: outside, withIntermediateDirectories: true)
+        let marker = outside.appending(path: "marker")
+        let markerBytes = Data("Must remain unchanged".utf8)
+        try markerBytes.write(to: marker)
+        let bytes = try peerImageBytes()
+        let prepared = try PreparedAgentGalleryImage(bytes: bytes,
+            filename: mode == "misleading" ? "image.txt" : "image.png", altText: "Captured image")
+        let shard = imageRoot.appending(path: String(prepared.file.digest.prefix(2)))
+        if mode == "root-link" {
+            try manager.createSymbolicLink(at: imageRoot, withDestinationURL: outside)
+        } else {
+            try manager.createDirectory(at: imageRoot, withIntermediateDirectories: true)
+            if mode == "shard-link" {
+                try manager.createSymbolicLink(at: shard, withDestinationURL: outside)
+            } else if ["blob-link", "corrupt-existing"].contains(mode) {
+                try manager.createDirectory(at: shard, withIntermediateDirectories: true)
+                let blob = shard.appending(path: prepared.file.digest)
+                if mode == "blob-link" { try manager.createSymbolicLink(at: blob, withDestinationURL: marker) }
+                else { try Data(repeating: 0, count: bytes.count).write(to: blob) }
+            }
+        }
+        let store = AgentImageStore(rootURL: imageRoot), createdAt = Date(timeIntervalSince1970: 1_000)
+        if ["valid", "misleading"].contains(mode) {
+            let expected = AttachmentMetadata(id: prepared.file.digest, filename: prepared.file.filename,
+                mimeType: "image/png", byteCount: Int64(bytes.count), kind: .image,
+                createdAt: createdAt, altText: prepared.altText)
+            let saved = try await store.importCapturedGalleryImage(prepared, createdAt: createdAt)
+            expectNoDifference(saved, expected)
+            let repeated = try await store.importCapturedGalleryImage(prepared, createdAt: createdAt)
+            expectNoDifference(repeated, expected)
+            let loaded = try await store.load([saved])
+            expectNoDifference(loaded, [InferenceAttachment(metadata: expected, data: bytes)])
+            let inventory = try await store.storageInventory()
+            expectNoDifference(inventory, AttachmentStoreInventory(active: [prepared.file.digest: Int64(bytes.count)],
+                quarantined: [:], temporaryFiles: []))
+        } else {
+            await #expect(throws: (any Error).self) {
+                try await store.importCapturedGalleryImage(prepared, createdAt: createdAt)
+            }
+        }
+        expectNoDifference(try Data(contentsOf: marker), markerBytes)
+        expectNoDifference(try manager.contentsOfDirectory(atPath: outside.path), ["marker"])
+    }
+
+    @Test func capturedGalleryImageMIMEMustMatchDecodedBytes() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "filicon-captured-mime-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let prepared = try PreparedAgentPublicationFile(bytes: peerImageBytes(), filename: "misleading.jpeg")
+        let store = AttachmentStore(rootURL: root)
+        await #expect(throws: AttachmentStoreError.self) {
+            try await store.ingest(prepared: prepared, createdAt: Date(timeIntervalSince1970: 1_000),
+                verifiedImageMIMEType: "image/jpeg")
+        }
+        expectNoDifference(FileManager.default.fileExists(atPath: root.path), false)
+    }
+
     private actor FileDispatchFence {
         var active = true
         func revoke() { active = false }
@@ -123,7 +185,7 @@ struct AgentImageMessagingTests {
                     validate: { try await fence.check() }, authorize: { sender, review, _, context in
                         expectNoDifference(sender.id, f.recipient.id)
                         expectNoDifference(review.text, "Designs")
-                        expectNoDifference(review.gallery, gallery)
+                        expectNoDifference(review.gallery, Optional(gallery))
                         expectNoDifference(context.conversationID, f.origin)
                         if mode == "denied" { throw CancellationError() }
                         if mode == "revoked" { await fence.revoke() }
@@ -1142,6 +1204,70 @@ struct AgentImageMessagingTests {
         await #expect(throws: AgentPublicationError.invalid) {
             try await reopened.publishRemoteAttachment(afterRestart)
         }
+    }
+
+    @Test(arguments: ["remote", "local", "mixed"])
+    func reviewedMailboxGallerySurvivesPeerTranscriptRecovery(mode: String) async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let binding = DirectConversationAgentBinding(accountID: "local", agentID: f.sender.id)
+        let createdAt = Date(timeIntervalSince1970: 1_000)
+        let inbound = AgentMessage(senderID: f.sender.id, recipientID: f.recipient.id, text: "Review designs",
+            createdAt: createdAt,
+            delivery: .init(chainID: UUID(), originConversationID: f.origin, directOriginBinding: binding))
+        try await f.messenger.send(inbound)
+        try await f.messenger.updateDelivery(id: inbound.id, state: .running, at: createdAt)
+        let images: [AttachmentMetadata] = mode == "remote" ? [] : [
+            .init(id: String(repeating: "a", count: 64), filename: "a.png", mimeType: "image/png",
+                byteCount: 100, kind: .image, createdAt: createdAt, altText: "Local A"),
+            .init(id: String(repeating: "b", count: 64), filename: "b.png", mimeType: "image/png",
+                byteCount: 100, kind: .image, createdAt: createdAt, altText: "Local B")]
+        let reference = try RemoteAttachmentReference(url: "https://example.com/design", alt: "Remote")
+        let gallery = mode == "local" ? nil : try RemoteImageGallery(images: [reference])
+        let items: [ImageGalleryLayout.Item] = switch mode {
+        case "remote": [.remote(reference)]
+        case "local": images.map { .attachment($0.id) }
+        default: [.attachment(images[0].id), .remote(reference), .attachment(images[1].id)]
+        }
+        let layout = try ImageGalleryLayout(items: items)
+        let lifetime = AgentPublicationLifetime()
+        let reviewed = ReviewedMailboxImageGallery(text: "Reviewed designs", images: images, gallery: gallery,
+            imageGalleryLayout: layout, incomingID: inbound.id, originID: f.origin, senderID: f.recipient.id,
+            messageID: UUID(), replyToMessageID: inbound.id, lifetime: lifetime)
+        _ = try await f.messenger.publishImageGallery(reviewed)
+        try await f.messenger.updateDelivery(id: inbound.id, state: .completed, at: createdAt)
+        lifetime.close()
+        let reopened = try AgentMessenger(service: f.agents, storeURL: f.root.appending(path: "messages.json"))
+        let canonical = try #require(await reopened.allMessages().first?.delivery?.publications?.first)
+        var expectedPublication = canonical
+        expectedPublication.shortAddress = nil
+        let expectedMessages = [RoomMessage(id: inbound.id, groupID: f.origin, senderID: f.sender.id,
+            text: inbound.text, createdAt: createdAt), expectedPublication]
+        let expectedSources = try [AgentMessageSource.Kind.incoming, .publication].map { kind in
+            try AgentMessageSource(accountID: "local", originConversationID: f.origin, deliveryID: inbound.id,
+                senderAgentID: f.sender.id, recipientAgentID: f.recipient.id, kind: kind)
+        }
+        let recovered = try await reopened.directPeerTranscript(originID: f.origin, binding: binding)
+        expectNoDifference(recovered.map(\.message), expectedMessages)
+        expectNoDifference(recovered.map(\.source), expectedSources)
+        let repeated = try await reopened.directPeerTranscript(originID: f.origin, binding: binding)
+        expectNoDifference(repeated, recovered)
+    }
+
+    @Test func plainMailboxFinalReportCannotSmuggleGalleryLayout() async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let inbound = AgentMessage(senderID: f.sender.id, recipientID: f.recipient.id, text: "Report",
+            delivery: .init(chainID: UUID(), originConversationID: f.origin))
+        try await f.messenger.send(inbound)
+        try await f.messenger.updateDelivery(id: inbound.id, state: .running)
+        let before = await f.messenger.allMessages()
+        let report = RoomMessage(groupID: f.origin, senderID: f.recipient.id, text: "Plain report",
+            imageGalleryLayout: try ImageGalleryLayout(items: [.remote(RemoteAttachmentReference(url: "https://example.com/unreviewed"))]))
+        await #expect(throws: AgentPublicationError.invalid) {
+            try await f.messenger.updateDelivery(id: inbound.id, state: .completed,
+                response: report.text, finalPublication: report)
+        }
+        let after = await f.messenger.allMessages()
+        expectNoDifference(after, before)
     }
 
     @Test func reviewedMailboxGalleryPreservesAtomicContentAndRejectsBypasses() async throws {

@@ -618,10 +618,10 @@ struct GroupMessageBubble: View {
                         if !isUser { Button("👍", action: onReaction) }
                     }
                 }
-                if let gallery = message.remoteImages {
-                    RemoteImageGalleryView(gallery: gallery, onPreview: onPreviewRemote, onThumbnail: onThumbnail)
+                if message.remoteImages != nil || !(message.images ?? []).isEmpty {
+                    OrderedImageGalleryView(layout: message.imageGalleryLayout, images: message.images ?? [],
+                        remoteGallery: message.remoteImages, onPreview: onPreviewRemote, onThumbnail: onThumbnail)
                 }
-                if let images = message.images, !images.isEmpty { AgentMessageImagePreviews(images: images) }
                 ForEach(message.files ?? []) { file in
                     Button { onOpenFile?(file) } label: {
                         HStack(spacing: 10) {

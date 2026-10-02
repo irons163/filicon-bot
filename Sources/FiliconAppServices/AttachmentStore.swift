@@ -187,8 +187,14 @@ public actor AttachmentStore {
     /// Installs the exact reviewed snapshot. Descriptor-relative creation never
     /// follows a shard/blob symlink and never overwrites an existing CAS entry.
     /// The caller must reserve quota before entering this synchronous operation.
-    public func ingest(prepared: PreparedAgentPublicationFile, createdAt: Date) throws -> AttachmentMetadata {
+    public func ingest(prepared: PreparedAgentPublicationFile, createdAt: Date,
+        verifiedImageMIMEType: String? = nil) throws -> AttachmentMetadata {
         try Task.checkCancellation()
+        if let verifiedImageMIMEType {
+            guard try AgentImageStore.validate(prepared.bytes) == verifiedImageMIMEType else {
+                throw AttachmentStoreError.corrupt("invalid-image-type")
+            }
+        }
         try fileManager.createDirectory(at: rootURL, withIntermediateDirectories: true)
         let root = open(rootURL.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
         guard root >= 0 else { throw AttachmentStoreError.corrupt("unsafe-root-directory") }
@@ -237,7 +243,9 @@ public actor AttachmentStore {
         // Never promote active document formats or unverified image bytes into
         // an inline renderer merely because their filename has an extension.
         let mime: String
-        if inferred.hasPrefix("image/") {
+        if let verifiedImageMIMEType {
+            mime = verifiedImageMIMEType
+        } else if inferred.hasPrefix("image/") {
             mime = (try? AgentImageStore.validate(prepared.bytes)) ?? "application/octet-stream"
         } else if ["text/html", "application/xhtml+xml"].contains(inferred) {
             mime = "application/octet-stream"

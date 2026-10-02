@@ -1,6 +1,7 @@
 import CustomDump
 import Foundation
 import Testing
+import FiliconAgents
 import FiliconAppServices
 import FiliconDomain
 
@@ -31,6 +32,32 @@ private actor FilePublicationGate {
 
 @Suite("File publication approval and durable receipt", .timeLimit(.minutes(1)))
 struct AgentFilePublicationTransactionTests {
+    @Test func standaloneFileReceiptCannotSmuggleGalleryLayout() async throws {
+        let origin = UUID(), sender = UUID(), messageID = UUID(), probe = FilePublicationProbe()
+        let file = try PreparedAgentPublicationFile(bytes: Data("artifact".utf8), filename: "report.txt")
+        let transaction = AgentFilePublicationTransaction(conversationID: origin, senderID: sender,
+            validateScope: {}, prepare: { _, _, _ in file }, authorize: { _, _, _ in },
+            commit: { review, _, _ in
+                await probe.record("save")
+                let metadata = AttachmentMetadata(id: file.digest, filename: file.filename, mimeType: "text/plain",
+                    byteCount: Int64(file.bytes.count), kind: .document)
+                let saved = RoomMessage(id: messageID, groupID: origin, senderID: sender, text: "", files: [metadata],
+                    imageGalleryLayout: try ImageGalleryLayout(items: [.remote(RemoteAttachmentReference(url: "https://example.com/unreviewed"))]))
+                return .init(messageID: messageID, conversationID: origin, senderID: sender, replyTo: nil,
+                    digest: file.digest, filename: file.filename, byteCount: file.bytes.count, savedMessage: saved)
+            })
+        let call = try NormalizedToolCall(id: "file", name: "SendMessage", argumentsJSON: Data("{}".utf8))
+        let context = ToolContext(conversationID: origin)
+        await #expect(throws: AgentFilePublicationError.invalidReceipt) {
+            try await transaction.publish(url: "file:///report.txt", replyTo: nil, call: call, context: context)
+        }
+        await #expect(throws: AgentFilePublicationError.uncertainCommit) {
+            try await transaction.publish(url: "file:///report.txt", replyTo: nil, call: call, context: context)
+        }
+        let events = await probe.events
+        expectNoDifference(events, ["save"])
+    }
+
     @Test(arguments: ["valid", "missing-receipt-alt", "blank", "control", "long"])
     func fileDescriptionIsPartOfApprovalAndReceipt(mode: String) async throws {
         let origin = UUID(), sender = UUID(), message = UUID(), probe = FilePublicationProbe()

@@ -75,14 +75,24 @@ public struct ReviewedGroupRemoteAttachment: Sendable {
 public struct ReviewedGroupImageGallery: Sendable {
     public let messageID: UUID
     public let text: String
-    public let gallery: RemoteImageGallery
+    public let images: [AttachmentMetadata]
+    public let gallery: RemoteImageGallery?
+    public let imageGalleryLayout: ImageGalleryLayout?
     public let groupID: UUID
     public let senderID: UUID
     public let replyTo: UUID?
     public let lifetime: AgentPublicationLifetime
     public init(text: String, gallery: RemoteImageGallery, groupID: UUID, senderID: UUID,
                 replyTo: UUID? = nil, lifetime: AgentPublicationLifetime, messageID: UUID = UUID()) {
-        self.text = text; self.gallery = gallery; self.groupID = groupID; self.senderID = senderID
+        self.init(text: text, images: [], gallery: gallery,
+            imageGalleryLayout: try? ImageGalleryLayout(items: gallery.images.map(ImageGalleryLayout.Item.remote)),
+            groupID: groupID, senderID: senderID, replyTo: replyTo, lifetime: lifetime, messageID: messageID)
+    }
+    public init(text: String, images: [AttachmentMetadata], gallery: RemoteImageGallery?,
+                imageGalleryLayout: ImageGalleryLayout?, groupID: UUID, senderID: UUID,
+                replyTo: UUID? = nil, lifetime: AgentPublicationLifetime, messageID: UUID = UUID()) {
+        self.text = text; self.images = images; self.gallery = gallery
+        self.imageGalleryLayout = imageGalleryLayout; self.groupID = groupID; self.senderID = senderID
         self.replyTo = replyTo; self.lifetime = lifetime; self.messageID = messageID
     }
 }
@@ -502,7 +512,7 @@ public actor GroupService {
                 total += published.count
                 messagesThisRound += published.count
                 for message in published {
-                    publishedTexts[memberID, default: []].insert(Self.replyFingerprint(message.text, images: message.images ?? [], files: message.files ?? [], remote: message.remoteAttachment, gallery: message.remoteImages))
+                    publishedTexts[memberID, default: []].insert(Self.replyFingerprint(message.text, images: message.images ?? [], files: message.files ?? [], remote: message.remoteAttachment, gallery: message.remoteImages, layout: message.imageGalleryLayout))
                 }
                 var sentThisTurn = published.count
                 for text in responses.filter({ !Self.isPass($0) }).prefix(Self.maximumMessagesPerMemberTurn) {
@@ -551,16 +561,32 @@ public actor GroupService {
         activeResponses.removeValue(forKey: groupID)?.cancel()
     }
 
+    private struct GalleryImageFingerprint: Hashable {
+        let id: String
+        let filename: String
+        let mimeType: String
+        let byteCount: Int64
+        let altText: String?
+        init(_ image: AttachmentMetadata) {
+            id = image.id; filename = image.filename; mimeType = image.mimeType
+            byteCount = image.byteCount; altText = image.altText
+        }
+    }
+
     private enum ReplyFingerprint: Hashable {
         case text(String)
         case imageIDs([String])
         case fileIDs([String])
         case remoteURL(String)
-        case gallery(String, RemoteImageGallery)
+        case gallery(String, [GalleryImageFingerprint], RemoteImageGallery?, ImageGalleryLayout?)
     }
 
-    private static func replyFingerprint(_ text: String, images: [AttachmentMetadata], files: [AttachmentMetadata] = [], remote: RemoteAttachmentReference? = nil, gallery: RemoteImageGallery? = nil) -> ReplyFingerprint {
-        if let gallery { return .gallery(text, gallery) }
+    private static func replyFingerprint(_ text: String, images: [AttachmentMetadata], files: [AttachmentMetadata] = [], remote: RemoteAttachmentReference? = nil, gallery: RemoteImageGallery? = nil, layout: ImageGalleryLayout? = nil) -> ReplyFingerprint {
+        if gallery != nil || layout != nil {
+            // Reimporting the same bytes changes createdAt, not the message's
+            // reviewed content. It must not bypass the round duplicate fence.
+            return .gallery(text, images.map(GalleryImageFingerprint.init), gallery, layout)
+        }
         if let remote { return .remoteURL(remote.url) }
         if !files.isEmpty { return .fileIDs(files.map(\.id)) }
         let normalized = text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
@@ -579,10 +605,15 @@ public actor GroupService {
                   state.groups.first(where: { $0.id == activity.groupID })?.memberIDs.contains(reviewed.senderID) == true,
                   text == reviewed.text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                   publication.replyToMessageID == reviewed.replyTo,
-                  images.isEmpty, files.isEmpty, publication.remoteAttachment == nil,
+                  images == reviewed.images, files.isEmpty, publication.remoteAttachment == nil,
+                  reviewed.imageGalleryLayout?.matches(attachments: reviewed.images, remoteGallery: reviewed.gallery) == true,
                   publication.question == nil, publication.cursorAgent == nil,
                   publication.lifetime == nil, publication.sourceUserMessageID == nil else {
                 throw AgentPublicationError.invalid
+            }
+            for image in images {
+                guard image.kind == .image else { throw AgentPublicationError.invalid }
+                try ReviewedGroupFile.validate(image)
             }
         }
         if let remote = publication.remoteAttachment {
@@ -620,7 +651,7 @@ public actor GroupService {
                 throw AgentQuestionError.unavailable
             }
         }
-        if !images.isEmpty {
+        if !images.isEmpty && publication.remoteImages == nil {
             guard publication.lifetime != nil, images.count <= 4, Set(images.map(\.id)).count == images.count,
                   let user = state.roomMessages.last(where: { $0.groupID == activity.groupID && $0.senderID == nil }),
                   user.id == publication.sourceUserMessageID,
@@ -631,15 +662,16 @@ public actor GroupService {
             }
         }
         let replies = explicitReplies[activity.id] ?? []
-        let fingerprint = Self.replyFingerprint(text, images: images, files: files, remote: publication.remoteAttachment?.reference, gallery: publication.remoteImages?.gallery)
+        let fingerprint = Self.replyFingerprint(text, images: images, files: files, remote: publication.remoteAttachment?.reference, gallery: publication.remoteImages?.gallery, layout: publication.remoteImages?.imageGalleryLayout)
         guard (!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !images.isEmpty || !files.isEmpty || publication.remoteAttachment != nil), text.count <= 8_000,
               replies.count < min(remainingBudget, Self.maximumMessagesPerMemberTurn),
-              !previousTexts.contains(fingerprint), !replies.contains(where: { Self.replyFingerprint($0.text, images: $0.images ?? [], files: $0.files ?? [], remote: $0.remoteAttachment, gallery: $0.remoteImages) == fingerprint }) else {
+              !previousTexts.contains(fingerprint), !replies.contains(where: { Self.replyFingerprint($0.text, images: $0.images ?? [], files: $0.files ?? [], remote: $0.remoteAttachment, gallery: $0.remoteImages, layout: $0.imageGalleryLayout) == fingerprint }) else {
             throw AgentServiceError.invalidName
         }
         var draft = RoomMessage(id: publication.remoteImages?.messageID ?? publication.remoteAttachment?.messageID ?? publication.file?.messageID ?? UUID(), groupID: activity.groupID, senderID: activity.senderID, text: text, images: images, files: files)
         draft.remoteAttachment = publication.remoteAttachment?.reference
         draft.remoteImages = publication.remoteImages?.gallery
+        draft.imageGalleryLayout = publication.remoteImages?.imageGalleryLayout
         draft.question = publication.question
         draft.cursorAgent = publication.cursorAgent
         draft.replyToMessageID = publication.replyToMessageID ?? activity.replyToMessageID

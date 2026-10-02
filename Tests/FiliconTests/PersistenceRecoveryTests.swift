@@ -35,7 +35,9 @@ private func seedRecoveryDatabase(_ url: URL) async throws -> Conversation {
     )
     conversation.messageAddressReservations = ["20000000-0000-0000-0000-000000000099": "t2s8"]
     conversation.messages[0].remoteAttachment = try RemoteAttachmentReference(url: "https://example.com/report?sig=a%2Bb", alt: "報表")
-    conversation.messages[0].remoteImages = try RemoteImageGallery(images: [RemoteAttachmentReference(url: "https://example.com/image", alt: "圖片")])
+    let gallery = try RemoteImageGallery(images: [RemoteAttachmentReference(url: "https://example.com/image", alt: "圖片")])
+    conversation.messages[0].remoteImages = gallery
+    conversation.messages[0].imageGalleryLayout = try ImageGalleryLayout(items: gallery.images.map(ImageGalleryLayout.Item.remote))
     conversation.agentBinding = .init(accountID: "recovery-account", agentID: UUID(uuidString: "30000000-0000-0000-0000-000000000001")!)
     let repository = try ConversationRepository(databaseURL: url)
     try await repository.save([conversation])
@@ -73,6 +75,7 @@ private func seedRecoveryDatabase(_ url: URL) async throws -> Conversation {
     expectNoDifference(recoveredValues.first?.agentBinding, expected.agentBinding)
     expectNoDifference(recoveredValues.first?.messages.first?.remoteAttachment, expected.messages.first?.remoteAttachment)
     expectNoDifference(recoveredValues.first?.messages.first?.remoteImages, expected.messages.first?.remoteImages)
+    expectNoDifference(recoveredValues.first?.messages.first?.imageGalleryLayout, expected.messages.first?.imageGalleryLayout)
     #expect(report.rejectedRows.contains { $0.table == "messages" && $0.rowIdentifier == "20000000-0000-0000-0000-000000000002" })
     let loaded = try await reopened.load()
     #expect(loaded.map(\.id) == [expected.id])

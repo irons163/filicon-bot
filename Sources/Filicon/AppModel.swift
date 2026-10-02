@@ -2098,7 +2098,7 @@ final class AppModel: ObservableObject {
                     let replyHistory = requestMessages.filter { $0.role == .user || $0.role == .assistant }.map {
                         var message = RoomMessage(id: $0.id, groupID: id, senderID: $0.role == .user ? nil : id,
                             text: $0.text, createdAt: $0.createdAt, remoteAttachment: $0.remoteAttachment,
-                            remoteImages: $0.remoteImages)
+                            remoteImages: $0.remoteImages, imageGalleryLayout: $0.imageGalleryLayout)
                         message.images = $0.attachments.filter { $0.kind == .image }
                         message.files = $0.attachments.filter { $0.kind != .image }
                         message.shortAddress = $0.shortAddress
@@ -2208,6 +2208,7 @@ final class AppModel: ObservableObject {
                             await self?.finishGroupDelegation(groupID: groupID, originID: id, failed: failed)
                         },
                         imageStore: agentImageStore,
+                        importGalleryImage: makeGalleryImageImporter(),
                         authorizeImages: { [weak self] sender, recipient, text, images, call, context in
                             guard let self else { throw CancellationError() }
                             try await self.validateDirectDelegation(conversationID: id, binding: agentBinding,
@@ -2479,11 +2480,22 @@ final class AppModel: ObservableObject {
 
     private func makeDirectGalleryPublication(conversationID id: UUID, assistantID: UUID,
         account: String, generation: UInt64) -> AgentGalleryPublicationTransaction {
-        AgentGalleryPublicationTransaction(conversationID: id, senderID: id,
+        let prepareLocalImage: AgentGalleryPublicationTransaction.PrepareLocalImage?
+        if quotaWriter != nil, attachmentLifecycle != nil {
+            prepareLocalImage = { [weak self] url, altText, call, context in
+                guard let self else { throw CancellationError() }
+                return try await self.prepareAgentGalleryImage(url: url, altText: altText, agentID: id,
+                    call: call, context: context, validateScope: {
+                        try await self.checkDirectFileScope(id, assistantID: assistantID,
+                            account: account, generation: generation)
+                    })
+            }
+        } else { prepareLocalImage = nil }
+        return AgentGalleryPublicationTransaction(conversationID: id, senderID: id,
             validateScope: { [weak self] in
                 guard let self else { throw CancellationError() }
                 try await self.checkDirectFileScope(id, assistantID: assistantID, account: account, generation: generation)
-            }, authorize: { [weak self] review, call, context in
+            }, prepareLocalImage: prepareLocalImage, authorize: { [weak self] review, call, context in
                 guard let self else { throw CancellationError() }
                 try await self.authorizeDirectGallery(review, call: call, context: context,
                     assistantID: assistantID, account: account, generation: generation)
@@ -2501,12 +2513,10 @@ final class AppModel: ObservableObject {
         guard review.senderID == id, context.conversationID == id else { throw AgentMessagingError.scopeMismatch }
         let fence = ApprovalFence(accountID: account, agentID: id.uuidString.lowercased(), runID: context.runID, generation: generation)
         await autoReviewBroker.activate(fence)
-        let images = review.gallery.images.enumerated().map { index, image in
-            "\(index + 1). \(image.url)" + (image.alt.map { "\n\($0)" } ?? "")
-        }.joined(separator: "\n\n")
+        let images = galleryReviewDetails(review)
         let details = review.text + "\n\n" + images
             + (review.replyTo.map { "\n\(l10n("Reply")): \($0.uuidString)" } ?? "")
-            + "\n" + l10n("Open external link. Content has not been downloaded or verified.")
+            + galleryReviewDisclosure(review)
         let action = AutoReviewAction(summary: l10n("Image"),
             target: .resource(kind: "conversation", identifier: id.uuidString), risks: [.sensitive],
             context: .init(fence: fence, conversationID: id, toolCallID: call.id.rawValue,
@@ -2520,32 +2530,110 @@ final class AppModel: ObservableObject {
         assistantID: UUID, account: String, generation: UInt64) async throws -> RoomMessage {
         let id = review.conversationID
         try checkDirectFileScope(id, assistantID: assistantID, account: account, generation: generation)
-        guard review.senderID == id, let ci = conversations.firstIndex(where: { $0.id == id }) else { throw CancellationError() }
-        if let reply = review.replyTo {
-            let targets = conversations[ci].messages.filter { $0.id == reply }
-            guard targets.count == 1, let target = targets.first,
-                  target.role == .user || target.role == .assistant,
-                  !target.text.isEmpty || !target.attachments.isEmpty || target.remoteAttachment != nil || target.remoteImages != nil else { throw GroupReplyError.unavailable }
-        }
-        let message = ChatMessage(role: .assistant, text: review.text, replyToMessageID: review.replyTo, remoteImages: review.gallery)
-        conversations[ci].messages.append(message)
-        do { try await persistOrThrow(conversationID: id) }
-        catch {
+        guard review.senderID == id else { throw CancellationError() }
+        guard quotaWriter != nil else { throw StorageQuotaError.corruptLedger }
+        let messageID = UUID()
+        let owner = AttachmentReferenceOwner(conversationID: id, messageID: messageID)
+        var uploads: [StagedAttachment] = []
+        var localMetadata: [AttachmentMetadata] = []
+        do {
+            for prepared in review.localImages {
+                try checkDirectFileScope(id, assistantID: assistantID, account: account, generation: generation)
+                guard let attachmentLifecycle else { throw AgentGalleryPublicationTransaction.Failure.unavailable }
+                let upload = try await quotaWrite(scope: "attachment-blob", key: prepared.file.digest, data: prepared.file.bytes) {
+                    try await attachmentLifecycle.stage(prepared: prepared.file, verifiedImageMIMEType: prepared.mimeType)
+                }
+                uploads.append(upload)
+                try checkDirectFileScope(id, assistantID: assistantID, account: account, generation: generation)
+                var metadata = try await attachmentLifecycle.commit(upload, to: owner)
+                metadata.altText = prepared.altText
+                // The transcript/inference store and mailbox preview store
+                // must both contain the same captured, reviewed bytes.
+                let preview = try await importAgentGalleryImage(prepared)
+                guard preview.id == metadata.id, preview.mimeType == metadata.mimeType,
+                      preview.byteCount == metadata.byteCount else { throw AgentImageError.invalid }
+                localMetadata.append(metadata)
+            }
+            try checkDirectFileScope(id, assistantID: assistantID, account: account, generation: generation)
+            // Import suspends the main actor. Resolve the destination and reply
+            // again rather than retaining an index across those suspension points.
+            guard let ci = conversations.firstIndex(where: { $0.id == id }) else { throw CancellationError() }
+            if let reply = review.replyTo {
+                let targets = conversations[ci].messages.filter { $0.id == reply }
+                guard targets.count == 1, let target = targets.first,
+                      target.role == .user || target.role == .assistant,
+                      !target.text.isEmpty || !target.attachments.isEmpty || target.remoteAttachment != nil || target.remoteImages != nil || target.imageGalleryLayout != nil else { throw GroupReplyError.unavailable }
+            }
+            let message = ChatMessage(id: messageID, role: .assistant, text: review.text, attachments: localMetadata,
+                replyToMessageID: review.replyTo, remoteImages: review.gallery, imageGalleryLayout: review.layout)
+            conversations[ci].messages.append(message)
+            try await persistOrThrow(conversationID: id)
+        } catch {
             let durable: Conversation?
             do { durable = try await store.conversation(id: id) }
             catch { throw AgentGalleryPublicationTransaction.Failure.uncertainCommit }
-            if durable?.messages.contains(where: { $0.id == message.id && $0.text == review.text && $0.remoteImages == review.gallery && $0.replyToMessageID == review.replyTo }) != true {
+            if durable?.messages.contains(where: { $0.id == messageID && $0.text == review.text
+                && $0.attachments == localMetadata && $0.remoteImages == review.gallery
+                && $0.imageGalleryLayout == review.layout && $0.replyToMessageID == review.replyTo }) != true {
                 if let index = conversations.firstIndex(where: { $0.id == id }) {
-                    conversations[index].messages.removeAll { $0.id == message.id }
+                    conversations[index].messages.removeAll { $0.id == messageID }
                 }
+                try? await attachmentLifecycle?.removeReferences(owner: owner)
+                for upload in uploads { try? await attachmentLifecycle?.abort(upload) }
                 throw error
             }
         }
-        directPublicationIDs[assistantID]?.append(message.id)
-        var receipt = RoomMessage(id: message.id, groupID: id, senderID: id, text: review.text, remoteImages: review.gallery)
+        directPublicationIDs[assistantID]?.append(messageID)
+        var receipt = RoomMessage(id: messageID, groupID: id, senderID: id, text: review.text,
+            images: localMetadata, remoteImages: review.gallery, imageGalleryLayout: review.layout)
         receipt.replyToMessageID = review.replyTo
-        receipt.shortAddress = conversations.first(where: { $0.id == id })?.messages.first(where: { $0.id == message.id })?.shortAddress
+        receipt.shortAddress = conversations.first(where: { $0.id == id })?.messages.first(where: { $0.id == messageID })?.shortAddress
         return receipt
+    }
+
+    private func makeGalleryImageImporter() -> AgentGalleryImageImporter? {
+        guard quotaWriter != nil else { return nil }
+        return { [weak self] prepared in
+            guard let self else { throw CancellationError() }
+            return try await self.importAgentGalleryImage(prepared)
+        }
+    }
+
+    private func importAgentGalleryImage(_ prepared: PreparedAgentGalleryImage) async throws -> AttachmentMetadata {
+        try Task.checkCancellation()
+        guard quotaWriter != nil else { throw StorageQuotaError.corruptLedger }
+        let metadata = try await quotaWrite(scope: "agent-image-blob", key: prepared.file.digest, data: prepared.file.bytes) { [agentImageStore] in
+            try await agentImageStore.importCapturedGalleryImage(prepared)
+        }
+        guard metadata.id == prepared.file.digest, metadata.filename == prepared.file.filename,
+              metadata.mimeType == prepared.mimeType, metadata.byteCount == prepared.file.bytes.count,
+              metadata.kind == .image else { throw AgentImageError.invalid }
+        try Task.checkCancellation()
+        return metadata
+    }
+
+    private func galleryReviewDetails(_ review: AgentGalleryPublicationTransaction.Review) -> String {
+        review.images.enumerated().map { index, image in
+            switch image {
+            case let .local(prepared):
+                let details = "\(index + 1). \(prepared.file.filename) · \(ByteCountFormatter.string(fromByteCount: Int64(prepared.file.bytes.count), countStyle: .file)) · SHA-256: \(prepared.file.digest)"
+                return details + (prepared.altText.map { "\n\($0)" } ?? "")
+            case let .remote(reference):
+                let details = "\(index + 1). \(reference.url)"
+                return details + (reference.alt.map { "\n\($0)" } ?? "")
+            }
+        }.joined(separator: "\n\n")
+    }
+
+    private func galleryReviewDisclosure(_ review: AgentGalleryPublicationTransaction.Review) -> String {
+        var notes: [String] = []
+        if !review.localImages.isEmpty {
+            notes.append(l10n("Local image bytes were captured from an authorized folder."))
+        }
+        if review.gallery != nil {
+            notes.append(l10n("Remote image links were not downloaded or verified."))
+        }
+        return notes.isEmpty ? "" : "\n" + notes.joined(separator: " ")
     }
 
     private func makeDirectRemotePublication(conversationID id: UUID, assistantID: UUID,
@@ -3620,6 +3708,9 @@ final class AppModel: ObservableObject {
             let attachmentInventory = try await attachmentStore.inventory()
             let attachmentSizes = attachmentInventory.active.merging(attachmentInventory.quarantined) { max($0, $1) }
             records += attachmentSizes.map { StorageQuotaRecord(scope: "attachment-blob", key: $0.key, byteCount: $0.value, generation: 1) }
+            let imageInventory = try await agentImageStore.storageInventory()
+            let imageSizes = imageInventory.active.merging(imageInventory.quarantined) { max($0, $1) }
+            records += imageSizes.map { StorageQuotaRecord(scope: "agent-image-blob", key: $0.key, byteCount: $0.value, generation: 1) }
             records += try agentAvatarStore.storageInventory().map {
                 StorageQuotaRecord(scope: "avatar-blob", key: $0.relativePath, byteCount: $0.byteCount, generation: 1)
             }
@@ -4427,6 +4518,7 @@ final class AppModel: ObservableObject {
                     await self?.finishGroupDelegation(groupID: groupID, originID: originID, failed: failed)
                 },
                 imageStore: agentImageStore,
+                importGalleryImage: makeGalleryImageImporter(),
                 authorizeImages: { [weak self] sender, recipient, text, images, call, context in
                     guard let self else { throw CancellationError() }
                     try await self.authorizeAgentDelegation(sender: sender, recipient: recipient,
@@ -4481,6 +4573,7 @@ final class AppModel: ObservableObject {
                 await self?.finishGroupDelegation(groupID: groupID, originID: originID, failed: failed)
             },
             imageStore: agentImageStore,
+            importGalleryImage: makeGalleryImageImporter(),
             authorizeImages: { [weak self] sender, recipient, text, images, call, context in
                 guard let self else { throw CancellationError() }
                 try await self.authorizeAgentDelegation(sender: sender, recipient: recipient, text: text, call: call, context: context, images: images)
@@ -4492,6 +4585,7 @@ final class AppModel: ObservableObject {
             groupFiles: makeGroupFileServices(originID: originID, generation: generation),
             authorizeRemotePublication: makeGroupRemoteAuthorizer(originID: originID, generation: generation),
             authorizeGalleryPublication: makeGroupGalleryAuthorizer(originID: originID, generation: generation),
+            prepareGalleryImage: makeGroupGalleryImagePreparer(originID: originID, generation: generation),
             mailboxFiles: makeMailboxFileFactory(originID: originID, generation: generation),
             mailboxRemote: makeMailboxRemoteFactory(originID: originID, generation: generation),
             mailboxGallery: makeMailboxGalleryFactory(originID: originID, generation: generation),
@@ -4530,6 +4624,14 @@ final class AppModel: ObservableObject {
                     guard let self else { throw CancellationError() }
                     try await self.authorizeMailboxGallery(incoming, sender: sender, review: review,
                         call: call, context: context, originID: originID, generation: generation)
+                }, prepareLocalImage: { [weak self] sender, url, altText, call, context in
+                    guard let self, sender.id == incoming.recipientID, context.conversationID == originID else {
+                        throw AgentMessagingError.scopeMismatch
+                    }
+                    return try await self.prepareAgentGalleryImage(url: url, altText: altText, agentID: sender.id,
+                        call: call, context: context, validateScope: {
+                            try await self.checkMailboxFileScope(incoming, originID: originID, generation: generation)
+                        })
                 })
         }
     }
@@ -4543,12 +4645,10 @@ final class AppModel: ObservableObject {
         let fence = ApprovalFence(accountID: settings.accountScope ?? "local", agentID: originID.uuidString.lowercased(),
             runID: context.runID, generation: generation)
         await autoReviewBroker.activate(fence)
-        let images = review.gallery.images.enumerated().map { index, image in
-            "\(index + 1). \(image.url)" + (image.alt.map { "\n\($0)" } ?? "")
-        }.joined(separator: "\n\n")
+        let images = galleryReviewDetails(review)
         let details = review.text + "\n\n" + images
             + (review.replyTo.map { "\n\(l10n("Reply")): \($0.uuidString)" } ?? "")
-            + "\n" + l10n("Open external link. Content has not been downloaded or verified.")
+            + galleryReviewDisclosure(review)
         let action = AutoReviewAction(summary: "\(sender.name) → \(l10n("User in this conversation")): \(l10n("Image"))",
             target: .resource(kind: "conversation", identifier: originID.uuidString), risks: [.sensitive],
             context: .init(fence: fence, conversationID: originID, toolCallID: call.id.rawValue,
@@ -4645,6 +4745,33 @@ final class AppModel: ObservableObject {
         return try await AgentPublicationFileSource(reader: reader).prepare(url: url, agentID: sender.id, call: call, context: context)
     }
 
+    private func prepareAgentGalleryImage(url: String, altText: String?, agentID: UUID,
+        call: NormalizedToolCall, context: ToolContext,
+        validateScope: @escaping @Sendable () async throws -> Void) async throws -> PreparedAgentGalleryImage {
+        let path = try AgentPublicationFileSource.localPath(url)
+        let filename = (path as NSString).lastPathComponent
+        guard filename.utf8.count <= 255, !filename.contains("\\") else { throw LocalToolError.pathEscape }
+        let reader = AuthorizedAgentFileReader(runtime: localToolRuntime, folders: workspaceFolders,
+            policy: localToolPermissionPolicy, validateScope: validateScope,
+            authorizeRead: { [weak self] operation, context, callID in
+                guard let self else { throw CancellationError() }
+                let target = try await self.localToolRuntime.authorizationTarget(for: operation)
+                let decision = await self.localToolPermissionPolicy.evaluate(action: .readFile,
+                    conversationID: context.conversationID, toolCallID: "publication-source:\(callID.rawValue)",
+                    title: target, reason: "SendMessage image")
+                switch decision {
+                case .denied: throw LocalToolError.permissionMismatch
+                case .requiresApproval(let request):
+                    guard await self.localToolApprovalBroker.requestApproval(request) else { throw CancellationError() }
+                case .allowed: break
+                }
+            })
+        let bytes = try await reader.read(path: path, agentID: agentID, call: call, context: context,
+            receiptPrefix: "publication-source", maximumBytes: AgentImageStore.maximumBytes)
+        try await validateScope()
+        return try PreparedAgentGalleryImage(bytes: bytes, filename: filename, altText: altText)
+    }
+
     private func authorizeMailboxFile(_ incoming: AgentMessage, sender: AgentProfile,
         review: AgentFilePublicationTransaction.Review, call: NormalizedToolCall, context: ToolContext,
         originID: UUID, generation: UInt64) async throws {
@@ -4711,6 +4838,19 @@ final class AppModel: ObservableObject {
         }
     }
 
+    private func makeGroupGalleryImagePreparer(originID: UUID, generation: UInt64,
+        destinationID: UUID? = nil, dispatchID: UUID? = nil) -> AgentGalleryImagePreparer? {
+        guard let audience = groups.first(where: { $0.id == (destinationID ?? originID) }) else { return nil }
+        return { [weak self] sender, url, altText, call, context in
+            guard let self else { throw CancellationError() }
+            return try await self.prepareAgentGalleryImage(url: url, altText: altText, agentID: sender.id,
+                call: call, context: context, validateScope: {
+                    try await self.checkGroupFileScope(senderID: sender.id, audience: audience,
+                        generation: generation, originID: originID, dispatchID: dispatchID)
+                })
+        }
+    }
+
     private func authorizeGroupGalleryPublication(sender: AgentProfile, review: AgentGalleryPublicationTransaction.Review,
         call: NormalizedToolCall, context: ToolContext, audience: AgentGroup, generation: UInt64,
         originID: UUID, dispatchID: UUID?) async throws {
@@ -4720,12 +4860,10 @@ final class AppModel: ObservableObject {
         let fence = ApprovalFence(accountID: settings.accountScope ?? "local", agentID: originID.uuidString.lowercased(),
             runID: context.runID, generation: generation)
         await autoReviewBroker.activate(fence)
-        let images = review.gallery.images.enumerated().map { index, reference in
-            "\(index + 1). \(reference.url)" + (reference.alt.map { "\n\($0)" } ?? "")
-        }.joined(separator: "\n\n")
+        let images = galleryReviewDetails(review)
         let details = review.text + "\n\n" + images
             + (review.replyTo.map { "\n\(l10n("Reply")): \($0.uuidString)" } ?? "")
-            + "\n" + l10n("Open external link. Content has not been downloaded or verified.")
+            + galleryReviewDisclosure(review)
         let action = AutoReviewAction(summary: "\(sender.name) → \(audience.name): \(l10n("Image"))",
             target: .resource(kind: "group", identifier: audience.id.uuidString), risks: [.sensitive],
             context: .init(fence: fence, conversationID: originID, toolCallID: call.id.rawValue,
@@ -4949,7 +5087,9 @@ final class AppModel: ObservableObject {
                 validate: { [weak self] in
                     guard let self else { throw CancellationError() }
                     try await self.validateBackgroundFileDispatch(dispatch, originID: originID, generation: generation)
-                }, authorize: authorize)
+                }, authorize: authorize,
+                prepareLocalImage: makeGroupGalleryImagePreparer(originID: originID, generation: generation,
+                    destinationID: groupID, dispatchID: dispatch.message.id))
         }
         _ = try await groupService.run(groupID: groupID,
             responder: GroupConversationResponder(groupID: groupID, registry: registry, coordinator: coordinator,
@@ -5814,19 +5954,24 @@ final class AppModel: ObservableObject {
         let attachments = images + files
         if message.remoteAttachment != nil {
             guard source.kind == .publication, message.text.isEmpty, attachments.isEmpty,
-                  message.remoteImages == nil,
+                  message.remoteImages == nil, message.imageGalleryLayout == nil,
                   message.question == nil, message.secretRequest == nil, message.cursorAgent == nil else {
                 throw AgentMessagingError.scopeMismatch
             }
         }
-        if message.remoteImages != nil {
+        if message.remoteImages != nil || message.imageGalleryLayout != nil {
             guard source.kind == .publication,
                   !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                   message.text.count <= 8_000, message.text.utf8.count <= 32_000,
-                  message.remoteAttachment == nil, attachments.isEmpty,
+                  message.remoteAttachment == nil, files.isEmpty,
                   message.question == nil, message.secretRequest == nil, message.cursorAgent == nil else {
                 throw AgentMessagingError.scopeMismatch
             }
+            if let layout = message.imageGalleryLayout {
+                guard layout.matches(attachments: images, remoteGallery: message.remoteImages) else {
+                    throw AgentMessagingError.scopeMismatch
+                }
+            } else if !images.isEmpty { throw AgentMessagingError.scopeMismatch }
         }
         guard Set(attachments.map(\.id)).count == attachments.count else { throw AgentMessagingError.scopeMismatch }
         var cards: [TranscriptCard] = []
@@ -5841,6 +5986,7 @@ final class AppModel: ObservableObject {
             guard saved.agentMessageSource == source, saved.text == message.text,
                   saved.remoteAttachment == message.remoteAttachment,
                   saved.remoteImages == message.remoteImages,
+                  saved.imageGalleryLayout == message.imageGalleryLayout,
                   saved.attachments == attachments,
                   saved.transcriptCards.map(\.payload) == cards.map(\.payload),
                   saved.transcriptCards.map(\.id) == cards.map(\.id),
@@ -5906,6 +6052,7 @@ final class AppModel: ObservableObject {
         projected.attachments = attachments
         projected.remoteAttachment = message.remoteAttachment
         projected.remoteImages = message.remoteImages
+        projected.imageGalleryLayout = message.imageGalleryLayout
         projected.transcriptCards = cards
         let position = conversations[index].messages.firstIndex { $0.createdAt > projected.createdAt }
             ?? conversations[index].messages.endIndex

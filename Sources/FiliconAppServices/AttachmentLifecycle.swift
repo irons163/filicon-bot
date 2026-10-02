@@ -100,11 +100,11 @@ public actor AttachmentLifecycle {
 
     /// Stages only the captured reviewed bytes; never reopens a source URL.
     /// App-level quota reservation must encompass this operation as well.
-    public func stage(prepared: PreparedAgentPublicationFile) async throws -> StagedAttachment {
+    public func stage(prepared: PreparedAgentPublicationFile, verifiedImageMIMEType: String? = nil) async throws -> StagedAttachment {
         try Task.checkCancellation()
         try await checkQuota(requestedBytes: Int64(prepared.bytes.count))
         try Task.checkCancellation()
-        let metadata = try await store.ingest(prepared: prepared, createdAt: clock())
+        let metadata = try await store.ingest(prepared: prepared, createdAt: clock(), verifiedImageMIMEType: verifiedImageMIMEType)
         try injectFault(.afterBlobWriteBeforeUploadIndex)
         let upload = StagedAttachment(id: UUID(), metadata: metadata)
         try await references.registerUpload(upload, stagedAt: clock())

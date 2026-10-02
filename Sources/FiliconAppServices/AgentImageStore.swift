@@ -41,6 +41,24 @@ public actor AgentImageStore {
         return try await store.ingest(data: data, filename: filename, declaredMIMEType: mime)
     }
 
+    public func storageInventory() async throws -> AttachmentStoreInventory {
+        try await store.inventory()
+    }
+
+    /// Installs a reviewed snapshot using descriptor-relative, exclusive CAS
+    /// creation. A shard/blob symlink or a corrupt existing blob cannot be reused.
+    /// The host must reserve quota before calling this method.
+    public func importCapturedGalleryImage(_ prepared: PreparedAgentGalleryImage,
+        createdAt: Date = Date()) async throws -> AttachmentMetadata {
+        guard try Self.validate(prepared.file.bytes) == prepared.mimeType else { throw AgentImageError.invalid }
+        let installed = try await store.ingest(prepared: prepared.file, createdAt: createdAt,
+            verifiedImageMIMEType: prepared.mimeType)
+        // Image type comes from decoded bytes, not a potentially misleading
+        // workspace filename. No unverified document is promoted to an image.
+        return .init(id: installed.id, filename: installed.filename, mimeType: prepared.mimeType,
+            byteCount: installed.byteCount, kind: .image, createdAt: installed.createdAt, altText: prepared.altText)
+    }
+
     public func load(_ images: [AttachmentMetadata]) async throws -> [InferenceAttachment] {
         guard images.count <= 4, Set(images.map(\.id)).count == images.count,
               images.allSatisfy({ $0.byteCount > 0 && $0.byteCount <= Self.maximumBytes }),

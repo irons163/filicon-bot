@@ -45,14 +45,29 @@ public struct ReviewedMailboxImageGallery: Sendable {
     public let incomingID: UUID
     public let publication: RoomMessage
     public let lifetime: AgentPublicationLifetime
+    public let images: [AttachmentMetadata]
+    public let gallery: RemoteImageGallery?
+    public let imageGalleryLayout: ImageGalleryLayout?
 
     public init(text: String, gallery: RemoteImageGallery, incomingID: UUID, originID: UUID,
                 senderID: UUID, messageID: UUID, replyToMessageID: UUID? = nil,
                 lifetime: AgentPublicationLifetime) {
+        self.init(text: text, images: [], gallery: gallery,
+            imageGalleryLayout: try? ImageGalleryLayout(items: gallery.images.map(ImageGalleryLayout.Item.remote)),
+            incomingID: incomingID, originID: originID, senderID: senderID,
+            messageID: messageID, replyToMessageID: replyToMessageID, lifetime: lifetime)
+    }
+
+    public init(text: String, images: [AttachmentMetadata], gallery: RemoteImageGallery?,
+                imageGalleryLayout: ImageGalleryLayout?, incomingID: UUID, originID: UUID,
+                senderID: UUID, messageID: UUID, replyToMessageID: UUID? = nil,
+                lifetime: AgentPublicationLifetime) {
         self.incomingID = incomingID
         self.lifetime = lifetime
+        self.images = images; self.gallery = gallery; self.imageGalleryLayout = imageGalleryLayout
         var message = RoomMessage(id: messageID, groupID: originID, senderID: senderID,
-                                  text: text, remoteImages: gallery)
+                                  text: text, images: images, remoteImages: gallery,
+                                  imageGalleryLayout: imageGalleryLayout)
         message.replyToMessageID = replyToMessageID
         self.publication = message
     }
@@ -400,11 +415,20 @@ public actor AgentMessenger {
                                   reviewedRemote: ReviewedMailboxRemoteAttachment? = nil,
                                   reviewedGallery: ReviewedMailboxImageGallery? = nil) throws {
         if let reviewedGallery {
-            guard reviewedFile == nil, reviewedRemote == nil, reviewedGallery.incomingID == id,
-                  reviewedGallery.publication == publication,
-                  !publication.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                  publication.text.utf8.count <= 32_000 else { throw AgentPublicationError.invalid }
-        } else if publication.remoteImages != nil { throw AgentPublicationError.invalid }
+            let publicationImages = publication.images ?? []
+            let isValid = reviewedFile == nil && reviewedRemote == nil && reviewedGallery.incomingID == id &&
+                  reviewedGallery.publication == publication &&
+                  !publication.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+                  publication.text.utf8.count <= 32_000 &&
+                  publicationImages == reviewedGallery.images &&
+                  publication.imageGalleryLayout == reviewedGallery.imageGalleryLayout &&
+                  reviewedGallery.imageGalleryLayout?.matches(attachments: reviewedGallery.images, remoteGallery: reviewedGallery.gallery) == true
+            guard isValid else { throw AgentPublicationError.invalid }
+            for image in publication.images ?? [] {
+                guard image.kind == .image else { throw AgentPublicationError.invalid }
+                try ReviewedGroupFile.validate(image)
+            }
+        } else if publication.remoteImages != nil || publication.imageGalleryLayout != nil { throw AgentPublicationError.invalid }
         if let reviewedRemote {
             guard reviewedFile == nil, reviewedRemote.incomingID == id,
                   reviewedRemote.publication == publication else { throw AgentPublicationError.invalid }
@@ -450,10 +474,12 @@ public actor AgentMessenger {
                 }
             }
             let images = publication.images ?? []
-            guard images.count <= 4, Set(images.map(\.id)).count == images.count,
-                  images.allSatisfy({ image in state.messages[index].images?.contains(where: { image.isAnnotation(of: $0) }) == true }) else {
-                throw AgentPublicationError.invalid
-            }
+            if reviewedGallery == nil {
+                guard images.count <= 4, Set(images.map(\.id)).count == images.count,
+                      images.allSatisfy({ image in state.messages[index].images?.contains(where: { image.isAnnotation(of: $0) }) == true }) else {
+                    throw AgentPublicationError.invalid
+                }
+            } else if images != reviewedGallery?.images { throw AgentPublicationError.invalid }
             guard !prior.contains(where: { $0.question != nil || $0.secretRequest != nil }) else { throw AgentQuestionError.unavailable }
             guard prior.count < 2 else { throw AgentPublicationError.limit }
             var next = state
@@ -479,7 +505,7 @@ public actor AgentMessenger {
                   !report.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                   report.question == nil, report.secretRequest == nil, report.cursorAgent == nil,
                   report.images?.isEmpty != false, report.files?.isEmpty != false, report.remoteAttachment == nil,
-                  report.remoteImages == nil, report.toolActivities.isEmpty,
+                  report.remoteImages == nil, report.imageGalleryLayout == nil, report.toolActivities.isEmpty,
                   report.memberOutcome == nil, report.shortAddress == nil,
                   report.replyToMessageID == nil, report.questionReplyTo == nil,
                   !containsMessageID(report.id) else { throw AgentPublicationError.invalid }
@@ -578,17 +604,20 @@ public actor AgentMessenger {
                       message.memberOutcome == nil, message.questionReplyTo == nil else { return }
                 if message.remoteAttachment != nil {
                     guard kind == .publication, message.text.isEmpty,
-                          message.remoteImages == nil,
+                          message.remoteImages == nil, message.imageGalleryLayout == nil,
                           (message.images ?? []).isEmpty, (message.files ?? []).isEmpty,
                           message.question == nil, message.secretRequest == nil, message.cursorAgent == nil else { return }
                 }
-                if message.remoteImages != nil {
+                if message.remoteImages != nil || message.imageGalleryLayout != nil {
                     guard kind == .publication,
                           !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                           message.text.count <= 8_000, message.text.utf8.count <= 32_000,
                           message.remoteAttachment == nil,
-                          (message.images ?? []).isEmpty, (message.files ?? []).isEmpty,
+                          (message.files ?? []).isEmpty,
                           message.question == nil, message.secretRequest == nil, message.cursorAgent == nil else { return }
+                    if let layout = message.imageGalleryLayout {
+                        guard layout.matches(attachments: message.images ?? [], remoteGallery: message.remoteImages) else { return }
+                    } else if !(message.images ?? []).isEmpty { return }
                 }
                 if let secret = message.secretRequest {
                     guard kind == .publication, secret.accountID == binding.accountID,

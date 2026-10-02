@@ -11,28 +11,63 @@ import CustomDump
     let url = directory.appending(path: "gallery.sqlite3")
     let gallery = try RemoteImageGallery(images: [RemoteAttachmentReference(url: "https://example.com/a", alt: "A"),
         RemoteAttachmentReference(url: "https://example.com/b?sig=x%2By", alt: "B")])
+    let layout = try ImageGalleryLayout(items: gallery.images.map(ImageGalleryLayout.Item.remote))
     let conversation = Conversation(messages: [.init(role: .user, text: "Compare"),
-        .init(role: .assistant, text: "Here are both", remoteImages: gallery)])
+        .init(role: .assistant, text: "Here are both", remoteImages: gallery, imageGalleryLayout: layout)])
     let repository = try ConversationRepository(databaseURL: url)
     try await repository.save([conversation])
     let reopened = try ConversationRepository(databaseURL: url)
     let loaded = try await reopened.load()
     expectNoDifference(loaded.first?.messages.last?.remoteImages, gallery)
+    expectNoDifference(loaded.first?.messages.last?.imageGalleryLayout, layout)
     let page = try await reopened.messagePage(conversationID: conversation.id, request: MessagePageRequest(limit: 1))
     expectNoDifference(page.items.first?.remoteImages, gallery)
+    expectNoDifference(page.items.first?.imageGalleryLayout, layout)
     let next = try await reopened.messagePage(conversationID: conversation.id,
         request: MessagePageRequest(before: try #require(page.nextCursor), limit: 1))
     expectNoDifference(next.items.first?.text, "Compare")
     var database: OpaquePointer?
     try #require(sqlite3_open(url.path, &database) == SQLITE_OK)
     defer { sqlite3_close(database) }
-    try #require(sqlite3_exec(database, "ALTER TABLE messages DROP COLUMN remote_images_json; UPDATE schema_version SET version=14", nil, nil, nil) == SQLITE_OK)
+    try #require(sqlite3_exec(database, "ALTER TABLE messages DROP COLUMN image_gallery_layout_json; ALTER TABLE messages DROP COLUMN remote_images_json; UPDATE schema_version SET version=14", nil, nil, nil) == SQLITE_OK)
     let migrated = try ConversationRepository(databaseURL: url)
     let legacy = try await migrated.load()
     expectNoDifference(legacy.first?.messages.last?.remoteImages, nil)
     try await migrated.save([conversation])
     let restored = try await migrated.load()
     expectNoDifference(restored.first?.messages.last?.remoteImages, gallery)
+    expectNoDifference(restored.first?.messages.last?.imageGalleryLayout, layout)
+}
+
+@Test func mixedImageGallerySQLiteRoundTripKeepsOrderAndRejectsMismatch() async throws {
+    let directory = try persistenceTemporaryDirectory(); defer { try? FileManager.default.removeItem(at: directory) }
+    let url = directory.appending(path: "mixed-gallery.sqlite3")
+    let local = AttachmentMetadata(id: String(repeating: "a", count: 64), filename: "local.png",
+        mimeType: "image/png", byteCount: 42, kind: .image, altText: "Local")
+    let remote = try RemoteAttachmentReference(url: "https://example.com/remote.png", alt: "Remote")
+    let layout = try ImageGalleryLayout(items: [.remote(remote), .attachment(local.id)])
+    let conversation = Conversation(messages: [.init(role: .assistant, text: "Compare",
+        attachments: [local], remoteImages: try RemoteImageGallery(images: [remote]), imageGalleryLayout: layout)])
+    let repository = try ConversationRepository(databaseURL: url)
+    try await repository.save([conversation])
+    let reopened = try ConversationRepository(databaseURL: url)
+    let loaded = try await reopened.load()
+    let message = try #require(loaded.first?.messages.first)
+    expectNoDifference(message.attachments, [local])
+    expectNoDifference(message.remoteImages, try RemoteImageGallery(images: [remote]))
+    expectNoDifference(message.imageGalleryLayout, layout)
+    #expect(layout.matches(attachments: message.attachments, remoteGallery: message.remoteImages))
+
+    var invalid = conversation
+    invalid.messages[0].imageGalleryLayout = try ImageGalleryLayout(items: [.attachment(local.id)])
+    await #expect(throws: PersistenceError.self) { try await reopened.save([invalid]) }
+
+    let statement = "UPDATE messages SET remote_images_json='null' WHERE id='\(conversation.messages[0].id.uuidString)'"
+    var database: OpaquePointer?
+    try #require(sqlite3_open(url.path, &database) == SQLITE_OK)
+    defer { sqlite3_close(database) }
+    try #require(sqlite3_exec(database, statement, nil, nil, nil) == SQLITE_OK)
+    await #expect(throws: PersistenceError.self) { try await reopened.load() }
 }
 
 @Test func remoteAttachmentSQLiteMigrationAndPaging() async throws {
@@ -50,7 +85,7 @@ import CustomDump
     var database: OpaquePointer?
     #expect(sqlite3_open(url.path, &database) == SQLITE_OK)
     defer { sqlite3_close(database) }
-    #expect(sqlite3_exec(database, "ALTER TABLE messages DROP COLUMN remote_images_json; ALTER TABLE messages DROP COLUMN remote_attachment_json; UPDATE schema_version SET version=13", nil, nil, nil) == SQLITE_OK)
+    #expect(sqlite3_exec(database, "ALTER TABLE messages DROP COLUMN image_gallery_layout_json; ALTER TABLE messages DROP COLUMN remote_images_json; ALTER TABLE messages DROP COLUMN remote_attachment_json; UPDATE schema_version SET version=13", nil, nil, nil) == SQLITE_OK)
     let migrated = try ConversationRepository(databaseURL: url)
     let legacy = try await migrated.load()
     expectNoDifference(legacy.first?.messages.first?.remoteAttachment, nil)

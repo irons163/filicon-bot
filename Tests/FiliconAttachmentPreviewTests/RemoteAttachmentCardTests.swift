@@ -65,6 +65,116 @@ struct RemotePreviewFixture: RemoteAttachmentDownloading {
 
 @Suite("Remote attachment card rendering", .timeLimit(.minutes(1)))
 @MainActor struct RemoteAttachmentCardTests {
+    @Test(arguments: ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"], [320.0, 620.0])
+    func mixedGalleryCellsFitWithoutDownloading(language: String, width: Double) throws {
+        try FiliconLocalization.$languageOverride.withValue(language) {
+            let context = try #require(CGContext(data: nil, width: 240, height: 120, bitsPerComponent: 8,
+                bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue))
+            context.setFillColor(CGColor(red: 0, green: 0, blue: 1, alpha: 1))
+            context.fill(CGRect(x: 0, y: 0, width: 240, height: 120))
+            let image = NSImage(cgImage: try #require(context.makeImage()), size: CGSize(width: 240, height: 120))
+            let metadata = AttachmentMetadata(id: String(repeating: "a", count: 64), filename: "初稿 image.png",
+                mimeType: "image/png", byteCount: 100, kind: .image, altText: "Local **plain text** 設計")
+            let remote = try RemoteAttachmentReference(url: "https://example.com/design?sig=exact", alt: "Remote 設計")
+            let view = VStack(alignment: .leading, spacing: 12) {
+                Text(l10n("Image"))
+                OrderedImageGalleryLayout(items: [.attachment(metadata.id), .remote(remote)]) { item in
+                    switch item {
+                    case .attachment:
+                        AgentMessageImagePreviewContent(image: metadata, preview: image, compact: true)
+                    case .remote:
+                        RemoteAttachmentCard(reference: remote,
+                            onPreview: { _ in Issue.record("Rendering must not download") }, isImage: true)
+                    }
+                }
+            }.padding(16).frame(width: width, alignment: .leading)
+                .environment(\.locale, Locale(identifier: language))
+                .environment(\.colorScheme, .light)
+                .environment(\.openURL, OpenURLAction { _ in Issue.record("Rendering must not open URLs"); return .handled })
+                .background(Color.white)
+            let renderer = ImageRenderer(content: view)
+            let rendered = try #require(renderer.cgImage)
+            expectNoDifference(rendered.width, Int(width))
+            #expect(rendered.height > 150 && rendered.height < 620)
+            if language == "zh-Hant" {
+                let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+                try #require(NSBitmapImageRep(cgImage: rendered).representation(using: .png, properties: [:]))
+                    .write(to: root.appending(path: ".build/validation/mixed-gallery-cells-\(Int(width)).png"))
+            }
+        }
+    }
+
+    @Test(arguments: ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"], [320.0, 620.0])
+    func mixedGalleryUsesCompactRowMajorOrder(language: String, width: Double) throws {
+        try FiliconLocalization.$languageOverride.withValue(language) {
+            let items: [ImageGalleryLayout.Item] = [
+                .attachment("blue"), .remote(try RemoteAttachmentReference(url: "https://example.com/red")),
+                .attachment("orange"), .remote(try RemoteAttachmentReference(url: "https://example.com/green"))]
+            let view = OrderedImageGalleryLayout(items: items) { item in
+                VStack(alignment: .leading, spacing: 6) {
+                    galleryColor(item).frame(height: 150)
+                    Text(l10n("Image")).font(.caption)
+                }
+            }.padding(16).frame(width: width, alignment: .leading)
+                .environment(\.locale, Locale(identifier: language))
+                .environment(\.colorScheme, .light).background(Color.white)
+            let renderer = ImageRenderer(content: view)
+            renderer.scale = 1
+            let image = try #require(renderer.cgImage)
+            expectNoDifference(image.width, Int(width))
+            // Two rows, not four vertically stacked full-width images.
+            #expect(image.height > 350 && image.height < 440)
+            let pixels = NSBitmapImageRep(cgImage: image)
+            let leftX = Int(width / 4), rightX = Int(width * 3 / 4)
+            let firstY = 75, secondY = image.height - 95
+            let colors = try [(leftX, firstY), (rightX, firstY), (leftX, secondY), (rightX, secondY)].map { x, y in
+                try #require(pixels.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB))
+            }
+            #expect(colors[0].blueComponent > 0.8 && colors[0].redComponent < 0.2)
+            #expect(colors[1].redComponent > 0.8 && colors[1].blueComponent < 0.2)
+            #expect(colors[2].redComponent > 0.8 && colors[2].greenComponent > 0.4 && colors[2].blueComponent < 0.2)
+            #expect(colors[3].greenComponent > 0.8 && colors[3].redComponent < 0.2)
+            if language == "zh-Hant" {
+                let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+                try #require(pixels.representation(using: .png, properties: [:]))
+                    .write(to: root.appending(path: ".build/validation/mixed-gallery-grid-\(Int(width)).png"))
+            }
+        }
+    }
+
+    @Test(arguments: [320.0, 620.0])
+    func singleGalleryUsesAvailableBubbleWidth(width: Double) throws {
+        let context = try #require(CGContext(data: nil, width: 240, height: 120, bitsPerComponent: 8,
+            bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue))
+        context.setFillColor(CGColor(red: 0, green: 0, blue: 1, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: 240, height: 120))
+        let preview = NSImage(cgImage: try #require(context.makeImage()), size: CGSize(width: 240, height: 120))
+        let metadata = AttachmentMetadata(id: String(repeating: "a", count: 64), filename: "design.png",
+            mimeType: "image/png", byteCount: 100, kind: .image)
+        let view = OrderedImageGalleryLayout(items: [.attachment("blue")]) { _ in
+            AgentMessageImagePreviewContent(image: metadata, preview: preview, compact: true, expanded: true)
+        }.padding(16).frame(width: width, alignment: .leading).background(Color.white)
+        let renderer = ImageRenderer(content: view)
+        let image = try #require(renderer.cgImage)
+        expectNoDifference(image.width, Int(width))
+        let imageWidth = min(width - 32, 560)
+        #expect(Double(image.height) > imageWidth / 2 + 32)
+        let pixels = NSBitmapImageRep(cgImage: image)
+        // Verify real local-image pixels near the far edge, not just a grid's
+        // background: a compact 96-point height must not shrink a single image.
+        let color = try #require(pixels.colorAt(x: Int(imageWidth - 8), y: Int(imageWidth / 4 + 16))?.usingColorSpace(.deviceRGB))
+        #expect(color.blueComponent > 0.8 && color.redComponent < 0.2)
+    }
+
+    private func galleryColor(_ item: ImageGalleryLayout.Item) -> Color {
+        switch item {
+        case .attachment("blue"): Color(red: 0, green: 0, blue: 1)
+        case .attachment: Color(red: 1, green: 0.5, blue: 0)
+        case let .remote(reference): reference.url.hasSuffix("red")
+            ? Color(red: 1, green: 0, blue: 0) : Color(red: 0, green: 1, blue: 0)
+        }
+    }
+
     @Test func inlineThumbnailRendersVerifiedPixels() throws {
         let context = try #require(CGContext(data: nil, width: 320, height: 160, bitsPerComponent: 8,
             bytesPerRow: 1280, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue))

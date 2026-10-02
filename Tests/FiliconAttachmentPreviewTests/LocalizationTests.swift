@@ -17,6 +17,17 @@ struct LocalizationTests {
         }
     }
 
+    @Test func imageGalleryAuthorizationDisclosuresAreLocalized() {
+        let keys = ["Local image bytes were captured from an authorized folder.",
+            "Remote image links were not downloaded or verified."]
+        for language in ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"] {
+            for key in keys {
+                let localized = FiliconLocalization.string(key, language: language)
+                expectNoDifference(localized == key, language == "en")
+            }
+        }
+    }
+
     @MainActor @Test func teamsAvailabilityRendersInSevenLanguagesAndBothAppearances() async throws {
         let output = ProcessInfo.processInfo.environment["FILICON_UI_REVIEW_OUTPUT"].map { URL(fileURLWithPath: $0) }
         for language in ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"] {

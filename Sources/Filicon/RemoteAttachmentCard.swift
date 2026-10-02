@@ -38,6 +38,64 @@ struct RemoteImageGalleryView: View {
     }
 }
 
+/// Renders persisted local image blobs and remote locators in the exact order
+/// that was approved. Legacy messages without layout keep their prior display.
+struct OrderedImageGalleryView: View {
+    let layout: ImageGalleryLayout?
+    let images: [AttachmentMetadata]
+    let remoteGallery: RemoteImageGallery?
+    var onPreview: ((RemoteAttachmentReference, @escaping RemoteRedirectReview) async throws -> Void)?
+    var onThumbnail: ((RemoteAttachmentReference, @escaping RemoteRedirectReview) async throws -> Data)?
+
+    var body: some View {
+        Group {
+            if let layout, layout.matches(attachments: images, remoteGallery: remoteGallery) {
+                OrderedImageGalleryLayout(items: layout.items) { item in
+                    switch item {
+                    case let .attachment(id):
+                        if let image = images.first(where: { $0.id == id }) {
+                            AgentMessageImagePreviews(images: [image], compact: true,
+                                expandsSingleImage: layout.items.count == 1, viewingGallery: images)
+                        }
+                    case let .remote(reference):
+                        RemoteAttachmentCard(reference: reference,
+                            onPreview: onPreview.map { action in { review in try await action(reference, review) } },
+                            isImage: true,
+                            onThumbnail: onThumbnail.map { action in { review in try await action(reference, review) } })
+                    }
+                }
+            } else {
+                if let remoteGallery {
+                    RemoteImageGalleryView(gallery: remoteGallery, onPreview: onPreview,
+                        onThumbnail: onThumbnail)
+                }
+                if !images.isEmpty { AgentMessageImagePreviews(images: images) }
+            }
+        }
+    }
+}
+
+/// A single image uses the bubble width; multiple images stay in a compact
+/// row-major grid, including when local blobs and remote locators alternate.
+struct OrderedImageGalleryLayout<Content: View>: View {
+    let items: [ImageGalleryLayout.Item]
+    @ViewBuilder var content: (ImageGalleryLayout.Item) -> Content
+
+    var body: some View {
+        if items.count == 1, let item = items.first {
+            content(item).frame(maxWidth: 560, alignment: .leading)
+        } else if !items.isEmpty {
+            LazyVGrid(columns: [GridItem(.flexible(), alignment: .topLeading),
+                                GridItem(.flexible(), alignment: .topLeading)], alignment: .leading, spacing: 12) {
+                ForEach(Array(items.enumerated()), id: \.offset) { _, item in
+                    content(item).frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            .frame(maxWidth: 560, alignment: .leading)
+        }
+    }
+}
+
 @MainActor final class RemoteRedirectReviewModel: ObservableObject {
     struct Request {
         let id: UUID
@@ -92,20 +150,20 @@ struct RemoteAttachmentCard: View {
             RemoteGalleryThumbnailView(image: thumbnail, alt: reference.alt)
         }
         Button { openReference() } label: {
-            HStack(alignment: .top, spacing: 12) {
-                Image(systemName: isImage ? "photo" : "link").font(.title2)
-                VStack(alignment: .leading, spacing: 5) {
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 8) {
+                    Image(systemName: isImage ? "photo" : "link").font(.title2)
                     Text(l10n(isImage ? "Image" : "Remote attachment")).font(.headline)
-                    if let alt = reference.alt {
-                        Text(verbatim: alt).lineLimit(3)
-                    }
-                    Text(verbatim: reference.url).font(.caption.monospaced()).lineLimit(2)
-                    Text(l10n("Open external link. Content has not been downloaded or verified."))
-                        .font(.caption).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                    Image(systemName: "arrow.up.right")
                 }
-                Spacer(minLength: 0)
-                Image(systemName: "arrow.up.right")
+                if let alt = reference.alt {
+                    Text(verbatim: alt).lineLimit(3)
+                }
+                Text(verbatim: reference.url).font(.caption.monospaced()).lineLimit(2)
+                Text(l10n("Open external link. Content has not been downloaded or verified."))
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             .padding(12).frame(maxWidth: .infinity, alignment: .leading)
             .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))

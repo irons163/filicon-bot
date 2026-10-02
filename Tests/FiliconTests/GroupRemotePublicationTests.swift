@@ -20,6 +20,43 @@ private struct RemoteGroupResponder: GroupAgentResponder {
 
 @Suite("Reviewed group remote attachment persistence")
 struct GroupRemotePublicationTests {
+    @Test(arguments: [false, true])
+    func localGalleryReimportCannotBypassDuplicateFence(mixed: Bool) async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "filicon-gallery-duplicate-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let agents = try AgentService(storeURL: root.appending(path: "agents.json"))
+        let sender = try await agents.create(name: "Sender", providerID: "fixture", modelID: "test")
+        let url = root.appending(path: "groups.json")
+        let groups = try GroupService(agents: agents, storeURL: url)
+        let group = try await groups.create(name: "Gallery", memberIDs: [sender.id])
+        _ = try await groups.postUserMessage("Compare", groupID: group.id)
+        let imageID = String(repeating: "a", count: 64)
+        let remote = try RemoteAttachmentReference(url: "https://example.com/design", alt: "Remote design")
+        let gallery = mixed ? try RemoteImageGallery(images: [remote]) : nil
+        let layout = try ImageGalleryLayout(items: mixed ? [.attachment(imageID), .remote(remote)] : [.attachment(imageID)])
+        let responder = RemoteGroupResponder { publish in
+            for index in 0..<2 {
+                let image = AttachmentMetadata(id: imageID, filename: "design.png", mimeType: "image/png",
+                    byteCount: 100, kind: .image, createdAt: Date(timeIntervalSince1970: Double(index + 1)), altText: "Design")
+                let reviewed = ReviewedGroupImageGallery(text: "Same designs", images: [image], gallery: gallery,
+                    imageGalleryLayout: layout, groupID: group.id, senderID: sender.id,
+                    lifetime: AgentPublicationLifetime())
+                do {
+                    _ = try #require(try await publish(.init(text: reviewed.text, images: [image], remoteImages: reviewed)))
+                    expectNoDifference(index, 0)
+                } catch {
+                    expectNoDifference(index, 1)
+                }
+            }
+            return ["PASS"]
+        }
+        _ = try await groups.run(groupID: group.id, responder: responder)
+        let reopened = try GroupService(agents: agents, storeURL: url)
+        let saved = await reopened.messages(groupID: group.id).filter { $0.imageGalleryLayout != nil }
+        expectNoDifference(saved.count, 1)
+        expectNoDifference(saved.first?.images?.first?.createdAt, Date(timeIntervalSince1970: 1))
+    }
+
     @Test(arguments: ["approve", "deny", "unavailable", "new-user", "members", "revoked"], [false, true])
     func sessionGalleryUsesScopedDurableGroupPublication(mode: String, background: Bool) async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-session-gallery-\(UUID())")
@@ -41,7 +78,7 @@ struct GroupRemotePublicationTests {
             expectNoDifference(review.conversationID, group.id)
             expectNoDifference(review.replyTo, user.id)
             expectNoDifference(review.text, "Designs")
-            expectNoDifference(review.gallery, gallery)
+            expectNoDifference(review.gallery, Optional(gallery))
             if mode == "deny" { throw AgentMessagingError.approvalRequired }
             if mode == "new-user" { _ = try await groups.postUserMessage("Changed request", groupID: group.id) }
             if mode == "members" { try await groups.updateMembers(groupID: group.id, memberIDs: [sender.id, other.id]) }
@@ -117,10 +154,11 @@ struct GroupRemotePublicationTests {
             let lifetime = AgentPublicationLifetime()
             let transaction = AgentGalleryPublicationTransaction(conversationID: group.id, senderID: sender.id,
                 validateScope: {}, authorize: { review, _, _ in
-                    expectNoDifference(review.gallery, gallery)
+                    expectNoDifference(review.gallery, Optional(gallery))
                     if mode == "revoke" { lifetime.close() }
                 }, commit: { review, _, _ in
-                    let reviewed = ReviewedGroupImageGallery(text: review.text, gallery: review.gallery,
+                    let reviewed = ReviewedGroupImageGallery(text: review.text, images: [], gallery: try #require(review.gallery),
+                        imageGalleryLayout: review.layout,
                         groupID: mode == "group" ? UUID() : group.id,
                         senderID: mode == "sender" ? UUID() : sender.id,
                         replyTo: review.replyTo, lifetime: lifetime)

@@ -1,6 +1,6 @@
 # 完成驗收入口（2026-09-27）
 
-2026-09-28 增量：群組／direct／mailbox 來源 → 背景群組的傳檔 App 接線及隔離核准／撤銷測試已補上，另修正 direct 來源停止目的群組未取消的缺陷。下方背景傳檔未完成仍包含委派重用及故障注入驗收，不再表示完全沒有入口；direct／mailbox 本身傳檔尚未接線。見 [傳檔第十一至十二階段](Send-message-files-parity.md)。
+2026-10-02 增量：本機獨立傳檔、HTTPS 附件 locator 及文字內 local／HTTPS 混合圖片集已接入 direct、前景／背景群組、mailbox 與 direct peer；有完整核准、配額、重開及撤銷隔離測試。另已重現並修正 mixed peer 復原排除與非 gallery 訊息夾帶 layout；解除系統鎖定後，最終完整串行回歸（135 XCTest＋1,508 Swift Testing）、原生建置及封裝驗證通過。下方日期段落是歷史進度，不能以「尚未接線」覆蓋後續實作；最新媒體邊界與驗證見 [傳檔第六十九階段](Send-message-files-parity.md)。所有分類仍須逐項驗收，不宣稱全功能對等。
 
 本檔不取代使用者要求或縮小 parity 範圍。基準 Filicon `a7ca268`、reference `a9f633e09d49a85829b8236331b9e21f7e612634`；工作樹檢查為乾淨。沒有啟動 App、使用外部帳號或重新驗證 release。
 
@@ -100,7 +100,7 @@ App fixture 覆蓋隱藏／恢復、合併修改及單改可見性保留通知�
 ## 必須保留的其他分類
 
 - 圖片頭像：模型主機／box 來源、獨立讀取與圖片預覽核准、提交、direct／mailbox／remote fixture，以及人工匯入前配額已接線（截至 `549f96f`）。見 [Avatar-image-parity.md](Avatar-image-parity.md) 第七至十階段；CAS 回收／崩潰復原、完整 SVG 範圍、最低 macOS 與真實遠端服務驗收仍保留，不能標為整體完成。
-- 下一個已確認缺口：`SendMessage` 交付新產生的檔案／媒體。Filicon 已接入前景群組的本機檔案核准與保存，reference schema 與 builder 接受 file／HTTPS URL；composition 的本機 ingest 已接線，但該處未注入 box resolver，不能把可選介面當成遠端端到端證據。來源與分階段驗收見 [Send-message-files-parity.md](Send-message-files-parity.md)。前景群組模型發佈入口已完成隔離驗證；背景群組、direct／mailbox 與遠端來源仍未完成，也未開放新的網路存取。
+- 檔案／媒體：`SendMessage` 的本機獨立檔案、HTTPS locator 與本機／遠端文字圖片集已接入上述五條 App 路徑，隔離測試不等同真實服務驗收。大檔、其他圖片格式、動畫／快取與完整 crash／UI lifecycle 邊界仍保留，見 [Send-message-files-parity.md](Send-message-files-parity.md)。reference composition 未注入 box resolver，不能把可選介面當成遠端端到端證據；保存 HTTPS locator 也不是授予下載權限。
 
 - 記憶：最新保存／搜尋／synthesis／episode／project recall 證據見 `Memory-archive-parity.md`；跨 epoch snapshot 是未接線參考設計，見 `Memory-snapshot-audit.md`，不能自行換成永久 cache。
 - 協作／訊息：AGENT-02／04 的歷史缺項需與 `Agent-collaboration-parity.md` 後續進度及 current source 逐項對照；不能用舊行的「缺」覆蓋已完成的接線，也不能以有 UI 就宣稱工具／背景路徑完成。

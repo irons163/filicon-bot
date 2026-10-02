@@ -1529,14 +1529,22 @@ struct TranscriptMessageView: View {
                     try await model.previewRemoteAttachment(reference, at: .direct(conversation.id, message.id), approveRedirect: review)
                 }
             }
-            if let gallery = message.remoteImages {
+            if let layout = message.imageGalleryLayout {
+                OrderedImageGalleryView(layout: layout,
+                    images: message.attachments.filter { $0.kind == .image }, remoteGallery: message.remoteImages,
+                    onThumbnail: { reference, review in
+                        try await model.remoteGalleryThumbnail(reference, at: .direct(conversation.id, message.id), approveRedirect: review)
+                    })
+            } else if let gallery = message.remoteImages {
                 RemoteImageGalleryView(gallery: gallery, onThumbnail: { reference, review in
                     try await model.remoteGalleryThumbnail(reference, at: .direct(conversation.id, message.id), approveRedirect: review)
                 })
             }
-            if !message.attachments.isEmpty {
+            let visibleAttachments = message.imageGalleryLayout == nil
+                ? message.attachments : message.attachments.filter { $0.kind != .image }
+            if !visibleAttachments.isEmpty {
                 ScrollView(.horizontal) {
-                    HStack { ForEach(message.attachments) { attachment in AttachmentCard(attachment: attachment) } }
+                    HStack { ForEach(visibleAttachments) { attachment in AttachmentCard(attachment: attachment) } }
                 }
                 .scrollIndicators(.hidden)
             }

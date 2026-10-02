@@ -73,12 +73,14 @@ public actor AgentMessagingSession {
     private let authorize: Authorizer
     private let authorizeImages: ImageAuthorizer
     private let imageStore: AgentImageStore?
+    private let importGalleryImage: AgentGalleryImageImporter?
     private let authorizePublication: PublicationAuthorizer
     private let groupFiles: AgentGroupFilePublicationServices?
     public typealias RemotePublicationAuthorizer = @Sendable (AgentProfile, AgentRemotePublicationTransaction.Review, NormalizedToolCall, ToolContext) async throws -> Void
     private let authorizeRemotePublication: RemotePublicationAuthorizer?
     public typealias GalleryPublicationAuthorizer = @Sendable (AgentProfile, AgentGalleryPublicationTransaction.Review, NormalizedToolCall, ToolContext) async throws -> Void
     private let authorizeGalleryPublication: GalleryPublicationAuthorizer?
+    private let prepareGalleryImage: AgentGalleryImagePreparer?
     private let mailboxFiles: (@Sendable (AgentMessage) -> AgentMailboxFileServices?)?
     private let mailboxRemote: (@Sendable (AgentMessage) -> AgentMailboxRemoteServices?)?
     private let mailboxGallery: (@Sendable (AgentMessage) -> AgentMailboxGalleryServices?)?
@@ -134,11 +136,13 @@ public actor AgentMessagingSession {
                 postGroup: GroupPoster? = nil, runGroup: GroupRunner? = nil,
                 finishGroup: @escaping @Sendable (UUID, Bool) async -> Void = { _, _ in },
                 imageStore: AgentImageStore? = nil,
+                importGalleryImage: AgentGalleryImageImporter? = nil,
                 authorizeImages: @escaping ImageAuthorizer = { _, _, _, _, _, _ in throw AgentMessagingError.approvalRequired },
                 authorizePublication: @escaping PublicationAuthorizer = { _, _, _, _, _ in throw AgentMessagingError.approvalRequired },
                 groupFiles: AgentGroupFilePublicationServices? = nil,
                 authorizeRemotePublication: RemotePublicationAuthorizer? = nil,
                 authorizeGalleryPublication: GalleryPublicationAuthorizer? = nil,
+                prepareGalleryImage: AgentGalleryImagePreparer? = nil,
                 mailboxFiles: (@Sendable (AgentMessage) -> AgentMailboxFileServices?)? = nil,
                 mailboxRemote: (@Sendable (AgentMessage) -> AgentMailboxRemoteServices?)? = nil,
                 mailboxGallery: (@Sendable (AgentMessage) -> AgentMailboxGalleryServices?)? = nil,
@@ -161,10 +165,12 @@ public actor AgentMessagingSession {
         self.runGroup = runGroup; self.finishGroup = finishGroup
         self.authorize = authorize; self.onChange = onChange; self.turnTimeout = turnTimeout
         self.imageStore = imageStore; self.authorizeImages = authorizeImages
+        self.importGalleryImage = importGalleryImage
         self.authorizePublication = authorizePublication
         self.groupFiles = groupFiles
         self.authorizeRemotePublication = authorizeRemotePublication
         self.authorizeGalleryPublication = authorizeGalleryPublication
+        self.prepareGalleryImage = prepareGalleryImage
         self.mailboxFiles = mailboxFiles
         self.mailboxRemote = mailboxRemote
         self.mailboxGallery = mailboxGallery
@@ -222,8 +228,13 @@ public actor AgentMessagingSession {
                 try await checkOpen()
             }
             try await validate()
+            let prepareLocalImage: AgentGalleryPublicationTransaction.PrepareLocalImage?
+            if let prepare = self.prepareGalleryImage, importGalleryImage != nil, imageStore != nil {
+                prepareLocalImage = { url, alt, call, context in try await prepare(sender, url, alt, call, context) }
+            } else { prepareLocalImage = nil }
             galleryPublication = makeGroupGalleryPublication(sender: sender, destinationID: originConversationID,
-                validate: validate, authorize: authorizeGalleryPublication, publish: publish)
+                validate: validate, authorize: authorizeGalleryPublication, publish: publish,
+                prepareLocalImage: prepareLocalImage)
         } else { galleryPublication = nil }
         return AgentUserMessageTool(conversationID: originConversationID, senderID: senderID, replyHistory: replyHistory,
             supportsQuestions: questionAccountID != nil, defaultReplyToMessageID: defaultReplyToMessageID,
@@ -250,19 +261,41 @@ public actor AgentMessagingSession {
     private func makeGroupGalleryPublication(sender: AgentProfile, destinationID: UUID,
         validate: @escaping @Sendable () async throws -> Void,
         authorize: @escaping GalleryPublicationAuthorizer,
-        publish: @escaping @Sendable (GroupAgentPublication) async throws -> RoomMessage?) -> AgentGalleryPublicationTransaction {
+        publish: @escaping @Sendable (GroupAgentPublication) async throws -> RoomMessage?,
+        prepareLocalImage: AgentGalleryPublicationTransaction.PrepareLocalImage?) -> AgentGalleryPublicationTransaction {
         AgentGalleryPublicationTransaction(conversationID: originConversationID, senderID: sender.id,
             destinationConversationID: destinationID, validateScope: validate,
+            prepareLocalImage: prepareLocalImage,
             authorize: { review, call, context in try await authorize(sender, review, call, context) },
             commit: { [self] review, _, _ in
                 try await validate()
-                let gallery = ReviewedGroupImageGallery(text: review.text, gallery: review.gallery,
+                let localImages = try await importReviewedGalleryImages(review.localImages, validate: validate)
+                try await validate()
+                let gallery = ReviewedGroupImageGallery(text: review.text, images: localImages,
+                    gallery: review.gallery, imageGalleryLayout: review.layout,
                     groupID: review.conversationID, senderID: sender.id,
                     replyTo: review.replyTo, lifetime: publicationLifetime)
-                guard let saved = try await publish(.init(text: review.text, replyToMessageID: review.replyTo,
-                    remoteImages: gallery)) else { throw AgentGalleryPublicationTransaction.Failure.invalidReceipt }
+                guard let saved = try await publish(.init(text: review.text, images: localImages,
+                    replyToMessageID: review.replyTo, remoteImages: gallery)) else { throw AgentGalleryPublicationTransaction.Failure.invalidReceipt }
                 return .init(review: review, message: saved)
             })
+    }
+
+    private func importReviewedGalleryImages(_ preparedImages: [PreparedAgentGalleryImage],
+        validate: @Sendable () async throws -> Void) async throws -> [AttachmentMetadata] {
+        guard !preparedImages.isEmpty else { return [] }
+        guard let importGalleryImage else { throw AgentGalleryPublicationTransaction.Failure.unavailable }
+        var images: [AttachmentMetadata] = []
+        for prepared in preparedImages {
+            try await validate()
+            var metadata = try await importGalleryImage(prepared)
+            guard metadata.id == prepared.file.digest, metadata.filename == prepared.file.filename,
+                  metadata.mimeType == prepared.mimeType, metadata.byteCount == prepared.file.bytes.count,
+                  metadata.kind == .image else { throw AgentGalleryPublicationTransaction.Failure.invalidReceipt }
+            metadata.altText = prepared.altText
+            images.append(metadata)
+        }
+        return images
     }
 
     private func makeGroupRemotePublication(sender: AgentProfile, userMessageID: UUID,
@@ -311,12 +344,19 @@ public actor AgentMessagingSession {
             try await capability.validate()
             try await checkOpen()
         }
+        let prepareLocalImage: AgentGalleryPublicationTransaction.PrepareLocalImage?
+        if let prepare = capability.prepareLocalImage, importGalleryImage != nil, imageStore != nil {
+            prepareLocalImage = { url, alt, call, context in try await prepare(sender, url, alt, call, context) }
+        } else { prepareLocalImage = nil }
         return AgentGalleryPublicationTransaction(conversationID: originConversationID, senderID: sender.id,
-            validateScope: validate, authorize: { review, call, context in
+            validateScope: validate, prepareLocalImage: prepareLocalImage, authorize: { review, call, context in
                 try await capability.authorize(sender, review, call, context)
             }, commit: { [self, messenger, publicationLifetime, onChange] review, _, _ in
                 try await validate()
-                let gallery = ReviewedMailboxImageGallery(text: review.text, gallery: review.gallery,
+                let localImages = try await importReviewedGalleryImages(review.localImages, validate: validate)
+                try await validate()
+                let gallery = ReviewedMailboxImageGallery(text: review.text, images: localImages,
+                    gallery: review.gallery, imageGalleryLayout: review.layout,
                     incomingID: inbound.id, originID: originConversationID, senderID: sender.id,
                     messageID: UUID(), replyToMessageID: review.replyTo, lifetime: publicationLifetime)
                 let saved = try await messenger.publishImageGallery(gallery)
@@ -503,8 +543,13 @@ public actor AgentMessagingSession {
                 try await checkOpen()
             }
             try await validate()
+            let prepareLocalImage: AgentGalleryPublicationTransaction.PrepareLocalImage?
+            if let prepare = galleryServices.prepareLocalImage, importGalleryImage != nil, imageStore != nil {
+                prepareLocalImage = { url, alt, call, context in try await prepare(sender, url, alt, call, context) }
+            } else { prepareLocalImage = nil }
             galleryPublication = makeGroupGalleryPublication(sender: sender, destinationID: groupID,
-                validate: validate, authorize: galleryServices.authorize, publish: publish)
+                validate: validate, authorize: galleryServices.authorize, publish: publish,
+                prepareLocalImage: prepareLocalImage)
         } else { galleryPublication = nil }
         return AgentUserMessageTool(conversationID: originConversationID, senderID: senderID,
             replyHistory: replyHistory, supportsQuestions: true, replyGroupID: groupID,

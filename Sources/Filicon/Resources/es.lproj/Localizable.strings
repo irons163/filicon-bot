@@ -1723,6 +1723,8 @@
 "This saves the reviewed file in this group. It does not add responders or automatically send the file to other models." = "El archivo aprobado se guardará en este grupo. No se añadirán participantes ni se enviará automáticamente el archivo a otros modelos.";
 "Remote attachment" = "Archivo adjunto remoto";
 "Open external link. Content has not been downloaded or verified." = "Abrir enlace externo. El contenido no se ha descargado ni verificado.";
+"Local image bytes were captured from an authorized folder." = "Los datos de la imagen local se leyeron desde una carpeta autorizada.";
+"Remote image links were not downloaded or verified." = "Los enlaces de imágenes remotas no se descargaron ni verificaron.";
 "Download image preview" = "Descargar vista previa de imagen";
 "Image preview unavailable. You can open the external link instead." = "La vista previa no está disponible. Puedes abrir el enlace externo.";
 "Download preview" = "Descargar vista previa";

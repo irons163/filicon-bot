@@ -1723,6 +1723,8 @@
 "This saves the reviewed file in this group. It does not add responders or automatically send the file to other models." = "승인된 파일을 이 그룹에 저장합니다. 응답자를 추가하거나 다른 모델에 파일을 자동으로 전송하지 않습니다.";
 "Remote attachment" = "원격 첨부 파일";
 "Open external link. Content has not been downloaded or verified." = "외부 링크를 엽니다. 콘텐츠가 다운로드되거나 검증되지 않았습니다.";
+"Local image bytes were captured from an authorized folder." = "로컬 이미지 데이터는 승인된 폴더에서 읽었습니다.";
+"Remote image links were not downloaded or verified." = "원격 이미지 링크는 다운로드하거나 검증하지 않았습니다.";
 "Download image preview" = "이미지 미리보기 다운로드";
 "Image preview unavailable. You can open the external link instead." = "이미지를 미리 볼 수 없습니다. 대신 외부 링크를 열 수 있습니다.";
 "Download preview" = "미리보기 다운로드";

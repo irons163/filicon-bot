@@ -1723,6 +1723,8 @@
 "This saves the reviewed file in this group. It does not add responders or automatically send the file to other models." = "承認したファイルをこのグループに保存します。返信するメンバーを追加したり、他のモデルにファイルを自動送信したりすることはありません。";
 "Remote attachment" = "リモート添付ファイル";
 "Open external link. Content has not been downloaded or verified." = "外部リンクを開きます。内容はダウンロードも検証もされていません。";
+"Local image bytes were captured from an authorized folder." = "ローカル画像のデータは、許可されたフォルダから取得されました。";
+"Remote image links were not downloaded or verified." = "リモート画像リンクはダウンロードも検証もされていません。";
 "Download image preview" = "画像プレビューをダウンロード";
 "Image preview unavailable. You can open the external link instead." = "画像をプレビューできません。代わりに外部リンクを開けます。";
 "Download preview" = "プレビューをダウンロード";
