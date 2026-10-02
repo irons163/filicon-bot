@@ -3,6 +3,7 @@ import FiliconDomain
 import FiliconProviderKit
 import FiliconAgents
 import FiliconAutomations
+import FiliconAppServices
 
 extension AppModel {
     func reloadWorkflows(executionLease: AgentWorkflowExecutionScope.Lease? = nil) async {
@@ -237,20 +238,11 @@ struct AppWorkflowPromptExecutor: AgentWorkflowPromptExecuting {
             ChatMessage(role: .user, text: userText),
         ]
         let inference = InferenceRequest(conversationID: request.runID, modelID: profile.modelID, messages: messages)
-        var output = ""
-        for try await event in provider.stream(inference) {
-            try Task.checkCancellation()
+        let result = try await TextOnlyInference.collect(provider.stream(inference),
+            maximumOutputBytes: AgentWorkflowLimits.maximumBodyBytes) {
             try request.executionLease?.check()
-            if case .textDelta(let delta) = event {
-                guard output.utf8.count + delta.utf8.count <= AgentWorkflowLimits.maximumBodyBytes else {
-                    throw AgentWorkflowError.boundsExceeded("prompt output")
-                }
-                output += delta
-            }
         }
-        try Task.checkCancellation()
-        try request.executionLease?.check()
-        return output
+        return result.text
     }
 
     private static func boundedUTF8(_ value: String, maximumBytes: Int) -> String {

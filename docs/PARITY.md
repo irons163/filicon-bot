@@ -1,5 +1,7 @@
 # Filicon / Grok Bot 0.18 功能 parity matrix（current implementation）
 
+2026-10-03 背景純文字增量：workflow／automation 共用有界、明確完成的 `TextOnlyInference`；缺少 completion、截斷、取消、工具事件、完成後正文或晚到 transport error 不再誤報成功，明確 silence 與 stop 後 usage 保留。單一回應累計 100,000 UTF-8 bytes，不將截斷當結果；workflow 各步合計上限另保留。最後聚焦 41 tests／4 suites、完整串行回歸 exit 0：135 XCTest＋1,632 Swift Testing（核心 869、App 532；兩項 opt-in live Codex 測試略過），原生建置／封裝簽章及七語各 1,724 keys／0 missing 通過。不宣稱共用協作 runner、工具執行、記憶授權或全 48 分類完成。詳見 [完成驗收入口的「背景純文字完成」](Parity-completion-audit.md)。
+
 2026-10-03 workflow 撤銷增量：切帳號同步撤銷整個多步驟／批次 runtime，四條入口保留原始 lease，晚到核准／provider 結果、後續批次及舊 UI reload 均重驗，最終成功歷史與 UI 投影有同步提交 fence；自有 scope 不被外來 lease 取代，重疊切換未結束不接新工作，取消不刪定義或提前釋放 lane。43 tests／4 suites 最終聚焦、原生建置／封裝簽章及七語檢查通過；最後完整串行回歸 exit 0：135 XCTest＋1,622 Swift Testing（核心 860、App 531；兩項 opt-in live Codex 測試略過）。automation／workflow prompt 仍非 reference background session 的完整管理／群組 runner；既有記憶 consent 限 direct／group／mailbox，未默默擴大到無人值守流程。此為生命週期修正，不上調 AGENT-01／02／04 或 AUTO-03 的整體 partial；詳見 [完成驗收入口的「背景執行流程」](Parity-completion-audit.md)。
 
 2026-10-03 平台再核對：AUTO-03 的 reference production 接線使用 bearer-authenticated 雲端 relay／AutomationsService，不是完整本機後端。GitHub source 已確認 CI-completed 契約，但未提供 all-checks 彙整實作；Slack 名稱／isSelf 與 Teams 已登入驗證也依賴後端。Filicon 的個別 push workflow、明確 Slack ID／非 self 與 Teams fail-closed 邊界仍 partial，未連線真實帳號或借用私有登入。詳見 [完成驗收入口的「平台觸發」](Parity-completion-audit.md)，不以歷史 complete／generic ingress 取代平台驗收。

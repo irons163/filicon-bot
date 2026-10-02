@@ -1,5 +1,13 @@
 # 協作能力核對紀錄（更新至 2026-10-03）
 
+## 背景純文字回應的完成界線（2026-10-03）
+
+`AppWorkflowPromptExecutor` 與 `AppAutomationExecutor` 已共用 `TextOnlyInference`：必須收到明確 stop 且串流正常結束才能回傳成功；明確空白 stop 保留原版允許 silence 的能力。缺少 completion、unknown、length、重複 stop、完成後再送正文／推理／response-start、所有 tool-call／tool-result 均不能算成功；cancelled 保持取消分類，晚到 transport error 不因先收到 stop 就被吞掉。usage 可在 stop 後抵達，未將私人 reasoning 當正文。每個入口的回應累計最多 100,000 UTF-8 bytes；workflow 仍由 runtime 另外限制各步合計，不默默截斷成成功結果。保留既有 provider 錯誤型別，未增加 UI 文案。
+
+隔離 collector 與實際 App workflow／automation 測試已加入正常／silence、缺少結尾、所有工具事件、跨 chunk Unicode 上限、取消／late error／validation 及禁止下一步等案例。最後聚焦 exit 0：41 tests／4 suites；完整串行回歸 exit 0：135 XCTest＋1,632 Swift Testing（核心 869／99 suites、App 532／74 suites；兩項 opt-in live Codex 測試略過）。原生建置、四個執行檔的封裝／deep strict 簽章及 app／XPC entitlements、七語各 1,724 keys／0 missing 均通過。第一輪 fixture 建構少寫 try 的編譯日誌保留；依測試技能使用固定日期、隔離目錄、受控 validate 和 CustomDump，不調用真實模型或服務。詳細日誌見完成驗收入口。
+
+這仍是 text-only 結果正確性，不是原版 background session／runner 接線、真實工具執行或外部任務完成的證明；AGENT-01／02／04、AUTO-03 與全 48 分類驗收保持原狀。沒有把既有 supervised-turn 記憶同意、routine 建立核准或 workflow 定義當作新增無人值守工具／記憶權限。
+
 ## Workflow 整體撤銷與背景 runner 邊界（2026-10-03）
 
 App 切帳號現在先同步 suspend workflow 執行 scope，再 cancelAll 整個 runtime／共用 agent lane，補上多步驟及事件／schedule 批次不能僅靠取消當前 agent submission 的缺口。四條入口（手動、已驗證事件、定時、重播）攜帶原始 lease 跨 actor；service／runtime 的自身 scope 不會被外來 lease 取代。步驟、晚到 action approval、排隊後 provider admission、每個串流事件及空串流結束、run history 成功提交與 UI reload 都重驗；最後同步保存／投影持有相依 scope 鎖，不以 preflight check 代替提交 fence。重疊帳號切換未全部結束前不接受新 dispatch；舊 lease 永久失效，晚到錯誤記為 cancelled，不能取消相同 ID 的新工作。定義與既有權限不變，沒有刪除歷史或提前釋放尚未收尾的 lane。

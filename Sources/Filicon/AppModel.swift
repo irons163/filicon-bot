@@ -9987,19 +9987,17 @@ private struct AppAutomationExecutor: AutomationExecutor {
         }
     }
     private func executeExclusive(automation: Automation, prompt: String) async throws -> AutomationExecutionResult {
+        try Task.checkCancellation()
         guard let profile = await agents.profile(id: automation.agentID), profile.archivedAt == nil,
               let provider = await registry.provider(id: profile.providerID) else {
             throw ProviderError.transport("Automation agent or provider is unavailable.")
         }
+        try Task.checkCancellation()
         let system = ChatMessage(role: .system, text: profile.instructions)
         let request = InferenceRequest(conversationID: UUID(), modelID: profile.modelID, messages: [system, .init(role: .user, text: prompt)])
-        var text = "", usage: Usage?
-        for try await event in provider.stream(request) {
-            try Task.checkCancellation()
-            if case .textDelta(let delta) = event { text += delta }
-            if case .usage(let value) = event { usage = value }
-        }
-        return .init(detail: text, inputTokens: usage?.inputTokens, outputTokens: usage?.outputTokens)
+        let result = try await TextOnlyInference.collect(provider.stream(request),
+            maximumOutputBytes: AgentWorkflowLimits.maximumBodyBytes)
+        return .init(detail: result.text, inputTokens: result.usage?.inputTokens, outputTokens: result.usage?.outputTokens)
     }
 }
 

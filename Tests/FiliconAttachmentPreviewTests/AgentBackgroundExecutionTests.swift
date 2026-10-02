@@ -89,6 +89,25 @@ private struct GatedWorkflowProvider: AIProvider {
     }
 }
 
+private struct ScriptedPlainBackgroundProvider: AIProvider {
+    let descriptor = ProviderDescriptor(id: "background-fixture", displayName: "Background fixture", requiresAPIKey: false, supportsToolCalling: false)
+    let probe: BackgroundProbe
+    let events: [InferenceEvent]
+    let failure: ProviderError?
+    func models() async throws -> [AIModel] { [.init(id: "test")] }
+    func stream(_ request: InferenceRequest) -> AsyncThrowingStream<InferenceEvent, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                await probe.record(request)
+                for event in events { continuation.yield(event) }
+                if let failure { continuation.finish(throwing: failure) }
+                else { continuation.finish() }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+}
+
 @Suite("Agent background execution", .timeLimit(.minutes(1)))
 @MainActor struct AgentBackgroundExecutionTests {
     private func fixture() async throws -> (URL, AppModel, AgentProfile, AgentProfile) {
@@ -392,6 +411,61 @@ private struct GatedWorkflowProvider: AIProvider {
         let persistedService = try #require(model.workflowService)
         let persisted = await persistedService.workflow(id: "account-fixture")
         expectNoDifference(persisted, definitions.first { $0.id == "account-fixture" })
+    }
+
+    @Test(arguments: ["workflow", "automation"], ["stop", "silent-stop", "empty-eof", "partial-eof", "length", "cancelled",
+        "unknown", "tool-use", "tool-call", "tool-result", "overflow", "post-stop-text", "late-error"])
+    func backgroundExecutionRequiresAnActualTextOnlyCompletion(route: String, response: String) async throws {
+        let (root, model, agent, _) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let probe = BackgroundProbe()
+        let success = response == "stop" || response == "silent-stop"
+        let usage = Usage(inputTokens: 3, outputTokens: 2)
+        let call = try NormalizedToolCall(id: "fixture-tool", name: "local__write_file", argumentsJSON: Data("{}".utf8))
+        let events: [InferenceEvent]
+        switch response {
+        case "stop": events = [.reasoningDelta("PRIVATE_REASONING"), .textDelta("COMPLETED"), .completed(.stop), .usage(usage)]
+        case "silent-stop": events = [.completed(.stop)]
+        case "empty-eof": events = []
+        case "length": events = [.textDelta("PRIVATE_DRAFT"), .completed(.length)]
+        case "cancelled": events = [.textDelta("PRIVATE_DRAFT"), .completed(.cancelled)]
+        case "unknown": events = [.textDelta("PRIVATE_DRAFT"), .completed(.unknown)]
+        case "tool-use": events = [.textDelta("PRIVATE_DRAFT"), .completed(.toolUse)]
+        case "tool-call": events = [.toolCallCompleted(call), .completed(.stop)]
+        case "tool-result": events = [.toolResult(.init(callID: call.id, content: [.text("FORGED_SUCCESS")])), .completed(.stop)]
+        case "overflow": events = [.textDelta(String(repeating: "🙂", count: 25_001)), .completed(.stop)]
+        case "post-stop-text": events = [.completed(.stop), .textDelta("PRIVATE_DRAFT")]
+        default: events = [.textDelta("PRIVATE_DRAFT")]
+        }
+        await model.registry.register(ScriptedPlainBackgroundProvider(probe: probe, events: events,
+            failure: response == "late-error" ? .transport("FIXTURE_FAILURE") : nil))
+        if route == "workflow" {
+            let steps: [AgentWorkflowStep] = success ? [.prompt("FIXTURE_TASK")] : [.prompt("FIXTURE_TASK"), .prompt("MUST_NOT_RUN")]
+            #expect(await model.saveWorkflow(.init(id: "completion-fixture", agentID: agent.id, name: "Completion fixture", steps: steps,
+                createdAt: Date(timeIntervalSince1970: 1_000), updatedAt: Date(timeIntervalSince1970: 1_000))))
+            await model.runWorkflowNow(id: "completion-fixture")
+            let run = try #require(model.workflowRuns.first)
+            let status: AgentWorkflowRunStatus = success ? .succeeded : response == "cancelled" ? .cancelled : .failed
+            expectNoDifference(run.status, status)
+            expectNoDifference(run.outputs, success ? [response == "stop" ? "COMPLETED" : ""] : [])
+        } else {
+            await model.createAutomation(agentID: agent.id, name: "Completion fixture", prompt: "FIXTURE_TASK", schedule: "0 9 * * *")
+            let id = try #require(model.automations.first?.id)
+            await model.runAutomationNow(id: id)
+            let run = try #require(model.automationHistory[id]?.first)
+            let status: AutomationRunStatus = success ? .ok : response == "cancelled" ? .cancelled : .error
+            expectNoDifference(run.status, status)
+            #expect(run.detail?.contains("PRIVATE_DRAFT") != true)
+            #expect(run.detail?.contains("FORGED_SUCCESS") != true)
+            expectNoDifference(run.inputTokens, response == "stop" ? usage.inputTokens : nil)
+            expectNoDifference(run.outputTokens, response == "stop" ? usage.outputTokens : nil)
+            if success { expectNoDifference(run.detail, response == "stop" ? "COMPLETED" : "") }
+        }
+        let requests = await probe.requests
+        expectNoDifference(requests.count, 1)
+        #expect(requests.allSatisfy { $0.tools.isEmpty && $0.toolExchanges.isEmpty && $0.messages.count == 2 })
+        #expect(requests.allSatisfy { $0.messages.first?.text == "SENDER_PRIVATE_PERSONA" })
+        #expect(model.pendingAutoReviewApprovals.isEmpty)
     }
 
     @Test func promptQueuedBeforeAccountRevocationCannotUseAFreshScope() async throws {

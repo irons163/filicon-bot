@@ -1,5 +1,7 @@
 # 完成驗收入口（2026-09-27）
 
+2026-10-03 背景純文字增量：workflow／automation 的結果收集現在要求明確完成，拒絕遺失結尾、截斷、工具事件及晚到錯誤，並有累計 UTF-8 上限；明確空白 stop 和完成後 usage 仍接受。最後聚焦 41 tests／4 suites、完整串行回歸 exit 0：135 XCTest＋1,632 Swift Testing（兩項 opt-in live Codex 測試略過），原生建置／封裝簽章及七語檢查通過。這是既有 text-only 路徑的結果修正，不以此關閉背景 runner、記憶 audience、外部服務或全 48 分類驗收。
+
 2026-10-03 workflow 生命週期增量：帳號切換現在同步撤銷整體 workflow 執行範圍，再取消 runtime 與共用代理人排程器；手動、已驗證事件、定時及重播四條入口均保留原始 dispatch fence。晚到核准／模型結果、同批後續 workflow 與舊 UI reload 不得跨越撤銷，成功歷史及 UI 投影使用同步提交 fence。43 項最終聚焦測試、原生建置／封裝簽章及七語檢查通過；最後完整回歸 exit 0：135 XCTest＋1,622 Swift Testing（兩項 opt-in live Codex 測試略過）。以下專節保留背景執行器與記憶授權的實際差異，不將本批取消修正寫成全背景 runtime 對等。
 
 2026-10-03 最新圖片增量：第七十七／七十八階段補齊十一格式獨立傳檔 MIME、一般 AVIF／ICO／SVG 預覽判定與已驗證圖片快照／有界 PNG 縮圖，原始 CAS bytes 不替換。46 項聚焦測試、77 個新增 canonical App 案例及十四個七語預覽 render 通過。歷史中止／EPERM 日誌保留；受保護探針恢復後，最後全專案串行 gate exit 0：135 XCTest＋1,609 Swift Testing（核心 859／98 suites、App 527／74 suites；兩項 opt-in live Codex 測試略過），原生建置／封裝簽章與七語各 1,724 keys／0 missing 通過。未移除保護、未重啟使用者 App／Xcode。完整格式變體、AV／Quick Look URL 邊界、其他分類及外部驗收仍保留，不能以本批通過宣稱所有 48 分類完成。詳見 [傳檔第七十七／七十八階段](Send-message-files-parity.md)。
@@ -150,3 +152,17 @@ Filicon `AppAutomationExecutor` 與 `AppWorkflowPromptExecutor` 目前仍使用 
 - cancelAll 不清空定義、刪除歷史或提前釋放仍未 unwound 的 active agent lane。新流程在原 operation 收尾後可正常執行。這是合作式取消與結果隔離，不是回滾已完成的外部動作，也不能強制停止忽略取消、永不返回的第三方 executor。
 
 隔離測試使用固定日期／識別與受控 gate、CustomDump 狀態斷言，涵蓋四條入口、八種 runtime／上游 scope 組合、晚到錯誤與核准、相同 ID 新舊 dispatch、實際 App 切帳號排隊、文字／空串流、UI reload、新流程及 service 重開，以及同步保存／撤銷順序與繼承 scope 去重。早期兩輪測試編譯問題（async autoclosure／非 Equatable request）與時間精度 fixture 的紅燈日誌保留；`workflow-account-scope-focused-commit-fence.log` exit 0：43 tests／4 suites。最後完整串行回歸 `workflow-account-scope-full-final.log` exit 0：135 XCTest＋1,622 Swift Testing（核心 860／98 suites、App 531／74 suites；兩項 opt-in live Codex 測試略過）。`workflow-account-scope-native-final.log` BUILD SUCCEEDED，`workflow-account-scope-package-final.log` deep／strict 簽章、四個執行檔及 app／XPC entitlements 核對通過；七語各 1,724 keys／0 missing，受保護儲存探針成功。第一輪完整回歸也是 exit 0，但發生於最後同步提交修正之前，不作為最終 gate。日誌在 `.build/validation/`，不提交產物。沒有 push、啟動／重啟使用者 App／Xcode、操作真實模型／帳號／群組或改變檔案保護。
+
+## 背景純文字完成：不能將未完成的模型串流當成任務成功（2026-10-03）
+
+沿用上節 reference automation 的 existing runner／group orchestration 證據，這輪另外修正 Filicon 的兩個簡化 executor：原程式僅收集 textDelta，在串流結束後就回傳結果，沒有檢查 finish reason，也會忽略未執行的工具事件。`AutomationService` 會將該回傳值記為 ok，workflow 則可能繼續下一步並保存 succeeded，不能把這種收集結果當成完成證據。
+
+`TextOnlyInference` 現在共用於兩條 App 路徑，只接受單一明確 stop 且正常 stream end；明確空白 stop 是允許的 silence，不是 missing completion。未知／缺失 completion、length、重複 stop、所有 tool-call／arguments／result，以及 stop 後的 text／reasoning／response-start 都失敗；cancelled 為 CancellationError。usage 在 stop 前後均可接收，符合既有 OpenAI-compatible parser 的完成後用量事件；不保存 reasoning。每個事件、結尾及 thrown error 路徑重驗 Task／host validation，帳號撤銷仍由上一批 lease 保護。晚到 transport error 不被先前 stop 吞掉；沒有自動 retry 或重跑已開始的推論。
+
+單一回應累計最多 100,000 UTF-8 bytes，以剩餘 bytes 比較防整數相加溢位，Unicode 與跨 chunk 逐筆計算；超限整次失敗而非把截斷草稿當成功。automation 原先無回應累計上限，持久 history 仍只保存既有 300-character 摘要與成功用量。workflow 另保留整個 run 各步合計上限、歷史／定義格式及既有 deadline。這是 collector 的正文上限，不是任意 provider buffer／CPU／永不返回串流的完整資源保證。
+
+隔離 collector 與實際 App workflow／automation 雙入口案例使用固定日期、temp store、受控 validate 與 CustomDump，核對正常／silence、缺失結尾、length／cancelled／unknown／tool-use、各種工具事件、Unicode／跨 chunk 上限、完成後正文、late error、Stop／revocation、未執行下一步、未存 PRIVATE_DRAFT／偽造工具成功及成功 usage。實際 App 雙入口有 26 組 completion 案例；第一輪 NormalizedToolCall fixture 建構缺少 try 的編譯失敗日誌 `background-text-completion-focused.log` 保留。修正後最後聚焦 `background-text-completion-focused-repair.log` exit 0：41 tests／4 suites。
+
+最後完整串行回歸 `background-text-completion-full.log` exit 0：135 XCTest＋1,632 Swift Testing（核心 869／99 suites、App 532／74 suites；兩項 opt-in live Codex 測試略過）。`background-text-completion-native.log` BUILD SUCCEEDED；`background-text-completion-package.log` 四個執行檔、deep／strict 簽章及 app／XPC entitlements 核對通過。七語各 1,724 keys／0 missing。日誌位於 `.build/validation/`，不提交產物；略過的兩項 live 測試不算真實 Codex／外部服務驗收證據。
+
+沒有增加或實際執行工具、傳送已同意事實到背景、修改真實帳號／群組、push 或啟動／重啟使用者 App／Xcode。本批成功只證明 text-only 推論完成，不證明模型所聲稱的網站、登入或外部動作真的完成；原版完整 background session／management／group runner、需新 audience 同意的背景記憶、平台後端及其他分類驗收仍保留，不能上調整體 partial 或宣稱全 48 分類完成。
