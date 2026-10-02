@@ -1,5 +1,7 @@
 # 完成驗收入口（2026-09-27）
 
+2026-10-03 最新圖片增量：第七十七／七十八階段補齊十一格式獨立傳檔 MIME、一般 AVIF／ICO／SVG 預覽判定與已驗證圖片快照／有界 PNG 縮圖，原始 CAS bytes 不替換。46 項聚焦測試、77 個新增 canonical App 案例及十四個七語預覽 render 通過。歷史中止／EPERM 日誌保留；受保護探針恢復後，最後全專案串行 gate exit 0：135 XCTest＋1,609 Swift Testing（核心 859／98 suites、App 527／74 suites；兩項 opt-in live Codex 測試略過），原生建置／封裝簽章與七語各 1,724 keys／0 missing 通過。未移除保護、未重啟使用者 App／Xcode。完整格式變體、AV／Quick Look URL 邊界、其他分類及外部驗收仍保留，不能以本批通過宣稱所有 48 分類完成。詳見 [傳檔第七十七／七十八階段](Send-message-files-parity.md)。
+
 2026-10-03 最新 SVG 增量：第七十六階段已接入安全驗證器支援的靜態自包含 SVG，保留原檔並僅將顯示畫面轉為有界 PNG。53 項聚焦測試、56 個七語卡片與全部 436 個 canonical App 案例通過，既有頭像 SVG 回歸未受影響。最後全專案串行 gate exit 0：135 XCTest＋1,593 Swift Testing（核心 853、App 517）；原生建置／封裝簽章、七語各 1,724 keys／0 missing 通過。完整瀏覽器 SVG、真實 HEIF、其他變體、獨立傳檔 MIME 及其他分類驗收仍保留，不將本批靜態子集寫為全部對等。詳見 [傳檔第七十六階段](Send-message-files-parity.md)。
 
 2026-10-03 最新增量：第七十五階段補上真正 AVIF／ICO 的經審核圖庫及共用預覽，保留原始 bytes／完整核准與 strict incoming／SendToAgent 邊界；八格式 viewer、42 個七語卡片與全部 386 個 canonical App 案例通過。最新全專案串行 gate exit 0：135 XCTest＋1,587 Swift Testing（核心 847、App 517）；原生建置／封裝簽章及七語各 1,724 keys／0 missing 通過。SVG、真實 HEIF、未覆蓋變體、獨立傳檔 MIME 與完整 lifecycle／外部驗收仍保留。以下日期段落是歷史進度，不能將當時 AVIF／ICO 尚缺當成目前狀態。詳見 [傳檔第七十五階段](Send-message-files-parity.md)。
@@ -106,7 +108,7 @@ App fixture 覆蓋隱藏／恢復、合併修改及單改可見性保留通知�
 ## 必須保留的其他分類
 
 - 圖片頭像：模型主機／box 來源、獨立讀取與圖片預覽核准、提交、direct／mailbox／remote fixture，以及人工匯入前配額已接線（截至 `549f96f`）。見 [Avatar-image-parity.md](Avatar-image-parity.md) 第七至十階段；CAS 回收／崩潰復原、完整 SVG 範圍、最低 macOS 與真實遠端服務驗收仍保留，不能標為整體完成。
-- 檔案／媒體：`SendMessage` 的本機獨立檔案、HTTPS locator 與本機／遠端文字圖片集已接入上述五條 App 路徑，隔離測試不等同真實服務驗收。遠端有界動畫、四張以上的經審核圖庫、重複來源、真正 AVIF／ICO 及安全驗證器支援的靜態自包含 SVG 已實作；第七十六階段最後完整串行 gate 通過。大檔、更廣 SVG、真實 HEIF、未覆蓋格式變體、獨立傳檔 MIME、快取與完整 crash／UI lifecycle 邊界仍保留。text-gallery 別名索引不列為原版缺失功能，見 [Send-message-files-parity.md](Send-message-files-parity.md)。reference composition 未注入 box resolver，不能把可選介面當成遠端端到端證據；保存 HTTPS locator 也不是授予下載權限。
+- 檔案／媒體：`SendMessage` 的本機獨立檔案、HTTPS locator 與本機／遠端文字圖片集已接入上述五條 App 路徑，隔離測試不等同真實服務驗收。遠端有界動畫、四張以上的經審核圖庫、重複來源、真正 AVIF／ICO、安全驗證器支援的靜態自包含 SVG、十一格式獨立傳檔 MIME 及一般圖片驗證快照已實作；第七十八階段最後完整串行 gate 通過。大檔、更廣 SVG、真實 HEIF、未覆蓋格式變體、快取、AV／Quick Look URL 與完整 crash／UI lifecycle 邊界仍保留。text-gallery 別名索引不列為原版缺失功能，見 [Send-message-files-parity.md](Send-message-files-parity.md)。reference composition 未注入 box resolver，不能把可選介面當成遠端端到端證據；保存 HTTPS locator 也不是授予下載權限。
 
 - 記憶：最新保存／搜尋／synthesis／episode／project recall 證據見 `Memory-archive-parity.md`；跨 epoch snapshot 是未接線參考設計，見 `Memory-snapshot-audit.md`，不能自行換成永久 cache。
 - 協作／訊息：AGENT-02／04 的歷史缺項需與 `Agent-collaboration-parity.md` 後續進度及 current source 逐項對照；不能用舊行的「缺」覆蓋已完成的接線，也不能以有 UI 就宣稱工具／背景路徑完成。

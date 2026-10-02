@@ -190,11 +190,25 @@ public actor AttachmentStore {
     public func ingest(prepared: PreparedAgentPublicationFile, createdAt: Date,
         verifiedImageMIMEType: String? = nil) throws -> AttachmentMetadata {
         try Task.checkCancellation()
+        let ext = (prepared.filename as NSString).pathExtension.lowercased()
+        let inferred = UTType(filenameExtension: ext)?.preferredMIMEType ?? "application/octet-stream"
+        // Never promote active document formats or unverified image bytes into
+        // an inline renderer merely because their filename has an extension.
+        let mime: String
         if let verifiedImageMIMEType {
             guard try AgentImageStore.validatePublishedImage(prepared.bytes) == verifiedImageMIMEType else {
                 throw AttachmentStoreError.corrupt("invalid-image-type")
             }
-        }
+            mime = verifiedImageMIMEType
+        } else if inferred.hasPrefix("image/") || ["avif", "ico", "svg"].contains(ext) {
+            do {
+                mime = try RemoteAttachmentImagePreparation.metadata(for: prepared.bytes,
+                    filename: prepared.filename, createdAt: createdAt).mimeType
+            } catch is RemoteAttachmentImageError { mime = "application/octet-stream" }
+        } else if ["text/html", "application/xhtml+xml"].contains(inferred) {
+            mime = "application/octet-stream"
+        } else { mime = inferred }
+        try Task.checkCancellation()
         try fileManager.createDirectory(at: rootURL, withIntermediateDirectories: true)
         let root = open(rootURL.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
         guard root >= 0 else { throw AttachmentStoreError.corrupt("unsafe-root-directory") }
@@ -238,18 +252,6 @@ public actor AttachmentStore {
             }
             guard fsync(directory) == 0, fsync(root) == 0 else { throw AttachmentStoreError.corrupt("cannot-sync-shard") }
         }
-        let inferred = UTType(filenameExtension: (prepared.filename as NSString).pathExtension)?.preferredMIMEType
-            ?? "application/octet-stream"
-        // Never promote active document formats or unverified image bytes into
-        // an inline renderer merely because their filename has an extension.
-        let mime: String
-        if let verifiedImageMIMEType {
-            mime = verifiedImageMIMEType
-        } else if inferred.hasPrefix("image/") {
-            mime = (try? AgentImageStore.validate(prepared.bytes)) ?? "application/octet-stream"
-        } else if ["text/html", "application/xhtml+xml"].contains(inferred) {
-            mime = "application/octet-stream"
-        } else { mime = inferred }
         return .init(id: prepared.digest, filename: prepared.filename, mimeType: mime,
             byteCount: Int64(prepared.bytes.count), kind: Self.kind(for: mime), createdAt: createdAt)
     }

@@ -867,3 +867,35 @@ reference 同一 commit 的 `source/shared/media/media-extensions.ts`／`image-m
 `gallery-svg-native.log` build succeeded，`gallery-svg-package.log` 的版本、四個執行檔、App／XPC entitlements 與 deep strict 簽章通過；七語各 1,724 keys／0 missing，diff check 通過。最後 `gallery-svg-full.log` 全專案串行 gate exit 0：135 XCTest（7 個非空 bundles）＋1,593 Swift Testing，核心 853 tests／98 suites、App 517 tests／74 suites，零測試失敗，沒有沿用上一批完整回歸作本批證據。日誌保留未配置外部服務 fail-closed fixture 的 CoreData 連線訊息及未使用 AppIntents framework 的建置 warning；不宣稱真實服務已連線或日誌完全無系統訊息。未 push、未啟動／重啟 App 或 Xcode。
 
 SVG 仍是既有驗證器支援的靜態自包含子集，不是完整瀏覽器 SVG 對等；CSS、文字／mask／clip 等未支援內容保持明確拒絕。真實 HEIF、其他格式變體、獨立傳檔 MIME、大檔／快取、全域記憶體及完整 crash／跨程序／窗口 lifecycle、最低實際 macOS／外部服務驗收仍保留。依 Swift 測試與精確差異指引使用固定時間、隔離資料、真實 vector／像素及完整原始 bytes 比較，不把局部格式進展寫成整體完成。
+
+## 第七十七階段：獨立傳檔的已驗證圖片 MIME（2026-10-03）
+
+同一 reference commit 的 `source/shared/media/media-extensions.ts`、`image-mime.ts` 及 `file-preview-kind.ts` 將 GIF／WebP／AVIF／ICO／SVG 等列為圖片。Filicon 經審核圖庫雖已支援，獨立 `PreparedAgentPublicationFile` 的預設 MIME 卻仍使用單幀 PNG／JPEG 驗證器，有效圖片因而被降為未知檔案。本批改為共用完整圖片驗證，於 CAS 安裝前判定實際 MIME，只有解碼／來源限制錯誤回退 `application/octet-stream`；取消不會被 `try?` 吞掉。仍不依圖片副檔名信任原始 bytes；HTML／XHTML 保持未知檔案、非圖片名稱維持既有文件 MIME 政策，明確的 host image MIME 仍須完全符合經驗證格式。
+
+獨立檔案既有 25 MiB 上限不變，使用共用圖片的幀／像素驗證；SVG 仍受 5 MiB 與原安全子集限制。真正 1,536 × 1,536 BMP 超過圖庫 5 MiB、但未超過獨立檔案上限，已驗證仍保存原始 bytes 並識別為 BMP；同 bytes 的圖庫入口仍拒絕超量。沒有擴大 strict incoming／SendToAgent 能力，也未改既有歷史附件投影。
+
+測試先於 production 修正。首輪 `standalone-image-mime-red.log` 因測試使用不存在的 `UUID(Int)` 初始化與漏填 gallery `altText` 而編譯失敗；修正為固定 UUID 字串和明確 nil，不改 production API。`standalone-image-mime-red-verified.log` 以 4 tests／1 suite、29 issues 重現：28 項為實際 MIME 落差，另 1 項是 `.bin` 既有 `application/macbinary` 被新 fixture 誤寫成 octet-stream；後者修正測試預期並保留原政策，不將環境或 fixture 問題冒充 production 缺陷。
+
+`standalone-image-mime-integration.log` exit 0：核心 10 tests／2 suites、App 11 tests／1 suite通過。新增十一格式（PNG／JPEG／GIF／APNG／WebP／TIFF／BMP／HEIC／AVIF／ICO／安全 SVG）的完整 metadata、原檔／alias／重開／reference authority／縮圖比較；30 個無效、HTML、外部／腳本 SVG、SVG 超量與截斷案例未取得圖片 MIME；取消或偽 host MIME 在建立 CAS 根目錄前拒絕。App 新增十一格式 × 七條獨立傳檔路徑共 77 案例：direct main、前景群組、群組／direct／mailbox 委派至群組、mailbox 與 direct peer。使用原有完整 source／publication review 流程，核對 durable owner、mirror 重開及 canonical preview，實際 native image 可解碼、關閉後 materialization 清除；原有拒絕、Stop、切帳號、成員變更、來源替換、quota／保存失敗案例亦通過。此批沒有重寫一般 modal renderer，不能以 MIME 測試宣稱所有舊傳檔或 native parser 行為均完成安全驗收。
+
+`standalone-image-mime-native.log` build succeeded；`standalone-image-mime-package.log` 的版本 0.1.0／build 1、四個執行檔、App／XPC entitlements 與 deep strict 簽章通過。七語各 1,724 keys／0 missing。完整回歸前探針中普通暫存檔寫入／重讀成功，但 `.completeFileProtectionUnlessOpen` 寫入後重讀得到 NSCocoaErrorDomain 257／NSPOSIXErrorDomain 1；系統唯讀檢查同時回報 `CGSSessionScreenIsLocked=Yes`。本輪 `standalone-image-mime-full.log` 出現受保護 fixture EPERM 與連帶失敗，已僅停止自行啟動的 Swift 測試（exit 130），保留日誌。不把中止列為全綠，也不將所有 assertion 未經核對地歸於環境。當時未提交；後續受保護存取恢復後，以第七十八階段所記錄的最新完整 gate 同時驗證本批，並於通過後提交。
+
+依 Swift 測試／精確差異指引使用隔離暫存資料、固定時間／owner 及原始 bytes／完整 metadata 比較。不移除檔案保護、不改鎖定設定、不 push、不啟動／重啟使用者 App 或 Xcode、不動真實帳號／群組。真實 HEIF、格式變體、更廣 SVG、其他媒體與全部分類／外部服務驗收仍保留。
+
+## 第七十八階段：一般圖片預覽的驗證快照與有界縮圖（2026-10-03）
+
+第七十七階段後續核對發現另一個實際缺口：一般附件 viewer 的副檔名清單未含 AVIF／ICO／SVG，且主圖與縮圖雖驗證檔案 hash／byteCount，仍把原始資料直接交給 `NSImage`，未使用共用圖片／SVG 安全驗證。`native-image-preview-red.log` 在 production 修正前以 2 tests／1 suite、24 issues 重現：六個副檔名判定案例及十八個偽 MIME／圖片副檔名下的外部 SVG、script、stylesheet PI、DTD／entity、HTML、垃圾 bytes 案例。危險 fixture 只到純驗證入口，沒有交給原生 SVG parser、讀取外部檔案或下載其網址。
+
+新增型別化 `AttachmentImageSnapshot`，只有通過共用完整來源、逐幀尺寸／像素／解碼與 SVG 靜態白名單驗證後才能建立。一般 integrity gate 在背景 worker 先核對原檔 hash，再取得這個不可變快照；主圖不再接受任意 raw `Data`。合法 raster 保留原始 bytes 供原生主圖，安全 SVG 僅將顯示資料轉成最大邊 1,024 的 PNG，原始 CAS、hash、filename、metadata、匯出檔案不被替換。一般縮圖也先驗證原檔，再生成最大邊 256 的單幀 PNG，不再以完整原圖作縮圖。取消會傳遞至 detached worker，取消或 view 失效不接回晚到結果；圖片解碼失敗使用既有七語「圖片預覽無法使用」提示。
+
+共用 32 MiB、200 幀、單邊 16,384／每幀 64M／合計 128M 像素限制及 SVG 5 MiB 靜態安全子集不變，不藉一般 viewer 擴張模型圖片輸入或檔案／圖庫 publication 上限。PDF／spreadsheet 仍取 hash 已驗證 bytes；AV／Quick Look 沿用原有檔案 URL，且不額外在 state 留住整份最大 200 MiB 原檔。本批不是 AV／Quick Look 的 URL race 或所有 native parser 安全驗收。
+
+新增七項測試：十一種真正格式的實際 MIME、精確原檔、bounded PNG 縮圖、修改／刪除路徑後的快照行為；大尺寸 SVG 的 1,024 × 512 實際紅色／alpha 像素；上述十八個危險來源在縮圖及主圖 gate 拒絕；三條取消入口在 parser 前回報 `CancellationError`；五種非圖片路徑僅在需要時保留 bytes；七語合法／不可用預覽共十四個實際 render，檢查 fitting size 及非空白像素。第七十七階段的 77 個 canonical App 傳檔案例也改經正式 typed preview gate，仍核對全部 original bytes，不用測試直接建立 raw `NSImage` 代替 production 驗證。
+
+保留測試修正歷史：`native-image-preview-core.log`／`focused.log` 因新 fixture 呼叫不存在的 helper 與 `try`／`await` macro 使用而編譯失敗，改用現有 API，沒有修改 production API 迎合測試。`final-focused.log` 有色彩比較與 XLSX 受保護 fixture EPERM 兩項問題；當時普通探針可讀、受保護探針仍失敗，未取得本輪鎖定旗標，不臆測使用者仍鎖定。`integration.log` 的唯一 assertion 為新色彩 fixture：產出 PNG 目視正常紅色，`NSBitmapImageRep` 色彩轉換比較不適合該 fixture，改用既有 SVG 測試的 `CGContext` RGBA 像素檢查後通過，沒有改繪圖程式。不可用畫面最初是透明 fixture 背景，追加明確白色背景與可見像素斷言，沒有藉空白 render 通過。
+
+最終 source 的 `native-image-preview-reviewed-integration.log` exit 0：核心 10 tests／2 suites、App 36 tests／4 suites，共 46 tests／6 suites 通過，含所有獨立傳檔 route、圖片安全驗證及十四個七語預覽 render。繁中合法 SVG／法文不可用畫面已目視檢查，沒有文字裁切；大尺寸顯示 PNG 也確認不是空白 bitmap。`native-image-preview-native.log` build succeeded；`native-image-preview-package.log` 的版本 0.1.0／build 1、四個執行檔、App／XPC entitlements 與 deep strict 簽章通過。七語各 1,724 keys／0 missing，diff check 通過。
+
+後段 `native-image-preview-protected-read.log` 的普通與 `.completeFileProtectionUnlessOpen` 寫入／重讀 bytes 都相符，沒有移除保護或修改系統設定。恢復後的最後完整串行 `native-image-preview-unlocked-full.log` exit 0：135 XCTest（7 個非空 bundles）＋1,609 Swift Testing，核心 target 859 tests／98 suites、App target 527 tests／74 suites，零測試失敗；兩項需主動啟用的 live Codex 測試 skipped，不以此宣稱真實 CLI／服務驗收。日誌仍有 fail-closed fixture 的 CoreData NSXPCConnection 訊息，建置仍有未使用 AppIntents framework 的 warning，不宣稱日誌完全無系統訊息。第七十七／七十八階段於本批完整 gate 通過後才提交，沒有以局部通過或前一批綠燈代替。
+
+依 Swift 測試、精確差異與 SwiftUI 指引，使用固定時間／身分、隔離原檔、完整 bytes 比較、具取消的背景準備及七語可見像素 render。未 push、未啟動／重啟 App 或 Xcode、未改真實帳號或群組。更廣 SVG、真實 HEIF、AVIF 動畫／ICO 多解析度等變體、大檔／快取／全域圖庫記憶體、完整 crash／跨程序／窗口 lifecycle、最低實際 macOS 與外部服務驗收仍保留，不把 native 圖片預覽修正當成全部 48 分類完成。

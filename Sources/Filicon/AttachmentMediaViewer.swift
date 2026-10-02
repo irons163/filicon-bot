@@ -3,6 +3,7 @@ import AVKit
 import CryptoKit
 import Darwin
 import Foundation
+import FiliconAppServices
 import FiliconDomain
 import PDFKit
 import SwiftUI
@@ -18,7 +19,7 @@ enum AttachmentViewerKind: Equatable {
     static func classify(filename: String, mimeType: String?) -> Self {
         let ext = URL(fileURLWithPath: filename).pathExtension.lowercased()
         let mime = mimeType?.lowercased() ?? ""
-        if mime.hasPrefix("image/") || ["png", "jpg", "jpeg", "gif", "heic", "heif", "tif", "tiff", "bmp", "webp"].contains(ext) {
+        if mime.hasPrefix("image/") || ["png", "jpg", "jpeg", "gif", "heic", "heif", "tif", "tiff", "bmp", "webp", "avif", "ico", "svg"].contains(ext) {
             return .image
         }
         if mime.hasPrefix("video/") || mime.hasPrefix("audio/") || ["mov", "mp4", "m4v", "mp3", "m4a", "aac", "wav", "aiff", "caf"].contains(ext) {
@@ -69,6 +70,57 @@ struct AttachmentFileIntegrity {
             }
         }
         return data
+    }
+}
+
+enum AttachmentImagePreviewError: LocalizedError, Equatable {
+    case unavailable
+
+    var errorDescription: String? { l10n("Image preview unavailable") }
+}
+
+struct AttachmentImageSnapshot: Sendable {
+    let displayData: Data
+    let original: AttachmentMetadata
+
+    private init(displayData: Data, original: AttachmentMetadata) {
+        self.displayData = displayData
+        self.original = original
+    }
+
+    nonisolated static func prepare(_ data: Data, filename: String) throws -> Self {
+        do {
+            let original = try RemoteAttachmentImagePreparation.metadata(for: data, filename: filename,
+                createdAt: Date(timeIntervalSince1970: 0))
+            let displayData = original.mimeType == "image/svg+xml"
+                ? try RemoteAttachmentImagePreparation.thumbnail(for: data, original: original,
+                    maximumDimension: 1_024).data : data
+            try Task.checkCancellation()
+            return Self(displayData: displayData, original: original)
+        } catch is RemoteAttachmentImageError { throw AttachmentImagePreviewError.unavailable }
+    }
+
+    nonisolated static func thumbnail(_ data: Data, filename: String) throws -> Data {
+        do {
+            let original = try RemoteAttachmentImagePreparation.metadata(for: data, filename: filename,
+                createdAt: Date(timeIntervalSince1970: 0))
+            return try RemoteAttachmentImagePreparation.thumbnail(for: data, original: original,
+                maximumDimension: 256).data
+        } catch is RemoteAttachmentImageError { throw AttachmentImagePreviewError.unavailable }
+    }
+}
+
+struct AttachmentPreviewSnapshot: Sendable {
+    let data: Data?
+    let image: AttachmentImageSnapshot?
+
+    nonisolated static func verified(for file: AttachmentPreviewFile) throws -> Self {
+        try Task.checkCancellation()
+        let data = try AttachmentFileIntegrity().verifiedData(for: file)
+        let kind = AttachmentViewerKind.classify(filename: file.filename, mimeType: file.metadata?.mimeType)
+        let image = kind == .image ? try AttachmentImageSnapshot.prepare(data, filename: file.filename) : nil
+        try Task.checkCancellation()
+        return Self(data: [.image, .pdf, .spreadsheet].contains(kind) ? data : nil, image: image)
     }
 }
 
@@ -149,12 +201,12 @@ struct AttachmentMediaViewerSheet: View {
     }
 
     @ViewBuilder private func viewer(for file: AttachmentPreviewFile) -> some View {
-        AttachmentIntegrityGate(file: file) { verifiedData in
+        AttachmentIntegrityGate(file: file) { snapshot in
             switch AttachmentViewerKind.classify(filename: file.filename, mimeType: file.metadata?.mimeType) {
-            case .image: AttachmentImageView(verifiedData: verifiedData)
+            case .image: AttachmentImageView(snapshot: snapshot.image)
             case .audiovisual: AttachmentAVPlayerView(fileURL: file.fileURL)
-            case .pdf: AttachmentPDFView(file: file, verifiedData: verifiedData)
-            case .spreadsheet: AttachmentSpreadsheetView(file: file, verifiedData: verifiedData)
+            case .pdf: AttachmentPDFView(file: file, verifiedData: snapshot.data)
+            case .spreadsheet: AttachmentSpreadsheetView(file: file, verifiedData: snapshot.data)
             case .quickLook: AttachmentQuickLookView(fileURL: file.fileURL)
             }
         }
@@ -216,16 +268,15 @@ struct AttachmentMediaViewerSheet: View {
 private struct AttachmentIntegrityGate<Content: View>: View {
     @Environment(\.locale) private var uiLocale
     let file: AttachmentPreviewFile
-    @ViewBuilder let content: (Data?) -> Content
-    @State private var isVerified = false
-    @State private var verifiedData: Data?
+    @ViewBuilder let content: (AttachmentPreviewSnapshot) -> Content
+    @State private var snapshot: AttachmentPreviewSnapshot?
     @State private var error: String?
 
     var body: some View {
         let _ = uiLocale.identifier
         Group {
-            if isVerified {
-                content(verifiedData)
+            if let snapshot {
+                content(snapshot)
             } else if let error {
                 ContentUnavailableView(
                     l10n("Attachment unavailable"),
@@ -240,20 +291,18 @@ private struct AttachmentIntegrityGate<Content: View>: View {
     }
 
     private func verifyAttachment() async {
-        isVerified = false
-        verifiedData = nil
+        snapshot = nil
         error = nil
         do {
             let previewFile = file
-            let data = try await Task.detached(priority: .userInitiated) {
-                try AttachmentFileIntegrity().verifiedData(for: previewFile)
-            }.value
-            guard !Task.isCancelled else { return }
-            let kind = AttachmentViewerKind.classify(filename: file.filename, mimeType: file.metadata?.mimeType)
-            if kind == .image || kind == .pdf || kind == .spreadsheet {
-                verifiedData = data
+            let worker = Task.detached(priority: .userInitiated) {
+                try AttachmentPreviewSnapshot.verified(for: previewFile)
             }
-            isVerified = true
+            let verified = try await withTaskCancellationHandler {
+                try await worker.value
+            } onCancel: { worker.cancel() }
+            guard !Task.isCancelled else { return }
+            snapshot = verified
         } catch {
             guard !Task.isCancelled else { return }
             self.error = error.localizedDescription
@@ -315,8 +364,10 @@ struct AttachmentThumbnail: View {
     }
 
     nonisolated static func verifiedImageData(for file: AttachmentPreviewFile) throws -> Data? {
+        try Task.checkCancellation()
         guard AttachmentViewerKind.classify(filename: file.filename, mimeType: file.metadata?.mimeType) == .image else { return nil }
-        return try AttachmentFileIntegrity().verifiedData(for: file)
+        let data = try AttachmentFileIntegrity().verifiedData(for: file)
+        return try AttachmentImageSnapshot.thumbnail(data, filename: file.filename)
     }
 
     private func loadThumbnail() async {
@@ -324,9 +375,12 @@ struct AttachmentThumbnail: View {
         failed = false
         do {
             let snapshot = file
-            let bytes = try await Task.detached(priority: .utility) {
+            let worker = Task.detached(priority: .utility) {
                 try Self.verifiedImageData(for: snapshot)
-            }.value
+            }
+            let bytes = try await withTaskCancellationHandler {
+                try await worker.value
+            } onCancel: { worker.cancel() }
             guard !Task.isCancelled else { return }
             preview = bytes.flatMap { NSImage(data: $0) }
             failed = bytes != nil && preview == nil
@@ -374,8 +428,8 @@ struct AttachmentImageView: View {
     @State private var zoom = AttachmentImageZoom()
     @GestureState private var gestureScale = 1.0
 
-    init(verifiedData: Data?) {
-        image = verifiedData.flatMap { NSImage(data: $0) }
+    init(snapshot: AttachmentImageSnapshot?) {
+        image = snapshot.flatMap { NSImage(data: $0.displayData) }
     }
 
     var body: some View {

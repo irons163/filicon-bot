@@ -4,6 +4,28 @@ import ImageIO
 import Testing
 
 enum LocalGalleryFormatFixture {
+    static let publicationFormats = ["gif", "apng", "webp", "tiff", "bmp", "heic", "avif", "ico", "png", "jpg", "svg"]
+
+    static func filename(type: String) -> String {
+        "report.\(type == "apng" ? "png" : type)"
+    }
+
+    static func mimeType(type: String) -> String {
+        switch type {
+        case "gif": "image/gif"
+        case "apng", "png": "image/png"
+        case "webp": "image/webp"
+        case "tiff": "image/tiff"
+        case "bmp": "image/bmp"
+        case "heic": "image/heic"
+        case "avif": "image/avif"
+        case "ico": "image/x-icon"
+        case "jpg": "image/jpeg"
+        case "svg": "image/svg+xml"
+        default: "text/plain"
+        }
+    }
+
     static func bytes(type: String, index: Int = 0) throws -> Data {
         if type == "webp" { return try webP(index: index) }
         if type == "svg" {
@@ -19,6 +41,7 @@ enum LocalGalleryFormatFixture {
         case "heic": identifier = "public.heic"
         case "avif": identifier = "public.avif"
         case "ico": identifier = "com.microsoft.ico"
+        case "jpg": identifier = "public.jpeg"
         default: identifier = "public.png"
         }
         let frames = ["gif", "apng", "tiff"].contains(type) ? 2 : 1

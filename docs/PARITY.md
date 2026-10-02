@@ -1,5 +1,7 @@
 # Filicon / Grok Bot 0.18 功能 parity matrix（current implementation）
 
+2026-10-03 最新圖片增量：第七十七階段補齊獨立傳檔十一格式的實際 MIME，新增七條 App 路徑共 77 個案例；第七十八階段修正一般預覽遺漏的 AVIF／ICO／SVG 判定，主圖改取型別化已驗證快照，縮圖為最大邊 256 的 PNG，安全 SVG 顯示最大邊 1,024，原檔不替換。46 項聚焦測試與十四個七語預覽 render 通過。前次鎖定／EPERM 中止日誌保留；受保護探針恢復後，最後全專案串行 gate exit 0：135 XCTest＋1,609 Swift Testing（核心 859、App 527；兩項 opt-in live Codex 測試略過）。原生建置／封裝簽章與七語各 1,724 keys／0 missing 通過。嚴格模型輸入、檔案／圖庫不同上限、SVG 安全子集與 AV／Quick Look URL 邊界不變；更廣格式、完整 lifecycle、其他分類／外部服務仍待驗收，不宣稱全部完成。詳見 [傳檔第七十七／七十八階段](Send-message-files-parity.md)。
+
 2026-10-03 最新 SVG 增量：第七十六階段共用既有頭像 XML 安全驗證器，接入經審核的自包含靜態 SVG 原檔保存與 bounded PNG 顯示；保留腳本、外部資源、CSS／style、動畫與未支援元素拒絕，不宣稱完整瀏覽器 SVG 對等。53 項聚焦測試通過，含實際向量顏色、原檔／alias／重開、九格式 viewer、56 個七語卡片與全部 436 個 canonical App 案例。最新完整串行 gate exit 0：135 XCTest＋1,593 Swift Testing（核心 853、App 517），原生建置／封裝簽章與七語各 1,724 keys／0 missing 通過。更廣 SVG、真實 HEIF、格式變體、獨立傳檔 MIME、完整 lifecycle／外部服務驗收仍保留；詳見 [傳檔第七十六階段](Send-message-files-parity.md)。
 
 2026-10-03 最新媒體增量：第七十五階段以真正 AVIF／ICO bytes 補上經審核本機圖庫及共用 local／remote 預覽；核對來源型別、偽 MIME／截斷拒絕、精確原檔保存／重開、八格式 viewer、42 個七語實際卡片及全部 386 個 canonical App 案例。最後完整串行 gate exit 0：135 XCTest＋1,587 Swift Testing（核心 847、App 517）；原生建置／封裝簽章、七語各 1,724 keys／0 missing 通過。strict incoming／SendToAgent 限制及既有 model history 投影不變；SVG、真實 HEIF、尚未覆蓋的格式變體、獨立傳檔 MIME、完整 lifecycle／外部服務邊界仍保留，不宣稱整體完成。詳見 [傳檔第七十五階段](Send-message-files-parity.md)。
@@ -260,7 +262,7 @@ PDF 預覽安全修正（2026-09-24）：PDF 畫面、頁數與文字擷取改�
 |---|---|---|---|
 | ATT-01 | `FiliconDomain/Attachments.swift`、`AttachmentStore.swift`、`AttachmentLifecycle.swift` 與 `AttachmentReferenceRepository.swift` 提供 SHA-256 content-addressed ingest、limits、metadata、staging、read/remove、reference lifecycle 與 quota。 | complete | final gates passed |
 | ATT-02 | `AppModel.swift` composer staging 與 `FiliconApp.swift` file/drop/paste UI 將 attachment 連到 user message、turn 與 provider request，並支援取消/重試。 | complete | final gates passed |
-| ATT-03 | `AttachmentMediaViewer.swift`、`AttachmentQuickLook.swift` 與 `AttachmentSpreadsheetPreview.swift` 提供 image/video/audio、PDF/Quick Look、CSV/TSV/XLSX safe preview、download/export 與 integrity/error states。 | complete | final gates passed |
+| ATT-03 | `AttachmentMediaViewer.swift`、`AttachmentQuickLook.swift` 與 `AttachmentSpreadsheetPreview.swift` 提供 image/video/audio、PDF/Quick Look、CSV/TSV/XLSX preview、download/export 與 integrity/error states。圖片主圖／縮圖先做 hash 與完整格式驗證；SVG 限既有靜態安全子集，原檔保留。AV／Quick Look 仍使用 URL，不將圖片驗證當作其他 parser 安全完成證據。 | complete | 歷史能力分類保留；`AttachmentViewerTests` 及第七十八階段完整回歸／原生封裝通過，格式變體與完整 runtime 邊界見傳檔紀錄 |
 | ATT-04 | `FiliconVoice/NativeVoiceRecorder.swift`、`VoiceComposerController.swift` 與 `SystemSpeechTranscriber.swift` 提供 microphone permission、bounded recording、cancel/retry、transcription 與 transcript attachment。 | complete | final gates passed |
 
 ### 4. Providers / models

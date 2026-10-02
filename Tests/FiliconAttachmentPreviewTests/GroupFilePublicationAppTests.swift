@@ -290,11 +290,22 @@ private struct GroupFileAppProvider: AIProvider {
 
     @Test(arguments: ["approve", "deny", "stop", "account", "source-changed", "quota-reserve", "quota-blob", "direct-message-reserve", "direct-message-late"])
     func directMainPublishesReviewedFile(mode: String) async throws {
+        try await checkDirectMainFile(mode: mode)
+    }
+
+    @Test(arguments: LocalGalleryFormatFixture.publicationFormats)
+    func standaloneFormatsReachDirectMainPublication(type: String) async throws {
+        try await checkDirectMainFile(mode: "approve", type: type)
+    }
+
+    private func checkDirectMainFile(mode: String, type: String = "txt") async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-direct-file-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }
         let workspace = root.appending(path: "workspace")
         try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
-        let source = workspace.appending(path: "report.txt"), bytes = Data("Reviewed direct artifact".utf8)
+        let filename = LocalGalleryFormatFixture.filename(type: type)
+        let source = workspace.appending(path: filename)
+        let bytes = try type == "txt" ? Data("Reviewed direct artifact".utf8) : LocalGalleryFormatFixture.bytes(type: type)
         try bytes.write(to: source)
         let grants = WorkspaceAuthorizationStore(fileURL: root.appending(path: "grants.json"))
         try await grants.authorize(workspace)
@@ -335,7 +346,7 @@ private struct GroupFileAppProvider: AIProvider {
         let files = saved.messages.filter { !$0.attachments.isEmpty }
         expectNoDifference(files.count, ["approve", "source-changed", "direct-message-late"].contains(mode) ? 1 : 0)
         if files.isEmpty {
-            let prepared = try PreparedAgentPublicationFile(bytes: bytes, filename: "report.txt")
+            let prepared = try PreparedAgentPublicationFile(bytes: bytes, filename: filename)
             let index = try AttachmentReferenceRepository(databaseURL: root.appending(path: "attachment-index.sqlite"))
             let count = try await index.referenceCount(blobID: prepared.digest)
             expectNoDifference(count, 0)
@@ -348,6 +359,14 @@ private struct GroupFileAppProvider: AIProvider {
             let lifecycle = try AttachmentLifecycle.live(applicationSupportDirectory: root)
             let data = try await lifecycle.data(for: metadata, owner: .init(conversationID: id, messageID: message.id))
             expectNoDifference(data, bytes)
+            expectNoDifference(metadata.filename, filename)
+            expectNoDifference(metadata.mimeType, LocalGalleryFormatFixture.mimeType(type: type))
+            if type != "txt" {
+                expectNoDifference(metadata.kind, .image)
+                let current = try #require(model.conversations[ci].messages.first(where: { $0.id == message.id })?.attachments.first)
+                model.openAttachment(current)
+                try await verifyStandaloneImagePreview(model: model, bytes: bytes)
+            }
         }
         if mode.hasPrefix("quota-") || mode.hasPrefix("direct-message-") { #expect(fault.didTrigger) }
     }
@@ -444,11 +463,22 @@ private struct GroupFileAppProvider: AIProvider {
 
     @Test(arguments: ["approve", "deny", "stop", "account", "source-changed", "quota-reserve", "quota-blob", "quota-message", "message-write"], ["mailbox", "direct"])
     func mailboxPublishesReviewedFileWithDurableOwner(mode: String, route: String) async throws {
+        try await checkMailboxFile(mode: mode, route: route)
+    }
+
+    @Test(arguments: LocalGalleryFormatFixture.publicationFormats, ["mailbox", "direct"])
+    func standaloneFormatsReachMailboxAndDirectPeer(type: String, route: String) async throws {
+        try await checkMailboxFile(mode: "approve", route: route, type: type)
+    }
+
+    private func checkMailboxFile(mode: String, route: String, type: String = "txt") async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-mailbox-file-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }
         let workspace = root.appending(path: "workspace")
         try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
-        let source = workspace.appending(path: "report.txt"), bytes = Data("Reviewed mailbox artifact".utf8)
+        let filename = LocalGalleryFormatFixture.filename(type: type)
+        let source = workspace.appending(path: filename)
+        let bytes = try type == "txt" ? Data("Reviewed mailbox artifact".utf8) : LocalGalleryFormatFixture.bytes(type: type)
         try bytes.write(to: source)
         let grants = WorkspaceAuthorizationStore(fileURL: root.appending(path: "grants.json"))
         try await grants.authorize(workspace)
@@ -485,7 +515,7 @@ private struct GroupFileAppProvider: AIProvider {
         let originID = approval.action.context.conversationID
         expectNoDifference(approval.action.context.metadata["agentFilePublication"], "true")
         #expect(approval.action.context.metadata["mailboxIncomingID"] != nil)
-        #expect(approval.action.context.metadata["agentMessage"]?.contains("report.txt") == true)
+        #expect(approval.action.context.metadata["agentMessage"]?.contains(filename) == true)
         if mode == "source-changed" { try Data("Changed source".utf8).write(to: source) }
         if mode == "stop" {
             if route == "direct" { model.cancel() }
@@ -507,7 +537,7 @@ private struct GroupFileAppProvider: AIProvider {
         #expect(model.pendingAutoReviewApprovals.isEmpty)
         if mode.hasPrefix("quota-") { #expect(fault.didTrigger) }
         if mode == "message-write" {
-            let prepared = try PreparedAgentPublicationFile(bytes: bytes, filename: "report.txt")
+            let prepared = try PreparedAgentPublicationFile(bytes: bytes, filename: filename)
             let index = try AttachmentReferenceRepository(databaseURL: root.appending(path: "attachment-index.sqlite"))
             let count = try await index.referenceCount(blobID: prepared.digest)
             expectNoDifference(count, 0)
@@ -523,6 +553,9 @@ private struct GroupFileAppProvider: AIProvider {
         expectNoDifference(files.count, ["approve", "source-changed", "quota-message"].contains(mode) ? 1 : 0)
         if let message = files.first, let file = message.files?.first {
             expectNoDifference(file.altText, "報表說明")
+            expectNoDifference(file.filename, filename)
+            expectNoDifference(file.mimeType, LocalGalleryFormatFixture.mimeType(type: type))
+            if type != "txt" { expectNoDifference(file.kind, .image) }
             expectNoDifference(messages.first?.delivery?.state, .completed)
             let lifecycle = try AttachmentLifecycle.live(applicationSupportDirectory: root)
             let data = try await lifecycle.data(for: file, owner: .init(conversationID: originID, messageID: message.id))
@@ -575,7 +608,8 @@ private struct GroupFileAppProvider: AIProvider {
             }
             let preview = try #require(model.attachmentPreview)
             expectNoDifference(try Data(contentsOf: preview.fileURL), bytes)
-            model.dismissAttachmentPreview()
+            if type != "txt" { try await verifyStandaloneImagePreview(model: model, bytes: bytes) }
+            else { model.dismissAttachmentPreview() }
         }
     }
 
@@ -601,12 +635,23 @@ private struct GroupFileAppProvider: AIProvider {
 
     @Test(arguments: ["approve", "deny", "stop", "destination-stop", "account", "members", "source-changed", "quota-reserve", "quota-blob", "quota-message", "message-write"], ["foreground", "group", "direct", "mailbox"])
     func requiresApprovalAndKeepsReviewedBytes(mode: String, route: String) async throws {
+        try await checkGroupFile(mode: mode, route: route)
+    }
+
+    @Test(arguments: LocalGalleryFormatFixture.publicationFormats, ["foreground", "group", "direct", "mailbox"])
+    func standaloneFormatsReachForegroundAndDelegatedGroups(type: String, route: String) async throws {
+        try await checkGroupFile(mode: "approve", route: route, type: type)
+    }
+
+    private func checkGroupFile(mode: String, route: String, type: String = "txt") async throws {
         let background = route != "foreground"
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-file-app-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }
         let workspace = root.appending(path: "workspace")
         try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
-        let source = workspace.appending(path: "report.txt"), bytes = Data("Reviewed artifact".utf8)
+        let filename = LocalGalleryFormatFixture.filename(type: type)
+        let source = workspace.appending(path: filename)
+        let bytes = try type == "txt" ? Data("Reviewed artifact".utf8) : LocalGalleryFormatFixture.bytes(type: type)
         try bytes.write(to: source)
         let grants = WorkspaceAuthorizationStore(fileURL: root.appending(path: "grants.json"))
         try await grants.authorize(workspace)
@@ -668,7 +713,7 @@ private struct GroupFileAppProvider: AIProvider {
         expectNoDifference(approval.action.context.metadata["agentFilePublication"], "true")
         expectNoDifference(approval.action.context.conversationID, originID)
         expectNoDifference(approval.action.context.metadata["agentGroupName"], destination.name)
-        #expect(approval.action.context.metadata["agentMessage"]?.contains("report.txt") == true)
+        #expect(approval.action.context.metadata["agentMessage"]?.contains(filename) == true)
         #expect(model.groupMessages[group.id]?.allSatisfy { $0.files == nil } == true)
         if mode == "source-changed" { try Data("Changed source".utf8).write(to: source) }
         if mode == "stop" {
@@ -702,7 +747,7 @@ private struct GroupFileAppProvider: AIProvider {
         if mode == "message-write" {
             let inMemory = model.groupMessages[destination.id, default: []]
             #expect(inMemory.allSatisfy { $0.files?.isEmpty != false })
-            let prepared = try PreparedAgentPublicationFile(bytes: bytes, filename: "report.txt")
+            let prepared = try PreparedAgentPublicationFile(bytes: bytes, filename: filename)
             let index = try AttachmentReferenceRepository(databaseURL: root.appending(path: "attachment-index.sqlite"))
             let referenceCount = try await index.referenceCount(blobID: prepared.digest)
             expectNoDifference(referenceCount, 0)
@@ -721,6 +766,8 @@ private struct GroupFileAppProvider: AIProvider {
         expectNoDifference(publications.count, ["approve", "source-changed", "quota-message"].contains(mode) ? 1 : 0)
         if let message = publications.first, let file = message.files?.first {
             expectNoDifference(file.altText, "報表說明")
+            expectNoDifference(file.filename, filename)
+            expectNoDifference(file.mimeType, LocalGalleryFormatFixture.mimeType(type: type))
             let activity = try #require(messages.flatMap(\.toolActivities).first(where: { $0.name == "SendMessage" }))
             expectNoDifference(activity.status, .succeeded)
             let lifecycle = try AttachmentLifecycle.live(applicationSupportDirectory: root)
@@ -731,11 +778,37 @@ private struct GroupFileAppProvider: AIProvider {
             await model.reconcileQuota()
             expectNoDifference(model.startupBanner, priorBanner)
             expectNoDifference(model.errorMessage, priorError)
+            if type != "txt" {
+                expectNoDifference(file.kind, .image)
+                model.selectedGroupID = destination.id
+                let current = try #require(model.groupMessages[destination.id]?.first(where: { $0.id == message.id })?.files?.first)
+                model.openGroupMessageFile(current, messageID: message.id, groupID: destination.id)
+                try await verifyStandaloneImagePreview(model: model, bytes: bytes)
+            }
         }
         if background {
             let sourceMessages = await groups.messages(groupID: group.id)
             #expect(sourceMessages.allSatisfy { $0.files?.isEmpty != false })
         }
+    }
+
+    private func verifyStandaloneImagePreview(model: AppModel, bytes: Data) async throws {
+        let deadline = ContinuousClock.now + .seconds(5)
+        while model.attachmentPreview == nil && ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let preview = try #require(model.attachmentPreview)
+        let file = try #require(preview.files.first)
+        expectNoDifference(try AttachmentFileIntegrity().verifiedData(for: file), bytes)
+        expectNoDifference(AttachmentViewerKind.classify(filename: file.filename, mimeType: file.metadata?.mimeType), .image)
+        let snapshot = try AttachmentPreviewSnapshot.verified(for: file)
+        expectNoDifference(snapshot.data, bytes)
+        let image = try #require(AttachmentImageView(snapshot: snapshot.image).image)
+        #expect(image.size.width > 0 && image.size.height > 0)
+        let urls = preview.files.map(\.fileURL)
+        model.dismissAttachmentPreview()
+        expectNoDifference(model.attachmentPreview, nil)
+        #expect(urls.allSatisfy { !FileManager.default.fileExists(atPath: $0.path) })
     }
 
     private func pending(_ model: AppModel, excluding priorID: String? = nil) async throws -> PendingApproval {

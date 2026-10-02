@@ -5,10 +5,158 @@ import Testing
 import CustomDump
 import FiliconDomain
 import FiliconAppServices
+import FiliconPersistence
 import zlib
 
 @Suite("Bounded inline image animation", .timeLimit(.minutes(1)))
 struct InlineImageAnimationTests {
+    @Test(arguments: ["gif", "apng", "webp", "tiff", "bmp", "heic", "avif", "ico", "png", "jpg", "svg"])
+    func standalonePublicationRecognizesVerifiedImageBytesAndReopens(format: String) async throws {
+        let identifiers = ["gif": "com.compuserve.gif", "apng": "public.png", "tiff": "public.tiff",
+            "bmp": "com.microsoft.bmp", "heic": "public.heic", "avif": "public.avif", "ico": "com.microsoft.ico",
+            "png": "public.png", "jpg": "public.jpeg"]
+        let mimeTypes = ["gif": "image/gif", "apng": "image/png", "webp": "image/webp", "tiff": "image/tiff",
+            "bmp": "image/bmp", "heic": "image/heic", "avif": "image/avif", "ico": "image/x-icon",
+            "png": "image/png", "jpg": "image/jpeg", "svg": "image/svg+xml"]
+        let bytes: Data
+        if format == "webp" { bytes = try webP(loops: 2) }
+        else if format == "svg" {
+            bytes = Data("<svg xmlns='http://www.w3.org/2000/svg' width='32' height='16'><rect width='32' height='16' fill='red'/></svg>".utf8)
+        } else {
+            bytes = try image(type: #require(identifiers[format]),
+                frames: ["gif", "apng", "tiff"].contains(format) ? 2 : 1, loops: 2)
+        }
+        let root = FileManager.default.temporaryDirectory.appending(path: "filicon-standalone-image-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let date = Date(timeIntervalSince1970: 1_000)
+        let store = AttachmentStore(rootURL: root.appending(path: "blobs"))
+        let database = root.appending(path: "references.sqlite")
+        let references = try AttachmentReferenceRepository(databaseURL: database)
+        let lifecycle = AttachmentLifecycle(store: store, references: references, clock: { date })
+        let filename = "Reviewed.\(format == "apng" ? "PNG" : format.uppercased())"
+        let captured = try PreparedAgentPublicationFile(bytes: bytes, filename: filename)
+        let upload = try await lifecycle.stage(prepared: captured)
+        let owner = AttachmentReferenceOwner(
+            conversationID: try #require(UUID(uuidString: "00000000-0000-0000-0000-000000000001")),
+            messageID: try #require(UUID(uuidString: "00000000-0000-0000-0000-000000000002")))
+        let saved = try await lifecycle.commit(upload, to: owner)
+        let expected = AttachmentMetadata(id: captured.digest, filename: filename,
+            mimeType: try #require(mimeTypes[format]), byteCount: Int64(bytes.count), kind: .image, createdAt: date)
+        expectNoDifference(saved, expected)
+        let reopened = AttachmentStore(rootURL: root.appending(path: "blobs"))
+        let original = try await reopened.data(for: saved)
+        expectNoDifference(original, bytes)
+        let again = try await reopened.ingest(prepared: captured, createdAt: date)
+        expectNoDifference(again, expected)
+        let alias = try await reopened.ingest(prepared: .init(bytes: bytes, filename: "Alias.png"), createdAt: date)
+        expectNoDifference(alias, .init(id: expected.id, filename: "Alias.png", mimeType: expected.mimeType,
+            byteCount: expected.byteCount, kind: .image, createdAt: date))
+        let inventory = try await reopened.inventory()
+        expectNoDifference(inventory, .init(active: [captured.digest: Int64(bytes.count)], quarantined: [:], temporaryFiles: []))
+        let reopenedReferences = try AttachmentReferenceRepository(databaseURL: database)
+        let isReferenced = try await reopenedReferences.isReferenced(blobID: saved.id, owner: owner)
+        expectNoDifference(isReferenced, true)
+        let thumbnail = try RemoteAttachmentImagePreparation.thumbnail(for: original, original: expected, maximumDimension: 16)
+        expectNoDifference(thumbnail.original, expected)
+        #expect(thumbnail.width <= 16 && thumbnail.height <= 16)
+        let source = try #require(CGImageSourceCreateWithData(thumbnail.data as CFData, nil))
+        expectNoDifference(CGImageSourceGetType(source) as String?, "public.png")
+        if !["png", "jpg"].contains(format) {
+            #expect(throws: AgentImageError.invalid) { try AgentImageStore.validate(bytes) }
+        }
+    }
+
+    @Test func standaloneLargeBitmapKeepsFileLimitSeparateFromGalleryLimit() async throws {
+        let bytes = try image(type: "com.microsoft.bmp", frames: 1, width: 1_536)
+        #expect(bytes.count > AgentImageStore.maximumBytes)
+        #expect(bytes.count < AttachmentLimits.regularBytes)
+        let root = FileManager.default.temporaryDirectory.appending(path: "filicon-large-standalone-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let date = Date(timeIntervalSince1970: 1_000)
+        let file = try PreparedAgentPublicationFile(bytes: bytes, filename: "design.bmp")
+        let store = AttachmentStore(rootURL: root)
+        let saved = try await store.ingest(prepared: file, createdAt: date)
+        expectNoDifference(saved, .init(id: file.digest, filename: file.filename, mimeType: "image/bmp",
+            byteCount: Int64(bytes.count), kind: .image, createdAt: date))
+        let read = try await store.data(for: saved)
+        expectNoDifference(read, bytes)
+        #expect(throws: AgentImageError.galleryLimit) { try PreparedAgentGalleryImage(bytes: bytes, filename: file.filename, altText: nil) }
+    }
+
+    @Test(arguments: ["garbage", "html", "external-svg", "script-svg", "oversize-svg", "truncated"],
+        ["png", "gif", "avif", "ico", "svg"])
+    func standaloneInvalidImagesAreNeverPromotedToImageMIME(mode: String, ext: String) async throws {
+        let bytes: Data
+        switch mode {
+        case "html": bytes = Data("<html><script>alert(1)</script></html>".utf8)
+        case "external-svg": bytes = Data("<svg xmlns='http://www.w3.org/2000/svg'><image href='https://example.com/private'/></svg>".utf8)
+        case "script-svg": bytes = Data("<svg xmlns='http://www.w3.org/2000/svg'><script>alert(1)</script></svg>".utf8)
+        case "oversize-svg":
+            bytes = Data("<svg xmlns='http://www.w3.org/2000/svg' width='1' height='1'>".utf8)
+                + Data(repeating: 32, count: 5 * 1_024 * 1_024) + Data("</svg>".utf8)
+        case "truncated": bytes = try image(type: "public.png", frames: 1).prefix(20)
+        default: bytes = Data("not an image".utf8)
+        }
+        let root = FileManager.default.temporaryDirectory.appending(path: "filicon-unverified-file-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let date = Date(timeIntervalSince1970: 1_000)
+        let file = try PreparedAgentPublicationFile(bytes: bytes, filename: "unverified.\(ext)")
+        let store = AttachmentStore(rootURL: root)
+        let saved = try await store.ingest(prepared: file, createdAt: date)
+        expectNoDifference(saved, .init(id: file.digest, filename: file.filename, mimeType: "application/octet-stream",
+            byteCount: Int64(bytes.count), kind: .other, createdAt: date))
+        let original = try await store.data(for: saved)
+        expectNoDifference(original, bytes)
+    }
+
+    @Test(arguments: ["report.txt", "page.html", "page.xhtml", "unknown.bin"])
+    func standaloneNonImageNamesRetainDocumentPolicy(filename: String) async throws {
+        let bytes = try image(type: "public.png", frames: 1)
+        let root = FileManager.default.temporaryDirectory.appending(path: "filicon-nonimage-file-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let date = Date(timeIntervalSince1970: 1_000)
+        let file = try PreparedAgentPublicationFile(bytes: bytes, filename: filename)
+        let store = AttachmentStore(rootURL: root)
+        let saved = try await store.ingest(prepared: file, createdAt: date)
+        expectNoDifference(saved, .init(id: file.digest, filename: filename,
+            mimeType: filename == "report.txt" ? "text/plain" : filename == "unknown.bin" ? "application/macbinary" : "application/octet-stream",
+            byteCount: Int64(bytes.count), kind: filename == "report.txt" ? .document : .other, createdAt: date))
+    }
+
+    @Test func standaloneCancellationCannotInstallAnImageOrBecomeUnknownMIME() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "filicon-cancelled-image-file-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let bytes = try image(type: "com.compuserve.gif", loops: 2)
+        let file = try PreparedAgentPublicationFile(bytes: bytes, filename: "design.gif")
+        let store = AttachmentStore(rootURL: root)
+        let release = AsyncStream<Void>.makeStream()
+        defer { release.continuation.finish() }
+        let task = Task {
+            for await _ in release.stream { break }
+            return try await store.ingest(prepared: file, createdAt: Date(timeIntervalSince1970: 1_000))
+        }
+        task.cancel()
+        release.continuation.finish()
+        await #expect(throws: CancellationError.self) { try await task.value }
+        let inventory = try await store.inventory()
+        expectNoDifference(inventory, .init(active: [:], quarantined: [:], temporaryFiles: []))
+        expectNoDifference(FileManager.default.fileExists(atPath: root.path), false)
+    }
+
+    @Test func standaloneClaimedImageMIMEStillRequiresExactValidatedTypeBeforeInstall() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "filicon-image-type-mismatch-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let bytes = try image(type: "com.compuserve.gif", loops: 2)
+        let file = try PreparedAgentPublicationFile(bytes: bytes, filename: "design.png")
+        let store = AttachmentStore(rootURL: root)
+        await #expect(throws: AttachmentStoreError.corrupt("invalid-image-type")) {
+            try await store.ingest(prepared: file, createdAt: Date(timeIntervalSince1970: 1_000), verifiedImageMIMEType: "image/png")
+        }
+        let inventory = try await store.inventory()
+        expectNoDifference(inventory, .init(active: [:], quarantined: [:], temporaryFiles: []))
+        expectNoDifference(FileManager.default.fileExists(atPath: root.path), false)
+    }
+
     @Test(arguments: ["com.compuserve.gif", "apng", "org.webmproject.webp", "public.tiff",
         "com.microsoft.bmp", "public.heic", "public.avif", "com.microsoft.ico", "public.png", "public.jpeg"])
     func reviewedLocalFormatsPreserveOriginalBytesWithoutGrantingModelInput(type: String) async throws {

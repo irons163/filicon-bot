@@ -3,8 +3,11 @@ import AppKit
 import CustomDump
 import Darwin
 import Foundation
+import ImageIO
 import PDFKit
+import SwiftUI
 import Testing
+import FiliconAppServices
 import FiliconDomain
 @testable import Filicon
 
@@ -89,13 +92,16 @@ struct AttachmentViewerTests {
         let verified = try AttachmentFileIntegrity().verifiedData(for: file)
         try Data("replaced".utf8).write(to: path, options: .atomic)
         #expect(throws: AttachmentFileIntegrityError.changed) { try AttachmentFileIntegrity().verifiedData(for: file) }
-        let view = AttachmentImageView(verifiedData: verified)
+        let snapshot = try AttachmentImageSnapshot.prepare(verified, filename: metadata.filename)
+        let view = AttachmentImageView(snapshot: snapshot)
         let image = try #require(view.image)
         expectNoDifference(image.size, CGSize(width: 2, height: 3))
         try FileManager.default.removeItem(at: path)
-        #expect(AttachmentImageView(verifiedData: verified).image != nil)
-        #expect(AttachmentImageView(verifiedData: nil).image == nil)
-        #expect(AttachmentImageView(verifiedData: Data("invalid image".utf8)).image == nil)
+        #expect(AttachmentImageView(snapshot: snapshot).image != nil)
+        #expect(AttachmentImageView(snapshot: nil).image == nil)
+        #expect(throws: AttachmentImagePreviewError.unavailable) {
+            try AttachmentImageSnapshot.prepare(Data("invalid image".utf8), filename: metadata.filename)
+        }
     }
 
     @Test @MainActor func previewWindowPreservesIdentityAndClosesWithParent() async throws {
@@ -133,12 +139,16 @@ struct AttachmentViewerTests {
         defer { try? FileManager.default.removeItem(at: sandbox) }
         try FileManager.default.createDirectory(at: sandbox, withIntermediateDirectories: true)
         let path = sandbox.appending(path: "image.png")
-        let bytes = Data("original".utf8)
+        let bytes = try LocalGalleryFormatFixture.bytes(type: "png")
         let metadata = AttachmentMetadata(id: SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined(),
-            filename: "image.png", mimeType: "image/png", byteCount: Int64(bytes.count), kind: .image)
+            filename: "image.png", mimeType: "image/png", byteCount: Int64(bytes.count), kind: .image,
+            createdAt: Date(timeIntervalSince1970: 1))
         let file = AttachmentPreviewFile(filename: "image.png", fileURL: path, metadata: metadata)
         try bytes.write(to: path)
-        expectNoDifference(try AttachmentThumbnail.verifiedImageData(for: file), bytes)
+        let preparedThumbnail = try AttachmentThumbnail.verifiedImageData(for: file)
+        let thumbnail = try #require(preparedThumbnail)
+        #expect(NSImage(data: thumbnail) != nil)
+        expectNoDifference(try AttachmentFileIntegrity().verifiedData(for: file), bytes)
         try Data("tampered".utf8).write(to: path)
         #expect(throws: AttachmentFileIntegrityError.changed) { try AttachmentThumbnail.verifiedImageData(for: file) }
         try FileManager.default.removeItem(at: path)
@@ -181,6 +191,182 @@ struct AttachmentViewerTests {
         #expect(AttachmentViewerKind.classify(filename: "report.pdf", mimeType: nil) == .pdf)
         #expect(AttachmentViewerKind.classify(filename: "table.xlsx", mimeType: nil) == .spreadsheet)
         #expect(AttachmentViewerKind.classify(filename: "model.usdz", mimeType: nil) == .quickLook)
+    }
+
+    @Test(arguments: ["AVIF", "ICO", "SVG"], [nil, "application/octet-stream"] as [String?])
+    func imagePreviewRecognizesReferenceExtensions(extension suffix: String, mime: String?) {
+        expectNoDifference(AttachmentViewerKind.classify(filename: "preview.\(suffix)", mimeType: mime), .image)
+    }
+
+    @Test(arguments: ["external", "script", "stylesheet", "entity", "html", "garbage"], ["png", "gif", "svg"])
+    func unsafeImageCandidatesAreRejectedBeforeNativeDecoding(mode: String, suffix: String) throws {
+        let sandbox = FileManager.default.temporaryDirectory.appending(path: "unsafe-image-\(UUID())", directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: sandbox) }
+        try FileManager.default.createDirectory(at: sandbox, withIntermediateDirectories: true)
+        let text: String
+        switch mode {
+        case "external": text = "<svg xmlns='http://www.w3.org/2000/svg' width='20' height='20'><image href='https://preview.invalid/external.png'/></svg>"
+        case "script": text = "<svg xmlns='http://www.w3.org/2000/svg' width='20' height='20'><script>alert(1)</script></svg>"
+        case "stylesheet": text = "<?xml-stylesheet href='https://preview.invalid/style.css'?><svg xmlns='http://www.w3.org/2000/svg' width='20' height='20'/>"
+        case "entity": text = "<!DOCTYPE svg [<!ENTITY outside SYSTEM 'file:///nonexistent/preview.txt'>]><svg xmlns='http://www.w3.org/2000/svg' width='20' height='20'><title>&outside;</title></svg>"
+        case "html": text = "<html><body>not an image</body></html>"
+        default: text = "not an image"
+        }
+        let bytes = Data(text.utf8)
+        let filename = "image.\(suffix)"
+        let path = sandbox.appending(path: filename)
+        let metadata = AttachmentMetadata(id: SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined(),
+            filename: filename, mimeType: "image/png", byteCount: Int64(bytes.count), kind: .image,
+            createdAt: Date(timeIntervalSince1970: 1))
+        let file = AttachmentPreviewFile(filename: filename, fileURL: path, metadata: metadata)
+        try bytes.write(to: path)
+        expectNoDifference(try AttachmentFileIntegrity().verifiedData(for: file), bytes)
+        #expect(throws: AttachmentImagePreviewError.unavailable) { try AttachmentThumbnail.verifiedImageData(for: file) }
+        #expect(throws: AttachmentImagePreviewError.unavailable) { try AttachmentPreviewSnapshot.verified(for: file) }
+        expectNoDifference(try Data(contentsOf: path), bytes)
+    }
+
+    @Test(arguments: LocalGalleryFormatFixture.publicationFormats)
+    @MainActor func nativeImageSnapshotPreservesOriginalAndBoundsThumbnail(type: String) throws {
+        let sandbox = FileManager.default.temporaryDirectory.appending(path: "native-image-\(UUID())", directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: sandbox) }
+        try FileManager.default.createDirectory(at: sandbox, withIntermediateDirectories: true)
+        let bytes = try LocalGalleryFormatFixture.bytes(type: type)
+        let filename = LocalGalleryFormatFixture.filename(type: type)
+        let path = sandbox.appending(path: filename)
+        let declared = AttachmentMetadata(id: SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined(),
+            filename: filename, mimeType: "application/octet-stream", byteCount: Int64(bytes.count), kind: .other,
+            createdAt: Date(timeIntervalSince1970: 1))
+        let file = AttachmentPreviewFile(filename: filename, fileURL: path, metadata: declared)
+        try bytes.write(to: path)
+        let verified = try AttachmentPreviewSnapshot.verified(for: file)
+        expectNoDifference(verified.data, bytes)
+        let snapshot = try #require(verified.image)
+        expectNoDifference(snapshot.original, AttachmentMetadata(id: declared.id, filename: filename,
+            mimeType: LocalGalleryFormatFixture.mimeType(type: type), byteCount: Int64(bytes.count), kind: .image,
+            createdAt: Date(timeIntervalSince1970: 0)))
+        if type != "svg" { expectNoDifference(snapshot.displayData, bytes) }
+        let preparedThumbnail = try AttachmentThumbnail.verifiedImageData(for: file)
+        let thumbnail = try #require(preparedThumbnail)
+        let source = try #require(CGImageSourceCreateWithData(thumbnail as CFData, nil))
+        expectNoDifference(CGImageSourceGetType(source) as String?, "public.png")
+        expectNoDifference(CGImageSourceGetCount(source), 1)
+        let decoded = try #require(CGImageSourceCreateImageAtIndex(source, 0, nil))
+        #expect(decoded.width > 0 && decoded.height > 0 && decoded.width <= 256 && decoded.height <= 256)
+        expectNoDifference(try AttachmentFileIntegrity().verifiedData(for: file), bytes)
+        try Data("replaced".utf8).write(to: path, options: .atomic)
+        #expect(throws: AttachmentFileIntegrityError.changed) { try AttachmentPreviewSnapshot.verified(for: file) }
+        try FileManager.default.removeItem(at: path)
+        let native = try #require(AttachmentImageView(snapshot: snapshot).image)
+        #expect(native.size.width > 0 && native.size.height > 0)
+        expectNoDifference(verified.data, bytes)
+    }
+
+    @Test @MainActor func nativeVectorDisplayIsBoundedWithoutReplacingOriginal() throws {
+        let bytes = Data("<svg xmlns='http://www.w3.org/2000/svg' width='2048' height='1024'><rect width='2048' height='1024' fill='red'/></svg>".utf8)
+        let snapshot = try AttachmentImageSnapshot.prepare(bytes, filename: "large.svg")
+        expectNoDifference(snapshot.original.mimeType, "image/svg+xml")
+        expectNoDifference(snapshot.original.byteCount, Int64(bytes.count))
+        expectNoDifference(snapshot.original.id, SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined())
+        let source = try #require(CGImageSourceCreateWithData(snapshot.displayData as CFData, nil))
+        expectNoDifference(CGImageSourceGetType(source) as String?, "public.png")
+        let image = try #require(CGImageSourceCreateImageAtIndex(source, 0, nil))
+        expectNoDifference(image.width, 1_024)
+        expectNoDifference(image.height, 512)
+        var pixels = [UInt8](repeating: 0, count: 4)
+        try pixels.withUnsafeMutableBytes { storage in
+            let context = try #require(CGContext(data: storage.baseAddress, width: 1, height: 1,
+                bitsPerComponent: 8, bytesPerRow: 4, space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+            context.draw(image, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+        }
+        if let output = ProcessInfo.processInfo.environment["FILICON_UI_REVIEW_OUTPUT"] {
+            let directory = URL(fileURLWithPath: output)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try snapshot.displayData.write(to: directory.appending(path: "native-large-svg.png"))
+        }
+        #expect(pixels[0] > 240 && pixels[1] < 10 && pixels[2] < 10 && pixels[3] > 240,
+            "Actual RGBA pixels: \(pixels)")
+        let native = try #require(AttachmentImageView(snapshot: snapshot).image)
+        expectNoDifference(native.size, CGSize(width: 1_024, height: 512))
+    }
+
+    @Test(arguments: ["image", "thumbnail", "file"])
+    func cancelledImagePreparationCannotReachAnyParser(route: String) async throws {
+        let bytes = Data("not an image".utf8)
+        let gate = AsyncStream<Void>.makeStream()
+        let worker = Task {
+            var iterator = gate.stream.makeAsyncIterator()
+            _ = await iterator.next()
+            switch route {
+            case "image": return try AttachmentImageSnapshot.prepare(bytes, filename: "image.png").displayData
+            case "thumbnail": return try AttachmentImageSnapshot.thumbnail(bytes, filename: "image.png")
+            default: return try AttachmentPreviewSnapshot.verified(for: AttachmentPreviewFile(filename: "image.png",
+                fileURL: URL(fileURLWithPath: "/nonexistent/cancelled-image.png"))).data ?? Data()
+            }
+        }
+        worker.cancel()
+        gate.continuation.yield(())
+        gate.continuation.finish()
+        await #expect(throws: CancellationError.self) { try await worker.value }
+    }
+
+    @Test(arguments: ["mp4", "mp3", "bin", "pdf", "csv"])
+    func onlySnapshotParsersRetainVerifiedBytes(suffix: String) throws {
+        let sandbox = FileManager.default.temporaryDirectory.appending(path: "preview-snapshot-\(UUID())", directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: sandbox) }
+        try FileManager.default.createDirectory(at: sandbox, withIntermediateDirectories: true)
+        let path = sandbox.appending(path: "preview.\(suffix)")
+        let bytes = Data("original".utf8)
+        try bytes.write(to: path)
+        let file = AttachmentPreviewFile(filename: path.lastPathComponent, fileURL: path,
+            metadata: .init(id: SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined(),
+                filename: path.lastPathComponent, mimeType: "application/octet-stream", byteCount: Int64(bytes.count),
+                kind: .other, createdAt: Date(timeIntervalSince1970: 1)))
+        let snapshot = try AttachmentPreviewSnapshot.verified(for: file)
+        expectNoDifference(snapshot.data, ["pdf", "csv"].contains(suffix) ? bytes : nil)
+        #expect(snapshot.image == nil)
+        expectNoDifference(try AttachmentFileIntegrity().verifiedData(for: file), bytes)
+    }
+
+    @Test(arguments: ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"], [false, true])
+    @MainActor func validatedVectorAndUnavailableImageRenderInSevenLanguages(language: String, unavailable: Bool) async throws {
+        let bytes = Data("<svg xmlns='http://www.w3.org/2000/svg' width='2048' height='1024'><rect width='2048' height='1024' fill='red'/></svg>".utf8)
+        let snapshot = unavailable ? nil : try AttachmentImageSnapshot.prepare(bytes, filename: "large.svg")
+        let output = ProcessInfo.processInfo.environment["FILICON_UI_REVIEW_OUTPUT"].map { URL(fileURLWithPath: $0) }
+        try await withUIRenderTurn(language: language) {
+            if language != "en" {
+                #expect(FiliconLocalization.string("Image preview unavailable") != "Image preview unavailable")
+                #expect(FiliconLocalization.string("Image unavailable") != "Image unavailable")
+            }
+            expectNoDifference(AttachmentImagePreviewError.unavailable.localizedDescription,
+                FiliconLocalization.string("Image preview unavailable"))
+            let host = NSHostingView(rootView: AttachmentImageView(snapshot: snapshot)
+                .frame(width: 760, height: 560)
+                .background(Color.white)
+                .environment(\.locale, Locale(identifier: language))
+                .environment(\.colorScheme, .light))
+            host.appearance = NSAppearance(named: .aqua)
+            host.frame = .init(x: 0, y: 0, width: 760, height: 560)
+            host.layoutSubtreeIfNeeded()
+            #expect(host.fittingSize.height <= 560)
+            let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            var visiblePixels = 0
+            var pixel = [UInt](repeating: 0, count: bitmap.samplesPerPixel)
+            for y in stride(from: 0, to: bitmap.pixelsHigh, by: 4) {
+                for x in stride(from: 0, to: bitmap.pixelsWide, by: 4) {
+                    bitmap.getPixel(&pixel, atX: x, y: y)
+                    if pixel.prefix(3).contains(where: { $0 < 240 }) { visiblePixels += 1 }
+                }
+            }
+            #expect(visiblePixels > 10)
+            if let output {
+                try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+                try #require(bitmap.representation(using: .png, properties: [:])).write(
+                    to: output.appending(path: "native-vector-\(language)-\(unavailable ? "unavailable" : "validated").png"))
+            }
+        }
     }
 
     @Test func parsesQuotedCSVWithoutTreatingContentAsCode() throws {
