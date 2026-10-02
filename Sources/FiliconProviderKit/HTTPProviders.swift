@@ -428,7 +428,11 @@ private struct HTTPStreamingProvider: AIProvider {
                 }
                 if let finish = candidate["finishReason"] as? String {
                     if ["SAFETY", "RECITATION", "BLOCKLIST", "PROHIBITED_CONTENT", "SPII"].contains(finish) { throw ProviderError.refusal("Gemini finish reason: \(finish)") }
-                    c.yield(.completed(state.hadTools ? .toolUse : finishReason(finish))); state.terminal = true
+                    let reason = finishReason(finish)
+                    // A complete function-call object is not evidence that the
+                    // response completed successfully. Preserve truncation,
+                    // cancellation and unknown reasons instead of executing it.
+                    c.yield(.completed(state.hadTools && reason == .stop ? .toolUse : reason)); state.terminal = true
                 }
             }
         }

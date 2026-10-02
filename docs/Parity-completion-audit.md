@@ -1,5 +1,7 @@
 # 完成驗收入口（2026-09-27）
 
+2026-10-03 共用 runner 增量：工具批次、互動 callback 及 plain coordinator 已接上嚴格 provider-response 完成判定，Gemini 保留真正失敗原因；124 項聚焦回歸／9 suites、完整串行回歸 exit 0：135 XCTest＋1,640 Swift Testing（兩項 opt-in live Codex 測試略過）、原生建置、封裝和七語檢查通過。以下專節保留本批證據與尚未接線的完整背景 session／記憶 audience／外部驗收；不以安全修正關閉整體 partial。
+
 2026-10-03 背景純文字增量：workflow／automation 的結果收集現在要求明確完成，拒絕遺失結尾、截斷、工具事件及晚到錯誤，並有累計 UTF-8 上限；明確空白 stop 和完成後 usage 仍接受。最後聚焦 41 tests／4 suites、完整串行回歸 exit 0：135 XCTest＋1,632 Swift Testing（兩項 opt-in live Codex 測試略過），原生建置／封裝簽章及七語檢查通過。這是既有 text-only 路徑的結果修正，不以此關閉背景 runner、記憶 audience、外部服務或全 48 分類驗收。
 
 2026-10-03 workflow 生命週期增量：帳號切換現在同步撤銷整體 workflow 執行範圍，再取消 runtime 與共用代理人排程器；手動、已驗證事件、定時及重播四條入口均保留原始 dispatch fence。晚到核准／模型結果、同批後續 workflow 與舊 UI reload 不得跨越撤銷，成功歷史及 UI 投影使用同步提交 fence。43 項最終聚焦測試、原生建置／封裝簽章及七語檢查通過；最後完整回歸 exit 0：135 XCTest＋1,622 Swift Testing（兩項 opt-in live Codex 測試略過）。以下專節保留背景執行器與記憶授權的實際差異，不將本批取消修正寫成全背景 runtime 對等。
@@ -166,3 +168,17 @@ Filicon `AppAutomationExecutor` 與 `AppWorkflowPromptExecutor` 目前仍使用 
 最後完整串行回歸 `background-text-completion-full.log` exit 0：135 XCTest＋1,632 Swift Testing（核心 869／99 suites、App 532／74 suites；兩項 opt-in live Codex 測試略過）。`background-text-completion-native.log` BUILD SUCCEEDED；`background-text-completion-package.log` 四個執行檔、deep／strict 簽章及 app／XPC entitlements 核對通過。七語各 1,724 keys／0 missing。日誌位於 `.build/validation/`，不提交產物；略過的兩項 live 測試不算真實 Codex／外部服務驗收證據。
 
 沒有增加或實際執行工具、傳送已同意事實到背景、修改真實帳號／群組、push 或啟動／重啟使用者 App／Xcode。本批成功只證明 text-only 推論完成，不證明模型所聲稱的網站、登入或外部動作真的完成；原版完整 background session／management／group runner、需新 audience 同意的背景記憶、平台後端及其他分類驗收仍保留，不能上調整體 partial 或宣稱全 48 分類完成。
+
+## 共用 runner 完成：未完成的工具回應不得觸發 host 效果（2026-10-03）
+
+本輪持續核對 reference `a9f633e09d49a85829b8236331b9e21f7e612634` 的 `automation-run-path.ts`：真正 background session 走相同 session 的 exclusive run，並區分一般 runner 與 group orchestrator。接線前，新隔離測試重現 Filicon 已使用的 ToolLoop／TurnCoordinator 漏洞；這不是 reference 已執行通過的聲明，也不能以修正該漏洞替代完整背景執行器。
+
+- 新增內部 `InferenceResponseCompletion`，只判定一個 provider response，不誤把 multi-step ToolLoop 的每個 toolUse 當成整個 turn 的 final stop。普通批次每一步要求一次明確完成，toolUse 對應非空、完整且有效的呼叫；最終無呼叫只能 stop。缺少完成、length、unknown、cancelled、矛盾 stop、重複完成、完成後正文／推理／start／工具及 provider 偽造 result 均拒絕。取消維持 CancellationError，length 維持 truncated；完成後 usage 仍允許。
+- 普通批次等串流正常 EOF、再次檢查 Task 及完成狀態後，才解析 executor／schema、開始效果及交易記錄。late transport error 不因先收到 toolUse 被吞掉。既有 pending argument 型別錯誤、八步限制、parallel-safe／順序批次、問題 suspension、事件 acknowledgement 與 lane cleanup 保留。三個舊 multi-call fixture 原先每個呼叫都附 completion，已修正為每批一次，不放寬 runtime 來配合錯誤 fixture。
+- 互動 provider 的工具仍只透過 host callback 執行／持久化／回傳。外層只接受明確 stop，並在傳送 stop 給 consumer 前關閉新 callback；還有 active callback 時不報成功，收尾仍等待已接受呼叫。provider 的工具事件不能偽造執行。這不回滾 stop 前已完成的工具，也不宣稱能強制中斷不合作的 executor、任意 buffer 或永不返回的串流。
+- plain TurnCoordinator 與 TextOnlyInference 使用相同完成判定，plain 路徑不得靠 EOF 或工具宣稱成功；text-only 的 100,000 UTF-8 bytes、usage／reasoning 與 host lease 檢查維持原義。沒有新增權限或默認背景工具。
+- Gemini 原先只要 hadTools 就把任何完成理由改成 toolUse，新 HTTP fixture 確認 length／unknown／cancelled 都會錯誤執行一次。現在只把有效 stop＋工具轉為 toolUse，其他完成原因保留。測試使用 URLProtocol 封閉的假回應與 fixture key，不呼叫 Gemini 帳號或網路。
+
+依測試技能使用固定 conversation ID、受控 gate、假 provider／executor／transaction hook 與 CustomDump。`shared-runner-completion-red.log` 為新 6 項測試函式、49 初始案例的 56 個失敗斷言；另 `shared-runner-gemini-red.log` 為 2 項函式／7 案例的 9 個失敗斷言，包含 host effect 實際被執行的探針。修正後 runner completion 有 58 案例，Gemini 7 案例；實際 App 群組／mailbox／現有 background 入口、排程、Stop／切帳號、核准、provider contract、工具順序與舊批次回歸共 124 tests／9 suites 在 `shared-runner-completion-focused-final.log` 通過。早期普通 `xcodebuild` 因系統選用 CommandLineTools 無法啟動；指定完整 Xcode 的 `shared-runner-completion-native-final.log` BUILD SUCCEEDED，未變更 xcode-select 或使用者 Xcode 狀態。`shared-runner-completion-package.log` 四個執行檔、deep／strict 簽章與 app／XPC entitlements 通過，七語各 1,724 keys／0 missing。
+
+最後完整串行回歸 `shared-runner-completion-full.log` exit 0：135 XCTest＋1,640 Swift Testing（核心 877／100 suites、App 532／74 suites；兩項 opt-in live Codex 測試略過）。略過測試不算真實 Codex／外部服務驗收。日誌在 `.build/validation/`，不提交產物。本批未 push、未啟動／重啟使用者 App／Xcode、未修改真實帳號／群組／連線、未延伸 direct／group／mailbox 的記憶 consent。真正 automation／workflow background session、management／group runner、獨立工具與記憶授權及外部平台／其他分類驗收仍保留。

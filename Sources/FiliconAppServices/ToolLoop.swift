@@ -124,12 +124,10 @@ public actor ToolLoop {
             var calls: [NormalizedToolCall] = []
             var assistantText = ""
             var pending = Set<ToolCallID>()
+            var completion = InferenceResponseCompletion(allowsToolCalls: true)
             for try await event in provider.stream(request) {
                 try Task.checkCancellation()
-                // Only our executors may produce results. A provider event is not
-                // evidence that an operation actually ran on the user's machine.
-                if case .toolResult = event { throw ProviderError.invalidResponse }
-                try await continuation.yield(event)
+                try completion.consume(event)
                 if case .toolCallStarted(let id, _) = event {
                     guard !seen.contains(id), pending.insert(id).inserted else { throw ToolLoopError.duplicateCallID(id) }
                 }
@@ -143,8 +141,17 @@ public actor ToolLoop {
                     calls.append(call)
                 }
                 if case .textDelta(let text) = event { assistantText += text }
+                if case .completed = event {
+                    if let unfinished = pending.first { throw ToolLoopError.malformedArguments(unfinished) }
+                    try completion.finish(hasToolCalls: !calls.isEmpty)
+                }
+                try await continuation.yield(event)
             }
+            try Task.checkCancellation()
             if let unfinished = pending.first { throw ToolLoopError.malformedArguments(unfinished) }
+            // Never execute a collected call on EOF alone, token-limit/cancelled
+            // completion, a contradictory stop, or a late transport error.
+            try completion.finish(hasToolCalls: !calls.isEmpty)
             guard !calls.isEmpty else { return }
             guard step < Self.maximumSteps else { throw ToolLoopError.toolStepLimit(maximum: Self.maximumSteps) }
 
@@ -170,6 +177,7 @@ public actor ToolLoop {
             messages: messages, tools: snapshot.descriptors, toolExchanges: initial.toolExchanges,
             attachmentsByMessageID: initial.attachmentsByMessageID, reasoningEffort: initial.reasoningEffort)
         let calls = InteractiveCallLedger()
+        var completion = InferenceResponseCompletion()
         do {
             for try await event in provider.stream(request, executeTool: { [self] call in
                 try Task.checkCancellation()
@@ -185,15 +193,17 @@ public actor ToolLoop {
                 }
             }) {
                 try Task.checkCancellation()
-                // All tool events come from the host callback, not provider assertions.
-                switch event {
-                case .toolCallStarted, .toolCallArgumentsDelta, .toolCallCompleted, .toolResult:
-                    throw ProviderError.invalidResponse
-                default: try await continuation.yield(event)
+                try completion.consume(event)
+                if case .completed = event {
+                    // Seal before acknowledging stop, not only at EOF. A provider
+                    // must finish every owned callback before reporting completion.
+                    try await calls.sealCompletion()
                 }
+                try await continuation.yield(event)
             }
             await calls.closeAndWait()
             try Task.checkCancellation()
+            try completion.finish()
         } catch {
             await calls.closeAndWait()
             throw error
@@ -318,6 +328,10 @@ private actor InteractiveCallLedger {
             let pending = waiters; waiters.removeAll()
             for waiter in pending { waiter.resume() }
         }
+    }
+    func sealCompletion() throws {
+        closed = true
+        guard active == 0 else { throw ProviderError.invalidResponse }
     }
     func closeAndWait() async {
         closed = true

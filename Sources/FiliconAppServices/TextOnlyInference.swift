@@ -23,13 +23,14 @@ public enum TextOnlyInference {
         guard maximumOutputBytes >= 0 else { throw ProviderError.invalidResponse }
         var text = "", bytes = 0
         var usage: Usage?
-        var completed = false
+        var completion = InferenceResponseCompletion()
         do {
             for try await event in stream {
                 try check()
+                try completion.consume(event)
                 switch event {
                 case .textDelta(let delta):
-                    guard !completed, delta.utf8.count <= maximumOutputBytes - bytes else {
+                    guard delta.utf8.count <= maximumOutputBytes - bytes else {
                         throw ProviderError.invalidResponse
                     }
                     bytes += delta.utf8.count
@@ -37,23 +38,12 @@ public enum TextOnlyInference {
                 case .usage(let value):
                     // OpenAI-compatible streams may send usage after finish_reason.
                     usage = value
-                case .responseStarted, .reasoningDelta:
-                    guard !completed else { throw ProviderError.invalidResponse }
-                case .toolCallStarted, .toolCallArgumentsDelta, .toolCallCompleted, .toolResult:
-                    throw ProviderError.invalidResponse
-                case .completed(let reason):
-                    if reason == .cancelled { throw CancellationError() }
-                    guard !completed else { throw ProviderError.invalidResponse }
-                    switch reason {
-                    case .stop: completed = true
-                    case .length: throw ProviderError.truncated(reason.rawValue)
-                    case .toolUse, .unknown: throw ProviderError.invalidResponse
-                    case .cancelled: throw CancellationError()
-                    }
+                case .responseStarted, .reasoningDelta, .toolCallStarted, .toolCallArgumentsDelta,
+                     .toolCallCompleted, .toolResult, .completed: break
                 }
             }
             try check()
-            guard completed else { throw ProviderError.invalidResponse }
+            try completion.finish()
             // Empty text with an explicit stop is a valid silent response.
             return .init(text: text, usage: usage)
         } catch {

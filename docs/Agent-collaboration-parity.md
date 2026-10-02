@@ -1,5 +1,11 @@
 # 協作能力核對紀錄（更新至 2026-10-03）
 
+## 共用 runner 的工具執行完成界線（2026-10-03）
+
+接回完整背景 session 前，實際共用 runner 被新測試確認仍會在缺少 completion／length／cancelled 後執行已收集工具，並在互動 stop 後接受新 callback；Gemini adapter 另會將失敗完成原因誤標為 toolUse。本批已修正這三個缺陷，並共用單一 provider-response 完成判定；不把 token 上限後的完整 JSON 當成執行授權，也不將 provider toolResult 當真實操作證據。
+
+124 項聚焦回歸／9 suites、原生建置、封裝及七語檢查通過；最後完整串行回歸 exit 0：135 XCTest＋1,640 Swift Testing（核心 877／100 suites、App 532／74 suites；兩項 opt-in live Codex 測試略過）。只有 batch 在正常 EOF 後開始效果；互動模式保留已接受 callback 的真正執行／交易與收尾，並非回滾已完成的外部動作。實際 App automation／workflow 仍是有界 text-only 路徑，既有 direct／group／mailbox 記憶 consent 未擴大到 unattended 背景。完整證據、剩餘界線與日誌見 [Parity-completion-audit.md 的「共用 runner 完成」](Parity-completion-audit.md)，不宣稱所有原版能力或 48 分類已完成。
+
 ## 背景純文字回應的完成界線（2026-10-03）
 
 `AppWorkflowPromptExecutor` 與 `AppAutomationExecutor` 已共用 `TextOnlyInference`：必須收到明確 stop 且串流正常結束才能回傳成功；明確空白 stop 保留原版允許 silence 的能力。缺少 completion、unknown、length、重複 stop、完成後再送正文／推理／response-start、所有 tool-call／tool-result 均不能算成功；cancelled 保持取消分類，晚到 transport error 不因先收到 stop 就被吞掉。usage 可在 stop 後抵達，未將私人 reasoning 當正文。每個入口的回應累計最多 100,000 UTF-8 bytes；workflow 仍由 runtime 另外限制各步合計，不默默截斷成成功結果。保留既有 provider 錯誤型別，未增加 UI 文案。

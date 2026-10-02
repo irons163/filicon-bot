@@ -1,7 +1,9 @@
 import Foundation
 import Testing
+import CustomDump
 @testable import FiliconDomain
 @testable import FiliconProviderKit
+import FiliconAppServices
 
 private final class ContractURLProtocol: URLProtocol, @unchecked Sendable {
     nonisolated(unsafe) static var handler: (@Sendable (URLRequest) throws -> (Int, Data))?
@@ -251,6 +253,50 @@ struct ProviderContractTests {
         }
     }
 
+    @Test(arguments: ["STOP", "MAX_TOKENS", "FINISH_REASON_UNSPECIFIED", "CANCELLED"])
+    func geminiToolCallsCannotHideAnUnsuccessfulFinishReason(reason: String) async throws {
+        ContractURLProtocol.handler = { _ in
+            let fixture = "data: {\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"id\":\"call-1\",\"name\":\"effect\",\"args\":{}}}]},\"finishReason\":\"\(reason)\"}]}\n\n"
+            return (200, Data(fixture.utf8))
+        }
+        let events = try await collect(GeminiProvider(credential: { "fixture-key" }, session: contractSession()))
+        let terminal = events.compactMap { if case .completed(let value) = $0 { value } else { nil } }
+        let expected: FinishReason = switch reason {
+        case "STOP": .toolUse
+        case "MAX_TOKENS": .length
+        case "CANCELLED": .cancelled
+        default: .unknown
+        }
+        expectNoDifference(terminal, [expected])
+    }
+
+    @Test(arguments: ["MAX_TOKENS", "FINISH_REASON_UNSPECIFIED", "CANCELLED"])
+    func geminiHTTPToolResponseMustFailBeforeTheHostExecutorRuns(reason: String) async throws {
+        ContractURLProtocol.handler = { _ in
+            let fixture = "data: {\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"id\":\"call-1\",\"name\":\"effect\",\"args\":{}}}]},\"finishReason\":\"\(reason)\"}]}\n\n"
+            return (200, Data(fixture.utf8))
+        }
+        let effects = ContractToolEffects()
+        let loop = ToolLoop(provider: GeminiProvider(credential: { "fixture-key" }, session: contractSession()),
+                            catalog: ToolCatalog([ContractEffectExecutor(effects: effects)]))
+        let scope = UUID(uuidString: "00000000-0000-0000-0000-000000000302")!
+        let run = await loop.start(.init(conversationID: scope, modelID: "fixture", messages: []), context: .init(conversationID: scope))
+        do {
+            for try await _ in run.events {}
+            await run.finish()
+            Issue.record("An unsuccessful Gemini tool response must fail")
+        } catch {
+            await run.cancelAndWait()
+            switch reason {
+            case "MAX_TOKENS": expectNoDifference(error as? ProviderError, .truncated("length"))
+            case "CANCELLED": #expect(error is CancellationError)
+            default: expectNoDifference(error as? ProviderError, .invalidResponse)
+            }
+        }
+        let executions = await effects.executions
+        expectNoDifference(executions, 0)
+    }
+
     @Test func normalizesStreamAndHTTPFailures() async throws {
         ContractURLProtocol.handler = { _ in (200, Data("data: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"busy\"}}\n\n".utf8)) }
         do {
@@ -275,5 +321,19 @@ struct ProviderContractTests {
         } catch let error as ProviderError {
             #expect(error == .transport("model unavailable"))
         }
+    }
+}
+
+private actor ContractToolEffects {
+    private(set) var executions = 0
+    func executed() { executions += 1 }
+}
+
+private struct ContractEffectExecutor: ToolExecutor {
+    let descriptor = ToolDescriptor(name: "effect")
+    let effects: ContractToolEffects
+    func execute(_ call: NormalizedToolCall, context: ToolContext) async throws -> NormalizedToolResult {
+        await effects.executed()
+        return .init(callID: call.id, content: [.text("HOST_RESULT")])
     }
 }

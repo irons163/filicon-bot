@@ -148,7 +148,7 @@ private struct PolicyContextExecutor: ToolExecutor, ToolRuntimeContextProviding 
 
 @Test func parallelSafeCallsRunTogetherButResultsKeepCallOrder() async throws {
     let first = try toolCall("first", "slow", "{\"value\":\"1\"}"), second = try toolCall("second", "fast", "{\"value\":\"2\"}")
-    let provider = ScriptedToolProvider { step, _ in step == 0 ? toolEvents(first) + toolEvents(second) : [.completed(.stop)] }
+    let provider = ScriptedToolProvider { step, _ in step == 0 ? Array(toolEvents(first).dropLast()) + toolEvents(second) : [.completed(.stop)] }
     let probe = ToolExecutionProbe()
     func executor(_ name: ToolName, delay: Duration) -> ClosureToolExecutor {
         ClosureToolExecutor(descriptor: .init(name: name, inputSchema: objectSchema, parallelSafe: true)) { call, _ in
@@ -164,7 +164,7 @@ private struct PolicyContextExecutor: ToolExecutor, ToolRuntimeContextProviding 
 
 @Test func oneUnsafeDescriptorForcesWholeStepSequential() async throws {
     let a = try toolCall("a", "a", "{\"value\":\"1\"}"), b = try toolCall("b", "b", "{\"value\":\"2\"}")
-    let provider = ScriptedToolProvider { step, _ in step == 0 ? toolEvents(a) + toolEvents(b) : [.completed(.stop)] }
+    let provider = ScriptedToolProvider { step, _ in step == 0 ? Array(toolEvents(a).dropLast()) + toolEvents(b) : [.completed(.stop)] }
     let probe = ToolExecutionProbe()
     func executor(_ name: ToolName, safe: Bool) -> ClosureToolExecutor { .init(descriptor: .init(name: name, inputSchema: objectSchema, parallelSafe: safe)) { call, _ in await probe.begin(); try await Task.sleep(for: .milliseconds(15)); await probe.end(); return .init(callID: call.id, content: [.text("ok")]) } }
     _ = try await collectToolLoop(ToolLoop(provider: provider, catalog: ToolCatalog([executor("a", safe: true), executor("b", safe: false)])))
@@ -174,7 +174,7 @@ private struct PolicyContextExecutor: ToolExecutor, ToolRuntimeContextProviding 
 @Test func duplicateUnknownMalformedAndSchemaFailuresAreTyped() async throws {
     let valid = try toolCall("same", "known", "{\"value\":\"ok\"}")
     let executor = ClosureToolExecutor(descriptor: .init(name: "known", inputSchema: objectSchema)) { call, _ in .init(callID: call.id, content: [.text("ok")]) }
-    let duplicate = ScriptedToolProvider { _, _ in toolEvents(valid) + toolEvents(valid) }
+    let duplicate = ScriptedToolProvider { _, _ in Array(toolEvents(valid).dropLast()) + toolEvents(valid) }
     await #expect(throws: ToolLoopError.duplicateCallID("same")) { _ = try await collectToolLoop(ToolLoop(provider: duplicate, catalog: ToolCatalog([executor]))) }
 
     let missing = try toolCall("u1", "missing")

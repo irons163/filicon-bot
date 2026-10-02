@@ -203,14 +203,19 @@ public actor TurnCoordinator {
             )
             toolRun = run; stream = run.events
         } else { toolRun = nil; stream = submission.provider.stream(submission.request) }
+        var completion = InferenceResponseCompletion()
         do {
             for try await event in stream {
                 try Task.checkCancellation()
                 // ToolLoop awaited this callback before execution. Drain its
                 // stream for completion/cancellation without delivering twice.
-                if toolRun == nil { try await submission.onEvent(event) }
+                if toolRun == nil {
+                    try completion.consume(event)
+                    try await submission.onEvent(event)
+                }
             }
             try Task.checkCancellation()
+            if toolRun == nil { try completion.finish() }
             await toolRun?.finish()
         } catch {
             await toolRun?.cancelAndWait()
