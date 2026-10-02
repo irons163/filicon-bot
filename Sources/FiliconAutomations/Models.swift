@@ -132,6 +132,25 @@ public protocol AutomationExecutor: Sendable {
     func execute(automation: Automation, prompt: String, events: [AutomationEvent]) async throws -> AutomationExecutionResult
 }
 
+/// Host-created after the durable running record is saved. Definitions and
+/// external event payloads cannot choose a run ID or claim its origin.
+public struct AutomationRunRequest: Sendable {
+    public let automation: Automation
+    public let run: AutomationRun
+    public let prompt: String
+    public let events: [AutomationEvent]
+
+    public init(automation: Automation, run: AutomationRun, prompt: String, events: [AutomationEvent]) {
+        self.automation = automation; self.run = run; self.prompt = prompt; self.events = events
+    }
+}
+
+/// Opt-in refinement, preserving existing text-only executors. Session routing
+/// is a host decision, not an authority field on an imported routine.
+public protocol AutomationRunExecutor: AutomationExecutor {
+    func execute(_ request: AutomationRunRequest) async throws -> AutomationExecutionResult
+}
+
 public enum AutomationServiceError: LocalizedError, Equatable, Sendable {
     case invalidDefinition, unknownAutomation(UUID), maximumDefinitions(Int)
     case listenerLimit, unsupportedTrigger(String), duplicateClaim, agentBusy(UUID)

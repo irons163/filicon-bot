@@ -1,5 +1,17 @@
 # 協作能力核對紀錄（更新至 2026-10-03）
 
+## 經人類審核的 routine 群組 runner（2026-10-03）
+
+routine 現在可經「自動化 → 展開排程 → 背景群組會話」明確綁定至包含擁有者的既有群組；定時、已驗證事件與手動執行走同一真實群組 runner，各成員使用自己的 persona／模型、協作工具、PASS、互動核准及持久 publication。seed 使用 service 已保存的真正 run ID，host 標記與事件 mention 不得改變已審核 audience。grant 與 routine 定義分開保存，不可由 import／模型工具產生；定義、帳號、群組目標或成員變更必須重新審核，失效 grant 不 fallback 到 plain provider。
+
+背景已保存記憶為新的獨立同意、預設關閉；原本 scope／project 限制仍保留，群組外委派不繼承，routine seed 不自動作為 suggestions／episodes／synthesis 來源。工具仍保有原有核准，並未授予瀏覽器、檔案、連線或 action 權限。忙碌／等待問題的群組拒絕新 wake，不中斷或重試。Stop、撤銷、切帳號、routine 修改／刪除與晚到核准有 run lease 保護；合作式取消不能回滾已完成外部效果。
+
+隔離 fixture 已實際驗證工程師／設計師共同發話、背景記憶 off/on、跨成員私人事實隔離、三條 dispatch／重開、事件 mention、過期核准、真實本機工具核准／拒絕、晚到核准取消、問題續接與忙碌排斥；七語／明暗核准畫面已渲染。第一輪 Xcode build 抓到新畫面未在原生清單，已補上，保留失敗證據。完整驗證紀錄及成本／合作式取消／packaged XPC 邊界見 [完成驗收入口](Parity-completion-audit.md)。
+
+這取代下方歷史段落的「App automation 全為 text-only」，但僅限上述經審核本機群組分支。未綁定 routine、一般代理人 background session、workflow prompt／action、原版雲端 group metadata 與外部服務仍未完整對齊；全 48 分類需逐項驗收，不能以本批綠燈宣稱全部完成。未 push、未重啟使用者 App／Xcode、未修改真實帳號／群組資料。
+
+本批最終串行回歸 `routine-group-session-full-final.log` exit 0：135 XCTest＋1,660 Swift Testing（核心 882／101 suites、App 546／76 suites；兩項 opt-in live Codex 測試略過）。最後群組 UI 投影競態已補上返回後的 account generation／run lease 重驗；原生建置、四個執行檔 deep／strict 簽章及 app／XPC entitlements、七語各 1,740 keys／0 missing 通過。先前聚焦 53 tests／6 suites；14 個核准畫面 render 均通過，長說明的實際撐寬問題已修正。
+
 ## 共用 runner 的工具執行完成界線（2026-10-03）
 
 接回完整背景 session 前，實際共用 runner 被新測試確認仍會在缺少 completion／length／cancelled 後執行已收集工具，並在互動 stop 後接受新 callback；Gemini adapter 另會將失敗完成原因誤標為 toolUse。本批已修正這三個缺陷，並共用單一 provider-response 完成判定；不把 token 上限後的完整 JSON 當成執行授權，也不將 provider toolResult 當真實操作證據。

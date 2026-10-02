@@ -445,7 +445,12 @@ public actor AutomationService {
         activeAgents.insert(automation.agentID)
         let prompt = buildPrompt(automation: automation, events: events)
         do {
-            let result = try await executor.execute(automation: automation, prompt: prompt, events: events)
+            let result: AutomationExecutionResult
+            if let runner = executor as? any AutomationRunExecutor {
+                result = try await runner.execute(.init(automation: automation, run: run, prompt: prompt, events: events))
+            } else {
+                result = try await executor.execute(automation: automation, prompt: prompt, events: events)
+            }
             run.status = .ok; run.detail = String(result.detail.prefix(300))
             run.inputTokens = result.inputTokens; run.outputTokens = result.outputTokens; run.actualCost = result.actualCost
         } catch is CancellationError {

@@ -1,5 +1,9 @@
 # 完成驗收入口（2026-09-27）
 
+2026-10-03 排程群組接線增量：人類可將既有 routine 明確綁定至既有群組；手動、定時與已驗證事件使用同一個真正群組 runner／持久對話，不再只是獨立 persona＋prompt 回應。背景已保存記憶另有預設關閉的獨立同意，不能借用原本 direct／group／mailbox 同意。下方「經審核 routine 的既有群組 session」記錄本批範圍及證據；舊段落的「automation 全為 text-only」是此前狀態，未綁定 routine 與 workflow prompt 仍維持 text-only。一般代理人 background session、完整 workflow、外部平台與全 48 分類仍須補齊／驗收。
+
+本批最終串行回歸 exit 0：135 XCTest＋1,660 Swift Testing（核心 882／101 suites、App 546／76 suites；兩項 opt-in live Codex 測試略過）。原生建置、四個執行檔的封裝／deep strict 簽章及 entitlements、七語各 1,740 keys／0 missing 通過。既有 CoreData NSXPC 診斷不視為測試失敗，也不冒充 live 外部服務驗收。
+
 2026-10-03 共用 runner 增量：工具批次、互動 callback 及 plain coordinator 已接上嚴格 provider-response 完成判定，Gemini 保留真正失敗原因；124 項聚焦回歸／9 suites、完整串行回歸 exit 0：135 XCTest＋1,640 Swift Testing（兩項 opt-in live Codex 測試略過）、原生建置、封裝和七語檢查通過。以下專節保留本批證據與尚未接線的完整背景 session／記憶 audience／外部驗收；不以安全修正關閉整體 partial。
 
 2026-10-03 背景純文字增量：workflow／automation 的結果收集現在要求明確完成，拒絕遺失結尾、截斷、工具事件及晚到錯誤，並有累計 UTF-8 上限；明確空白 stop 和完成後 usage 仍接受。最後聚焦 41 tests／4 suites、完整串行回歸 exit 0：135 XCTest＋1,632 Swift Testing（兩項 opt-in live Codex 測試略過），原生建置／封裝簽章及七語檢查通過。這是既有 text-only 路徑的結果修正，不以此關閉背景 runner、記憶 audience、外部服務或全 48 分類驗收。
@@ -168,6 +172,27 @@ Filicon `AppAutomationExecutor` 與 `AppWorkflowPromptExecutor` 目前仍使用 
 最後完整串行回歸 `background-text-completion-full.log` exit 0：135 XCTest＋1,632 Swift Testing（核心 869／99 suites、App 532／74 suites；兩項 opt-in live Codex 測試略過）。`background-text-completion-native.log` BUILD SUCCEEDED；`background-text-completion-package.log` 四個執行檔、deep／strict 簽章及 app／XPC entitlements 核對通過。七語各 1,724 keys／0 missing。日誌位於 `.build/validation/`，不提交產物；略過的兩項 live 測試不算真實 Codex／外部服務驗收證據。
 
 沒有增加或實際執行工具、傳送已同意事實到背景、修改真實帳號／群組、push 或啟動／重啟使用者 App／Xcode。本批成功只證明 text-only 推論完成，不證明模型所聲稱的網站、登入或外部動作真的完成；原版完整 background session／management／group runner、需新 audience 同意的背景記憶、平台後端及其他分類驗收仍保留，不能上調整體 partial 或宣稱全 48 分類完成。
+
+## 經審核 routine 的既有群組 session（2026-10-03）
+
+reference `a9f633e09d49a85829b8236331b9e21f7e612634` 的 `source/host/extensions/transcript/automation-run-path.ts` 68–105 行會將 group automation seed 寫入群組 session，再交給 background／automation `GroupChatOrchestrator`；109–239 行另保留一般代理人的 existing runner、exclusive run、真正 run ID 及 event wake。Filicon 本批接上經人類審核的本機既有群組分支，不聲稱 reconstructed production 的外部後端或背景記憶已實際驗收。
+
+入口是「自動化 → 展開排程 → 背景群組會話」，選擇包含該排程擁有者的既有群組後，審閱完整排程本文、目標群組、成員及群組目標，再按「核准群組會話」。可從同一處開啟群組或撤銷綁定。背景已保存記憶預設關閉，須在這個視窗另行同意；取消不保存 grant。七語文案、明暗外觀與長說明換行均有隔離 render。
+
+- `AutomationRunExecutor` 接收 service 已保存的 running record，而非隨機另建 run ID；手動／定時／事件使用相同 dispatch。host-only `automation-group-sessions.json` 不屬於 routine import／`update_state` schema。grant 精確綁 account、routine owner／definition digest／revision、group name／goal／member IDs，CAS 寫入、私有檔案權限及最終 lease commit 保護保存。變更後必須重新審核；存在但失效的 grant 拒絕執行，不默默退回另一模型呼叫。不存在 grant 的 routine 保持有界、嚴格完成的 text-only 路徑。
+- seed 具有實際 automation／run ID、host name 及外部事件標記，寫入真正群組紀錄並顯示排程標記。事件本文與 `@` mention 是不可信任務資料，不能縮小／擴大已審核的整群 audience，也不是檔案、瀏覽器、連線或動作權限。
+- 透過既有 `GroupConversationResponder`／`TurnCoordinator`，使用各成員的目前 persona／模型、SendMessage／SendToAgent／管理工具、真正 publication、PASS 及 tool receipts；每位成員各自取得共用 scheduler lane，不在持有擁有者 lane 時再等待自己的 lane。手動使用 user lane，定時／事件使用 background lane 與既有 180 秒合作式期限。
+- 背景記憶同意獨立且限已審核成員；原本 account、私人 owner、共享事實及 joined-project 限制仍有效。關閉時不 recall、不暴露 SearchMemory，偽造 memory mutation 仍拒絕。群組外委派不能繼承該 memory grant。routine seed 不自動收集 suggestions／episodes／synthesis；這不是允許發布無關私人事實，也不擴充 provider／file／browser 授權。
+- 忙碌、停止中或正在等待人類回答問題的群組拒絕新的 wake，不打斷現有工作、不自動重試。問題保留在實際群組，正常人類選擇可續接原發問者；回傳的 generic run finished 摘要不宣稱整個外部任務完成。
+- Stop、撤銷／替換 grant、切帳號、人工修改／停用／刪除 routine 同步撤銷舊 run scope；已核准模型修改在定義真正保存後撤銷。推論開始、每個 event、委派 publication 與收尾均重驗。排隊的取消清理只作用於原 run lease，不可停止同群組較新的人工工作。晚到核准不得產生檔案；已完成的外部效果不能回滾。
+
+聚焦隔離測試 `RoutineGroupSessionTests`、`RoutineGroupSessionRenderTests`、`AutomationGroupBindingTests`、`AutomationRunContextTests` 與既有 group approval／background execution 回歸通過，含工程師／設計師共同發話、memory off/on／peer 隔離、持久重開、三條 dispatch、事件 mention、過期定義／目標／成員／帳號、實際雙層本機寫入核准、拒絕、五種晚到核准取消、問題續接與忙碌排斥。初始 `routine-group-session-red.log` 保留 13 個語意失敗斷言；曾實際重現舊 executor 走 plain、缺少群組 seed 及 stale grant 仍成功。第一輪原生建置 `routine-group-session-native.log` 發現新 SwiftUI source 未加入 Xcode 清單，已補 `project.pbxproj`，保留失敗日誌，不以 SwiftPM 綠燈取代原生建置。
+
+最後檢查另補上群組紀錄讀取返回後的 account generation 重驗：seed UI 投影有同步 lease commit，取消後的 canonical tool statuses 只在原帳號／原 run 身分仍相符時更新，舊讀取不可覆蓋新帳號畫面。第一輪完整回歸 `routine-group-session-full.log` exit 0：135 XCTest＋1,660 Swift Testing（核心 882／101 suites、App 546／76 suites），但發生於此最後修正之前，不作最終 gate。修正後 `routine-group-session-native-final.log` BUILD SUCCEEDED，`routine-group-session-package-final.log` 四個執行檔、deep／strict 簽章及 app／XPC entitlements 通過。七語各 1,740 keys／0 missing；14 個明暗 render 及逐語視覺檢查完成。日誌／PNG 位於 `.build/validation/`，不提交產物；Xcode 請開啟 `Filicon.xcworkspace` 並使用 `Filicon App` scheme。
+
+最後完整串行 gate `routine-group-session-full-final.log` exit 0：135 XCTest＋1,660 Swift Testing（206 suites，核心 882／101、App 546／76）；兩項 opt-in live Codex 測試略過，不算真實模型驗收。先前聚焦 `routine-group-session-focused.log` 共 53 tests／6 suites 通過；最後 UI 投影修正另由完整 gate 覆蓋。未移除系統保護，未更改 xcode-select，未啟動使用者 App／Xcode。
+
+剩餘邊界：本批只綁本機既有群組，不是一般 solo agent existing background session／mailbox、workflow shared runner／action handlers 或原版 cloud group 成員 metadata 的完整還原。群組 token／cost 尚未彙整至 automation history；未知維持 nil，不當作零費用，核准畫面明示沒有價格或全群組預算保證。fixture 的本機寫入使用真實 permission receipt／host 執行，但不是 packaged XPC／live provider／真實外部帳號驗收；release、公證、最低 macOS、平台後端及其餘分類仍保留。未 push、未啟動／重啟使用者 App／Xcode、未更動真實帳號／群組／聊天。
 
 ## 共用 runner 完成：未完成的工具回應不得觸發 host 效果（2026-10-03）
 

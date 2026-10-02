@@ -1924,6 +1924,7 @@ struct RoutineAutomationWorkspaceView: View {
     @State private var prompt = ""
     @State private var listeners = [AutomationListenerDraft()]
     @State private var editSession: RoutineEditSession?
+    @State private var groupSessionEdit: RoutineGroupSessionEdit?
     var body: some View {
         let _ = uiLocale.identifier
         Form {
@@ -1983,6 +1984,26 @@ struct RoutineAutomationWorkspaceView: View {
                     DisclosureGroup {
                         VStack(alignment: .leading, spacing: 8) {
                             Text(automation.prompt).textSelection(.enabled)
+                            VStack(alignment: .leading, spacing: 8) {
+                                Button(l10n("Background group session")) {
+                                    groupSessionEdit = model.beginRoutineGroupSessionEdit(automation)
+                                }
+                                if let binding = model.automationGroupBindings.first(where: {
+                                    $0.automationID == automation.id && $0.accountID == (model.settings.accountScope ?? "local")
+                                }) {
+                                    Text(binding.groupName).font(.caption)
+                                    HStack {
+                                        Button(l10n("Open group")) {
+                                            model.selectGroup(id: binding.groupID)
+                                        }
+                                        Button(l10n("Revoke group session"), role: .destructive) {
+                                            Task { await model.revokeRoutineGroupSession(binding) }
+                                        }
+                                    }
+                                } else {
+                                    Text(l10n("Text-only · no group session consent")).font(.caption).foregroundStyle(.secondary)
+                                }
+                            }
                             if let runs = model.automationHistory[automation.id], !runs.isEmpty {
                                 Text(l10n("Recent runs")).font(.caption.bold())
                                 ForEach(runs) { run in
@@ -1991,7 +2012,7 @@ struct RoutineAutomationWorkspaceView: View {
                                         Text(FiliconLocalization.string(run.trigger.rawValue.capitalized)).foregroundStyle(.secondary)
                                         Text(run.startedAt, style: .relative).foregroundStyle(.secondary)
                                         Spacer()
-                                        Text(run.detail ?? "").lineLimit(2).foregroundStyle(.secondary)
+                                        Text(FiliconLocalization.string(run.detail ?? "")).lineLimit(2).foregroundStyle(.secondary)
                                     }.font(.caption)
                                 }
                             } else {
@@ -2019,6 +2040,9 @@ struct RoutineAutomationWorkspaceView: View {
             .sheet(item: $editSession) { session in
                 RoutineAutomationEditView(session: session)
                     .environmentObject(model)
+            }
+            .sheet(item: $groupSessionEdit) { edit in
+                RoutineGroupSessionView(edit: edit).environmentObject(model)
             }
     }
 

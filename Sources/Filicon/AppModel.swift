@@ -335,6 +335,16 @@ final class AppModel: ObservableObject {
     private let groupService: GroupService?
     private var groupQuestionLifetimes: [UUID: AgentPublicationLifetime] = [:]
     private let automationService: AutomationService?
+    private let automationGroupBindingStore: AutomationGroupSessionBindingStore?
+    @Published private(set) var automationGroupBindings: [AutomationGroupSessionBinding] = []
+    private struct RoutineGroupExecution {
+        let automationID: UUID
+        let groupID: UUID
+        let bindingID: UUID
+        let scope: AgentWorkflowExecutionScope
+        let lease: AgentWorkflowExecutionScope.Lease
+    }
+    private var routineGroupExecutions: [UUID: RoutineGroupExecution] = [:]
     private var routineEditSessions: [UUID: RoutineEditSession] = [:]
     var workflowService: WorkflowService? = nil
     let workflowExecutionScope = AgentWorkflowExecutionScope()
@@ -521,6 +531,7 @@ final class AppModel: ObservableObject {
         }
         pinnedAgentIDs = Set((UserDefaults.standard.stringArray(forKey: "FiliconPinnedAgentIDs") ?? []).compactMap(UUID.init(uuidString:)))
         automationService = try? AutomationService(storeURL: root.appending(path: "automations.json"))
+        automationGroupBindingStore = try? AutomationGroupSessionBindingStore(url: root.appending(path: "automation-group-sessions.json"))
         channelService = try? ChannelService(storeURL: root.appending(path: "channels.json"))
         mcpConfigStore = MCPConfigurationStore(url: root.appending(path: "mcp-servers.json"))
         let mcpOAuthCoordinator = MCPOAuthPendingCoordinator()
@@ -553,7 +564,7 @@ final class AppModel: ObservableObject {
             )
         }
         if let automationService, let agentService {
-            let executor = AppAutomationExecutor(registry: registry, agents: agentService, scheduler: agentExecutionScheduler)
+            let executor = makeAutomationExecutor(agents: agentService)
             automationScheduler = AutomationScheduler(service: automationService, executor: executor)
             let hub = AutomationTriggerHub(service: automationService, executor: executor)
             automationTriggerHub = hub
@@ -648,7 +659,7 @@ final class AppModel: ObservableObject {
             "conversations.json", "composer-drafts.json", "attachments", "channel-attachments", "attachment-index.sqlite",
             "workspace-bookmarks.json", "local-tool-permissions.json", "teach-recordings", "plugins-installed.json",
             "plugin-setup.json", "plugins", "plugin-skills-cache.json", "private-skills", "skill-publications.json", "updates",
-            "agent-avatars", "agents.json", "agent-messages.json", "groups.json", "automations.json", "workflows.json", "runs.json", "channels.json", "mcp-servers.json",
+            "agent-avatars", "agents.json", "agent-messages.json", "groups.json", "automations.json", "automation-group-sessions.json", "workflows.json", "runs.json", "channels.json", "mcp-servers.json",
             "mcp-accounts.json", "mcp-approval-policies.json", "settings.json", "workspace-navigation.json", "auto-review-instructions.json", "onboarding.json",
             "shared-rooms/state.json", "automation-ingress.json", "automation-ingress-audit.json", "quota",
         ].map { dataRoot.appending(path: $0) }
@@ -3576,6 +3587,7 @@ final class AppModel: ObservableObject {
             groupMessages = values
         }
         if let automationService { automations = await automationService.list() }
+        automationGroupBindings = await automationGroupBindingStore?.list() ?? []
         if let channelService {
             channelConnections = await channelService.connections()
             channelDescriptors = await channelService.connectorDescriptors()
@@ -4374,7 +4386,8 @@ final class AppModel: ObservableObject {
         await invalidateMCPAuthorization(conversationID: scopeID)
     }
 
-    private func makeAgentManagementSession(originID: UUID) -> AgentManagementSession? {
+    private func makeAgentManagementSession(originID: UUID, allowsSavedMemory: Bool = true,
+                                            savedMemoryAudience: Set<UUID>? = nil) -> AgentManagementSession? {
         guard let agentService else { return nil }
         let generation = autoReviewAccountGeneration
         let remoteBackend = remoteComputerBackend
@@ -4447,7 +4460,7 @@ final class AppModel: ObservableObject {
             }, commitProject: { [weak self] change, lifetime in
                 guard let self else { throw CancellationError() }
                 try await self.commitAgentProjectChange(change, lifetime: lifetime, originID: originID, generation: generation)
-            })
+            }, allowsSavedMemory: allowsSavedMemory, savedMemoryAudience: savedMemoryAudience)
     }
 
     private func validateAvatarSourceScope(ownerID: UUID, originID: UUID, generation: UInt64,
@@ -4525,10 +4538,14 @@ final class AppModel: ObservableObject {
     }
 
     private func makeAgentMessagingSession(originID: UUID, supportsMailboxQuestions: Bool = false,
-                                           directBinding: DirectConversationAgentBinding? = nil) -> AgentMessagingSession? {
+                                           directBinding: DirectConversationAgentBinding? = nil,
+                                           allowsSavedMemory: Bool = true,
+                                           savedMemoryAudience: Set<UUID>? = nil,
+                                           collectMemoryEvidence: Bool = true) -> AgentMessagingSession? {
         guard let agentService, let agentMessenger, let agentConversations else { return nil }
         let generation = autoReviewAccountGeneration
-        let management = makeAgentManagementSession(originID: originID)
+        let management = makeAgentManagementSession(originID: originID, allowsSavedMemory: allowsSavedMemory,
+            savedMemoryAudience: savedMemoryAudience)
         let secretPublisher: AgentMessagingSession.SecretPublisher?
         if supportsMailboxQuestions, channelService != nil {
             secretPublisher = { [weak self] request, incoming, target, lifetime in
@@ -4588,15 +4605,15 @@ final class AppModel: ObservableObject {
             originConversationID: originID, agents: agentService, messenger: agentMessenger,
             registry: registry, coordinator: coordinator, conversations: agentConversations,
             accountID: settings.accountScope ?? "local", management: management,
-            memoryExtractor: AgentMemorySuggestionExtractor(agents: agentService, registry: registry, scheduler: agentExecutionScheduler,
+            memoryExtractor: collectMemoryEvidence ? AgentMemorySuggestionExtractor(agents: agentService, registry: registry, scheduler: agentExecutionScheduler,
                 record: { [weak self] suggestions, settings, exchangeID, lifetime in
                     guard let self else { throw CancellationError() }
                     try await self.recordMemorySuggestions(suggestions, settings: settings, exchangeID: exchangeID,
                         lifetime: lifetime, originID: originID, generation: generation)
-                }),
-            memorySynthesis: AgentMemorySynthesisTransport(agents: agentService, registry: registry,
-                scheduler: agentExecutionScheduler),
-            memorySynthesisWorker: backgroundMemorySynthesisWorker(),
+                }) : nil,
+            memorySynthesis: collectMemoryEvidence ? AgentMemorySynthesisTransport(agents: agentService, registry: registry,
+                scheduler: agentExecutionScheduler) : nil,
+            memorySynthesisWorker: collectMemoryEvidence ? backgroundMemorySynthesisWorker() : nil,
             memorySynthesisLifetime: backgroundMemorySynthesisLifetime(originID: originID),
             memoryEpisodeReady: memoryEpisodeReadiness(originID: originID),
             supportsMailboxQuestions: supportsMailboxQuestions,
@@ -5426,6 +5443,22 @@ final class AppModel: ObservableObject {
                 result = saved
             }
         } else { result = try await automationService.applyStateChange(change, lifetime: lifetime) }
+        // An approved definition mutation is durable, but it revokes the old
+        // background audience before delegates can begin another operation.
+        let affected = invalidateRoutineGroupExecutions(automationID: change.automation.id)
+        for id in affected {
+            guard let revokedLease = routineGroupExecutions.values.first(where: {
+                $0.automationID == change.automation.id && $0.groupID == id
+            })?.lease else { continue }
+            Task { [weak self] in
+                // A queued cleanup belongs to the revoked run, never to a
+                // newer human turn that acquired this group after it finished.
+                guard let self, self.routineGroupExecutions.values.contains(where: {
+                    $0.groupID == id && $0.lease == revokedLease
+                }) else { return }
+                await self.stopGroup(id: id)
+            }
+        }
         // Do not rebind UI to an old account after awaiting storage. The model's
         // existing scheduler observes the same service; no runNow is invoked.
         let definitions = await automationService.list()
@@ -5825,6 +5858,8 @@ final class AppModel: ObservableObject {
     }
 
     private func isAgentMessagingScopeActive(_ scopeID: UUID) -> Bool {
+        if let execution = routineGroupExecutions.values.first(where: { $0.groupID == scopeID }),
+           (try? execution.lease.check()) == nil { return false }
         if let binding = directMessagingBindings[scopeID] {
             guard binding.accountID == (settings.accountScope ?? "local"),
                   !deletedConversationIDs.contains(scopeID),
@@ -6684,6 +6719,7 @@ final class AppModel: ObservableObject {
     }
 
     func stopGroup(id: UUID) async {
+        for execution in routineGroupExecutions.values where execution.groupID == id { execution.scope.invalidate() }
         invalidateBackgroundMemorySynthesis(originID: id)
         if let originID = delegatedGroupOrigins[id] {
             if runningAgentMessageScopes.contains(originID) { await stopAgentMessages(scopeID: originID) }
@@ -7073,6 +7109,232 @@ final class AppModel: ObservableObject {
         return CredentialRef(providerID: ProviderID(rawValue: "channel.\(identifier)"))
     }
 
+    func beginRoutineGroupSessionEdit(_ automation: Automation) -> RoutineGroupSessionEdit? {
+        guard !agentMessagingAccountTransition, automationGroupBindingStore != nil,
+              automations.contains(where: { $0.id == automation.id && $0.revision == automation.revision }) else { return nil }
+        return .init(automation: automation, accountID: settings.accountScope ?? "local",
+            generation: autoReviewAccountGeneration,
+            binding: automationGroupBindings.first { $0.automationID == automation.id },
+            groups: groups.filter { $0.memberIDs.contains(automation.agentID) && !$0.memberIDs.isEmpty })
+    }
+
+    func saveRoutineGroupSession(_ edit: RoutineGroupSessionEdit, groupID: UUID,
+                                memoryAccess: AutomationGroupSessionBinding.MemoryAccess) async -> Bool {
+        guard let store = automationGroupBindingStore, let automationService, let groupService, let agentService,
+              edit.accountID == (settings.accountScope ?? "local"), edit.generation == autoReviewAccountGeneration,
+              !agentMessagingAccountTransition else { return false }
+        do {
+            let lease = try workflowExecutionScope.capture()
+            guard let automation = await automationService.list().first(where: { $0.id == edit.automation.id }),
+                  automation.revision == edit.automation.revision, automation.agentID == edit.automation.agentID,
+                  let group = await groupService.list().first(where: { $0.id == groupID }),
+                  let reviewed = edit.groups.first(where: { $0.id == groupID }),
+                  group.name == reviewed.name, group.summary == reviewed.summary, group.memberIDs == reviewed.memberIDs else {
+                throw AutomationGroupSessionError.reviewRequired
+            }
+            for memberID in group.memberIDs {
+                guard let profile = await agentService.profile(id: memberID), profile.archivedAt == nil else {
+                    throw AutomationGroupSessionError.unavailable
+                }
+            }
+            try lease.check()
+            let value = try AutomationGroupSessionBinding(automation: automation, accountID: edit.accountID,
+                group: group, memoryAccess: memoryAccess)
+            // Replacing human consent revokes running uses before the first
+            // persistence hop, not after a slow quota/store operation completes.
+            let affected = invalidateRoutineGroupExecutions(automationID: automation.id)
+            for id in affected { await stopGroup(id: id) }
+            do {
+                _ = try await quotaWrite(scope: "automation", key: "group-session-\(automation.id)", data: JSONEncoder().encode(value)) {
+                    try await store.save(value, replacing: edit.binding, lease: lease)
+                }
+            } catch {
+                // Post-commit quota bookkeeping must not present durable human
+                // consent as an unsuccessful save and invite a duplicate retry.
+                guard await store.binding(automationID: value.automationID) == value else { throw error }
+                try lease.check()
+                errorMessage = Self.quotaMessage(error)
+            }
+            try lease.check()
+            let bindings = await store.list()
+            try lease.check()
+            automationGroupBindings = bindings
+            return true
+        } catch {
+            if edit.generation == autoReviewAccountGeneration { errorMessage = FiliconLocalization.string(error.localizedDescription) }
+            return false
+        }
+    }
+
+    func revokeRoutineGroupSession(_ expected: AutomationGroupSessionBinding) async {
+        guard let store = automationGroupBindingStore, !agentMessagingAccountTransition,
+              expected.accountID == (settings.accountScope ?? "local") else { return }
+        let generation = autoReviewAccountGeneration
+        do {
+            let lease = try workflowExecutionScope.capture()
+            let affected = invalidateRoutineGroupExecutions(automationID: expected.automationID)
+            for id in affected { await stopGroup(id: id) }
+            try await store.revoke(expected, lease: lease)
+            try lease.check()
+            let bindings = await store.list()
+            try lease.check()
+            automationGroupBindings = bindings
+        } catch {
+            if generation == autoReviewAccountGeneration { errorMessage = FiliconLocalization.string(error.localizedDescription) }
+        }
+    }
+
+    private func invalidateRoutineGroupExecutions(automationID: UUID) -> Set<UUID> {
+        let affected = routineGroupExecutions.values.filter { $0.automationID == automationID }
+        for execution in affected { execution.scope.invalidate() }
+        return Set(affected.map(\.groupID))
+    }
+
+    private func makeAutomationExecutor(agents: AgentService, lane: AgentExecutionLane = .background) -> AppAutomationExecutor {
+        AppAutomationExecutor(registry: registry, agents: agents, scheduler: agentExecutionScheduler, lane: lane,
+            groupSession: { [weak self] request in
+                guard let self else { throw CancellationError() }
+                return try await self.executeRoutineGroupSessionIfBound(request)
+            })
+    }
+
+    private func validateRoutineGroupExecution(_ request: AutomationRunRequest, binding: AutomationGroupSessionBinding,
+                                               generation: UInt64, lease: AgentWorkflowExecutionScope.Lease) async throws {
+        try lease.check()
+        guard !agentMessagingAccountTransition, generation == autoReviewAccountGeneration,
+              binding.accountID == (settings.accountScope ?? "local"),
+              let execution = routineGroupExecutions[request.run.id], execution.bindingID == binding.id,
+              execution.lease == lease, runningGroups.contains(binding.groupID),
+              !cancelledGroupRuns.contains(binding.groupID), let store = automationGroupBindingStore,
+              await store.binding(automationID: binding.automationID) == binding,
+              let current = await automationService?.list().first(where: { $0.id == request.automation.id }),
+              let group = await groupService?.list().first(where: { $0.id == binding.groupID }),
+              binding.matches(automation: current, accountID: settings.accountScope ?? "local", group: group) else {
+            throw AutomationGroupSessionError.reviewRequired
+        }
+        for memberID in binding.memberIDs {
+            guard let profile = await agentService?.profile(id: memberID), profile.archivedAt == nil else {
+                throw AutomationGroupSessionError.unavailable
+            }
+        }
+        try lease.check()
+    }
+
+    /// nil means there is no host grant. A present but stale grant never falls
+    /// through to another provider call with a different audience or authority.
+    private func executeRoutineGroupSessionIfBound(_ request: AutomationRunRequest) async throws -> AutomationExecutionResult? {
+        guard !agentMessagingAccountTransition else { throw CancellationError() }
+        let generation = autoReviewAccountGeneration
+        let accountLease = try workflowExecutionScope.capture()
+        guard let store = automationGroupBindingStore else { throw AutomationGroupSessionError.unavailable }
+        let saved = await store.binding(automationID: request.automation.id)
+        try accountLease.check()
+        guard let binding = saved else { return nil }
+        guard let groupService, let agentService,
+              let current = await automationService?.list().first(where: { $0.id == request.automation.id }),
+              let group = await groupService.list().first(where: { $0.id == binding.groupID }),
+              binding.matches(automation: request.automation, accountID: settings.accountScope ?? "local", group: group),
+              binding.matches(automation: current, accountID: settings.accountScope ?? "local", group: group) else {
+            throw AutomationGroupSessionError.reviewRequired
+        }
+        for memberID in binding.memberIDs {
+            guard let profile = await agentService.profile(id: memberID), profile.archivedAt == nil else {
+                throw AutomationGroupSessionError.unavailable
+            }
+        }
+        let history = await groupService.messages(groupID: binding.groupID)
+        try accountLease.check()
+        let groupID = binding.groupID
+        guard !runningGroups.contains(groupID), !stoppingGroups.contains(groupID),
+              !history.contains(where: { $0.question?.isPending == true }) else { throw AutomationGroupSessionError.busy }
+        // Reserve on the main actor before suspending. Do not acquire the
+        // routine owner's scheduler lane here: the shared runner acquires each
+        // member's lane, and nesting the owner's lease would deadlock.
+        let scope = AgentWorkflowExecutionScope(), lease = try scope.capture(inheriting: accountLease)
+        routineGroupExecutions[request.run.id] = .init(automationID: request.automation.id, groupID: groupID,
+            bindingID: binding.id, scope: scope, lease: lease)
+        runningGroups.insert(groupID)
+        workspaceFolders.beginTurn(conversationID: groupID)
+        let questionLifetime = AgentPublicationLifetime()
+        groupQuestionLifetimes[groupID] = questionLifetime
+        let messaging = makeAgentMessagingSession(originID: groupID,
+            allowsSavedMemory: binding.memoryAccess == .savedFacts, savedMemoryAudience: Set(binding.memberIDs),
+            collectMemoryEvidence: false)
+        agentMessagingSessions[groupID] = messaging
+        defer {
+            scope.invalidate(); questionLifetime.close()
+            routineGroupExecutions[request.run.id] = nil
+            groupQuestionLifetimes[groupID] = nil; agentMessagingSessions[groupID] = nil
+            runningGroups.remove(groupID); cancelledGroupRuns.remove(groupID)
+            thinkingGroupMembers[groupID] = nil
+        }
+        let outcome: Result<AutomationExecutionResult, any Error>
+        do {
+            try await validateRoutineGroupExecution(request, binding: binding, generation: generation, lease: lease)
+            guard messaging != nil else { throw AutomationGroupSessionError.unavailable }
+            let seed = try await groupService.postRoutineMessage(request.prompt, group: group,
+                wake: .init(automationID: request.automation.id, runID: request.run.id,
+                    name: request.automation.name, containsUntrustedEvents: !request.events.isEmpty),
+                lease: lease, at: request.run.startedAt)
+            let seededHistory = await groupService.messages(groupID: groupID)
+            try lease.commit {
+                guard generation == autoReviewAccountGeneration, !agentMessagingAccountTransition,
+                      routineGroupExecutions[request.run.id]?.lease == lease else { throw CancellationError() }
+                groupMessages[groupID] = seededHistory
+            }
+            let validator: @Sendable () async throws -> Void = { [weak self] in
+                guard let self else { throw CancellationError() }
+                try await self.validateRoutineGroupExecution(request, binding: binding, generation: generation, lease: lease)
+            }
+            let produced = try await groupService.run(groupID: groupID,
+                responder: GroupConversationResponder(groupID: groupID, registry: registry, coordinator: coordinator,
+                    messaging: messaging, userMessageID: seed.id, questionAccountID: binding.accountID,
+                    questionLifetime: questionLifetime, agentLane: request.run.trigger == .manual ? .user : .background,
+                    validateExecution: validator),
+                onAgentChange: { [weak self] agentID in
+                    await MainActor.run {
+                        guard let self, self.routineGroupExecutions[request.run.id]?.lease == lease,
+                              (try? lease.check()) != nil else { return }
+                        self.thinkingGroupMembers[groupID] = agentID
+                    }
+                }, onMessage: { [weak self] message in
+                    await MainActor.run {
+                        guard let self, self.autoReviewAccountGeneration == generation,
+                              self.routineGroupExecutions[request.run.id]?.lease == lease, (try? lease.check()) != nil else { return }
+                        if let index = self.groupMessages[groupID, default: []].firstIndex(where: { $0.id == message.id }) {
+                            self.groupMessages[groupID]?[index] = message
+                        } else { self.groupMessages[groupID, default: []].append(message) }
+                    }
+                })
+            try await validator()
+            if !produced.contains(where: { $0.question != nil }) {
+                try await messaging?.drain(onUpdate: { [weak self] message in
+                    try await validator()
+                    guard let self else { throw CancellationError() }
+                    try await self.recordDelegatedGroupMessage(message)
+                })
+            }
+            try await validator()
+            // The durable group log contains actual publications and tool
+            // receipts, not a synthesized claim that the whole task succeeded.
+            outcome = .success(.init(detail: "Group run finished. Open the group to review replies, tool results and questions."))
+        } catch { outcome = .failure(error) }
+        questionLifetime.close()
+        try? await messaging?.close()
+        await cancelAgentMessageTools(scopeID: groupID)
+        let finalHistory = await groupService.messages(groupID: groupID)
+        // Stop may revoke this run while its canonical tool statuses still
+        // need displaying. Account identity is checked after the store hop;
+        // an old read must never project into a newer account's workspace.
+        if generation == autoReviewAccountGeneration, !agentMessagingAccountTransition,
+           binding.accountID == (settings.accountScope ?? "local"),
+           routineGroupExecutions[request.run.id]?.lease == lease {
+            groupMessages[groupID] = finalHistory
+        }
+        try lease.check()
+        return try outcome.get()
+    }
+
     func createAutomation(agentID: UUID, name: String, prompt: String, schedule: String) async {
         let timeZoneIdentifier = settings.timeZoneIdentifier ?? TimeZone.current.identifier
         await createAutomation(agentID: agentID, name: name, prompt: prompt, trigger: .cron(expression: schedule, timeZoneIdentifier: timeZoneIdentifier))
@@ -7112,6 +7374,8 @@ final class AppModel: ObservableObject {
         }
         try session.lifetime.check()
         let change = try draft.change
+        let affected = invalidateRoutineGroupExecutions(automationID: change.automation.id)
+        for id in affected { await stopGroup(id: id) }
         do {
             let payload = try JSONEncoder().encode(change.automation)
             _ = try await quotaWrite(scope: "automation", key: change.automation.id.uuidString, data: payload) {
@@ -7129,12 +7393,16 @@ final class AppModel: ObservableObject {
 
     func setAutomationEnabled(id: UUID, enabled: Bool) async {
         guard let automationService else { return }
+        let affected = invalidateRoutineGroupExecutions(automationID: id)
+        for groupID in affected { await stopGroup(id: groupID) }
         do { try await automationService.setEnabled(id: id, enabled: enabled); await reloadAutomationDetails(markViewed: false) }
         catch { errorMessage = error.localizedDescription }
     }
 
     func deleteAutomation(id: UUID) async {
         guard let automationService else { return }
+        let affected = invalidateRoutineGroupExecutions(automationID: id)
+        for groupID in affected { await stopGroup(id: groupID) }
         do { try await automationService.delete(id: id); await reloadAutomationDetails(markViewed: false) }
         catch { errorMessage = error.localizedDescription }
     }
@@ -7142,9 +7410,16 @@ final class AppModel: ObservableObject {
     func runAutomationNow(id: UUID) async {
         guard let automationService, let agentService else { return }
         do {
-            _ = try await automationService.runNow(id: id, executor: AppAutomationExecutor(registry: registry, agents: agentService, scheduler: agentExecutionScheduler, lane: .user))
+            _ = try await automationService.runNow(id: id, executor: makeAutomationExecutor(agents: agentService, lane: .user))
             await reloadAutomationDetails(markViewed: false)
         } catch { errorMessage = error.localizedDescription }
+    }
+
+    /// A bounded host tick, also used by isolated integration tests. It does
+    /// not start the scheduler loop or connect external listeners.
+    func runAutomationScheduleTick(at date: Date) async {
+        await automationScheduler?.runOnce(at: date)
+        await reloadAutomationDetails(markViewed: false)
     }
 
     func acknowledgeAutomationWake(id: UUID) async {
@@ -7176,6 +7451,7 @@ final class AppModel: ObservableObject {
         var histories: [UUID: [AutomationRun]] = [:]
         for automation in definitions { histories[automation.id] = await automationService.history(automationID: automation.id) }
         automations = definitions
+        automationGroupBindings = await automationGroupBindingStore?.list() ?? []
         automationHistory = histories
         automationWakes = await automationService.pendingWakes()
         automationSpendGuard = await automationService.spendGuardState()
@@ -9976,17 +10252,25 @@ private struct AppPluginSecretStore: PluginSecretStore {
     }
 }
 
-private struct AppAutomationExecutor: AutomationExecutor {
+private struct AppAutomationExecutor: AutomationRunExecutor {
     let registry: ProviderRegistry
     let agents: AgentService
     let scheduler: AgentExecutionScheduler
     var lane: AgentExecutionLane = .background
+    var groupSession: @Sendable (AutomationRunRequest) async throws -> AutomationExecutionResult? = { _ in nil }
+    func execute(_ request: AutomationRunRequest) async throws -> AutomationExecutionResult {
+        if let result = try await groupSession(request) { return result }
+        return try await executeTextOnly(automation: request.automation, prompt: request.prompt, conversationID: request.run.id)
+    }
     func execute(automation: Automation, prompt: String, events: [AutomationEvent]) async throws -> AutomationExecutionResult {
+        try await executeTextOnly(automation: automation, prompt: prompt, conversationID: UUID())
+    }
+    private func executeTextOnly(automation: Automation, prompt: String, conversationID: UUID) async throws -> AutomationExecutionResult {
         try await scheduler.withExclusiveAccess(agentID: automation.agentID, lane: lane) {
-            try await executeExclusive(automation: automation, prompt: prompt)
+            try await executeExclusive(automation: automation, prompt: prompt, conversationID: conversationID)
         }
     }
-    private func executeExclusive(automation: Automation, prompt: String) async throws -> AutomationExecutionResult {
+    private func executeExclusive(automation: Automation, prompt: String, conversationID: UUID) async throws -> AutomationExecutionResult {
         try Task.checkCancellation()
         guard let profile = await agents.profile(id: automation.agentID), profile.archivedAt == nil,
               let provider = await registry.provider(id: profile.providerID) else {
@@ -9994,7 +10278,7 @@ private struct AppAutomationExecutor: AutomationExecutor {
         }
         try Task.checkCancellation()
         let system = ChatMessage(role: .system, text: profile.instructions)
-        let request = InferenceRequest(conversationID: UUID(), modelID: profile.modelID, messages: [system, .init(role: .user, text: prompt)])
+        let request = InferenceRequest(conversationID: conversationID, modelID: profile.modelID, messages: [system, .init(role: .user, text: prompt)])
         let result = try await TextOnlyInference.collect(provider.stream(request),
             maximumOutputBytes: AgentWorkflowLimits.maximumBodyBytes)
         return .init(detail: result.text, inputTokens: result.usage?.inputTokens, outputTokens: result.usage?.outputTokens)

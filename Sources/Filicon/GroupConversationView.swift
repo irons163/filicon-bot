@@ -576,6 +576,11 @@ struct GroupMessageBubble: View {
         HStack(alignment: .top, spacing: 0) {
             if isUser { Spacer(minLength: 50) }
             VStack(alignment: .leading, spacing: 6) {
+                if let wake = message.routineWake {
+                    Label(wake.name, systemImage: "clock.arrow.circlepath")
+                        .font(.caption).foregroundStyle(FiliconTheme.textSecondary)
+                        .accessibilityLabel(l10n("Routine") + ": " + wake.name)
+                }
                 if !isUser {
                     HStack(spacing: 6) {
                         if let agent { AgentAvatarIcon(profile: agent, dimension: 20) }

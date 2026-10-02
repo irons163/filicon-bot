@@ -315,6 +315,28 @@ public actor GroupService {
         try await update(groupID: groupID, name: group.name, summary: group.summary, memberIDs: memberIDs)
     }
 
+    /// A host-reviewed whole-group wake. Event mentions cannot retarget it;
+    /// oversized seeds are rejected intact, never truncated into a new task.
+    public func postRoutineMessage(_ text: String, group: AgentGroup, wake: GroupRoutineWake,
+                                   lease: AgentWorkflowExecutionScope.Lease, at: Date) throws -> RoomMessage {
+        guard !text.isEmpty, text.utf8.count <= 100_000, !wake.name.isEmpty, wake.name.count <= 80 else {
+            throw AgentServiceError.messageTooLong
+        }
+        return try lease.commit {
+            guard let current = state.groups.first(where: { $0.id == group.id }),
+                  current.name == group.name, current.summary == group.summary,
+                  current.memberIDs == group.memberIDs, !current.memberIDs.isEmpty else { throw CancellationError() }
+            var message = RoomMessage(id: wake.runID, groupID: group.id, senderID: nil, text: text, createdAt: at)
+            message.routineWake = wake
+            guard !state.roomMessages.contains(where: { $0.id == wake.runID }) else { throw CancellationError() }
+            let previous = state.roomMessages
+            retireQuestions(groupID: group.id, onlyMoveOn: true)
+            state.roomMessages.append(message)
+            do { try persist() } catch { state.roomMessages = previous; throw error }
+            return state.roomMessages.last(where: { $0.id == message.id }) ?? message
+        }
+    }
+
     public func postUserMessage(_ text: String, groupID: UUID, images: [AttachmentMetadata] = [],
                                 expectedMemberIDs: [UUID]? = nil, replyToMessageID: UUID? = nil) async throws -> RoomMessage {
         // Truncating can remove a trailing @mention and turn a targeted image
@@ -806,7 +828,9 @@ public actor GroupService {
     private static func resolveResponderIDs(members: [AgentProfile], history: [RoomMessage]) -> [UUID] {
         // Only the user's address controls recipients, not an assistant quoting
         // another handle or escalating a private mention to @everyone.
-        let text = history.last(where: { $0.senderID == nil })?.text ?? ""
+        let request = history.last(where: { $0.senderID == nil })
+        if request?.routineWake != nil { return members.map(\.id) }
+        let text = request?.text ?? ""
         guard unknownMentions(in: text, members: members).isEmpty else { return [] }
         let targets = parseMentions(in: text, members: members)
         if targets.everyone || targets.memberIDs.isEmpty { return members.map(\.id) }

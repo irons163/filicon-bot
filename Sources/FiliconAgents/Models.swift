@@ -397,6 +397,19 @@ public struct RoomToolActivity: Identifiable, Codable, Hashable, Sendable {
 /// Host-authored status, separate from model prose and tool results.
 public enum RoomMemberOutcome: String, Codable, Hashable, Sendable { case passed, failed }
 
+/// Host provenance for a routine's visible seed, never a model tool argument.
+/// It labels background work; it is not a memory or tool permission.
+public struct GroupRoutineWake: Codable, Hashable, Sendable {
+    public let automationID: UUID
+    public let runID: UUID
+    public let name: String
+    public let containsUntrustedEvents: Bool
+    public init(automationID: UUID, runID: UUID, name: String, containsUntrustedEvents: Bool) {
+        self.automationID = automationID; self.runID = runID; self.name = name
+        self.containsUntrustedEvents = containsUntrustedEvents
+    }
+}
+
 public struct RoomMessage: Identifiable, Codable, Hashable, Sendable {
     public let id: UUID
     public let groupID: UUID
@@ -419,6 +432,7 @@ public struct RoomMessage: Identifiable, Codable, Hashable, Sendable {
     public var replyToMessageID: UUID?
     /// Host-assigned, group-local address. Never recomputed from a bounded prompt.
     public var shortAddress: String?
+    public internal(set) var routineWake: GroupRoutineWake?
     public init(id: UUID = UUID(), groupID: UUID, senderID: UUID?, text: String, createdAt: Date = Date(), toolActivities: [RoomToolActivity] = [], memberOutcome: RoomMemberOutcome? = nil, images: [AttachmentMetadata] = [], files: [AttachmentMetadata] = [], remoteAttachment: RemoteAttachmentReference? = nil, remoteImages: RemoteImageGallery? = nil, imageGalleryLayout: ImageGalleryLayout? = nil) {
         self.id = id; self.groupID = groupID; self.senderID = senderID; self.text = text; self.createdAt = createdAt
         self.toolActivities = toolActivities
@@ -430,7 +444,7 @@ public struct RoomMessage: Identifiable, Codable, Hashable, Sendable {
         self.imageGalleryLayout = imageGalleryLayout
     }
 
-    private enum CodingKeys: String, CodingKey { case id, groupID, senderID, text, createdAt, toolActivities, memberOutcome, images, files, remoteAttachment, remoteImages, imageGalleryLayout, question, secretRequest, cursorAgent, questionReplyTo, replyToMessageID, shortAddress }
+    private enum CodingKeys: String, CodingKey { case id, groupID, senderID, text, createdAt, toolActivities, memberOutcome, images, files, remoteAttachment, remoteImages, imageGalleryLayout, question, secretRequest, cursorAgent, questionReplyTo, replyToMessageID, shortAddress, routineWake }
     public init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         id = try values.decode(UUID.self, forKey: .id)
@@ -455,6 +469,7 @@ public struct RoomMessage: Identifiable, Codable, Hashable, Sendable {
         questionReplyTo = try values.decodeIfPresent(UUID.self, forKey: .questionReplyTo)
         replyToMessageID = try values.decodeIfPresent(UUID.self, forKey: .replyToMessageID)
         shortAddress = try values.decodeIfPresent(String.self, forKey: .shortAddress)
+        routineWake = try values.decodeIfPresent(GroupRoutineWake.self, forKey: .routineWake)
     }
 }
 
