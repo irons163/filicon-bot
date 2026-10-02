@@ -7,6 +7,7 @@ public enum AgentImageError: String, LocalizedError, Sendable {
     case invalid = "Choose a valid, single-frame PNG or JPEG image."
     case limit = "Use at most 4 images, 5 MB each and 12 MB total."
     case galleryLimit = "Use images up to 5 MB each and 12 MB total."
+    case galleryInvalid = "Choose a valid PNG, JPEG, GIF, WebP, TIFF, BMP, HEIC or HEIF image within the decoding limits."
     case unavailable = "This image is not available in the current request."
     case unsupported = "The recipient model does not support image input. No image was sent to the model."
     case group = "Forwarding images to a group with SendToAgent is not supported."
@@ -52,7 +53,7 @@ public actor AgentImageStore {
     /// The host must reserve quota before calling this method.
     public func importCapturedGalleryImage(_ prepared: PreparedAgentGalleryImage,
         createdAt: Date = Date()) async throws -> AttachmentMetadata {
-        guard try Self.validate(prepared.file.bytes) == prepared.mimeType else { throw AgentImageError.invalid }
+        guard try Self.validatePublishedImage(prepared.file.bytes) == prepared.mimeType else { throw AgentImageError.invalid }
         let installed = try await store.ingest(prepared: prepared.file, createdAt: createdAt,
             verifiedImageMIMEType: prepared.mimeType)
         // Image type comes from decoded bytes, not a potentially misleading
@@ -105,7 +106,8 @@ public actor AgentImageStore {
             try Task.checkCancellation()
             guard image.kind == .image else { throw AgentImageError.invalid }
             let bytes = try await store.data(for: image)
-            guard try Self.validate(bytes) == image.mimeType else { throw AgentImageError.invalid }
+            let mime = try allowsRepeatedSources ? Self.validatePublishedImage(bytes) : Self.validate(bytes)
+            guard mime == image.mimeType else { throw AgentImageError.invalid }
             result.append(.init(metadata: image, data: bytes))
         }
         try Task.checkCancellation()
@@ -116,28 +118,27 @@ public actor AgentImageStore {
     /// Actor isolation keeps the potentially expensive decode off the UI actor.
     public func thumbnail(for image: AttachmentMetadata, maximumDimension: Int = 640) async throws -> Data {
         guard (1...1_024).contains(maximumDimension) else { throw AgentImageError.invalid }
-        let original = try await load([image])
-        try Task.checkCancellation()
-        guard let bytes = original.first?.data,
-              let source = CGImageSourceCreateWithData(bytes as CFData,
-                [kCGImageSourceShouldCache: false] as CFDictionary),
-              let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, [
-                kCGImageSourceCreateThumbnailFromImageAlways: true,
-                kCGImageSourceCreateThumbnailWithTransform: true,
-                kCGImageSourceThumbnailMaxPixelSize: maximumDimension,
-                kCGImageSourceShouldCacheImmediately: false
-              ] as CFDictionary),
-              thumbnail.width > 0, thumbnail.height > 0,
-              thumbnail.width <= maximumDimension, thumbnail.height <= maximumDimension else { throw AgentImageError.invalid }
-        try Task.checkCancellation()
-        let data = NSMutableData()
-        guard let destination = CGImageDestinationCreateWithData(data, "public.png" as CFString, 1, nil) else {
-            throw AgentImageError.invalid
-        }
-        CGImageDestinationAddImage(destination, thumbnail, nil)
-        guard CGImageDestinationFinalize(destination) else { throw AgentImageError.invalid }
-        try Task.checkCancellation()
-        return data as Data
+        let original = try await loadPublishedGallery([image])
+        guard let bytes = original.first?.data else { throw AgentImageError.galleryInvalid }
+        return try RemoteAttachmentImagePreparation.thumbnail(for: bytes, original: image,
+            maximumDimension: maximumDimension).data
+    }
+
+    public func inlinePreview(for image: AttachmentMetadata,
+                              maximumDimension: Int = 640) async throws -> RemoteAttachmentImagePreparation.InlinePreview {
+        let original = try await loadPublishedGallery([image])
+        guard let bytes = original.first?.data else { throw AgentImageError.galleryInvalid }
+        return try RemoteAttachmentImagePreparation.inlinePreview(for: bytes, original: image,
+            maximumDimension: maximumDimension)
+    }
+
+    public nonisolated static func validatePublishedImage(_ data: Data) throws -> String {
+        guard data.count <= maximumBytes else { throw AgentImageError.galleryLimit }
+        do {
+            return try RemoteAttachmentImagePreparation.metadata(for: data, filename: "gallery-image",
+                createdAt: Date(timeIntervalSince1970: 0)).mimeType
+        } catch is CancellationError { throw CancellationError() }
+        catch { throw AgentImageError.galleryInvalid }
     }
 
     public static func validate(_ data: Data) throws -> String {

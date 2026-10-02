@@ -56,6 +56,7 @@
 "Choose a valid, single-frame PNG or JPEG image." = "Choisissez une image PNG ou JPEG valide et non animée.";
 "Use at most 4 images, 5 MB each and 12 MB total." = "Limite : 4 images, 5 Mo chacune et 12 Mo au total.";
 "Use images up to 5 MB each and 12 MB total." = "Limite : 5 Mo par image et 12 Mo au total.";
+"Choose a valid PNG, JPEG, GIF, WebP, TIFF, BMP, HEIC or HEIF image within the decoding limits." = "Choisissez une image PNG, JPEG, GIF, WebP, TIFF, BMP, HEIC ou HEIF valide respectant les limites de décodage.";
 "This image is not available in the current request." = "Cette image n’est pas disponible dans la demande actuelle.";
 "The recipient model does not support image input. No image was sent to the model." = "Le modèle du destinataire ne prend pas en charge les images. Aucune image ne lui a été envoyée.";
 "Image messages are currently supported only for a single peer, not groups." = "Les messages avec images sont actuellement réservés à un seul agent, pas aux groupes.";

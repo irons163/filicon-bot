@@ -514,33 +514,42 @@ private struct AgentMessageImagePreview: View {
     var compact = false
     var expanded = false
     let onOpen: () -> Void
-    @State private var preview: NSImage?
-    @State private var failed = false
-    var body: some View {
-        AgentMessageImagePreviewContent(image: image, preview: preview, failed: failed, compact: compact, expanded: expanded,
-                                       onOpen: onOpen)
-            .task(id: "\(model.settings.accountScope ?? "local"):\(image.id)") { await loadPreview() }
+    @State private var previewModel = RemoteGalleryCardModel()
+
+    private struct PreviewIdentity: Hashable {
+        let account: String
+        let image: AttachmentMetadata
     }
-    private func loadPreview() async {
-        preview = nil; failed = false
-        do {
-            let bytes = try await model.agentMessageImageThumbnailData(image)
-            try Task.checkCancellation()
-            preview = NSImage(data: bytes); failed = preview == nil
-        } catch is CancellationError {} catch { failed = true }
+
+    var body: some View {
+        AgentMessageImagePreviewContent(image: image, preview: nil, animation: previewModel.display,
+            failed: previewModel.state.previewFailed, compact: compact, expanded: expanded, onOpen: onOpen)
+            .task(id: PreviewIdentity(account: model.settings.accountScope ?? "local", image: image)) { await previewRequested() }
+            .onDisappear { previewModel.cancelButtonTapped() }
+    }
+
+    private func previewRequested() async {
+        await previewModel.previewRequested { try await model.agentMessageImageInlinePreview(image) }
     }
 }
 
 struct AgentMessageImagePreviewContent: View {
     let image: AttachmentMetadata
     let preview: NSImage?
+    var animation: RemoteGalleryDisplay?
     var failed = false
     var compact = false
     var expanded = false
     var onOpen: (() -> Void)?
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            if let preview {
+            if let animation {
+                if let onOpen {
+                    Button(action: onOpen) { fittedAnimation(animation) }
+                        .buttonStyle(.plain)
+                        .help(image.altText ?? image.filename)
+                } else { fittedAnimation(animation) }
+            } else if let preview {
                 if let onOpen {
                     Button(action: onOpen) { fittedImage(preview) }
                         .buttonStyle(.plain)
@@ -567,6 +576,15 @@ struct AgentMessageImagePreviewContent: View {
         AgentImageFitLayout(imageSize: preview.size, maximumWidth: expanded ? 560 : 280,
                             maximumHeight: expanded ? 320 : compact ? 96 : 160) {
             Image(nsImage: preview).resizable().scaledToFit()
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+                .accessibilityLabel(image.altText ?? image.filename)
+        }
+    }
+
+    private func fittedAnimation(_ display: RemoteGalleryDisplay) -> some View {
+        AgentImageFitLayout(imageSize: CGSize(width: display.images[0].width, height: display.images[0].height),
+                            maximumWidth: expanded ? 560 : 280, maximumHeight: expanded ? 320 : compact ? 96 : 160) {
+            RemoteGalleryAnimationView(display: display, maximumHeight: expanded ? 320 : compact ? 96 : 160)
                 .clipShape(RoundedRectangle(cornerRadius: 10))
                 .accessibilityLabel(image.altText ?? image.filename)
         }

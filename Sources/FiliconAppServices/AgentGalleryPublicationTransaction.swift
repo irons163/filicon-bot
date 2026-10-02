@@ -15,7 +15,7 @@ public struct PreparedAgentGalleryImage: Equatable, Sendable {
     public let altText: String?
 
     public init(bytes: Data, filename: String, altText: String?) throws {
-        guard bytes.count <= AgentImageStore.maximumBytes else { throw AgentImageError.limit }
+        guard bytes.count <= AgentImageStore.maximumBytes else { throw AgentImageError.galleryLimit }
         if let altText {
             guard !altText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                   altText.count <= 500, altText.utf8.count <= 2_000,
@@ -23,7 +23,7 @@ public struct PreparedAgentGalleryImage: Equatable, Sendable {
                 throw AgentImageError.invalid
             }
         }
-        mimeType = try AgentImageStore.validate(bytes)
+        mimeType = try AgentImageStore.validatePublishedImage(bytes)
         file = try PreparedAgentPublicationFile(bytes: bytes, filename: filename)
         self.altText = altText
     }

@@ -56,6 +56,7 @@
 "Choose a valid, single-frame PNG or JPEG image." = "有効な単一フレームの PNG または JPEG 画像を選択してください。";
 "Use at most 4 images, 5 MB each and 12 MB total." = "画像は最大4枚、1枚5 MB、合計12 MBまでです。";
 "Use images up to 5 MB each and 12 MB total." = "画像は1枚5 MB、合計12 MBまでです。";
+"Choose a valid PNG, JPEG, GIF, WebP, TIFF, BMP, HEIC or HEIF image within the decoding limits." = "デコード制限内の有効な PNG、JPEG、GIF、WebP、TIFF、BMP、HEIC または HEIF 画像を選択してください。";
 "This image is not available in the current request." = "現在のリクエストでは、この画像を利用できません。";
 "The recipient model does not support image input. No image was sent to the model." = "宛先のモデルは画像入力に対応していません。モデルには画像を送信していません。";
 "Image messages are currently supported only for a single peer, not groups." = "現在、画像メッセージは個別のエージェント宛てにのみ対応し、グループには対応していません。";

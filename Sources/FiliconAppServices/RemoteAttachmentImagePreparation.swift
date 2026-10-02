@@ -71,8 +71,19 @@ public enum RemoteAttachmentImagePreparation {
 
     public static func thumbnail(for data: Data, reference: RemoteAttachmentReference,
                                  maximumDimension: Int = 640, createdAt: Date = Date()) throws -> Thumbnail {
-        guard (1...1_024).contains(maximumDimension) else { throw RemoteAttachmentImageError.decodeLimit }
         let original = try metadata(for: data, reference: reference, createdAt: createdAt)
+        return try prepareThumbnail(for: data, original: original, maximumDimension: maximumDimension)
+    }
+
+    public static func thumbnail(for data: Data, original: AttachmentMetadata,
+                                 maximumDimension: Int = 640) throws -> Thumbnail {
+        try validateOriginal(data, original: original)
+        return try prepareThumbnail(for: data, original: original, maximumDimension: maximumDimension)
+    }
+
+    private static func prepareThumbnail(for data: Data, original: AttachmentMetadata,
+                                         maximumDimension: Int) throws -> Thumbnail {
+        guard (1...1_024).contains(maximumDimension) else { throw RemoteAttachmentImageError.decodeLimit }
         try Task.checkCancellation()
         if original.mimeType == "image/png", let animation = try pngAnimation(data) {
             let preview = try preparePNGAnimation(animation, original: original,
@@ -101,8 +112,19 @@ public enum RemoteAttachmentImagePreparation {
     /// Nothing here downloads, writes a file or grants model image access.
     public static func inlinePreview(for data: Data, reference: RemoteAttachmentReference,
                                      maximumDimension: Int = 640, createdAt: Date = Date()) throws -> InlinePreview {
-        guard (1...1_024).contains(maximumDimension) else { throw RemoteAttachmentImageError.decodeLimit }
         let original = try metadata(for: data, reference: reference, createdAt: createdAt)
+        return try prepareInlinePreview(for: data, original: original, maximumDimension: maximumDimension)
+    }
+
+    public static func inlinePreview(for data: Data, original: AttachmentMetadata,
+                                     maximumDimension: Int = 640) throws -> InlinePreview {
+        try validateOriginal(data, original: original)
+        return try prepareInlinePreview(for: data, original: original, maximumDimension: maximumDimension)
+    }
+
+    private static func prepareInlinePreview(for data: Data, original: AttachmentMetadata,
+                                             maximumDimension: Int) throws -> InlinePreview {
+        guard (1...1_024).contains(maximumDimension) else { throw RemoteAttachmentImageError.decodeLimit }
         if original.mimeType == "image/png", let animation = try pngAnimation(data) {
             return try preparePNGAnimation(animation, original: original, maximumDimension: maximumDimension)
         }
@@ -255,6 +277,22 @@ public enum RemoteAttachmentImagePreparation {
 
     public static func metadata(for data: Data, reference: RemoteAttachmentReference,
                                 createdAt: Date = Date()) throws -> AttachmentMetadata {
+        try verifiedMetadata(for: data, filename: nil, altText: reference.alt, createdAt: createdAt)
+    }
+
+    public static func metadata(for data: Data, filename: String, altText: String? = nil,
+                                createdAt: Date = Date()) throws -> AttachmentMetadata {
+        try verifiedMetadata(for: data, filename: filename, altText: altText, createdAt: createdAt)
+    }
+
+    private static func validateOriginal(_ data: Data, original: AttachmentMetadata) throws {
+        let actual = try metadata(for: data, filename: original.filename,
+            altText: original.altText, createdAt: original.createdAt)
+        guard original == actual else { throw RemoteAttachmentImageError.unsupportedOrInvalid }
+    }
+
+    private static func verifiedMetadata(for data: Data, filename: String?, altText: String?,
+                                         createdAt: Date) throws -> AttachmentMetadata {
         try Task.checkCancellation()
         guard !data.isEmpty, data.count <= maximumBytes else { throw RemoteAttachmentImageError.byteLimit }
         guard let source = CGImageSourceCreateWithData(data as CFData,
@@ -301,9 +339,9 @@ public enum RemoteAttachmentImagePreparation {
             }
         }
         let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
-        return AttachmentMetadata(id: digest, filename: "remote-image.\(format.extension)",
+        return AttachmentMetadata(id: digest, filename: filename ?? "remote-image.\(format.extension)",
             mimeType: format.mime, byteCount: Int64(data.count), kind: .image,
-            createdAt: createdAt, altText: reference.alt)
+            createdAt: createdAt, altText: altText)
     }
 
     private struct PNGFrame {

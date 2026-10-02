@@ -191,7 +191,7 @@ public actor AttachmentStore {
         verifiedImageMIMEType: String? = nil) throws -> AttachmentMetadata {
         try Task.checkCancellation()
         if let verifiedImageMIMEType {
-            guard try AgentImageStore.validate(prepared.bytes) == verifiedImageMIMEType else {
+            guard try AgentImageStore.validatePublishedImage(prepared.bytes) == verifiedImageMIMEType else {
                 throw AttachmentStoreError.corrupt("invalid-image-type")
             }
         }

@@ -36,10 +36,11 @@ struct RemoteGalleryFrameView: View {
     let display: RemoteGalleryDisplay
     let elapsed: TimeInterval
     var paused = false
+    var maximumHeight: CGFloat = 240
 
     var body: some View {
         Image(decorative: display.images[paused ? 0 : display.preview.frameIndex(at: elapsed)], scale: 1)
-            .resizable().scaledToFit().frame(maxWidth: .infinity, maxHeight: 240)
+            .resizable().scaledToFit().frame(maxWidth: .infinity, maxHeight: maximumHeight)
             .accessibilityLabel(display.preview.original.altText ?? l10n("Image"))
             .accessibilityIdentifier("remote-gallery-thumbnail")
     }
@@ -62,13 +63,14 @@ struct RemoteGalleryTimeline: TimelineSchedule {
 
 struct RemoteGalleryAnimationView: View {
     let display: RemoteGalleryDisplay
+    var maximumHeight: CGFloat = 240
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
     @State private var startedAt: Date?
 
     var body: some View {
         RemoteGalleryPlaybackView(display: display, startedAt: startedAt, reduceMotion: reduceMotion,
-            isActive: scenePhase == .active)
+            isActive: scenePhase == .active, maximumHeight: maximumHeight)
             .onAppear { startedAt = Date() }
             .onDisappear { startedAt = nil }
     }
@@ -79,15 +81,17 @@ struct RemoteGalleryPlaybackView: View {
     let startedAt: Date?
     let reduceMotion: Bool
     let isActive: Bool
+    var maximumHeight: CGFloat = 240
 
     var body: some View {
         Group {
             if display.preview.isAnimated, !reduceMotion, isActive, let startedAt {
                 TimelineView(RemoteGalleryTimeline(preview: display.preview, startedAt: startedAt)) { context in
-                    RemoteGalleryFrameView(display: display, elapsed: context.date.timeIntervalSince(startedAt) + 0.000_001)
+                    RemoteGalleryFrameView(display: display, elapsed: context.date.timeIntervalSince(startedAt) + 0.000_001,
+                        maximumHeight: maximumHeight)
                 }
             } else {
-                RemoteGalleryFrameView(display: display, elapsed: 0, paused: true)
+                RemoteGalleryFrameView(display: display, elapsed: 0, paused: true, maximumHeight: maximumHeight)
             }
         }
     }
@@ -106,21 +110,26 @@ struct RemoteGalleryPlaybackView: View {
 
     func previewButtonTapped(onThumbnail: RemoteThumbnailAction?, onPreview: RemotePreviewAction?,
                              approveRedirect: @escaping RemoteRedirectReview) async {
+        await previewRequested {
+            if let onThumbnail { return try await onThumbnail(approveRedirect) }
+            if let onPreview { try await onPreview(approveRedirect) }
+            return nil
+        }
+    }
+
+    func previewRequested(_ prepare: @MainActor () async throws -> RemoteGalleryPreview?) async {
         generation &+= 1
         let expected = generation
         state = State(isLoading: true)
         display = nil
         defer { if generation == expected { state.isLoading = false } }
         do {
-            if let onThumbnail {
-                let preview = try await onThumbnail(approveRedirect)
+            if let preview = try await prepare() {
                 try Task.checkCancellation()
                 guard generation == expected else { return }
                 let prepared = try RemoteGalleryDisplay(preview: preview)
                 state.preview = preview
                 display = prepared
-            } else if let onPreview {
-                try await onPreview(approveRedirect)
             }
         } catch is CancellationError {
         } catch {

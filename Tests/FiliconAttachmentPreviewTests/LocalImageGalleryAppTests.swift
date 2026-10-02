@@ -130,6 +130,23 @@ private struct SavedLocalGallery: Equatable {
         try await exercise(mode: mode, scenario: scenario, galleryCount: 5, repeatedSources: true)
     }
 
+    @Test(arguments: ["gif", "apng", "webp", "tiff", "bmp", "heic"],
+        ["local-direct", "mixed-direct", "local-group", "mixed-group", "local-background", "mixed-background",
+         "local-mailbox", "mixed-mailbox", "local-peer", "mixed-peer"])
+    func decodedLocalFormatsUseEveryCanonicalAppRoute(type: String, scenario: String) async throws {
+        try await exercise(mode: "approve", scenario: scenario, format: type)
+    }
+
+    @Test(arguments: ["gif", "apng", "webp"].flatMap { type in
+        ["read-deny", "deny", "account", "source-changed"].map { "\(type):\($0)" }
+    },
+        ["local-direct", "mixed-direct", "local-group", "mixed-group", "local-background", "mixed-background",
+         "local-mailbox", "mixed-mailbox", "local-peer", "mixed-peer"])
+    func localAnimationsKeepCaptureAndApprovalFences(sample: String, scenario: String) async throws {
+        let parts = sample.components(separatedBy: ":")
+        try await exercise(mode: parts[1], scenario: scenario, format: parts[0])
+    }
+
     @Test(arguments: ["members", "destination-stop"],
         ["local-group", "mixed-group", "local-background", "mixed-background"])
     func groupRevocationPreventsLocalGalleryPublication(mode: String, scenario: String) async throws {
@@ -149,19 +166,21 @@ private struct SavedLocalGallery: Equatable {
         try await exercise(mode: mode, scenario: scenario)
     }
 
-    private func exercise(mode: String, scenario: String, galleryCount: Int? = nil, repeatedSources: Bool = false) async throws {
+    private func exercise(mode: String, scenario: String, galleryCount: Int? = nil, repeatedSources: Bool = false,
+                          format: String? = nil) async throws {
         let route = String(scenario.split(separator: "-").last!), mixed = scenario.hasPrefix("mixed-")
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-local-gallery-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }
         let workspace = root.appending(path: "workspace")
         try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
         let localCount = galleryCount.map { mixed ? $0 / 2 : $0 } ?? 2
-        let bytes = try repeatedSources ? Array(repeating: png(index: 0), count: localCount)
+        let bytes = try format.map { type in try [0, 1].map { try LocalGalleryFormatFixture.bytes(type: type, index: $0) } }
+            ?? (repeatedSources ? Array(repeating: png(index: 0), count: localCount)
             : galleryCount == nil ? [png(red: 0, blue: 1), png(red: 1, blue: 0)]
-            : (0..<localCount).map { try png(index: $0) }
+            : (0..<localCount).map { try png(index: $0) })
         let sources = galleryCount == nil
-            ? [workspace.appending(path: mode == "misleading-name" ? "初稿 image.txt" : "初稿 image.png"),
-               workspace.appending(path: mode == "misleading-name" ? "second" : "second.png")]
+            ? [workspace.appending(path: mode == "misleading-name" || format != nil ? "初稿 image.txt" : "初稿 image.png"),
+               workspace.appending(path: mode == "misleading-name" || format != nil ? "second" : "second.png")]
             : (0..<localCount).map { workspace.appending(path: repeatedSources ? "same.png" : "image-\($0).png") }
         for (source, data) in zip(sources, bytes) { try data.write(to: source) }
         let prepared = try zip(sources, bytes).enumerated().map { index, pair in
@@ -237,7 +256,8 @@ private struct SavedLocalGallery: Equatable {
         } else if route == "mailbox" || route == "peer" {
             let value = await model.createAgent(name: "Recipient", summary: "", instructions: "",
                 providerID: provider.descriptor.id, modelID: "vision")
-            recipient = try #require(value)
+            let created = try #require(value)
+            recipient = created
             if route == "peer" {
                 originID = try #require(await model.addConversation(agentID: sender.id))
                 provider.recipientID = recipient?.id
@@ -371,6 +391,16 @@ private struct SavedLocalGallery: Equatable {
             let imageStore = AgentImageStore(rootURL: root.appending(path: "agent-message-images"))
             let loaded = try await imageStore.loadPublishedGallery(saved.images)
             expectNoDifference(loaded.map(\.data), bytes)
+            if let format {
+                for (metadata, original) in zip(saved.images, bytes) {
+                    let preview = try await model.agentMessageImageInlinePreview(metadata)
+                    expectNoDifference(preview.original, metadata)
+                    expectNoDifference(preview.frames.count, ["gif", "apng", "webp"].contains(format) ? 2 : 1)
+                    expectNoDifference(preview.playCount, ["gif", "apng", "webp"].contains(format) ? 2 : 1)
+                    let expected = try RemoteAttachmentImagePreparation.inlinePreview(for: original, original: metadata)
+                    expectNoDifference(preview, expected)
+                }
+            }
             if route == "direct" || route == "peer" {
                 if route == "peer" {
                     let destination = try #require(model.conversations.first(where: { $0.agentBinding?.agentID == recipient?.id }))

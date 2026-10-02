@@ -815,3 +815,23 @@ APNG 不使用 ImageIO 的預設封面作動畫第一幀。新增 bounded chunk 
 本輪後段系統存取恢復，`gallery-repeat-unlocked-probe.log` 的普通與 `.completeFileProtectionUnlessOpen` 寫入／重開 bytes 都相符；沒有移除保護或更改鎖定設定。`gallery-repeat-unlocked-canonical.log` exit 0，12 tests／2 suites 通過，包含全部 116 個原有拒絕／撤銷／故障案例、30 個大量圖片、40 個重複圖片與 group／mailbox GIF／APNG 保存內容重開。最終 `gallery-repeat-unlocked-full.log` 全專案串行測試 exit 0：135 XCTest（7 bundles）、1,577 Swift Testing，其中核心 target 843 tests／97 suites、App target 511 tests／73 suites，零測試失敗；不能沿用解鎖前局部綠燈代替這次 gate。`gallery-repeat-final-native.log` build succeeded，`gallery-repeat-final-native-package.log` 的四個執行檔、App／XPC entitlements 與 deep strict 簽章通過；七語各 1,723 keys／0 missing，diff check 通過。
 
 依 pfw-testing／pfw-custom-dump 使用隔離來源、固定時間／身分及完整順序／bytes 斷言，await 的 actor 值先取得再比較；SwiftUI skill 引導用位置身分與 action helper，沒有增加依賴或外部網路。未 push、未啟動或重啟使用者 App／Xcode、未改真實群組／帳號。仍保留大型本機媒體、其他本機圖片／動畫格式、遠端快取、完整窗口／跨程序 receipt、最低實際 macOS 及真實外部服務驗收；本批 journal 故障案例不是所有 crash 或跨程序發佈邊界的完成證明。
+
+## 第七十四階段：經審核本機圖庫格式與動畫（2026-10-03）
+
+reference 同一 commit 的 `source/host/runner/tools/send-message-schema.ts` 沒有圖片格式的封閉清單；`send-message-tool.ts:41` 逐張解析本機／HTTPS locator，`frontend/src/recovered/features/conversation/workspace/transcript.tsx:458–460` 以原始 URL 呈現。Filicon 先前將人類可見的本機圖庫沿用單幀 PNG／JPEG 模型輸入驗證，因此 GIF／APNG／WebP／TIFF／BMP／HEIC 被拒絕。本批將「經 host 完整核准的圖庫」與嚴格 incoming／`SendToAgent` 圖片入口分開，不以假造 HTTPS URL 使用遠端預覽。
+
+本機 captured gallery 現共用既有完整 ImageIO／APNG 驗證與有界動畫準備，保留原始 bytes、內容 hash、實際 MIME、filename／alt／createdAt 及每個位置。原始 CAS blob 不替換成縮圖；本機卡片顯示準備後的 PNG 幀，GIF／APNG／WebP 按原次數與延遲播放，TIFF 多頁不是動畫。卡片使用完整 metadata＋account 作為任務身分，離開／取消／替換不恢復晚到結果；Reduce Motion／非 active scene 保留首幀。modal viewer 仍檢查完整原始 bytes，切帳號會清除已 materialize 的預覽。
+
+本機圖庫每張 5 MiB、合計 12 MiB、200 幀及既有像素／顯示預算不變；超量提示改為圖庫大小提示，不誤稱四張限制。來源讀取、整則正文／alt／layout 核准、quota、receipt／scope／account fence、同 call 重播及 CAS 安裝檢查不變。普通 `importImage`／`load`、current host ID 與 `SendToAgent` 仍為最多四張唯一單幀 PNG／JPEG。直接對話歷史原本已投影附件原始 bytes，本批測試也保留該事實，不能宣稱新格式永遠不會出現在任何模型歷史；沒有擴大既有 provider／vision 能力。獨立檔案的預設 MIME 推論仍未改為全部新格式，不能把本批圖庫接線當作所有傳檔入口都完成。
+
+新增核心三項測試：八種本機格式保存／重開與 exact metadata、alias 共用一個 CAS blob、strict incoming 拒絕非單幀 PNG／JPEG、實際縮圖／幀／循環比較；四種 metadata 偽造同時被縮圖及動畫入口拒絕；無效資料、SVG／HTML、損壞後續 APNG、201 幀、大小超量與取消不能產生 prepared image。新增 App 四項測試涵蓋六種格式的原始 viewer／重開／切帳號清理、七語 × 320／620 pt 真實卡片與首幀逐像素相符、四種明確 suspension gate 的晚到結果隔離及假 MIME 拒絕。另擴充五條 canonical App fixture，新增六格式 × local／mixed 共 60 個核准／保存／重開案例與三動畫 × 四種核准／來源／帳號邊界共 120 案例，保留既有 186 案例。
+
+驗證不掩蓋失敗：`local-gallery-formats-red.log` 重現六種格式的真實拒絕，另有 `public.heif` 原生 writer 無法產生 fixture 的獨立錯誤；HEIF decoder 清單仍存在，但沒有用 HEIC 偽冒 HEIF runtime 證據，真實 HEIF 驗收保持開放。中斷前 `local-gallery-formats-integration.log` 因測試使用不存在的 `AttachmentPreviewFile.url` 而編譯失敗；已改為真正的 `fileURL`，沒有放寬 production 型別或隔離。
+
+`local-gallery-formats-integration-fixed.log` exit 0：核心 27 tests／1 suite、App 12 tests／2 suites 通過，包含全部 366 個 canonical publication 案例。兩張繁中 `.build/validation/local-gallery-format-{320,620}.png` 已實際目視確認 filename／alt 未被裁切；是實際卡片渲染，不代表整個 App 或七語皆經人工操作。最後追加圖庫超量錯誤斷言後，完整回歸中的同一核心 suite 亦通過。
+
+最新 production source 的 `local-gallery-formats-final-native.log` build succeeded，`local-gallery-formats-final-package.log` 的版本 0.1.0／build 1、四個執行檔、App／XPC entitlements 與 deep strict 簽章通過；七語各 1,724 keys／0 missing。完整串行 `local-gallery-formats-full.log` 途中系統再度鎖定：獨立 Foundation 探針的普通檔案寫入／重開成功，但 `.completeFileProtectionUnlessOpen` 重讀得到 NSCocoaErrorDomain 257／NSPOSIXErrorDomain 1，系統同時回報 `CGSSessionScreenIsLocked=Yes`。該次 core target 846 tests／97 suites 回報 42 issues，其他 target 亦有失敗與連帶 assertion；不將所有 assertion 都未經核對地歸為 EPERM。確認後只停止本輪自行啟動的 Swift 測試（exit 130），保留日誌，不把中止當全綠。
+
+受保護存取恢復後，`local-gallery-formats-protected-read-recheck.log` 的普通與 `.completeFileProtectionUnlessOpen` 檔案重讀 bytes 都相符。最後 `local-gallery-formats-unlocked-full.log` 全專案串行測試 exit 0：135 XCTest（7 個非空 bundles）＋1,586 Swift Testing，核心 target 846 tests／97 suites、App target 517 tests／74 suites，零測試失敗；不是沿用先前局部綠燈。本批通過完整 gate 後才提交。未 push、未啟動／重啟 App 或 Xcode、未改真實群組或帳號、未移除檔案保護。本批依 Swift 測試／可觀察模型指引使用隔離資料、固定時間、真實原始 bytes 及明確狀態變化驗證。SVG／AVIF／ICO 等其他格式、真實 HEIF、獨立傳檔 MIME、大型本機媒體、快取、全域圖庫記憶體、完整 crash／跨程序／窗口 lifecycle、最低實際 macOS 與真實外部服務仍是待驗收邊界，不宣稱全部 parity 完成。
+
+後續來源核對修正缺口分類：reference `source/host/extensions/content-search/search-index-writer.ts:21` 的 `mediaOf` 只索引 `user-attachment` 與 `send-message` 的單一 `attachment`，不索引 text gallery 的 `images`；資料表同樣使用 agent＋entry 作為唯一身分。Filicon 圖庫別名搜尋仍只保留同 blob 的首個 filename，這是已知產品限制，但不是已確認的原版 text-gallery 別名索引功能，不能以此臆造必須新增的 parity 要求。原版 `source/shared/media/media-extensions.ts` 則明確列出 AVIF／ICO／SVG；本機唯讀 ImageIO 能力檢查顯示 AVIF 與 ICO 有 reader／writer，HEIF 僅 reader，因此下一批先補驗 AVIF／ICO 的真正 bytes，不將 decoder 名稱當 runtime 完成證明。

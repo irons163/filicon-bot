@@ -4328,7 +4328,7 @@ final class AppModel: ObservableObject {
 
     func agentMessageImageData(_ image: AttachmentMetadata) async throws -> Data {
         let generation = autoReviewAccountGeneration
-        let loaded = try await agentImageStore.load([image])
+        let loaded = try await agentImageStore.loadPublishedGallery([image])
         guard generation == autoReviewAccountGeneration, !agentMessagingAccountTransition,
               let bytes = loaded.first?.data else { throw CancellationError() }
         return bytes
@@ -4340,6 +4340,15 @@ final class AppModel: ObservableObject {
         let bytes = try await agentImageStore.thumbnail(for: image)
         guard generation == autoReviewAccountGeneration, !agentMessagingAccountTransition else { throw CancellationError() }
         return bytes
+    }
+
+    func agentMessageImageInlinePreview(_ image: AttachmentMetadata) async throws -> RemoteGalleryPreview {
+        let generation = autoReviewAccountGeneration
+        guard !agentMessagingAccountTransition else { throw CancellationError() }
+        let preview = try await agentImageStore.inlinePreview(for: image)
+        try Task.checkCancellation()
+        guard generation == autoReviewAccountGeneration, !agentMessagingAccountTransition else { throw CancellationError() }
+        return preview
     }
 
     func stopAgentMessages(scopeID: UUID) async {

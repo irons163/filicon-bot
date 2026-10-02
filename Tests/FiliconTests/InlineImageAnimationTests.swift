@@ -9,6 +9,103 @@ import zlib
 
 @Suite("Bounded inline image animation", .timeLimit(.minutes(1)))
 struct InlineImageAnimationTests {
+    @Test(arguments: ["com.compuserve.gif", "apng", "org.webmproject.webp", "public.tiff",
+        "com.microsoft.bmp", "public.heic", "public.png", "public.jpeg"])
+    func reviewedLocalFormatsPreserveOriginalBytesWithoutGrantingModelInput(type: String) async throws {
+        let actualType = type == "apng" ? "public.png" : type
+        let animated = ["com.compuserve.gif", "apng", "org.webmproject.webp"].contains(type)
+        let bytes = try type == "org.webmproject.webp" ? webP(loops: 2)
+            : image(type: actualType, frames: animated || type == "public.tiff" ? 2 : 1, loops: 2)
+        let root = FileManager.default.temporaryDirectory.appending(path: "filicon-local-format-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let date = Date(timeIntervalSince1970: 1_000)
+        let captured = try PreparedAgentGalleryImage(bytes: bytes, filename: "not-an-image.txt", altText: "已核准的設計")
+        let store = AgentImageStore(rootURL: root)
+        let saved = try await store.importCapturedGalleryImage(captured, createdAt: date)
+        expectNoDifference(saved.filename, "not-an-image.txt")
+        expectNoDifference(saved.mimeType, captured.mimeType)
+        expectNoDifference(saved.altText, "已核准的設計")
+        expectNoDifference(saved.createdAt, date)
+        expectNoDifference(saved.kind, .image)
+        let reopened = AgentImageStore(rootURL: root)
+        let loaded = try await reopened.loadPublishedGallery([saved])
+        expectNoDifference(loaded, [.init(metadata: saved, data: bytes)])
+        let alias = try PreparedAgentGalleryImage(bytes: bytes, filename: "different-name", altText: "第二次出現")
+        let aliasMetadata = try await reopened.importCapturedGalleryImage(alias, createdAt: date)
+        expectNoDifference(aliasMetadata.id, saved.id)
+        let inventory = try await reopened.storageInventory()
+        expectNoDifference(inventory, .init(active: [saved.id: Int64(bytes.count)], quarantined: [:], temporaryFiles: []))
+        let thumbnail = try await reopened.thumbnail(for: saved, maximumDimension: 32)
+        let source = try #require(CGImageSourceCreateWithData(thumbnail as CFData, nil))
+        expectNoDifference(CGImageSourceGetType(source) as String?, "public.png")
+        expectNoDifference(CGImageSourceGetCount(source), 1)
+        let preview = try await reopened.inlinePreview(for: saved, maximumDimension: 32)
+        expectNoDifference(preview.original, saved)
+        expectNoDifference(preview.frames.count, animated ? 2 : 1)
+        expectNoDifference(preview.playCount, animated ? 2 : 1)
+        expectNoDifference(preview.isAnimated, animated)
+        let aliasPreview = try await reopened.inlinePreview(for: aliasMetadata, maximumDimension: 32)
+        expectNoDifference(aliasPreview.original, aliasMetadata)
+        expectNoDifference(aliasPreview.frames, preview.frames)
+        if ["public.png", "public.jpeg"].contains(type) {
+            let inference = try await reopened.load([saved])
+            expectNoDifference(inference, loaded)
+        } else {
+            await #expect(throws: AgentImageError.invalid) { try await reopened.load([saved]) }
+            await #expect(throws: AgentImageError.invalid) {
+                try await reopened.importImage(data: bytes, filename: "not-an-image.txt")
+            }
+        }
+    }
+
+    @Test(arguments: ["digest", "byte-count", "mime", "kind"])
+    func localPreviewMetadataMustMatchCompleteOriginalBytes(mode: String) throws {
+        let bytes = try image(type: "com.compuserve.gif", loops: 2)
+        let original = try RemoteAttachmentImagePreparation.metadata(for: bytes,
+            filename: "本機.gif", altText: "已審核", createdAt: Date(timeIntervalSince1970: 1_000))
+        let changed = AttachmentMetadata(id: mode == "digest" ? String(repeating: "a", count: 64) : original.id,
+            filename: original.filename, mimeType: mode == "mime" ? "image/png" : original.mimeType,
+            byteCount: mode == "byte-count" ? original.byteCount + 1 : original.byteCount,
+            kind: mode == "kind" ? .document : original.kind, createdAt: original.createdAt, altText: original.altText)
+        #expect(throws: RemoteAttachmentImageError.unsupportedOrInvalid) {
+            try RemoteAttachmentImagePreparation.inlinePreview(for: bytes, original: changed)
+        }
+        #expect(throws: RemoteAttachmentImageError.unsupportedOrInvalid) {
+            try RemoteAttachmentImagePreparation.thumbnail(for: bytes, original: changed)
+        }
+    }
+
+    @Test func invalidLocalFramesAndCancelledCaptureNeverProducePreparedImages() async throws {
+        let valid = try deltaAnimation(type: "public.png")
+        var corrupt = valid.prefix(8)
+        for item in try pngChunks(valid) {
+            let payload = item.tag == "fdAT" ? item.payload.prefix(4) + Data([1, 2, 3, 4]) : item.payload
+            corrupt.append(pngChunk(item.tag, payload))
+        }
+        for bytes in [Data(), Data("<svg/>".utf8), Data("<html/>".utf8), corrupt,
+                      try image(type: "com.compuserve.gif", frames: 201)] {
+            #expect(throws: AgentImageError.galleryInvalid) {
+                try PreparedAgentGalleryImage(bytes: bytes, filename: "safe.png", altText: nil)
+            }
+        }
+        #expect(throws: AgentImageError.galleryLimit) {
+            try AgentImageStore.validatePublishedImage(Data(count: AgentImageStore.maximumBytes + 1))
+        }
+        #expect(throws: AgentImageError.galleryLimit) {
+            try PreparedAgentGalleryImage(bytes: Data(count: AgentImageStore.maximumBytes + 1),
+                filename: "safe.gif", altText: nil)
+        }
+        let bytes = try image(type: "com.compuserve.gif", loops: 2)
+        let task = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try PreparedAgentGalleryImage(bytes: bytes, filename: "safe.gif", altText: nil)
+        }
+        switch await task.result {
+        case .success: Issue.record("Cancelled image capture must not be published")
+        case let .failure(error): #expect(error is CancellationError)
+        }
+    }
+
     @Test(arguments: ["com.compuserve.gif", "public.png", "org.webmproject.webp"], [0, 1, 2])
     func preservesFrameOrderTimingAndLoopSemantics(type: String, loops: Int) throws {
         let bytes = try type == "org.webmproject.webp" ? webP(loops: loops) : image(type: type, loops: loops)
