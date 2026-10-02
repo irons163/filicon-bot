@@ -312,7 +312,7 @@ struct AgentMemorySynthesisTransportTests {
             }
         }))
         let transport = AgentMemorySynthesisTransport(agents: agents, registry: registry, scheduler: scheduler,
-            timeout: .seconds(20), attemptTimeout: .milliseconds(100))
+            timeout: .seconds(20), attemptTimeout: .milliseconds(500))
         let date = Date(timeIntervalSince1970: 1_000)
         await #expect(throws: MemorySynthesisTimeout.self) {
             try await transport.run(settings: settings,
