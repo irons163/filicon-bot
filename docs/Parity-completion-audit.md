@@ -1,5 +1,7 @@
 # 完成驗收入口（2026-09-27）
 
+2026-10-03 workflow 生命週期增量：帳號切換現在同步撤銷整體 workflow 執行範圍，再取消 runtime 與共用代理人排程器；手動、已驗證事件、定時及重播四條入口均保留原始 dispatch fence。晚到核准／模型結果、同批後續 workflow 與舊 UI reload 不得跨越撤銷，成功歷史及 UI 投影使用同步提交 fence。43 項最終聚焦測試、原生建置／封裝簽章及七語檢查通過；最後完整回歸 exit 0：135 XCTest＋1,622 Swift Testing（兩項 opt-in live Codex 測試略過）。以下專節保留背景執行器與記憶授權的實際差異，不將本批取消修正寫成全背景 runtime 對等。
+
 2026-10-03 最新圖片增量：第七十七／七十八階段補齊十一格式獨立傳檔 MIME、一般 AVIF／ICO／SVG 預覽判定與已驗證圖片快照／有界 PNG 縮圖，原始 CAS bytes 不替換。46 項聚焦測試、77 個新增 canonical App 案例及十四個七語預覽 render 通過。歷史中止／EPERM 日誌保留；受保護探針恢復後，最後全專案串行 gate exit 0：135 XCTest＋1,609 Swift Testing（核心 859／98 suites、App 527／74 suites；兩項 opt-in live Codex 測試略過），原生建置／封裝簽章與七語各 1,724 keys／0 missing 通過。未移除保護、未重啟使用者 App／Xcode。完整格式變體、AV／Quick Look URL 邊界、其他分類及外部驗收仍保留，不能以本批通過宣稱所有 48 分類完成。詳見 [傳檔第七十七／七十八階段](Send-message-files-parity.md)。
 
 2026-10-03 最新 SVG 增量：第七十六階段已接入安全驗證器支援的靜態自包含 SVG，保留原檔並僅將顯示畫面轉為有界 PNG。53 項聚焦測試、56 個七語卡片與全部 436 個 canonical App 案例通過，既有頭像 SVG 回歸未受影響。最後全專案串行 gate exit 0：135 XCTest＋1,593 Swift Testing（核心 853、App 517）；原生建置／封裝簽章、七語各 1,724 keys／0 missing 通過。完整瀏覽器 SVG、真實 HEIF、其他變體、獨立傳檔 MIME 及其他分類驗收仍保留，不將本批靜態子集寫為全部對等。詳見 [傳檔第七十六階段](Send-message-files-parity.md)。
@@ -130,3 +132,21 @@ reference `source/host/extensions/automations/extension.ts` 的 production compo
 `native-image-preview-unlocked-full.log` 中 `GitHub routine event boundaries`、`Slack routine event boundaries`、`Teams outgoing event boundaries` 三個現存 suite 均通過；包含九種 workflow conclusion、偽 self 拒絕，以及 signed webhook／AAD 不代表 application-user authentication。這些證明目前有限契約與 fail-closed 行為，不證明新平台能力已補齊。完整回歸及封裝證據見本檔最新圖片段落，沒有因 documentation 再核對修改 production 政策或重新執行 live 測試。
 
 AUTO-03 維持 partial，不能因通用 HMAC／matcher 已有就改為 complete；也不能僅見外部 proto 就聲稱原版後端實作已在 reconstructed 倉庫。此核對只涵蓋三條平台流程，其餘 48 分類、人類互動、release／最低 macOS 及真實外部驗收繼續保留，不將平台邊界縮小為圖片工作。
+
+## 背景執行流程：workflow 帳號撤銷與未補齊邊界（2026-10-03）
+
+reference HEAD 仍為 `a9f633e09d49a85829b8236331b9e21f7e612634`。`source/host/extensions/transcript/automation-run-path.ts` 先 `resolveBackgroundSession`，再進同一 session 的 exclusive run；一般代理人呼叫既有 `runner.run`（hidden／automationWake），群組則進 `runGroupAutomation`。這是已確認的背景 session／runner 接線，不是獨立的 persona＋prompt 查詢。另一方面 `host-runner-composition.ts` 的 production context dependencies 仍將 memoryStore／memorySnapshots／userMemory／projectMemory 回傳 null，不能據此宣稱 reconstructed production 已證明所有背景記憶注入。
+
+Filicon `AppAutomationExecutor` 與 `AppWorkflowPromptExecutor` 目前仍使用 profile instructions、提示詞及後者的 prior outputs 呼叫普通 provider stream；共用代理人 lane 不等於共用聊天／mailbox 的管理工具、互動卡、記憶或群組 session。workflow action 的 App handler 仍全部拒絕。此差異繼續列入 AGENT-01／02／04 與 AUTO-03 核對，不以本批修正宣稱已對齊完整 runner。
+
+既有共享事實 consent 明確只涵蓋 bound direct chats、group chats 與 mailbox turns（`en.lproj/Localizable.strings` 的 Shared facts 文案）。本批沒有自動把已核准事實送往無人值守 automation／workflow，也沒有賦予新的工具或帳號權限；若後續接入背景記憶，須明確處理該 audience／授權範圍與撤銷，不把共用 scheduler 當成同意。
+
+本批修正先前可直接重現的生命週期缺口：原 App 切帳號只取消排程器，沒有取消多步驟／批次 workflow 的整個 runtime。
+
+- 新增 process-local `AgentWorkflowExecutionScope`，在切帳號第一個 await 之前同步 suspend。每次 suspend／invalidate 都永久撤銷舊 lease；重疊切換須全部 resume 後才能接受新 dispatch，不會重新啟用舊 lease。lease 不持久化，不是 tool permission。
+- Service 與 runtime 各自捕捉 scope，繼承的 host lease 只補充、不取代自身撤銷；即使上游使用另一個獨立 scope，runtime cancelAll 仍阻止同批下一個 workflow。每一步、核准返回後、進入 agent lane 後、模型每個事件及空串流結束後均重驗。已撤銷時晚到一般錯誤／deadline 仍記為 cancelled，不冒充失敗後可接續或成功。
+- 最終成功歷史／磁碟寫入及 UI 投影持有全部相依 scope 的鎖，依 ObjectIdentifier 排序、同一 scope 去重；同步保存與撤銷有明確先後，不以 preflight check 代替提交 fence。這不新增磁碟交易格式；保存本身失敗仍回報失敗，不捏造已落盤回條。
+- 四條 App dispatch 在跨 actor 之前捕捉原始 lease；service 的 store 查找後及 runtime admission 再重驗，舊 dispatch 不能取消相同 ID 的新流程。舊 schedule tick 不推進下次時間，run／replay／event 的 UI reload 在 await 後重驗，不覆蓋新狀態。
+- cancelAll 不清空定義、刪除歷史或提前釋放仍未 unwound 的 active agent lane。新流程在原 operation 收尾後可正常執行。這是合作式取消與結果隔離，不是回滾已完成的外部動作，也不能強制停止忽略取消、永不返回的第三方 executor。
+
+隔離測試使用固定日期／識別與受控 gate、CustomDump 狀態斷言，涵蓋四條入口、八種 runtime／上游 scope 組合、晚到錯誤與核准、相同 ID 新舊 dispatch、實際 App 切帳號排隊、文字／空串流、UI reload、新流程及 service 重開，以及同步保存／撤銷順序與繼承 scope 去重。早期兩輪測試編譯問題（async autoclosure／非 Equatable request）與時間精度 fixture 的紅燈日誌保留；`workflow-account-scope-focused-commit-fence.log` exit 0：43 tests／4 suites。最後完整串行回歸 `workflow-account-scope-full-final.log` exit 0：135 XCTest＋1,622 Swift Testing（核心 860／98 suites、App 531／74 suites；兩項 opt-in live Codex 測試略過）。`workflow-account-scope-native-final.log` BUILD SUCCEEDED，`workflow-account-scope-package-final.log` deep／strict 簽章、四個執行檔及 app／XPC entitlements 核對通過；七語各 1,724 keys／0 missing，受保護儲存探針成功。第一輪完整回歸也是 exit 0，但發生於最後同步提交修正之前，不作為最終 gate。日誌在 `.build/validation/`，不提交產物。沒有 push、啟動／重啟使用者 App／Xcode、操作真實模型／帳號／群組或改變檔案保護。

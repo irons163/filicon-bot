@@ -7,17 +7,21 @@ import FiliconAgents
 public actor WorkflowService {
     private let store: AgentWorkflowStore
     private let runtime: AgentWorkflowRuntime
+    private let executionScope: AgentWorkflowExecutionScope
 
-    public init(store: AgentWorkflowStore, runtime: AgentWorkflowRuntime) {
+    public init(store: AgentWorkflowStore, runtime: AgentWorkflowRuntime,
+                executionScope: AgentWorkflowExecutionScope = .init()) {
         self.store = store
         self.runtime = runtime
+        self.executionScope = executionScope
     }
 
     public static func persistent(workflowsURL: URL, runHistoryURL: URL,
                                   promptExecutor: any AgentWorkflowPromptExecuting,
                                   actionAuthorizer: any AgentWorkflowActionAuthorizing = DenyAllAgentWorkflowActions(),
                                   actionHandler: any AgentWorkflowActionHandling,
-                                  defaultDeadline: TimeInterval = 15 * 60) throws -> WorkflowService {
+                                  defaultDeadline: TimeInterval = 15 * 60,
+                                  executionScope: AgentWorkflowExecutionScope = .init()) throws -> WorkflowService {
         let executor = AuthorizedAgentWorkflowExecutor(
             promptExecutor: promptExecutor,
             actionAuthorizer: actionAuthorizer,
@@ -28,8 +32,10 @@ public actor WorkflowService {
             runtime: AgentWorkflowRuntime(
                 executor: executor,
                 defaultDeadline: defaultDeadline,
-                historyURL: runHistoryURL
-            )
+                historyURL: runHistoryURL,
+                executionScope: executionScope
+            ),
+            executionScope: executionScope
         )
     }
 
@@ -108,36 +114,57 @@ public actor WorkflowService {
         ))
     }
 
-    public func runNow(id: String, deadline: TimeInterval? = nil) async throws -> AgentWorkflowRun {
+    public func runNow(id: String, deadline: TimeInterval? = nil,
+                       executionLease: AgentWorkflowExecutionScope.Lease? = nil) async throws -> AgentWorkflowRun {
+        let lease = try executionScope.capture(inheriting: executionLease)
+        try lease.check()
         let library = await store.list()
+        try lease.check()
         guard let workflow = library.first(where: { $0.id == id }) else { throw AgentWorkflowError.notFound }
-        return await runtime.runManual(workflow, library: library, deadline: deadline)
+        return await runtime.runManual(workflow, library: library, deadline: deadline, executionLease: lease)
     }
 
-    public func dispatchEvent(_ event: String, deadline: TimeInterval? = nil) async throws -> [AgentWorkflowRun] {
+    public func dispatchEvent(_ event: String, deadline: TimeInterval? = nil,
+                              executionLease: AgentWorkflowExecutionScope.Lease? = nil) async throws -> [AgentWorkflowRun] {
+        let lease = try executionScope.capture(inheriting: executionLease)
+        try lease.check()
         let normalized = try Self.normalized(event, maximumCharacters: 128, field: "event")
         let library = await store.list()
-        return await runtime.fire(event: normalized, workflows: library, deadline: deadline)
+        try lease.check()
+        return await runtime.fire(event: normalized, workflows: library, deadline: deadline, executionLease: lease)
     }
 
     /// Called when the scheduler declares one normalized schedule expression due.
-    public func dispatchSchedule(_ schedule: String, deadline: TimeInterval? = nil) async throws -> [AgentWorkflowRun] {
+    public func dispatchSchedule(_ schedule: String, deadline: TimeInterval? = nil,
+                                 executionLease: AgentWorkflowExecutionScope.Lease? = nil) async throws -> [AgentWorkflowRun] {
+        let lease = try executionScope.capture(inheriting: executionLease)
+        try lease.check()
         let normalized = try Self.normalizedSchedule(schedule)
         let library = await store.list()
-        return await runtime.fire(schedule: normalized, workflows: library, deadline: deadline)
+        try lease.check()
+        return await runtime.fire(schedule: normalized, workflows: library, deadline: deadline, executionLease: lease)
     }
 
-    public func replay(runID: UUID, deadline: TimeInterval? = nil) async throws -> AgentWorkflowRun {
+    public func replay(runID: UUID, deadline: TimeInterval? = nil,
+                       executionLease: AgentWorkflowExecutionScope.Lease? = nil) async throws -> AgentWorkflowRun {
+        let lease = try executionScope.capture(inheriting: executionLease)
+        try lease.check()
         let library = await store.list()
         guard let prior = await runtime.runs().first(where: { $0.id == runID }),
               let workflow = library.first(where: { $0.id == prior.workflowID }) else {
             throw AgentWorkflowError.replayRejected
         }
-        return try await runtime.replay(runID: runID, workflow: workflow, library: library, deadline: deadline)
+        try lease.check()
+        return try await runtime.replay(runID: runID, workflow: workflow, library: library, deadline: deadline, executionLease: lease)
     }
 
     public func cancel(workflowID: String) async { await runtime.cancel(workflowID: workflowID) }
     public func cancel(runID: UUID) async { await runtime.cancel(runID: runID) }
+
+    public func cancelAll() async {
+        executionScope.invalidate()
+        await runtime.cancelAll()
+    }
 
     private static func normalized(_ value: String, maximumCharacters: Int, field: String) throws -> String {
         let clean = value

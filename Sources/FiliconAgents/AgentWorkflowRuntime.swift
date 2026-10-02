@@ -9,10 +9,13 @@ public struct AgentWorkflowStepRequest: Hashable, Sendable {
     public var step: AgentWorkflowStep
     public var referencedWorkflows: [AgentWorkflow]
     public var priorOutputs: [String]
+    public var executionLease: AgentWorkflowExecutionScope.Lease?
     public init(workflowID: String, agentID: UUID? = nil, runID: UUID, generation: UInt64, stepIndex: Int,
-                step: AgentWorkflowStep, referencedWorkflows: [AgentWorkflow], priorOutputs: [String]) {
+                step: AgentWorkflowStep, referencedWorkflows: [AgentWorkflow], priorOutputs: [String],
+                executionLease: AgentWorkflowExecutionScope.Lease? = nil) {
         self.workflowID = workflowID; self.agentID = agentID; self.runID = runID; self.generation = generation; self.stepIndex = stepIndex
         self.step = step; self.referencedWorkflows = referencedWorkflows; self.priorOutputs = priorOutputs
+        self.executionLease = executionLease
     }
 }
 
@@ -99,16 +102,20 @@ public actor AgentWorkflowRuntime {
     private var history: [AgentWorkflowRun] = []
     private var replayed = Set<UUID>()
     private let historyPersistence: AgentWorkflowRunPersistence?
+    private let executionScope: AgentWorkflowExecutionScope
 
-    public init(executor: any AgentWorkflowStepExecutor, defaultDeadline: TimeInterval = 15 * 60) {
+    public init(executor: any AgentWorkflowStepExecutor, defaultDeadline: TimeInterval = 15 * 60,
+                executionScope: AgentWorkflowExecutionScope = .init()) {
         self.executor = executor
         self.defaultDeadline = max(0.05, min(defaultDeadline, 24 * 60 * 60))
         self.historyPersistence = nil
+        self.executionScope = executionScope
     }
 
     /// Restores bounded history and marks runs interrupted by a previous process exit as failed.
     public init(executor: any AgentWorkflowStepExecutor, defaultDeadline: TimeInterval = 15 * 60,
-                historyURL: URL, fileManager: FileManager = .default) throws {
+                historyURL: URL, fileManager: FileManager = .default,
+                executionScope: AgentWorkflowExecutionScope = .init()) throws {
         self.executor = executor
         self.defaultDeadline = max(0.05, min(defaultDeadline, 24 * 60 * 60))
         let persistence = AgentWorkflowRunPersistence(url: historyURL, fileManager: fileManager)
@@ -127,6 +134,7 @@ public actor AgentWorkflowRuntime {
         self.generations = Dictionary(grouping: restored, by: \AgentWorkflowRun.workflowID)
             .mapValues { $0.map(\.generation).max() ?? 0 }
         self.historyPersistence = persistence
+        self.executionScope = executionScope
         if recovered { try persistence.save(restored) }
     }
 
@@ -134,33 +142,44 @@ public actor AgentWorkflowRuntime {
         history.filter { workflowID == nil || $0.workflowID == workflowID }.sorted { $0.startedAt > $1.startedAt }
     }
 
-    public func runManual(_ workflow: AgentWorkflow, library: [AgentWorkflow] = [], deadline: TimeInterval? = nil) async -> AgentWorkflowRun {
-        await run(workflow, origin: .manual, library: library, deadline: deadline)
+    public func runManual(_ workflow: AgentWorkflow, library: [AgentWorkflow] = [], deadline: TimeInterval? = nil,
+                          executionLease: AgentWorkflowExecutionScope.Lease? = nil) async -> AgentWorkflowRun {
+        await run(workflow, origin: .manual, library: library, deadline: deadline, executionLease: executionLease)
     }
 
-    public func fire(event: String, workflows: [AgentWorkflow], deadline: TimeInterval? = nil) async -> [AgentWorkflowRun] {
+    public func fire(event: String, workflows: [AgentWorkflow], deadline: TimeInterval? = nil,
+                     executionLease: AgentWorkflowExecutionScope.Lease? = nil) async -> [AgentWorkflowRun] {
+        guard let lease = try? executionScope.capture(inheriting: executionLease) else { return [] }
         var records: [AgentWorkflowRun] = []
         for workflow in workflows where workflow.isEnabled {
             guard case .event(let expected) = workflow.trigger, expected == event else { continue }
-            records.append(await run(workflow, origin: .trigger(event), library: workflows, deadline: deadline))
+            guard (try? lease.check()) != nil else { break }
+            records.append(await run(workflow, origin: .trigger(event), library: workflows, deadline: deadline, executionLease: lease))
         }
         return records
     }
 
     /// Scheduler integration point: the host decides when a normalized schedule is due.
-    public func fire(schedule: String, workflows: [AgentWorkflow], deadline: TimeInterval? = nil) async -> [AgentWorkflowRun] {
+    public func fire(schedule: String, workflows: [AgentWorkflow], deadline: TimeInterval? = nil,
+                     executionLease: AgentWorkflowExecutionScope.Lease? = nil) async -> [AgentWorkflowRun] {
+        guard let lease = try? executionScope.capture(inheriting: executionLease) else { return [] }
         var records: [AgentWorkflowRun] = []
         for workflow in workflows where workflow.isEnabled {
             guard case .schedule(let expected) = workflow.trigger, expected == schedule else { continue }
-            records.append(await run(workflow, origin: .trigger("schedule:\(schedule)"), library: workflows, deadline: deadline, requireTriggerMatch: false))
+            guard (try? lease.check()) != nil else { break }
+            records.append(await run(workflow, origin: .trigger("schedule:\(schedule)"), library: workflows, deadline: deadline,
+                                     requireTriggerMatch: false, executionLease: lease))
         }
         return records
     }
 
-    public func replay(runID: UUID, workflow: AgentWorkflow, library: [AgentWorkflow] = [], deadline: TimeInterval? = nil) async throws -> AgentWorkflowRun {
+    public func replay(runID: UUID, workflow: AgentWorkflow, library: [AgentWorkflow] = [], deadline: TimeInterval? = nil,
+                       executionLease: AgentWorkflowExecutionScope.Lease? = nil) async throws -> AgentWorkflowRun {
+        let lease = try executionScope.capture(inheriting: executionLease)
+        try lease.check()
         guard let previous = history.first(where: { $0.id == runID }), previous.workflowID == workflow.id,
               previous.status.isTerminal, replayed.insert(runID).inserted else { throw AgentWorkflowError.replayRejected }
-        return await run(workflow, origin: .replay(runID), library: library, deadline: deadline)
+        return await run(workflow, origin: .replay(runID), library: library, deadline: deadline, executionLease: lease)
     }
 
     public func cancel(workflowID: String) {
@@ -171,7 +190,19 @@ public actor AgentWorkflowRuntime {
         for (_, value) in active where value.runID == runID { value.task.cancel() }
     }
 
-    private func run(_ workflow: AgentWorkflow, origin: AgentWorkflowRunOrigin, library: [AgentWorkflow], deadline: TimeInterval?, requireTriggerMatch: Bool = true) async -> AgentWorkflowRun {
+    public func cancelAll() {
+        executionScope.invalidate()
+        for value in active.values { value.task.cancel() }
+        // Keep active entries until their executor unwinds; never report an
+        // ignored cancellation as success or free another run's active entry.
+    }
+
+    private func run(_ workflow: AgentWorkflow, origin: AgentWorkflowRunOrigin, library: [AgentWorkflow], deadline: TimeInterval?,
+                     requireTriggerMatch: Bool = true, executionLease: AgentWorkflowExecutionScope.Lease? = nil) async -> AgentWorkflowRun {
+        let lease: AgentWorkflowExecutionScope.Lease
+        do { lease = try executionScope.capture(inheriting: executionLease) }
+        catch { return terminal(workflow, origin: origin, generation: generations[workflow.id] ?? 0,
+                                status: .cancelled, failure: AgentWorkflowError.cancelled.localizedDescription) }
         // Matches the source product: disablement suppresses automatic surfacing/firing,
         // while an explicit Run Now remains an intentional user action.
         if case .manual = origin { } else if !workflow.isEnabled {
@@ -196,9 +227,11 @@ public actor AgentWorkflowRuntime {
             return try await Self.withDeadline(deadline ?? self.defaultDeadline) {
                 var outputs: [String] = []
                 for (index, step) in workflow.steps.enumerated() {
-                    try Task.checkCancellation()
+                    try lease.check()
                     let output = try await executor.execute(.init(workflowID: workflow.id, agentID: workflow.agentID, runID: run.id, generation: generation,
-                                                                  stepIndex: index, step: step, referencedWorkflows: references, priorOutputs: outputs))
+                                                                  stepIndex: index, step: step, referencedWorkflows: references, priorOutputs: outputs,
+                                                                  executionLease: lease))
+                    try lease.check()
                     guard output.utf8.count <= AgentWorkflowLimits.maximumBodyBytes,
                           outputs.reduce(0, { $0 + $1.utf8.count }) + output.utf8.count <= AgentWorkflowLimits.maximumBodyBytes
                     else { throw AgentWorkflowError.boundsExceeded("step outputs") }
@@ -210,16 +243,19 @@ public actor AgentWorkflowRuntime {
         active[workflow.id] = (run.id, task)
         do {
             let outputs = try await task.value
-            guard generations[workflow.id] == generation else { return terminal(workflow, run: run, status: .failed, failure: AgentWorkflowError.staleGeneration.localizedDescription) }
-            active.removeValue(forKey: workflow.id); return terminal(workflow, run: run, status: .succeeded, outputs: outputs)
-        } catch is CancellationError {
-            if generations[workflow.id] == generation { active.removeValue(forKey: workflow.id) }
-            return terminal(workflow, run: run, status: .cancelled, failure: AgentWorkflowError.cancelled.localizedDescription)
-        } catch AgentWorkflowError.deadlineExceeded {
-            if generations[workflow.id] == generation { active.removeValue(forKey: workflow.id) }
-            return terminal(workflow, run: run, status: .deadlineExceeded, failure: AgentWorkflowError.deadlineExceeded.localizedDescription)
+            return try lease.commit {
+                guard generations[workflow.id] == generation else { return terminal(workflow, run: run, status: .failed, failure: AgentWorkflowError.staleGeneration.localizedDescription) }
+                active.removeValue(forKey: workflow.id)
+                return terminal(workflow, run: run, status: .succeeded, outputs: outputs)
+            }
         } catch {
             if generations[workflow.id] == generation { active.removeValue(forKey: workflow.id) }
+            if error is CancellationError || task.isCancelled || (try? lease.check()) == nil {
+                return terminal(workflow, run: run, status: .cancelled, failure: AgentWorkflowError.cancelled.localizedDescription)
+            }
+            if let workflowError = error as? AgentWorkflowError, workflowError == .deadlineExceeded {
+                return terminal(workflow, run: run, status: .deadlineExceeded, failure: AgentWorkflowError.deadlineExceeded.localizedDescription)
+            }
             return terminal(workflow, run: run, status: .failed, failure: String(describing: error))
         }
     }

@@ -8,6 +8,7 @@ import FiliconAppServices
 import FiliconDomain
 import FiliconProviderKit
 import FiliconLocalTools
+import FiliconAutomations
 @testable import Filicon
 
 private struct BackgroundAgentProvider: InteractiveToolProvider {
@@ -59,6 +60,29 @@ private struct PlainScheduledAgentProvider: AIProvider {
             let task = Task {
                 await probe.record(request)
                 continuation.yield(.textDelta("Completed fixture")); continuation.yield(.completed(.stop)); continuation.finish()
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+}
+
+private struct GatedWorkflowProvider: AIProvider {
+    let descriptor = ProviderDescriptor(id: "background-fixture", displayName: "Background fixture", requiresAPIKey: false, supportsToolCalling: false)
+    let probe: BackgroundProbe
+    let gate: BackgroundExecutionGate
+    let response: String
+    func models() async throws -> [AIModel] { [.init(id: "test")] }
+    func stream(_ request: InferenceRequest) -> AsyncThrowingStream<InferenceEvent, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                await probe.record(request)
+                await gate.wait()
+                switch response {
+                case "empty": continuation.finish()
+                default:
+                    continuation.yield(.textDelta("LATE_ACCOUNT_OUTPUT"))
+                    continuation.yield(.completed(.stop)); continuation.finish()
+                }
             }
             continuation.onTermination = { _ in task.cancel() }
         }
@@ -304,6 +328,135 @@ private struct PlainScheduledAgentProvider: AIProvider {
         #expect(requests[1].messages.last?.text.contains("WORKFLOW_TASK") == true)
         #expect(requests[2].messages.last?.text.contains("SUBAGENT_TASK") == true)
         expectNoDifference(model.workflowRuns.first?.status, .succeeded)
+    }
+
+    @Test(arguments: ["manual", "event", "schedule", "replay"])
+    func accountTransitionCancelsWholeWorkflowWithoutChangingTheDefinition(route: String) async throws {
+        let (root, model, agent, _) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let gate = BackgroundExecutionGate(), probe = BackgroundProbe()
+        await model.registry.register(PlainScheduledAgentProvider(probe: probe))
+        let connectorID = UUID(uuidString: "00000000-0000-0000-0000-000000000002")!
+        let eventKey = "connector:\(connectorID.uuidString.lowercased()):push"
+        let trigger: AgentWorkflowTrigger = route == "schedule" ? .schedule("0 9 * * *") : .event(eventKey)
+        #expect(await model.saveWorkflow(.init(id: "account-fixture", agentID: agent.id, name: "Account fixture", trigger: trigger,
+            steps: [.prompt("WORKFLOW_FIRST"), .prompt("WORKFLOW_SECOND")],
+            createdAt: Date(timeIntervalSince1970: 1_000), updatedAt: Date(timeIntervalSince1970: 1_000))))
+        var replayID: UUID?
+        if route == "replay" {
+            await model.runWorkflowNow(id: "account-fixture")
+            replayID = try #require(model.workflowRuns.first?.id)
+        }
+        let definitions = model.workflows
+        let initialRequestCount = await probe.requests.count
+        let previousLease = try model.workflowExecutionScope.capture()
+        let owner = Task {
+            try await model.agentExecutionScheduler.withExclusiveAccess(agentID: agent.id) {
+                await withTaskCancellationHandler { await gate.wait() } onCancel: { Task { await gate.open() } }
+            }
+        }
+        defer { owner.cancel() }
+        let deadline = ContinuousClock.now.advanced(by: .seconds(8))
+        while !(await gate.isWaiting), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
+        try #require(await gate.isWaiting)
+        let replaySource = replayID
+        let now = Date(timeIntervalSince1970: 2_000)
+        model.workflowNextRuns["0 9 * * *"] = now.addingTimeInterval(-1)
+        let run = Task {
+            switch route {
+            case "event": await model.dispatchWorkflowAuthenticatedEvent(.init(connectorID: connectorID, kind: "push",
+                externalEventID: "fixture-push", payloadJSON: Data("{}".utf8), occurredAt: now))
+            case "schedule": await model.runWorkflowScheduleTick(now: now)
+            case "replay": await model.replayWorkflowRun(id: replaySource!)
+            default: await model.runWorkflowNow(id: "account-fixture")
+            }
+        }
+        try await waitForAgentQueue(model, agentID: agent.id, count: 1)
+        await model.cancelAutoReviewApprovals(nextAccountID: "fixture-other-account")
+        await run.value
+        _ = await owner.result
+        await model.reloadWorkflows()
+        #expect(throws: CancellationError.self) { try previousLease.check() }
+        let afterCancellationRequests = await probe.requests
+        expectNoDifference(afterCancellationRequests.count, initialRequestCount)
+        expectNoDifference(model.workflows, definitions)
+        let cancelled = try #require(model.workflowRuns.first { $0.status == .cancelled })
+        expectNoDifference(cancelled.outputs, [])
+        #expect(model.pendingAutoReviewApprovals.isEmpty)
+        await model.runWorkflowNow(id: "account-fixture")
+        let requests = await probe.requests
+        expectNoDifference(requests.count, initialRequestCount + 2)
+        #expect(requests.allSatisfy { $0.tools.isEmpty && $0.messages.count == 2 })
+        #expect(requests.allSatisfy { $0.messages.first?.text == "SENDER_PRIVATE_PERSONA" })
+        expectNoDifference(model.workflowRuns.first { $0.id == cancelled.id }?.status, .cancelled)
+        let persistedService = try #require(model.workflowService)
+        let persisted = await persistedService.workflow(id: "account-fixture")
+        expectNoDifference(persisted, definitions.first { $0.id == "account-fixture" })
+    }
+
+    @Test func promptQueuedBeforeAccountRevocationCannotUseAFreshScope() async throws {
+        let (root, model, agent, _) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let agents = try AgentService(storeURL: root.appending(path: "agents.json"))
+        let gate = BackgroundExecutionGate(), probe = BackgroundProbe()
+        await model.registry.register(PlainScheduledAgentProvider(probe: probe))
+        let executor = AppWorkflowPromptExecutor(registry: model.registry, agents: agents, scheduler: model.agentExecutionScheduler)
+        let owner = Task { try await model.agentExecutionScheduler.withExclusiveAccess(agentID: agent.id) { await gate.wait() } }
+        defer { owner.cancel() }
+        let request = AgentWorkflowPromptRequest(workflowID: "delayed", agentID: agent.id,
+            runID: UUID(uuidString: "00000000-0000-0000-0000-000000000003")!, prompt: "OLD_ACCOUNT_PROMPT",
+            referencedWorkflows: [], priorOutputs: [], executionLease: try model.workflowExecutionScope.capture())
+        let run = Task { try await executor.executePrompt(request) }
+        try await waitForAgentQueue(model, agentID: agent.id, count: 1)
+        // No scheduler cancel here: isolate the stale-lease check after waiting.
+        model.workflowExecutionScope.suspend(); model.workflowExecutionScope.resume()
+        await gate.open()
+        try await owner.value
+        await #expect(throws: CancellationError.self) { try await run.value }
+        let requests = await probe.requests
+        #expect(requests.isEmpty)
+    }
+
+    @Test(arguments: ["text", "empty"])
+    func promptStreamingBeforeAccountRevocationCannotReturnALateResult(response: String) async throws {
+        let (root, model, agent, _) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let agents = try AgentService(storeURL: root.appending(path: "agents.json"))
+        let gate = BackgroundExecutionGate(), probe = BackgroundProbe()
+        await model.registry.register(GatedWorkflowProvider(probe: probe, gate: gate, response: response))
+        let executor = AppWorkflowPromptExecutor(registry: model.registry, agents: agents, scheduler: model.agentExecutionScheduler)
+        let request = AgentWorkflowPromptRequest(workflowID: "streaming", agentID: agent.id,
+            runID: UUID(uuidString: "00000000-0000-0000-0000-000000000004")!, prompt: "OLD_ACCOUNT_PROMPT",
+            referencedWorkflows: [], priorOutputs: [], executionLease: try model.workflowExecutionScope.capture())
+        let run = Task { try await executor.executePrompt(request) }
+        let deadline = ContinuousClock.now.advanced(by: .seconds(8))
+        while !(await gate.isWaiting), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
+        try #require(await gate.isWaiting)
+        // Keep the task running to test lease revocation independently of stream cancellation.
+        model.workflowExecutionScope.suspend(); model.workflowExecutionScope.resume()
+        await gate.open()
+        await #expect(throws: CancellationError.self) { try await run.value }
+        let requests = await probe.requests
+        expectNoDifference(requests.count, 1)
+        await model.registry.register(PlainScheduledAgentProvider(probe: probe))
+        var fresh = request; fresh.executionLease = try model.workflowExecutionScope.capture()
+        let output = try await executor.executePrompt(fresh)
+        expectNoDifference(output, "Completed fixture")
+    }
+
+    @Test func aRevokedWorkflowReloadCannotReplaceTheCurrentUIState() async throws {
+        let (root, model, _, _) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        #expect(await model.saveWorkflow(.init(id: "ui-state", name: "Current UI", steps: [.prompt("fixture")])))
+        let workflows = model.workflows, runs = model.workflowRuns
+        let lease = try model.workflowExecutionScope.capture()
+        model.workflowExecutionScope.suspend(); model.workflowExecutionScope.resume()
+        model.workflowError = "CURRENT_UI_ERROR"
+        await model.reloadWorkflows(executionLease: lease)
+        expectNoDifference(model.workflows, workflows)
+        expectNoDifference(model.workflowRuns, runs)
+        expectNoDifference(model.workflowError, "CURRENT_UI_ERROR")
+        #expect(!model.workflowIsLoading)
     }
 
     @Test func manualSendWakesPeerAndReplyWakesSenderWithoutSelectingEitherChat() async throws {

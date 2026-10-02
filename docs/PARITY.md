@@ -1,5 +1,7 @@
 # Filicon / Grok Bot 0.18 功能 parity matrix（current implementation）
 
+2026-10-03 workflow 撤銷增量：切帳號同步撤銷整個多步驟／批次 runtime，四條入口保留原始 lease，晚到核准／provider 結果、後續批次及舊 UI reload 均重驗，最終成功歷史與 UI 投影有同步提交 fence；自有 scope 不被外來 lease 取代，重疊切換未結束不接新工作，取消不刪定義或提前釋放 lane。43 tests／4 suites 最終聚焦、原生建置／封裝簽章及七語檢查通過；最後完整串行回歸 exit 0：135 XCTest＋1,622 Swift Testing（核心 860、App 531；兩項 opt-in live Codex 測試略過）。automation／workflow prompt 仍非 reference background session 的完整管理／群組 runner；既有記憶 consent 限 direct／group／mailbox，未默默擴大到無人值守流程。此為生命週期修正，不上調 AGENT-01／02／04 或 AUTO-03 的整體 partial；詳見 [完成驗收入口的「背景執行流程」](Parity-completion-audit.md)。
+
 2026-10-03 平台再核對：AUTO-03 的 reference production 接線使用 bearer-authenticated 雲端 relay／AutomationsService，不是完整本機後端。GitHub source 已確認 CI-completed 契約，但未提供 all-checks 彙整實作；Slack 名稱／isSelf 與 Teams 已登入驗證也依賴後端。Filicon 的個別 push workflow、明確 Slack ID／非 self 與 Teams fail-closed 邊界仍 partial，未連線真實帳號或借用私有登入。詳見 [完成驗收入口的「平台觸發」](Parity-completion-audit.md)，不以歷史 complete／generic ingress 取代平台驗收。
 
 2026-10-03 最新圖片增量：第七十七階段補齊獨立傳檔十一格式的實際 MIME，新增七條 App 路徑共 77 個案例；第七十八階段修正一般預覽遺漏的 AVIF／ICO／SVG 判定，主圖改取型別化已驗證快照，縮圖為最大邊 256 的 PNG，安全 SVG 顯示最大邊 1,024，原檔不替換。46 項聚焦測試與十四個七語預覽 render 通過。前次鎖定／EPERM 中止日誌保留；受保護探針恢復後，最後全專案串行 gate exit 0：135 XCTest＋1,609 Swift Testing（核心 859、App 527；兩項 opt-in live Codex 測試略過）。原生建置／封裝簽章與七語各 1,724 keys／0 missing 通過。嚴格模型輸入、檔案／圖庫不同上限、SVG 安全子集與 AV／Quick Look URL 邊界不變；更廣格式、完整 lifecycle、其他分類／外部服務仍待驗收，不宣稱全部完成。詳見 [傳檔第七十七／七十八階段](Send-message-files-parity.md)。

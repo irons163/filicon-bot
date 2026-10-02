@@ -337,6 +337,7 @@ final class AppModel: ObservableObject {
     private let automationService: AutomationService?
     private var routineEditSessions: [UUID: RoutineEditSession] = [:]
     var workflowService: WorkflowService? = nil
+    let workflowExecutionScope = AgentWorkflowExecutionScope()
     private var automationScheduler: AutomationScheduler?
     private var automationTriggerHub: AutomationTriggerHub?
     private var automationIngress: AutomationIngressController?
@@ -547,7 +548,8 @@ final class AppModel: ObservableObject {
                 workflowsURL: root.appending(path: "workflows.json"),
                 runHistoryURL: root.appending(path: "runs.json"),
                 promptExecutor: AppWorkflowPromptExecutor(registry: registry, agents: agentService, scheduler: agentExecutionScheduler),
-                actionHandler: AppWorkflowNoAuthorityActionHandler()
+                actionHandler: AppWorkflowNoAuthorityActionHandler(),
+                executionScope: workflowExecutionScope
             )
         }
         if let automationService, let agentService {
@@ -8031,6 +8033,7 @@ final class AppModel: ObservableObject {
         for lifetime in manualSidebarChanges.values { lifetime.close() }
         // Queued peer work is scoped to the account that approved the exchange.
         agentMessagingAccountTransition = true
+        workflowExecutionScope.suspend()
         memorySynthesisAccountLifetime.close()
         memorySynthesisAccountLifetime = .init()
         memorySynthesisJournal = .init()
@@ -8065,8 +8068,9 @@ final class AppModel: ObservableObject {
         agentMemorySuggestionUILifetime = AgentMemorySuggestionLifetime()
         for session in agentMessagingSessions.values { session.revokeProfileChanges() }
         autoReviewAccountGeneration &+= 1
-        defer { agentMessagingAccountTransition = false }
+        defer { agentMessagingAccountTransition = false; workflowExecutionScope.resume() }
         await oldMemoryWorker?.shutdown()
+        await workflowService?.cancelAll()
         await agentExecutionScheduler.cancelAll()
         await subagentService?.cancelAll()
         for scopeID in Array(agentMessagingSessions.keys) {

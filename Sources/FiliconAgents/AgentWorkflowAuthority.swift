@@ -15,15 +15,18 @@ public struct AgentWorkflowPromptRequest: Hashable, Sendable {
     public var prompt: String
     public var referencedWorkflows: [AgentWorkflow]
     public var priorOutputs: [String]
+    public var executionLease: AgentWorkflowExecutionScope.Lease?
 
     public init(workflowID: String, agentID: UUID? = nil, runID: UUID, prompt: String,
-                referencedWorkflows: [AgentWorkflow], priorOutputs: [String]) {
+                referencedWorkflows: [AgentWorkflow], priorOutputs: [String],
+                executionLease: AgentWorkflowExecutionScope.Lease? = nil) {
         self.workflowID = workflowID
         self.agentID = agentID
         self.runID = runID
         self.prompt = prompt
         self.referencedWorkflows = referencedWorkflows
         self.priorOutputs = priorOutputs
+        self.executionLease = executionLease
     }
 }
 
@@ -79,6 +82,8 @@ public struct AuthorizedAgentWorkflowExecutor: AgentWorkflowStepExecutor {
     }
 
     public func execute(_ request: AgentWorkflowStepRequest) async throws -> String {
+        try Task.checkCancellation()
+        try request.executionLease?.check()
         switch request.step {
         case .prompt(let prompt):
             return try await promptExecutor.executePrompt(.init(
@@ -87,7 +92,8 @@ public struct AuthorizedAgentWorkflowExecutor: AgentWorkflowStepExecutor {
                 runID: request.runID,
                 prompt: prompt,
                 referencedWorkflows: request.referencedWorkflows,
-                priorOutputs: request.priorOutputs
+                priorOutputs: request.priorOutputs,
+                executionLease: request.executionLease
             ))
         case .action(let name, let payload):
             guard let action = AgentWorkflowAllowedAction(rawValue: name) else {
@@ -103,6 +109,8 @@ public struct AuthorizedAgentWorkflowExecutor: AgentWorkflowStepExecutor {
             guard await actionAuthorizer.authorize(actionRequest) else {
                 throw AgentWorkflowError.actionDenied(name)
             }
+            try Task.checkCancellation()
+            try request.executionLease?.check()
             return try await actionHandler.perform(actionRequest)
         }
     }

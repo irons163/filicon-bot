@@ -5,17 +5,24 @@ import FiliconAgents
 import FiliconAutomations
 
 extension AppModel {
-    func reloadWorkflows() async {
+    func reloadWorkflows(executionLease: AgentWorkflowExecutionScope.Lease? = nil) async {
+        if let executionLease, (try? executionLease.check()) == nil { return }
         guard let workflowService else {
             workflowError = "Workflow storage is unavailable."
             return
         }
         workflowIsLoading = true
         defer { workflowIsLoading = false }
-        workflows = await workflowService.workflows()
-        workflowRuns = await workflowService.runs()
-        workflowError = nil
-        reconcileWorkflowSchedules(now: .now)
+        let definitions = await workflowService.workflows()
+        let runs = await workflowService.runs()
+        let apply = {
+            self.workflows = definitions
+            self.workflowRuns = runs
+            self.workflowError = nil
+            self.reconcileWorkflowSchedules(now: .now)
+        }
+        if let executionLease { try? executionLease.commit(apply) }
+        else { apply() }
     }
 
     func saveWorkflow(_ proposed: AgentWorkflow, replacingID: String? = nil) async -> Bool {
@@ -44,9 +51,12 @@ extension AppModel {
     }
 
     func runWorkflowNow(id: String) async {
-        guard let workflowService else { return }
-        do { _ = try await workflowService.runNow(id: id); await reloadWorkflows() }
-        catch { workflowError = error.localizedDescription }
+        guard let workflowService, let lease = try? workflowExecutionScope.capture() else { return }
+        do {
+            _ = try await workflowService.runNow(id: id, executionLease: lease)
+            try lease.check(); await reloadWorkflows(executionLease: lease)
+        } catch is CancellationError { }
+        catch { if (try? lease.check()) != nil { workflowError = error.localizedDescription } }
     }
 
     func cancelWorkflow(id: String) async {
@@ -60,9 +70,12 @@ extension AppModel {
     }
 
     func replayWorkflowRun(id: UUID) async {
-        guard let workflowService else { return }
-        do { _ = try await workflowService.replay(runID: id); await reloadWorkflows() }
-        catch { workflowError = error.localizedDescription }
+        guard let workflowService, let lease = try? workflowExecutionScope.capture() else { return }
+        do {
+            _ = try await workflowService.replay(runID: id, executionLease: lease)
+            try lease.check(); await reloadWorkflows(executionLease: lease)
+        } catch is CancellationError { }
+        catch { if (try? lease.check()) != nil { workflowError = error.localizedDescription } }
     }
 
     func importWorkflowText(_ markdown: String, fallbackName: String? = nil) async -> Bool {
@@ -116,11 +129,15 @@ extension AppModel {
 
     /// Maps only events that already passed the existing automation connector/webhook ingress.
     func dispatchWorkflowAuthenticatedEvent(_ event: AutomationEvent) async {
+        guard let lease = try? workflowExecutionScope.capture() else { return }
         let kind = event.kind.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !kind.isEmpty else { return }
         let key = "connector:\(event.connectorID.uuidString.lowercased()):\(kind)"
-        do { _ = try await workflowService?.dispatchEvent(key); await reloadWorkflows() }
-        catch { workflowError = error.localizedDescription }
+        do {
+            _ = try await workflowService?.dispatchEvent(key, executionLease: lease)
+            try lease.check(); await reloadWorkflows(executionLease: lease)
+        } catch is CancellationError { }
+        catch { if (try? lease.check()) != nil { workflowError = error.localizedDescription } }
     }
 
     func setWorkflowRuntimeActive(_ active: Bool) {
@@ -129,23 +146,27 @@ extension AppModel {
     }
 
     func runWorkflowScheduleTick(now: Date = .now) async {
-        guard let workflowService else { return }
+        guard let workflowService, let lease = try? workflowExecutionScope.capture() else { return }
         let schedules = Set(workflows.compactMap { workflow -> String? in
             guard workflow.isEnabled, case .schedule(let expression) = workflow.trigger else { return nil }
             return expression
         })
         workflowNextRuns = workflowNextRuns.filter { schedules.contains($0.key) }
         for schedule in schedules.sorted() {
+            guard (try? lease.check()) != nil else { return }
             if let due = workflowNextRuns[schedule], due <= now {
-                do { _ = try await workflowService.dispatchSchedule(schedule) }
-                catch { workflowError = error.localizedDescription }
+                do { _ = try await workflowService.dispatchSchedule(schedule, executionLease: lease) }
+                catch is CancellationError { return }
+                catch { if (try? lease.check()) != nil { workflowError = error.localizedDescription } }
+                guard (try? lease.check()) != nil else { return }
                 workflowNextRuns[schedule] = try? AutomationSchedule.nextRun(for: schedule, after: now, defaultTimeZone: workflowTimeZone)
             } else if workflowNextRuns[schedule] == nil {
                 do { workflowNextRuns[schedule] = try AutomationSchedule.nextRun(for: schedule, after: now, defaultTimeZone: workflowTimeZone) }
                 catch { workflowError = error.localizedDescription }
             }
         }
-        workflowRuns = await workflowService.runs()
+        let runs = await workflowService.runs()
+        try? lease.commit { workflowRuns = runs }
     }
 
     private var workflowTimeZone: TimeZone {
@@ -186,6 +207,8 @@ struct AppWorkflowPromptExecutor: AgentWorkflowPromptExecuting {
     }
 
     func executePrompt(_ request: AgentWorkflowPromptRequest) async throws -> String {
+        try Task.checkCancellation()
+        try request.executionLease?.check()
         guard let agentID = request.agentID else {
             throw ProviderError.transport("The workflow's selected agent or provider is unavailable.")
         }
@@ -195,11 +218,15 @@ struct AppWorkflowPromptExecutor: AgentWorkflowPromptExecuting {
     }
 
     private func executeExclusive(_ request: AgentWorkflowPromptRequest) async throws -> String {
+        try Task.checkCancellation()
+        try request.executionLease?.check()
         guard let agentID = request.agentID,
               let profile = await agents.profile(id: agentID), profile.archivedAt == nil,
               let provider = await registry.provider(id: profile.providerID) else {
             throw ProviderError.transport("The workflow's selected agent or provider is unavailable.")
         }
+        try Task.checkCancellation()
+        try request.executionLease?.check()
         var userText = request.prompt
         if !request.priorOutputs.isEmpty {
             userText += "\n\nPrior workflow outputs:\n" + request.priorOutputs.joined(separator: "\n")
@@ -213,6 +240,7 @@ struct AppWorkflowPromptExecutor: AgentWorkflowPromptExecuting {
         var output = ""
         for try await event in provider.stream(inference) {
             try Task.checkCancellation()
+            try request.executionLease?.check()
             if case .textDelta(let delta) = event {
                 guard output.utf8.count + delta.utf8.count <= AgentWorkflowLimits.maximumBodyBytes else {
                     throw AgentWorkflowError.boundsExceeded("prompt output")
@@ -220,6 +248,8 @@ struct AppWorkflowPromptExecutor: AgentWorkflowPromptExecuting {
                 output += delta
             }
         }
+        try Task.checkCancellation()
+        try request.executionLease?.check()
         return output
     }
 

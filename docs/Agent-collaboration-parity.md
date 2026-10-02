@@ -1,5 +1,13 @@
 # 協作能力核對紀錄（更新至 2026-10-03）
 
+## Workflow 整體撤銷與背景 runner 邊界（2026-10-03）
+
+App 切帳號現在先同步 suspend workflow 執行 scope，再 cancelAll 整個 runtime／共用 agent lane，補上多步驟及事件／schedule 批次不能僅靠取消當前 agent submission 的缺口。四條入口（手動、已驗證事件、定時、重播）攜帶原始 lease 跨 actor；service／runtime 的自身 scope 不會被外來 lease 取代。步驟、晚到 action approval、排隊後 provider admission、每個串流事件及空串流結束、run history 成功提交與 UI reload 都重驗；最後同步保存／投影持有相依 scope 鎖，不以 preflight check 代替提交 fence。重疊帳號切換未全部結束前不接受新 dispatch；舊 lease 永久失效，晚到錯誤記為 cancelled，不能取消相同 ID 的新工作。定義與既有權限不變，沒有刪除歷史或提前釋放尚未收尾的 lane。
+
+43 tests／4 suites 最終聚焦回歸通過（`workflow-account-scope-focused-commit-fence.log`），含八種 runtime／獨立上游 scope 組合、同步提交／撤銷順序及實際 App 四入口取消／新執行。依 Swift 測試技能使用固定日期、isolated fixtures、受控 gate 與 CustomDump；早期編譯／精度失敗日誌保留。最後完整回歸 `workflow-account-scope-full-final.log` exit 0：135 XCTest＋1,622 Swift Testing（核心 860／98 suites、App 531／74 suites；兩項 opt-in live Codex 測試略過）。最後原生建置／封裝簽章及七語各 1,724 keys／0 missing 通過。未啟動或重啟使用者 App／Xcode，也未操作真實帳號／群組／模型。
+
+這不是完整背景協作 runtime 已完成。reference automation 透過 background session 進 existing runner／group orchestration；Filicon automation／workflow prompt 仍是普通 persona＋prompt stream，workflow action 在 App 仍拒絕。既有共享事實 consent 限定 direct／group／mailbox，不能默默擴大到無人值守流程。reference production 的 memory context dependencies 仍回傳 null，不能把可選記憶介面當成已運作的背景注入證據。取消為合作式，不能回滾已完成動作或強制停止永不返回的 executor；AGENT-01／02／04、AUTO-03 與全 48 分類驗收繼續保留。詳細 source 與當前邊界見 [完成驗收入口的「背景執行流程」](Parity-completion-audit.md)。
+
 ## 平台來源再核對（2026-10-03）
 
 reference 的 GitHub CI-completed、Slack 名稱／自身反應及 Teams 登入限制由雲端契約／relay 供應，所核對的 reconstructed production 呼叫鏈未提供完整的後端 checks 彙整或人類身分驗證實作。Filicon 目前的個別 push workflow、明確 Slack ID／非 self 與 Teams fail-closed 仍是有限版本，不借用 reference 私有 backend 或 Cursor 登入。當前 composition、欄位與測試證據見 [完成驗收入口的「平台觸發」](Parity-completion-audit.md)。下方歷史的「checks 彙整尚缺」不是已取得該演算法或授權的證明，AUTO-03 維持 partial；其他協作能力仍按各節最新接線紀錄核對。
