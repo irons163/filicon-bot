@@ -835,3 +835,19 @@ reference 同一 commit 的 `source/host/runner/tools/send-message-schema.ts` �
 受保護存取恢復後，`local-gallery-formats-protected-read-recheck.log` 的普通與 `.completeFileProtectionUnlessOpen` 檔案重讀 bytes 都相符。最後 `local-gallery-formats-unlocked-full.log` 全專案串行測試 exit 0：135 XCTest（7 個非空 bundles）＋1,586 Swift Testing，核心 target 846 tests／97 suites、App target 517 tests／74 suites，零測試失敗；不是沿用先前局部綠燈。本批通過完整 gate 後才提交。未 push、未啟動／重啟 App 或 Xcode、未改真實群組或帳號、未移除檔案保護。本批依 Swift 測試／可觀察模型指引使用隔離資料、固定時間、真實原始 bytes 及明確狀態變化驗證。SVG／AVIF／ICO 等其他格式、真實 HEIF、獨立傳檔 MIME、大型本機媒體、快取、全域圖庫記憶體、完整 crash／跨程序／窗口 lifecycle、最低實際 macOS 與真實外部服務仍是待驗收邊界，不宣稱全部 parity 完成。
 
 後續來源核對修正缺口分類：reference `source/host/extensions/content-search/search-index-writer.ts:21` 的 `mediaOf` 只索引 `user-attachment` 與 `send-message` 的單一 `attachment`，不索引 text gallery 的 `images`；資料表同樣使用 agent＋entry 作為唯一身分。Filicon 圖庫別名搜尋仍只保留同 blob 的首個 filename，這是已知產品限制，但不是已確認的原版 text-gallery 別名索引功能，不能以此臆造必須新增的 parity 要求。原版 `source/shared/media/media-extensions.ts` 則明確列出 AVIF／ICO／SVG；本機唯讀 ImageIO 能力檢查顯示 AVIF 與 ICO 有 reader／writer，HEIF 僅 reader，因此下一批先補驗 AVIF／ICO 的真正 bytes，不將 decoder 名稱當 runtime 完成證明。
+
+## 第七十五階段：AVIF／ICO 的經審核圖庫與預覽（2026-10-03）
+
+重新核對同一 reference commit 的 `source/shared/media/media-extensions.ts`、`image-mime.ts` 及 `file-preview-kind.ts`：AVIF／ICO 明確列入圖片格式。使用 ImageIO 產生真正的 `public.avif`／`com.microsoft.ico` 檔案，先核對來源型別，不以 PNG 改副檔名冒充。`gallery-avif-ico-red.log` 在 production 修正前以 2 tests／1 suite、4 issues 重現本機 captured gallery 與共用預覽入口的拒絕。
+
+共用解碼白名單新增 `image/avif`／`image/x-icon`，使用相同完整來源、逐張尺寸／解碼與 bounded PNG 顯示流程；遠端 MIME／URL 副檔名不能決定實際圖片格式。原始 CAS bytes、hash、metadata／alt、每次出現、完整核准、來源／帳號／quota／重播保護不變。strict `importImage`／`load`、incoming／SendToAgent 仍只接受唯一單幀 PNG／JPEG；直接對話既有歷史附件投影未改。沒有增加外部下載或模型權限，也未更改 5／12 MiB、200 幀與像素預算。
+
+新增核心測試核對真實型別、MIME、遠端命名、local／remote 相同預覽、單幀／非動畫／一次播放、有界縮圖尺寸與 PNG bytes、偽造 MIME 及截斷來源拒絕；既有 exact 原檔保存／重開／alias 共用 CAS 測試從八格式擴為十格式。第一輪 `gallery-avif-ico-focused.log` 的 ICO 截斷輸入被拒絕為 `.decodeLimit`，而非新測試預期的 `.unsupportedOrInvalid`；改為依真實格式核對精確分類，不改成接受任意錯誤或放寬 production 解碼。七語／寬度／格式的首版三集合 `@Test` 不符合目前 Testing macro，編譯失敗日誌 `gallery-avif-ico-focused-fixed.log` 保留；改成兩集合與具名寬度／格式 tuple，沒有更改 App API 或測試範圍。
+
+`gallery-avif-ico-final-focused.log` exit 0：核心 28 tests／1 suite、App 12 tests／2 suites 通過。八格式 modal 原始 bytes／重開／切帳號清理、GIF／AVIF／ICO × 七語 × 320／620 pt 共 42 個實際卡片逐像素案例通過；繁中 AVIF 320 pt 與 ICO 620 pt 渲染已目視確認檔名與說明未裁切，不冒充全 App 人工驗收。五條 canonical publication 路徑的格式案例擴為 80 個，連同既有來源、大量／重複圖片、動畫邊界及故障情境，共 386 個案例通過。
+
+`gallery-avif-ico-native.log` build succeeded；`gallery-avif-ico-package.log` 的版本 0.1.0／build 1、四個執行檔、App／XPC entitlements 與 deep strict 簽章通過。七語各 1,724 keys／0 missing；圖庫解碼錯誤的新格式清單已同步七語。`gallery-avif-ico-protected-read.log` 的普通及受保護檔案重讀 bytes 都相符。最後 `gallery-avif-ico-full.log` 全專案串行 gate exit 0：135 XCTest（7 個非空 bundles）＋1,587 Swift Testing，核心 847 tests／97 suites、App 517 tests／74 suites，零測試失敗；不以局部測試或前一批全綠替代本批完整回歸。
+
+日誌保留未配置 SecurityKey／skill publishing 的 fail-closed App fixture 中四筆 CoreData NSXPCConnection 訊息；兩項測試本身均通過，不把它們當成真實外部服務連線成功。原生建置另有未使用 AppIntents framework 的 metadata extraction warning，不影響本次 build／package gate；不宣稱日誌完全沒有系統警告。
+
+依 Swift 測試／精確差異指引使用隔離來源、固定時間與完整 metadata／原始 bytes／狀態比較，沒有使用真實帳號或群組。SVG、真實 HEIF、AVIF 動畫／ICO 多解析度等未覆蓋變體、獨立傳檔 MIME、大檔、快取、全域記憶體、完整 crash／跨程序／窗口 lifecycle、最低實際 macOS 與外部服務驗收仍保留；不以兩種格式的靜態 fixture 宣稱所有格式變體或全部 parity 完成。

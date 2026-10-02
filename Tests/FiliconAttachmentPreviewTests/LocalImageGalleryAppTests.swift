@@ -130,7 +130,7 @@ private struct SavedLocalGallery: Equatable {
         try await exercise(mode: mode, scenario: scenario, galleryCount: 5, repeatedSources: true)
     }
 
-    @Test(arguments: ["gif", "apng", "webp", "tiff", "bmp", "heic"],
+    @Test(arguments: ["gif", "apng", "webp", "tiff", "bmp", "heic", "avif", "ico"],
         ["local-direct", "mixed-direct", "local-group", "mixed-group", "local-background", "mixed-background",
          "local-mailbox", "mixed-mailbox", "local-peer", "mixed-peer"])
     func decodedLocalFormatsUseEveryCanonicalAppRoute(type: String, scenario: String) async throws {

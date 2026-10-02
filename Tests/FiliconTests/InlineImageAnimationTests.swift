@@ -10,7 +10,7 @@ import zlib
 @Suite("Bounded inline image animation", .timeLimit(.minutes(1)))
 struct InlineImageAnimationTests {
     @Test(arguments: ["com.compuserve.gif", "apng", "org.webmproject.webp", "public.tiff",
-        "com.microsoft.bmp", "public.heic", "public.png", "public.jpeg"])
+        "com.microsoft.bmp", "public.heic", "public.avif", "com.microsoft.ico", "public.png", "public.jpeg"])
     func reviewedLocalFormatsPreserveOriginalBytesWithoutGrantingModelInput(type: String) async throws {
         let actualType = type == "apng" ? "public.png" : type
         let animated = ["com.compuserve.gif", "apng", "org.webmproject.webp"].contains(type)
@@ -55,6 +55,52 @@ struct InlineImageAnimationTests {
             await #expect(throws: AgentImageError.invalid) {
                 try await reopened.importImage(data: bytes, filename: "not-an-image.txt")
             }
+        }
+    }
+
+    @Test(arguments: ["public.avif", "com.microsoft.ico"])
+    func additionalReferenceFormatsUseVerifiedLocalAndRemoteBytes(type: String) throws {
+        let bytes = try image(type: type, frames: 1, width: 32)
+        let source = try #require(CGImageSourceCreateWithData(bytes as CFData, nil))
+        expectNoDifference(CGImageSourceGetType(source) as String?, type)
+        let mime = type == "public.avif" ? "image/avif" : "image/x-icon"
+        let ext = type == "public.avif" ? "avif" : "ico"
+        let date = Date(timeIntervalSince1970: 1_000)
+        let remote = try RemoteAttachmentReference(url: "https://example.com/looks-like-text.html", alt: "Reviewed image")
+        let metadata = try RemoteAttachmentImagePreparation.metadata(for: bytes, reference: remote, createdAt: date)
+        expectNoDifference(metadata.mimeType, mime)
+        expectNoDifference(metadata.filename, "remote-image.\(ext)")
+        let preview = try RemoteAttachmentImagePreparation.inlinePreview(for: bytes, reference: remote,
+            maximumDimension: 16, createdAt: date)
+        expectNoDifference(preview.original, metadata)
+        expectNoDifference(preview.frames.count, 1)
+        expectNoDifference(preview.isAnimated, false)
+        expectNoDifference(preview.playCount, 1)
+        let local = try RemoteAttachmentImagePreparation.inlinePreview(for: bytes, original: metadata,
+            maximumDimension: 16)
+        expectNoDifference(local, preview)
+        let thumbnail = try RemoteAttachmentImagePreparation.thumbnail(for: bytes, original: metadata,
+            maximumDimension: 16)
+        expectNoDifference(thumbnail.original, metadata)
+        expectNoDifference(thumbnail.width, 16)
+        expectNoDifference(thumbnail.height, 16)
+        let thumbnailSource = try #require(CGImageSourceCreateWithData(thumbnail.data as CFData, nil))
+        expectNoDifference(CGImageSourceGetType(thumbnailSource) as String?, "public.png")
+        let frame = try #require(CGImageSourceCreateWithData(preview.frames[0].data as CFData, nil))
+        expectNoDifference(CGImageSourceGetType(frame) as String?, "public.png")
+        expectNoDifference(preview.frames[0].width, 16)
+        expectNoDifference(preview.frames[0].height, 16)
+        let wrong = AttachmentMetadata(id: metadata.id, filename: metadata.filename, mimeType: "image/png",
+            byteCount: metadata.byteCount, kind: .image, createdAt: date, altText: metadata.altText)
+        #expect(throws: RemoteAttachmentImageError.unsupportedOrInvalid) {
+            try RemoteAttachmentImagePreparation.inlinePreview(for: bytes, original: wrong)
+        }
+        #expect(throws: RemoteAttachmentImageError.unsupportedOrInvalid) {
+            try RemoteAttachmentImagePreparation.thumbnail(for: bytes, original: wrong)
+        }
+        let truncatedError: RemoteAttachmentImageError = type == "com.microsoft.ico" ? .decodeLimit : .unsupportedOrInvalid
+        #expect(throws: truncatedError) {
+            try RemoteAttachmentImagePreparation.metadata(for: Data(bytes.prefix(20)), reference: remote)
         }
     }
 

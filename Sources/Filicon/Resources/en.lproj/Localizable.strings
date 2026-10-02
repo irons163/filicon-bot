@@ -56,7 +56,7 @@
 "Choose a valid, single-frame PNG or JPEG image." = "Choose a valid, single-frame PNG or JPEG image.";
 "Use at most 4 images, 5 MB each and 12 MB total." = "Use at most 4 images, 5 MB each and 12 MB total.";
 "Use images up to 5 MB each and 12 MB total." = "Use images up to 5 MB each and 12 MB total.";
-"Choose a valid PNG, JPEG, GIF, WebP, TIFF, BMP, HEIC or HEIF image within the decoding limits." = "Choose a valid PNG, JPEG, GIF, WebP, TIFF, BMP, HEIC or HEIF image within the decoding limits.";
+"Choose a valid PNG, JPEG, GIF, WebP, TIFF, BMP, AVIF, ICO, HEIC or HEIF image within the decoding limits." = "Choose a valid PNG, JPEG, GIF, WebP, TIFF, BMP, AVIF, ICO, HEIC or HEIF image within the decoding limits.";
 "This image is not available in the current request." = "This image is not available in the current request.";
 "The recipient model does not support image input. No image was sent to the model." = "The recipient model does not support image input. No image was sent to the model.";
 "Image messages are currently supported only for a single peer, not groups." = "Image messages are currently supported only for a single peer, not groups.";

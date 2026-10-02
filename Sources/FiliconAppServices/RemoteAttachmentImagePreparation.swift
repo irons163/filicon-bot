@@ -309,6 +309,8 @@ public enum RemoteAttachmentImagePreparation {
         case "public.tiff": format = ("tiff", "image/tiff")
         case "com.microsoft.bmp": format = ("bmp", "image/bmp")
         case "org.webmproject.webp": format = ("webp", "image/webp")
+        case "public.avif": format = ("avif", "image/avif")
+        case "com.microsoft.ico": format = ("ico", "image/x-icon")
         case "public.heic": format = ("heic", "image/heic")
         case "public.heif": format = ("heif", "image/heif")
         default: throw RemoteAttachmentImageError.unsupportedOrInvalid

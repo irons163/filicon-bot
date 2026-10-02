@@ -7,7 +7,7 @@ public enum AgentImageError: String, LocalizedError, Sendable {
     case invalid = "Choose a valid, single-frame PNG or JPEG image."
     case limit = "Use at most 4 images, 5 MB each and 12 MB total."
     case galleryLimit = "Use images up to 5 MB each and 12 MB total."
-    case galleryInvalid = "Choose a valid PNG, JPEG, GIF, WebP, TIFF, BMP, HEIC or HEIF image within the decoding limits."
+    case galleryInvalid = "Choose a valid PNG, JPEG, GIF, WebP, TIFF, BMP, AVIF, ICO, HEIC or HEIF image within the decoding limits."
     case unavailable = "This image is not available in the current request."
     case unsupported = "The recipient model does not support image input. No image was sent to the model."
     case group = "Forwarding images to a group with SendToAgent is not supported."

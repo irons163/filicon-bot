@@ -20,7 +20,7 @@ private struct LocalFormatPreviewGate: Sendable {
 
 @Suite("Local gallery formats and playback", .timeLimit(.minutes(1)))
 @MainActor struct LocalGalleryFormatsAppTests {
-    @Test(arguments: ["gif", "apng", "webp", "tiff", "bmp", "heic"])
+    @Test(arguments: ["gif", "apng", "webp", "tiff", "bmp", "heic", "avif", "ico"])
     func inlinePreviewAndModalRetainExactCapturedOriginals(type: String) async throws {
         let fixture = try await fixture(type: type)
         defer { try? FileManager.default.removeItem(at: fixture.root) }
@@ -49,9 +49,12 @@ private struct LocalFormatPreviewGate: Sendable {
         #expect(urls.allSatisfy { !FileManager.default.fileExists(atPath: $0.path) })
     }
 
-    @Test(arguments: ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"], [320.0, 620.0])
-    func actualLocalImageCardRendersFirstFrameAndDescriptionsWithoutClipping(language: String, width: Double) async throws {
-        let fixture = try await fixture(type: "gif")
+    @Test(arguments: ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"],
+        [320.0, 620.0].flatMap { width in ["gif", "avif", "ico"].map { (width: width, type: $0) } })
+    func actualLocalImageCardRendersFirstFrameAndDescriptionsWithoutClipping(language: String,
+        variant: (width: Double, type: String)) async throws {
+        let (width, type) = variant
+        let fixture = try await fixture(type: type)
         defer { try? FileManager.default.removeItem(at: fixture.root) }
         let preview = try await fixture.model.agentMessageImageInlinePreview(fixture.metadata)
         let display = try RemoteGalleryDisplay(preview: preview)
@@ -72,7 +75,7 @@ private struct LocalFormatPreviewGate: Sendable {
             if language == "zh-Hant" {
                 let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
                 let output = try #require(NSBitmapImageRep(cgImage: actualPixels).representation(using: .png, properties: [:]))
-                try output.write(to: root.appending(path: ".build/validation/local-gallery-format-\(Int(width)).png"))
+                try output.write(to: root.appending(path: ".build/validation/local-gallery-\(type)-\(Int(width)).png"))
             }
         }
     }

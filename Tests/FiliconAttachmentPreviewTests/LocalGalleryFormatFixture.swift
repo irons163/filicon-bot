@@ -13,6 +13,8 @@ enum LocalGalleryFormatFixture {
         case "tiff": identifier = "public.tiff"
         case "bmp": identifier = "com.microsoft.bmp"
         case "heic": identifier = "public.heic"
+        case "avif": identifier = "public.avif"
+        case "ico": identifier = "com.microsoft.ico"
         default: identifier = "public.png"
         }
         let frames = ["gif", "apng", "tiff"].contains(type) ? 2 : 1
