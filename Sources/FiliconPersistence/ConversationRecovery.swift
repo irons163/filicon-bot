@@ -44,6 +44,8 @@ enum ConversationRecovery {
     private struct SalvageConversation {
         var value: Conversation
         var messages: [(ordinal: Int, value: ChatMessage)]
+        var unreadState: ConversationUnreadState?
+        var activityReceipts: [(id: UUID, at: Date)] = []
     }
 
     private final class RecoveryLock {
@@ -295,7 +297,7 @@ enum ConversationRecovery {
                 let rawID = rows.text(0)
                 do {
                     let conversation = try ConversationRepository.decodeConversationMetadata(rows)
-                    values[conversation.id] = .init(value: conversation, messages: [])
+                    values[conversation.id] = .init(value: conversation, messages: [], unreadState: nil)
                 } catch {
                     rejected.append(.init(table: "conversations", rowIdentifier: bounded(rawID), reason: bounded(error.localizedDescription)))
                     if !tolerateInvalidRows { completed = false; break }
@@ -322,6 +324,41 @@ enum ConversationRecovery {
                 }
             }
         } catch { rejected.append(.init(table: "messages", rowIdentifier: "query", reason: bounded(error.localizedDescription))); completed = false }
+        do {
+            let rows = try database.prepare("SELECT last_activity_at,last_viewed_at,manual_unread,unread_count,conversation_id FROM conversation_read_state", operation: "scan unread state for recovery")
+            while try rows.step() == SQLITE_ROW {
+                let rawID = rows.text(4)
+                do {
+                    guard let id = UUID(uuidString: rawID), values[id] != nil else {
+                        throw PersistenceError.invalidData(table: "conversation_read_state", row: rawID, field: "conversation_id")
+                    }
+                    values[id]?.unreadState = try ConversationRepository.decodeUnreadState(rows, conversationID: id)
+                } catch {
+                    // Corruption must not silently become a claim that the user
+                    // read the chat. The original bytes remain in quarantine.
+                    if let id = UUID(uuidString: rawID), values[id] != nil {
+                        values[id]?.unreadState = .init(isManuallyUnread: true, unreadCount: 1)
+                    }
+                    rejected.append(.init(table: "conversation_read_state", rowIdentifier: bounded(rawID), reason: bounded(error.localizedDescription)))
+                }
+            }
+        } catch { rejected.append(.init(table: "conversation_read_state", rowIdentifier: "query", reason: bounded(error.localizedDescription))); completed = false }
+        for id in values.keys where values[id]?.unreadState == nil {
+            // Covers an absent row and a scan/query failure. Unknown is not read.
+            values[id]?.unreadState = .init(isManuallyUnread: true, unreadCount: 1)
+            rejected.append(.init(table: "conversation_read_state", rowIdentifier: id.uuidString, reason: "Unread state could not be recovered"))
+        }
+        do {
+            let rows = try database.prepare("SELECT conversation_id,message_id,activity_at FROM conversation_activity_receipts", operation: "scan unread receipts for recovery")
+            while try rows.step() == SQLITE_ROW {
+                let rawID = rows.text(0), rawMessageID = rows.text(1)
+                guard let id = UUID(uuidString: rawID), values[id] != nil,
+                      let messageID = UUID(uuidString: rawMessageID), rows.double(2).isFinite else {
+                    rejected.append(.init(table: "conversation_activity_receipts", rowIdentifier: bounded(rawMessageID), reason: "Invalid activity receipt")); continue
+                }
+                values[id]?.activityReceipts.append((messageID, Date(timeIntervalSince1970: rows.double(2))))
+            }
+        } catch { rejected.append(.init(table: "conversation_activity_receipts", rowIdentifier: "query", reason: bounded(error.localizedDescription))); completed = false }
         let ordered = values.values.map { item -> SalvageConversation in
             var item = item
             item.messages.sort { $0.ordinal == $1.ordinal ? $0.value.id.uuidString < $1.value.id.uuidString : $0.ordinal < $1.ordinal }
@@ -340,6 +377,7 @@ enum ConversationRecovery {
             let conversation = try database.prepare("INSERT INTO conversations(id,title,provider_id,model_id,updated_at,hidden_at,next_message_ordinal,reasoning_effort,message_addresses_json,agent_binding_json) VALUES(?,?,?,?,?,?,?,?,?,?)", operation: "recover conversation")
             let message = try database.prepare("INSERT INTO messages(id,conversation_id,ordinal,role,text,created_at,attachments_json,delivery_status,delivery_error,reasoning_text,tool_activities_json,reply_to_message_id,reactions_json,transcript_cards_json,short_address,agent_message_source_json,remote_attachment_json,remote_images_json,image_gallery_layout_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", operation: "recover message")
             let search = try database.prepare("INSERT INTO conversation_search(conversation_id,content) VALUES(?,?)", operation: "recover search")
+            let activity = try database.prepare("INSERT OR IGNORE INTO conversation_activity_receipts(conversation_id,message_id,activity_at) VALUES(?,?,?)", operation: "recover unread receipt")
             for item in values {
                 let value = item.value
                 let nextOrdinal = (item.messages.map(\.ordinal).max() ?? -1) + 1
@@ -352,7 +390,13 @@ enum ConversationRecovery {
                     try message.bind(value.id.uuidString, at: 1); try message.bind(item.value.id.uuidString, at: 2); try message.bind(row.ordinal, at: 3); try message.bind(value.role.rawValue, at: 4); try message.bind(value.text, at: 5); try message.bind(value.createdAt.timeIntervalSince1970, at: 6); try message.bind(String(decoding: attachments, as: UTF8.self), at: 7); try message.bind(value.deliveryStatus.rawValue, at: 8); try message.bind(value.deliveryError ?? "", at: 9); try message.bind(value.reasoningText, at: 10); try message.bind(String(decoding: activities, as: UTF8.self), at: 11); try message.bind(value.replyToMessageID?.uuidString ?? "", at: 12); try message.bind(String(decoding: reactions, as: UTF8.self), at: 13); try message.bind(String(decoding: cards, as: UTF8.self), at: 14); try message.bind(value.shortAddress ?? "", at: 15); try message.bind(String(decoding: JSONEncoder().encode(value.agentMessageSource), as: UTF8.self), at: 16); try message.bind(String(decoding: JSONEncoder().encode(value.remoteAttachment), as: UTF8.self), at: 17); try message.bind(String(decoding: JSONEncoder().encode(value.remoteImages), as: UTF8.self), at: 18); try message.bind(String(decoding: JSONEncoder().encode(value.imageGalleryLayout), as: UTF8.self), at: 19); _ = try message.step(); message.reset()
                 }
                 try search.bind(value.id.uuidString, at: 1); try search.bind(([value.title] + value.messages.map(\.text)).joined(separator: "\n"), at: 2); _ = try search.step(); search.reset()
+                try ConversationRepository.writeUnreadState(item.unreadState ?? .init(isManuallyUnread: true, unreadCount: 1), conversationID: value.id, database: database)
+                for receipt in item.activityReceipts {
+                    try activity.bind(value.id.uuidString, at: 1); try activity.bind(receipt.id.uuidString, at: 2)
+                    try activity.bind(receipt.at.timeIntervalSince1970, at: 3); _ = try activity.step(); activity.reset()
+                }
             }
+            try ConversationRepository.seedUnreadHistory(database)
         }
         try database.execute("PRAGMA wal_checkpoint(TRUNCATE)", operation: "checkpoint recovered database")
         guard try check(database, pragma: "integrity_check") else { throw PersistenceError.corrupt(operation: "verify recovered database") }
@@ -362,6 +406,8 @@ enum ConversationRecovery {
         let expected: [String: [String]] = [
             "conversations": ["id", "title", "provider_id", "model_id", "updated_at", "hidden_at", "next_message_ordinal", "reasoning_effort", "message_addresses_json", "agent_binding_json"],
             "messages": ["id", "conversation_id", "ordinal", "role", "text", "created_at", "attachments_json", "delivery_status", "delivery_error", "reasoning_text", "tool_activities_json", "reply_to_message_id", "reactions_json", "transcript_cards_json", "short_address", "agent_message_source_json", "remote_attachment_json", "remote_images_json", "image_gallery_layout_json"],
+            "conversation_read_state": ["conversation_id", "last_activity_at", "last_viewed_at", "manual_unread", "unread_count"],
+            "conversation_activity_receipts": ["conversation_id", "message_id", "activity_at"],
         ]
         for (table, columns) in expected {
             let statement = try database.prepare("PRAGMA table_info(\(table))", operation: "validate \(table) schema")

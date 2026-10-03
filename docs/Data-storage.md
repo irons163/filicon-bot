@@ -42,3 +42,37 @@ Before a user-authorized recovery:
 `StartupRecoveryAppIntegrationTests` covers canonical startup for both launch
 types, a populated foreign directory, ignored foreign symlinks, invalid overrides,
 and failure before model/store creation. The regression tests use isolated roots.
+
+## Canonical conversation read state (schema 17)
+
+`conversations.sqlite3` stores direct-chat activity/view timestamps, the manual
+unread flag and the unread count in `conversation_read_state`, outside serialized
+`Conversation` snapshots. Saving old content therefore cannot overwrite a read
+marker. `conversation_activity_receipts` retains counted message IDs even after
+message deletion, preventing a restored message from becoming a second arrival.
+Deleting a conversation removes both tables' associated rows; changing its exact
+account/agent binding resets that owner's bookkeeping without recounting the old
+messages. These are read markers, not execution permissions or tool approvals.
+
+New completed user/assistant publications and their receipts/counts are committed
+with the canonical message rows in one transaction. Incoming peer traffic,
+unfinished messages and bookkeeping-only cards do not count. A correctly bound
+direct secret-request card counts without adding a credential value to storage.
+Migration from schema 16 and trusted legacy JSON import seed historical published
+IDs without treating all old messages as new unread arrivals. An unfinished draft
+can still become a new arrival when it actually completes after import.
+
+Read actions require the exact current binding, including an explicitly unbound
+chat. Automatic views can preserve manual unread; explicit read clears it without
+regressing the timestamp. A final host commit guard may reject a stale action.
+Ordinary saves cannot silently replace a missing or invalid read record with an
+empty state. Recovery preserves the original bytes in private quarantine, records
+rejected/missing state and conservatively leaves that chat needing attention.
+Valid read markers and deleted-message receipts survive salvage; irrecoverable
+receipt IDs cannot be reconstructed from absent message rows.
+
+This storage layer is not yet wired to automatic chat viewing, manual read/unread
+UI, or the automation guard's canonical unread counter. Those integration steps,
+group-chat read state, chat widgets/host reminders and live UI/release validation
+remain separate. A read-state transaction does not provide a cross-process CAS
+for arbitrary conversation snapshots.

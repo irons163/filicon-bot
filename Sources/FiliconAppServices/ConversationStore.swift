@@ -91,6 +91,22 @@ public actor ConversationStore {
         return try await repository.leaseUniqueBinding(accountID: accountID, agentID: agentID, conversationID: conversationID)
     }
 
+    public func unreadState(conversationID: UUID) async throws -> ConversationUnreadState? {
+        let repository = try resolveRepository()
+        try await importLegacyIfNeeded(into: repository)
+        return try await repository.unreadState(conversationID: conversationID)
+    }
+
+    @discardableResult
+    public func updateReadState(conversationID: UUID, action: ConversationReadAction, at: Date,
+                               expectedBinding: DirectConversationAgentBinding?,
+                               commit: ConversationCommitGuard = { try $0() }) async throws -> ConversationUnreadState {
+        let repository = try resolveRepository()
+        try await importLegacyIfNeeded(into: repository)
+        return try await repository.updateReadState(conversationID: conversationID, action: action, at: at,
+            expectedBinding: expectedBinding, commit: commit)
+    }
+
     /// Loads one backwards keyset page, returned in chronological order.
     public func messagePage(
         conversationID: UUID,
@@ -130,12 +146,13 @@ public actor ConversationStore {
         replacingLoadedMessageIDs: Set<UUID>,
         historyComplete: Bool,
         expectedBinding: DirectConversationAgentBinding? = nil,
+        activityAt: Date = Date(),
         commit: ConversationCommitGuard = { try $0() }
     ) async throws {
         let repository = try resolveRepository()
         try await importLegacyIfNeeded(into: repository)
         guard !historyComplete, let canonical = try await repository.conversation(id: conversation.id) else {
-            try await repository.upsert(conversation, expectedBinding: expectedBinding, commit: commit)
+            try await repository.upsert(conversation, expectedBinding: expectedBinding, activityAt: activityAt, commit: commit)
             try await transcriptService.reconcile(conversation)
             return
         }
@@ -145,7 +162,7 @@ public actor ConversationStore {
         merged.messageAddressReservations.merge(canonical.messageAddressReservations) { _, saved in saved }
         let unseen = canonical.messages.filter { !replacingLoadedMessageIDs.contains($0.id) }
         merged.messages = Self.mergeChronologically(older: unseen, newer: conversation.messages)
-        try await repository.upsert(merged, expectedBinding: expectedBinding, commit: commit)
+        try await repository.upsert(merged, expectedBinding: expectedBinding, activityAt: activityAt, commit: commit)
         try await transcriptService.reconcile(merged)
     }
 
@@ -156,10 +173,10 @@ public actor ConversationStore {
         try await transcriptService.delete(conversationID: id)
     }
 
-    public func save(_ conversations: [Conversation]) async throws {
+    public func save(_ conversations: [Conversation], activityAt: Date = Date()) async throws {
         let repository = try resolveRepository()
         try await importLegacyIfNeeded(into: repository)
-        try await repository.save(conversations)
+        try await repository.save(conversations, activityAt: activityAt)
         try await transcriptService.reconcileAll(conversations)
     }
 
@@ -281,7 +298,7 @@ public actor ConversationStore {
             let values: [Conversation]
             do { values = try decodeLegacy(data) }
             catch { throw PersistenceError.invalidLegacy(error.localizedDescription) }
-            try await repository.save(values)
+            try await repository.save(values, historicalImport: true)
         }
         do {
             if !FileManager.default.fileExists(atPath: backupURL.path) { try FileManager.default.copyItem(at: legacyURL, to: backupURL) }

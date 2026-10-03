@@ -1,5 +1,21 @@
 # 完成驗收入口（2026-09-27）
 
+## 聊天資料庫未讀／手動未讀基礎（2026-10-03）
+
+reference `a9f633e09d49a85829b8236331b9e21f7e612634` 的 `source/host/extensions/session/agent-db.ts` 保存 `lastActivityAt`／`lastViewedAt`／`isManuallyUnread`／`unreadCount`，`source/host/extensions/transcript/session-runtime.ts` 對 message／send-message／user-attachment 記錄活動，排除 `fromAgent` 的 incoming peer；`automation-spend-guard-runtime.ts` 使用這份 DB 狀態而非結果 wake 數。本批先補 native canonical storage，並未完成後兩者的 UI／guard 接線。
+
+SQLite schema 17 加入每單獨聊天的 read state 及 message-ID activity receipts，與訊息保存同筆交易。read state 不放進 `Conversation` JSON／舊畫面快照；串流成功只計一次，編輯／反應／刪除後還原不重算，receipts 只隨整個聊天刪除。純工具／系統／未完成／失敗／incoming peer 不計；native 綁定且屬於該聊天的空正文 secret-request 卡片算已發表活動，不存憑證值。較舊／相同活動時間不倒退或重計，批次新發表的多訊息可一次計數，溢位飽和。
+
+自動 viewed 可保留 manual unread，explicit read 清除旗標且時間不倒退；讀寫需 exact canonical binding（包括明確 unbound），最後同步 host commit guard 可取消，SQLite transaction 內重驗 binding。重綁 account／agent 會重設狀態並 seed 舊 ID，不把舊 owner 的未讀帶給新 owner。兩個 repository 實例的 read time 只前進，舊 content save 不覆蓋 read marker；這不代表 arbitrary snapshot 的跨 process CAS、完整 core 帳號隔離或 UI 生命周期已驗收。寫入 API 回傳 SQLite 已落盤的日期精度值。
+
+schema 16 遷移／受信任舊 JSON import seed 歷史已發表 ID，不把整批聊天算成新未讀；尚未發表的串流 draft 在匯入後完成仍可成為新 arrival。普通 content save／read action 遇到缺失或損壞 read row 明確失敗，不自行補零。recovery 保存原始資料庫／WAL 隔離證據與報告；valid 手動未讀及已刪除／被拒絕訊息的 receipts 可保留，無法恢復的 read state 保守標成需注意，不宣稱人類讀過。損壞 receipt 若連對應歷史訊息也不存在，不能捏造其已計數 ID。
+
+有效紅燈：`conversation-unread-storage-red-valid.log` 的未接線計數／重綁／回滾共 10 issues；`conversation-unread-recovery-red.log` 的缺失 row／空正文 secret 卡片／匯入未完成 draft 共 7 issues；`conversation-unread-storage-focused-final-v2.log` 重現兩 repository 的回傳日期與 SQL 精度不一致一項差異。`conversation-unread-storage-red.log` 及 `conversation-unread-storage-focused-unlocked.log` 是 fixture 的 await autoclosure／可變值 async-let 編譯錯誤，不當成產品紅燈。第一次擴大聚焦 `conversation-unread-storage-focused-final.log` 的既有 agents／policy／workflow 讀取 EPERM 與一項 mailbox cancellation 保留；不把 cancellation 本身當成鎖定證明，也不降低 `.completeFileProtectionUnlessOpen`。解鎖後最後 `conversation-unread-storage-focused-final-v3.log` exit 0：88 tests／23 suites，18 個新增測試涵蓋持久化／恢復／部分歷史／exact owner／原子回滾／多實例，其中損壞 row 另有兩種參數情境。
+
+最後完整串行 gate `conversation-unread-storage-full.log` exit 0：135 XCTest＋1,771 Swift Testing（220 suites；核心 935／107、App 602／83），兩項 opt-in live Codex 測試略過，不當成 live 服務驗收。`conversation-unread-storage-native.log` BUILD SUCCEEDED；`conversation-unread-storage-package.log` 四個執行檔、deep strict 簽章及 app／XPC entitlements 通過，七語各 1,787 keys／0 missing。隔離產物 `.build/validation/SpendUnreadStoragePackage/Filicon.app` 為 Debug／離線 gate，不是 release／公證；本批未改 UI layout，完整套件中的既有 render 斷言通過，沒有新增真人視覺／互動驗收。日誌與產物只保留於忽略的 `.build/validation/`。
+
+本批是 storage foundation，不是聊天未讀整套完成。既有 visible-chat 路徑仍只接 automation 查看時間，manual read／unread UI、guard canonical unread counter、group chat read state、聊天 widget／host reminder 均尚未接；真人點擊／VoiceOver、雲端 session、完整 persisted account migration、live／release 與全 48 分類仍需各自驗收，整體 partial 不上調。沒有 push、啟動或重啟使用者 App／Xcode 或改真實帳號／群組／聊天。
+
 ## 綁定單獨聊天的可見活動時間（2026-10-03）
 
 reference `a9f633e09d49a85829b8236331b9e21f7e612634` 的 `source/host/extensions/transcript/session-runtime.ts` 將 focused active session 的活動、取得焦點與啟用聊天接到 `markSessionViewed`；`source/host/extensions/session/agent-db.ts` 的查看與回答 spend guard 是兩條不同流程。Filicon 本批接上主工作區的真實 active／key／visible／非最小化／occlusion 狀態，設定視窗取得焦點不當成聊天已讀。首次 window attach、選取聊天、最新訊息 ID／delivery status 變化及 account generation 均重新解析；不按每個串流文字 delta 更新。

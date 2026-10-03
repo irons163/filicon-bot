@@ -12,8 +12,8 @@ public enum BoundConversationLookupError: Error, Equatable, Sendable {
 }
 
 public actor ConversationRepository {
-    public static let currentSchemaVersion = 16
-    private let database: SQLiteDatabase
+    public static let currentSchemaVersion = 17
+    let database: SQLiteDatabase
     private var bindingLeases: [ConversationBindingLease] = []
     public nonisolated let initialRecoveryReport: PersistenceRecoveryReport?
 
@@ -147,6 +147,7 @@ public actor ConversationRepository {
     }
 
     public func upsert(_ conversation: Conversation, expectedBinding: DirectConversationAgentBinding? = nil,
+                       activityAt: Date = Date(),
                        commit: ConversationCommitGuard = { try $0() }) throws {
         var values = try load()
         if let expectedBinding {
@@ -157,14 +158,17 @@ public actor ConversationRepository {
         }
         if let index = values.firstIndex(where: { $0.id == conversation.id }) { values[index] = conversation }
         else { values.append(conversation) }
-        try commit { try save(values) }
+        try commit { try save(values, activityAt: activityAt) }
     }
 
     public func delete(id: UUID) throws {
         try save(load().filter { $0.id != id })
     }
 
-    public func save(_ values: [Conversation]) throws {
+    public func save(_ values: [Conversation], activityAt: Date = Date(), historicalImport: Bool = false) throws {
+        guard activityAt.timeIntervalSince1970.isFinite else {
+            throw PersistenceError.invalidData(table: "conversation_read_state", row: "save", field: "timestamp")
+        }
         // Revoke before the transaction: a failed save may conservatively cancel
         // a proposal, but must never leave a stale ownership permit usable.
         for lease in bindingLeases {
@@ -197,6 +201,7 @@ public actor ConversationRepository {
             let insertMediaFTS = try database.prepare("INSERT INTO media_search_fts(conversation_id,message_id,attachment_id,content) VALUES(?,?,?,?)", operation: "full-text index attachment")
             try database.execute("UPDATE global_search_state SET ready = 0 WHERE singleton = 1", operation: "mark global search update in progress")
             for conversation in values {
+                let oldOwner = try unreadBinding(conversation.id)
                 try upsert.bind(conversation.id.uuidString, at: 1); try upsert.bind(conversation.title, at: 2); try upsert.bind(conversation.providerID.rawValue, at: 3); try upsert.bind(conversation.modelID.rawValue, at: 4); try upsert.bind(conversation.updatedAt.timeIntervalSince1970, at: 5); try upsert.bind(conversation.hiddenAt?.timeIntervalSince1970 ?? 0, at: 6); try upsert.bind(conversation.reasoningEffort.rawValue, at: 7); try upsert.bind(String(decoding: JSONEncoder().encode(conversation.messageAddressReservations), as: UTF8.self), at: 8)
                 try upsert.bind(String(decoding: JSONEncoder().encode(conversation.agentBinding), as: UTF8.self), at: 9)
                 _ = try upsert.step(); upsert.reset()
@@ -247,6 +252,9 @@ public actor ConversationRepository {
                 try storeNextOrdinal.bind(nextOrdinal, at: 1); try storeNextOrdinal.bind(conversation.id.uuidString, at: 2); _ = try storeNextOrdinal.step(); storeNextOrdinal.reset()
                 try clearSearch.bind(conversation.id.uuidString, at: 1); _ = try clearSearch.step(); clearSearch.reset()
                 try insertSearch.bind(conversation.id.uuidString, at: 1); try insertSearch.bind(([conversation.title] + conversation.messages.map(\.text)).joined(separator: "\n"), at: 2); _ = try insertSearch.step(); insertSearch.reset()
+                try recordSavedConversationActivity(conversation, previousBinding: oldOwner.binding,
+                    existed: oldOwner.exists, previousMessageIDs: Set(ordinalByMessageID.keys),
+                    at: activityAt, historicalImport: historicalImport)
             }
             try database.execute("DELETE FROM message_search WHERE conversation_id NOT IN (SELECT id FROM conversations)", operation: "prune message search documents")
             try database.execute("DELETE FROM media_search WHERE conversation_id NOT IN (SELECT id FROM conversations)", operation: "prune media search documents")
@@ -521,6 +529,14 @@ public actor ConversationRepository {
                 try database.transaction("migration 16") {
                     try database.execute("ALTER TABLE messages ADD COLUMN image_gallery_layout_json TEXT NOT NULL DEFAULT 'null'", operation: "migration 16 image gallery layout")
                     try database.execute("UPDATE schema_version SET version=16 WHERE singleton=1", operation: "finish migration 16")
+                }
+            }
+            if version < 17 {
+                try database.transaction("migration 17") {
+                    try database.execute("CREATE TABLE IF NOT EXISTS conversation_read_state(conversation_id TEXT PRIMARY KEY NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,last_activity_at REAL NOT NULL DEFAULT 0,last_viewed_at REAL NOT NULL DEFAULT 0,manual_unread INTEGER NOT NULL DEFAULT 0 CHECK(manual_unread IN (0,1)),unread_count INTEGER NOT NULL DEFAULT 0 CHECK(unread_count>=0)) STRICT", operation: "migration 17 conversation unread")
+                    try database.execute("CREATE TABLE IF NOT EXISTS conversation_activity_receipts(conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,message_id TEXT NOT NULL,activity_at REAL NOT NULL,PRIMARY KEY(conversation_id,message_id)) STRICT", operation: "migration 17 unread receipts")
+                    try Self.seedUnreadHistory(database)
+                    try database.execute("UPDATE schema_version SET version=17 WHERE singleton=1", operation: "finish migration 17")
                 }
             }
         } catch let error as PersistenceError { throw error }

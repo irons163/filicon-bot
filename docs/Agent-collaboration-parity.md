@@ -1,5 +1,13 @@
 # 協作能力核對紀錄（更新至 2026-10-03）
 
+## 聊天未讀狀態先落在 canonical DB（2026-10-03）
+
+新增 schema 17 每單獨聊天的活動／查看時間、manual unread 與 count；read marker 與 content snapshot 分離，message ID receipts 跟正文同筆保存，重存、編輯或刪除後還原不重計。incoming peer 不等同使用者活動；該聊天 exact binding 的空正文 secret-request 發表可計入，無憑證值。歷史 import／migration seed 已發表 ID、不創造整批未讀，尚未完成 draft 後續完成可計入。換綁定不帶走舊 owner 的狀態，read action 在最終 transaction 重驗 exact owner；這是 bookkeeping，不回答 spend guard、不放寬任何工具核准。
+
+ordinary save／read 遇到缺失狀態失敗，不補零；salvage 保存 valid manual state 與刪除／被拒絕訊息 ID，無法恢復的 read row 保守標成需注意並保留 quarantine 證據。兩 repository 的讀取日期不倒退，回傳保存後的 SQL 日期精度。18 個新增測試及既有回歸共 88 tests／23 suites 聚焦通過；有效紅燈、fixture 編譯錯誤、macOS 存取拒絕與最後 gate 分開記錄，詳見 [完成驗收入口的「聊天資料庫未讀／手動未讀基礎」](Parity-completion-audit.md)。
+
+這只補資料庫，不宣稱畫面或 guard 接線完成；manual read／unread UI、visible chat DB viewed、真正 unread counter、group read state、chat widget／host reminder、真人 UI／VoiceOver、雲端 session、完整帳號資料遷移、live／release 與全 48 分類仍保留。後續會接上它們，pending wakes 目前仍是近似 signal，整體 partial 不上調。未 push、未重啟使用者 App／Xcode、未改真實資料。
+
 ## 綁定單獨聊天查看更新該 owner 的活動時間（2026-10-03）
 
 主工作區的 focused／active／可見 bound direct chat 現在解析 canonical 唯一 owner，最新訊息載入／完成與聊天切換會更新該 owner 的 automation 查看時間；不以名稱、一般設定視窗焦點或共用工作區當成所有人已讀。queued epoch、account generation、可撤銷 lifetime 及同 repository binding lease 拒絕失焦、切換、封存、歧義、換綁定再換回來及晚到工作。舊 receipt 不取消新 receipt，舊日期不覆蓋新日期；保存拒絕不提前發布狀態。
