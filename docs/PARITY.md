@@ -1,5 +1,9 @@
 # Filicon / Grok Bot 0.18 功能 parity matrix（current implementation）
 
+2026-10-03 活動提醒增量：automation spend guard 改為 per-agent 的持久狀態及精確 owner／card／account／generation 回答；打開共用工作區不再把全部代理人當成已讀。「標示為已讀」不回答提醒或解除暫停。Keep／Resume 延後檢查 30 天、Never ask 限該 owner，只恢復 guard 自己暫停的項目並從目前時間重新排程；人工停用不被恢復。自動 pause／resume 保留已審核 definition revision，以獨立 owner dispatch epoch 阻止舊事件／定時／coalesced 批次補跑；寫入失敗不部分變更或提前撤銷 batch。實際 direct／group runner 與 grant 保存回歸通過，不新增工具／背景記憶權限。
+
+最後聚焦 156 tests／11 suites、完整串行 `spend-guard-full-final.log` exit 0：135 XCTest＋1,741 Swift Testing（219 suites，兩項 opt-in live Codex 測試略過），原生建置／四執行檔封裝簽章、七語各 1,787 keys／0 missing 及 28 個窄版明暗卡片 render 通過。原版群組 session 豁免、真正 transcript unread／對話查看、聊天 widget／host reminder、完整帳號資料隔離與 live／release／全 48 分類仍保留；整體 partial 不上調。詳細來源、紅綠燈與原生／封裝 gate 見 [完成驗收入口的「擁有者隔離的自動化活動提醒與安全恢復」](Parity-completion-audit.md)。未 push、未重啟使用者 App／Xcode、未改真實資料。
+
 2026-10-03 用量歸屬增量：一般直接對話收尾現在使用 admission 捕捉的 account＋provider，不把收到的 usage 記到後來選取的帳號／供應商；usage receipt 只更新統計投影，不覆蓋獨立畫面偏好。實際 App 受控 fixture 的成功／失敗 × 三種晚到變更共六種情境通過，最後聚焦 33 tests／3 suites、原生建置／四執行檔封裝簽章與七語各 1,782 keys／0 missing 通過；完整串行 `usage-attribution-full.log` exit 0：135 XCTest＋1,715 Swift Testing（217 suites，兩項 opt-in live Codex 測試略過）。
 
 原版來源再核對：`AutomationRun`／`finishAutomationRun` 沒有 per-routine token／price／cost 欄位，turn usage 另依 session／request 回報 telemetry，spend guard 是閒置／未讀／執行次數提醒而非金額預算。故下方歷史「完整費用彙整」是 Filicon 已知統計／外部驗收邊界，不直接證明原版已有同等功能而本機漏做；未知不當零、provider 數值不冒充已核對帳單。群組／peer／所有取消刪除用量、live billing、release 及全 48 分類仍保留，整體 partial 不上調。來源及紅綠燈證據見 [完成驗收入口的「回合用量歸屬與原版費用契約核對」](Parity-completion-audit.md)。未 push、未重啟使用者 App／Xcode、未改真實資料。

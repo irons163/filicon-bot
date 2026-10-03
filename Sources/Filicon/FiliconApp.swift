@@ -1962,19 +1962,12 @@ struct RoutineAutomationWorkspaceView: View {
                     }
                 }
             }
-            if model.automationSpendGuard.nudgedAt != nil || !model.automationSpendGuard.guardPausedAutomationIDs.isEmpty {
+            if !model.automationSpendGuardPrompts.isEmpty {
                 Section(l10n("Automation activity check")) {
-                    Text(model.automationSpendGuard.guardPausedAutomationIDs.isEmpty
-                         ? l10n("Automations have continued while you were away. Keep them running or pause them.")
-                         : l10n("Automations were paused after prolonged unviewed activity."))
-                    HStack {
-                        if model.automationSpendGuard.guardPausedAutomationIDs.isEmpty {
-                            Button(l10n("Keep running")) { Task { await model.answerAutomationSpendGuard(.keep) } }
-                            Button(l10n("Pause"), role: .destructive) { Task { await model.answerAutomationSpendGuard(.pause) } }
-                            Button(l10n("Never ask")) { Task { await model.answerAutomationSpendGuard(.neverAsk) } }
-                        } else {
-                            Button(l10n("Resume")) { Task { await model.answerAutomationSpendGuard(.resume) } }
-                            Button(l10n("Stay paused")) { Task { await model.answerAutomationSpendGuard(.stayPaused) } }
+                    ForEach(model.automationSpendGuardPrompts) { prompt in
+                        AutomationSpendGuardCard(prompt: prompt,
+                            isAnswering: model.answeringAutomationSpendGuardIDs.contains(prompt.id)) { answer in
+                            await model.answerAutomationSpendGuard(answer, prompt: prompt)
                         }
                     }
                 }
@@ -1985,6 +1978,7 @@ struct RoutineAutomationWorkspaceView: View {
                     DisclosureGroup {
                         VStack(alignment: .leading, spacing: 8) {
                             Text(automation.prompt).textSelection(.enabled)
+                            Button(l10n("Mark as read")) { markRead(automation) }
                             VStack(alignment: .leading, spacing: 8) {
                                 Button(l10n("Background group session")) {
                                     groupSessionEdit = model.beginRoutineGroupSessionEdit(automation)
@@ -2056,7 +2050,7 @@ struct RoutineAutomationWorkspaceView: View {
                 }
             }
         }.formStyle(.grouped).navigationTitle(l10n("Automations"))
-            .task { await model.reloadAutomationDetails(markViewed: true) }
+            .task { await model.reloadAutomationDetails() }
             .sheet(item: $editSession) { session in
                 RoutineAutomationEditView(session: session)
                     .environmentObject(model)
@@ -2080,6 +2074,11 @@ struct RoutineAutomationWorkspaceView: View {
         } catch { model.errorMessage = error.localizedDescription }
     }
 
+    private func markRead(_ automation: Automation) {
+        guard let context = model.beginAutomationAgentRead(id: automation.agentID) else { return }
+        Task { await model.markAutomationAgentViewed(context) }
+    }
+
     private func triggerSummary(_ trigger: AutomationTrigger) -> String {
         switch trigger {
         case .cron(let expression, let zone): "\(expression) · \(zone ?? "system time")"
@@ -2089,6 +2088,49 @@ struct RoutineAutomationWorkspaceView: View {
         case .unknown(let kind, _): l10n("Unavailable: \(kind)")
         }
     }
+}
+
+@MainActor
+struct AutomationSpendGuardCard: View {
+    @Environment(\.locale) private var uiLocale
+    let prompt: AutomationSpendGuardPrompt
+    var isAnswering = false
+    let onAnswer: (SpendGuardAnswer) async -> Void
+    var body: some View {
+        let _ = uiLocale.identifier
+        VStack(alignment: .leading, spacing: 10) {
+            Text(prompt.agentName).font(.headline).fixedSize(horizontal: false, vertical: true)
+            Text(l10n("This check affects only \(prompt.agentName)'s routines."))
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Text(prompt.isPaused ? l10n("Automations were paused after prolonged unviewed activity.")
+                 : l10n("Automations have continued while you were away. Keep them running or pause them."))
+                .fixedSize(horizontal: false, vertical: true)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) { choices }.fixedSize()
+                VStack(alignment: .leading, spacing: 8) { choices }
+            }
+            .disabled(isAnswering)
+            Text(l10n("Keep running or Resume postpones the next activity check for 30 days; it does not run missed tasks."))
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Text(l10n("Never ask disables this check only for this agent."))
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        }.padding(.vertical, 6)
+    }
+    @ViewBuilder private var choices: some View {
+        if prompt.isPaused {
+            choice(.resume, title: l10n("Resume"))
+            choice(.stayPaused, title: l10n("Stay paused"))
+        } else {
+            choice(.keep, title: l10n("Keep running"))
+            choice(.pause, title: l10n("Pause"), role: .destructive)
+            choice(.neverAsk, title: l10n("Never ask"))
+        }
+    }
+    private func choice(_ answer: SpendGuardAnswer, title: String, role: ButtonRole? = nil) -> some View {
+        Button(title, role: role) { Task { await answerSelected(answer) } }
+            .accessibilityIdentifier("automation-spend-guard-\(answer.rawValue)")
+    }
+    private func answerSelected(_ answer: SpendGuardAnswer) async { await onAnswer(answer) }
 }
 
 struct RoutineEditSession: Identifiable {

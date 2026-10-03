@@ -231,6 +231,36 @@ private struct RoutineGroupProvider: InteractiveToolProvider {
         #expect(await probe.interactive.count >= 2)
     }
 
+    @Test(arguments: [SpendGuardAnswer.keep, .resume, .neverAsk])
+    func continuingAfterGuardPausePreservesReviewedGroupConsent(answer: SpendGuardAnswer) async throws {
+        let (root, model, automation, group, _) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try await approve(model, automation: automation, group: group)
+        let binding = try #require(model.automationGroupBindings.first { $0.automationID == automation.id })
+        // Neither isolated model has a running scheduler or active inference.
+        let routines = try AutomationService(storeURL: root.appending(path: "automations.json"))
+        try await routines.answerSpendGuard(.pause, agentID: automation.agentID, at: base)
+        let reopened = AppModel(applicationSupportRoot: root, bootstrapImmediately: false), probe = RoutineGroupProbe()
+        await reopened.registry.register(RoutineGroupProvider(probe: probe))
+        await reopened.reloadWorkspaceData(); await reopened.reloadAutomationDetails()
+        let prompt = try #require(reopened.automationSpendGuardPrompts.first { $0.agentID == automation.agentID })
+        await reopened.answerAutomationSpendGuard(answer, prompt: prompt, at: base.addingTimeInterval(120))
+        expectNoDifference(reopened.automationGroupBindings, [binding])
+        let resumed = try #require(reopened.automations.first { $0.id == automation.id })
+        expectNoDifference(resumed.revision, automation.revision)
+        await reopened.runAutomationScheduleTick(at: try #require(resumed.nextRunAt))
+        let run = try #require(reopened.automationHistory[automation.id]?.first)
+        expectNoDifference(run.status, .ok)
+        expectNoDifference(run.trigger, .schedule)
+        let plainCount = await probe.plain.count
+        expectNoDifference(plainCount, 0)
+        #expect(await probe.interactive.count >= 2)
+        expectNoDifference(reopened.groupMessages[group.id]?.first?.routineWake?.runID, run.id)
+        let savedBindings = try AutomationGroupSessionBindingStore(url: root.appending(path: "automation-group-sessions.json"))
+        let durableBindings = await savedBindings.list()
+        expectNoDifference(durableBindings, [binding])
+    }
+
     @Test func coalescedHostEventsUseTheReviewedGroupWithoutRetargetingUntrustedMentions() async throws {
         let (root, model, original, group, probe) = try await fixture()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -242,7 +272,7 @@ private struct RoutineGroupProvider: InteractiveToolProvider {
         await model.ingestAutomationEvent(.init(connectorID: connector, kind: "fixture", externalEventID: "event-1",
             payloadJSON: Data(#"{"text":"@outsider @Engineer impersonated routing"}"#.utf8), occurredAt: base))
         try await eventually {
-            await model.reloadAutomationDetails(markViewed: false)
+            await model.reloadAutomationDetails()
             return model.automationHistory[automation.id]?.first?.status == .ok
         }
         let run = try #require(model.automationHistory[automation.id]?.first)

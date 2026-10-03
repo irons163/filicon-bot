@@ -196,16 +196,16 @@ struct AutomationTests {
         let old = date("2026-01-01T00:00:00Z"), agent = UUID()
         let enabled = try await service.save(.init(agentID: agent, name: "Enabled", prompt: "run", trigger: .cron(expression: "@daily", timeZoneIdentifier: "UTC"), createdAt: old), now: old)
         let disabled = try await service.save(.init(agentID: agent, name: "Disabled", prompt: "run", trigger: .cron(expression: "@daily", timeZoneIdentifier: "UTC"), enabled: false, createdAt: old), now: old)
-        try await service.recordViewed(at: old)
-        for index in 0..<AutomationSpendGuard.minimumFiresSinceViewed {
+        try await service.recordViewed(agentID: agent, at: old)
+        for index in 1...AutomationSpendGuard.minimumFiresSinceViewed {
             _ = try await service.runNow(id: enabled.id, executor: EchoAutomationExecutor(), now: old.addingTimeInterval(Double(index)))
         }
         let nudgeAt = old.addingTimeInterval(AutomationSpendGuard.idleInterval + 1)
-        #expect(try await service.evaluateSpendGuard(at: nudgeAt) == .nudge)
+        #expect(try await service.evaluateSpendGuard(agentID: agent, at: nudgeAt) == .nudge)
         let pauseAt = nudgeAt.addingTimeInterval(AutomationSpendGuard.pauseDelay + 1)
-        #expect(try await service.evaluateSpendGuard(at: pauseAt) == .pause)
+        #expect(try await service.evaluateSpendGuard(agentID: agent, at: pauseAt) == .pause)
         #expect(await service.list().first(where: { $0.id == enabled.id })?.enabled == false)
-        try await service.answerSpendGuard(.resume, at: pauseAt)
+        try await service.answerSpendGuard(.resume, agentID: agent, at: pauseAt)
         #expect(await service.list().first(where: { $0.id == enabled.id })?.enabled == true)
         #expect(await service.list().first(where: { $0.id == disabled.id })?.enabled == false)
         #expect(await service.history(automationID: enabled.id).count == AutomationService.maximumHistory)

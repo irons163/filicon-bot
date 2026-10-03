@@ -193,8 +193,8 @@
 "Automation trigger {0} is unavailable." = "自動觸發{0}無法使用。";
 "Automation webhook ingress is unavailable." = "無法使用自定義的 Webhook 入侵 。";
 "Automations" = "自動化";
-"Automations have continued while you were away. Keep them running or pause them." = "在你離開時,自動化仍在繼續, 繼續執行或暫停。";
-"Automations were paused after prolonged unviewed activity." = "在長時間的未檢視活動後,自動化被暫停.";
+"Automations have continued while you were away. Keep them running or pause them." = "在你未查看活動期間，自動化持續執行。你可以選擇繼續執行或暫停。";
+"Automations were paused after prolonged unviewed activity." = "由於長時間未查看活動，自動化已暫停。";
 "Available" = "可用";
 "Avatar" = "頭像";
 "Avatar images must be smaller than 25 MB." = "神通影象必須小於25 MB.";
@@ -1791,3 +1791,10 @@
 "Add action step" = "新增動作步驟";
 "Source reference" = "來源參照";
 "Editing preserves the ordered steps, source and enabled state. Changing the recipe requires reviewing its session consent again." = "編輯會保留步驟順序、來源及啟用狀態。變更流程內容後，必須重新審核對話同意。";
+
+// Owner-scoped automation activity checks.
+"This automation activity check is no longer current." = "此自動化活動提醒已過期。";
+"This check affects only {0}'s routines." = "此提醒只會影響「{0}」的排程。";
+"Keep running or Resume postpones the next activity check for 30 days; it does not run missed tasks." = "「繼續執行」或「恢復」會將下次活動提醒延後 30 天；不會補跑錯過的任務。";
+"Never ask disables this check only for this agent." = "「不再詢問」只會關閉這位代理人的活動提醒。";
+"Mark as read" = "標示為已讀";

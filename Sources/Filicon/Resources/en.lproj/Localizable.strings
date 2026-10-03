@@ -1791,3 +1791,10 @@
 "Add action step" = "Add action step";
 "Source reference" = "Source reference";
 "Editing preserves the ordered steps, source and enabled state. Changing the recipe requires reviewing its session consent again." = "Editing preserves the ordered steps, source and enabled state. Changing the recipe requires reviewing its session consent again.";
+
+// Owner-scoped automation activity checks.
+"This automation activity check is no longer current." = "This automation activity check is no longer current.";
+"This check affects only {0}'s routines." = "This check affects only {0}'s routines.";
+"Keep running or Resume postpones the next activity check for 30 days; it does not run missed tasks." = "Keep running or Resume postpones the next activity check for 30 days; it does not run missed tasks.";
+"Never ask disables this check only for this agent." = "Never ask disables this check only for this agent.";
+"Mark as read" = "Mark as read";

@@ -193,8 +193,8 @@
 "Automation trigger {0} is unavailable." = "El gatillo de automatización {0} no está disponible.";
 "Automation webhook ingress is unavailable." = "Automatización webhook ingress no está disponible.";
 "Automations" = "Automatizaciones";
-"Automations have continued while you were away. Keep them running or pause them." = "Las automatizaciones han continuado mientras estabas fuera. Manténgalos corriendo o pausarlos.";
-"Automations were paused after prolonged unviewed activity." = "Las automatizaciones se detuvieron después de una actividad prolongada sin revisión.";
+"Automations have continued while you were away. Keep them running or pause them." = "Las automatizaciones han seguido ejecutándose mientras no revisabas su actividad. Puedes mantenerlas en ejecución o pausarlas.";
+"Automations were paused after prolonged unviewed activity." = "Las automatizaciones se pausaron tras un largo periodo de actividad sin revisar.";
 "Available" = "Disponible";
 "Avatar" = "Avatar";
 "Avatar images must be smaller than 25 MB." = "Las imágenes de Avatar deben ser más pequeñas que 25 MB.";
@@ -535,7 +535,7 @@
 "Join a room" = "Unirse a una sala";
 "Join requests" = "Solicitudes de acceso";
 "Jump to replied message" = "Jump to replied message";
-"Keep running" = "Sigue corriendo.";
+"Keep running" = "Seguir ejecutando";
 "Keychain account" = "Cuenta de llave en mano";
 "Keychain error {0}." = "Error de llavero {0}.";
 "Keychain reference" = "Referencia de llave en mano";
@@ -740,7 +740,7 @@
 "Paste a filicon://shared-room/join invite" = "Pega una invitación filicon://shared-room/join";
 "Paste files" = "Archivo de sabores";
 "Path" = "Camino";
-"Pause" = "Pausa";
+"Pause" = "Pausar";
 "Pending" = "Pendiente";
 "Pending results" = "Resultados pendientes";
 "Permission" = "Permiso";
@@ -879,7 +879,7 @@
 "Respond as agent" = "Responder como agente";
 "Restore" = "Restaurar";
 "Result" = "Resultado";
-"Resume" = "Resumen";
+"Resume" = "Reanudar";
 "Resync" = "Resync";
 "Retired" = "Retirada";
 "Retired Permission" = "Permiso retirado";
@@ -994,7 +994,7 @@
 "Starting" = "Comienzo";
 "Starting recording…" = "Comenzando la grabación...";
 "Status not loaded." = "Estado no cargado.";
-"Stay paused" = "Mantente pausado";
+"Stay paused" = "Mantener en pausa";
 "Stop" = "Detener";
 "Stop and transcribe" = "Para y transcribe";
 "Stopped" = "Deténganse.";
@@ -1791,3 +1791,10 @@
 "Add action step" = "Añadir paso de acción";
 "Source reference" = "Referencia de origen";
 "Editing preserves the ordered steps, source and enabled state. Changing the recipe requires reviewing its session consent again." = "La edición conserva el orden de los pasos, el origen y el estado de activación. Cambiar el flujo requiere revisar de nuevo el consentimiento de su sesión.";
+
+// Owner-scoped automation activity checks.
+"This automation activity check is no longer current." = "Esta comprobación de actividad de las automatizaciones ya no está vigente.";
+"This check affects only {0}'s routines." = "Esta comprobación solo afecta a las rutinas de {0}.";
+"Keep running or Resume postpones the next activity check for 30 days; it does not run missed tasks." = "Continuar o Reanudar aplaza la próxima comprobación de actividad 30 días; no ejecuta las tareas omitidas.";
+"Never ask disables this check only for this agent." = "No volver a preguntar desactiva esta comprobación solo para este agente.";
+"Mark as read" = "Marcar como leído";

@@ -193,8 +193,8 @@
 "Automation trigger {0} is unavailable." = "オートメーショントリガー{0}は利用できません。";
 "Automation webhook ingress is unavailable." = "自動化webhookイングレッシブは利用できません。";
 "Automations" = "自動化";
-"Automations have continued while you were away. Keep them running or pause them." = "オートメーションは、あなたが離れていたときに継続しています。 それらを実行または一時停止してください。";
-"Automations were paused after prolonged unviewed activity." = "長時間の未視活動後に自動化が悪用されました。";
+"Automations have continued while you were away. Keep them running or pause them." = "確認していない間も自動化は実行されていました。実行を続けるか、一時停止してください。";
+"Automations were paused after prolonged unviewed activity." = "長期間アクティビティを確認していないため、自動化を一時停止しました。";
 "Available" = "利用できる";
 "Avatar" = "アバター";
 "Avatar images must be smaller than 25 MB." = "Avatarの画像は25MB未満でなければなりません。";
@@ -535,7 +535,7 @@
 "Join a room" = "ルームに参加";
 "Join requests" = "参加リクエスト";
 "Jump to replied message" = "返信されたメッセージにジャンプ";
-"Keep running" = "実行を続けて下さい";
+"Keep running" = "実行を続ける";
 "Keychain account" = "Keychainアカウント";
 "Keychain error {0}." = "キーホルダーエラー{0}。";
 "Keychain reference" = "Keychainの参照";
@@ -740,7 +740,7 @@
 "Paste a filicon://shared-room/join invite" = "filicon://shared-room/join の招待リンクを貼り付け";
 "Paste files" = "ファイルの貼り付け";
 "Path" = "パス";
-"Pause" = "パデュース";
+"Pause" = "一時停止";
 "Pending" = "保留中";
 "Pending results" = "終了結果";
 "Permission" = "パーミッション";
@@ -879,7 +879,7 @@
 "Respond as agent" = "応答するエージェント";
 "Restore" = "復元";
 "Result" = "結果発表";
-"Resume" = "レジュメ";
+"Resume" = "再開";
 "Resync" = "再同期";
 "Retired" = "リティレッド";
 "Retired Permission" = "無効になった権限";
@@ -994,7 +994,7 @@
 "Starting" = "スタート";
 "Starting recording…" = "録音の開始...";
 "Status not loaded." = "ステータスが読み込まれていない。";
-"Stay paused" = "宿泊のpaused";
+"Stay paused" = "一時停止を続ける";
 "Stop" = "停止";
 "Stop and transcribe" = "停止および退会";
 "Stopped" = "停止する";
@@ -1791,3 +1791,10 @@
 "Add action step" = "アクションステップを追加";
 "Source reference" = "ソース参照";
 "Editing preserves the ordered steps, source and enabled state. Changing the recipe requires reviewing its session consent again." = "編集ではステップの順序、ソース、有効状態を保持します。内容を変更した場合は、セッションへの同意を再確認する必要があります。";
+
+// Owner-scoped automation activity checks.
+"This automation activity check is no longer current." = "この自動化の活動確認は古くなっています。";
+"This check affects only {0}'s routines." = "この確認は「{0}」のルーチンにのみ影響します。";
+"Keep running or Resume postpones the next activity check for 30 days; it does not run missed tasks." = "「実行を続ける」または「再開」は次の活動確認を30日後に延期します。実行されなかったタスクを遡って実行することはありません。";
+"Never ask disables this check only for this agent." = "「今後は確認しない」は、このエージェントの活動確認のみを無効にします。";
+"Mark as read" = "既読にする";

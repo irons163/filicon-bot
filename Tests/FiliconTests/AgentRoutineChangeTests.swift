@@ -1390,10 +1390,10 @@ struct AgentRoutineChangeTests {
         let action = scenario.hasPrefix("create") ? "create" : "update"
         let eventFields = scenario.hasSuffix("teams") ? teamsFields : scenario.hasSuffix("pagerduty") ? pagerDutyFields : scenario.hasSuffix("sentry") ? sentryFields : scenario.hasSuffix("linear") ? linearFields : scenario.hasSuffix("cycle") ? cycleFields : scenario.hasSuffix("github") ? githubFields : scenario.hasSuffix("group") ? groupFields : scenario.hasSuffix("mixed") ? mixedFields : slackFields
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
-        if initiallyPaused { try await f.automations.answerSpendGuard(.pause, at: Date(timeIntervalSince1970: 2_000)) }
+        if initiallyPaused { try await f.automations.answerSpendGuard(.pause, agentID: f.owner.id, at: Date(timeIntervalSince1970: 2_000)) }
         let session = f.session(authorize: { _, _, _, _ in
             #expect(!initiallyPaused)
-            try await f.automations.answerSpendGuard(.pause, at: Date(timeIntervalSince1970: 2_000))
+            try await f.automations.answerSpendGuard(.pause, agentID: f.owner.id, at: Date(timeIntervalSince1970: 2_000))
         })
         defer { session.close() }
         var fields: [String: Any] = ["target": "routine", "action": action, "trigger": eventFields]
@@ -1403,7 +1403,9 @@ struct AgentRoutineChangeTests {
             _ = try await session.tools(for: f.owner.id)[2].execute(writeCall(fields), context: f.context)
         }
         let values = await f.automations.list()
-        expectNoDifference(values.count, 2); #expect(values.allSatisfy { !$0.enabled })
+        expectNoDifference(values.count, 2)
+        #expect(values.filter { $0.agentID == f.owner.id }.allSatisfy { !$0.enabled })
+        expectNoDifference(values.first { $0.agentID == f.peer.id }, f.peerRoutine)
         expectNoDifference(values.first?.trigger, f.routine.trigger)
     }
 
@@ -1708,7 +1710,7 @@ struct AgentRoutineChangeTests {
 
     @Test func routineWritesCannotBypassSpendProtectionOrConvertEventTriggers() async throws {
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
-        try await f.automations.answerSpendGuard(.pause, at: Date(timeIntervalSince1970: 2_000))
+        try await f.automations.answerSpendGuard(.pause, agentID: f.owner.id, at: Date(timeIntervalSince1970: 2_000))
         let session = f.session()
         let tool = session.tools(for: f.owner.id)[2]
         await #expect(throws: AutomationStateChangeError.protectedDefinition) {
@@ -1718,9 +1720,10 @@ struct AgentRoutineChangeTests {
             _ = try await tool.execute(writeCall(["target": "routine", "action": "update", "id": f.routine.id.uuidString, "enabled": true]), context: f.context)
         }
         _ = try await tool.execute(writeCall(["target": "routine", "action": "create", "name": "Disabled draft", "prompt": "Review", "schedule": "@daily", "enabled": false]), context: f.context)
-        let guardState = await f.automations.spendGuardState(), values = await f.automations.list()
-        expectNoDifference(guardState.guardPausedAutomationIDs, [f.routine.id, f.peerRoutine.id])
-        #expect(values.allSatisfy { !$0.enabled })
+        let guardState = await f.automations.spendGuardState(agentID: f.owner.id), values = await f.automations.list()
+        expectNoDifference(guardState.guardPausedAutomationIDs, [f.routine.id])
+        #expect(values.filter { $0.agentID == f.owner.id }.allSatisfy { !$0.enabled })
+        expectNoDifference(values.first { $0.id == f.peerRoutine.id }, f.peerRoutine)
         let event = try await f.automations.save(.init(agentID: f.owner.id, name: "Event", prompt: "Review",
             trigger: .event(.init(connectorID: UUID(), kind: "fixture")), enabled: false))
         await #expect(throws: AutomationStateChangeError.unsupportedSchedule) {
@@ -1801,18 +1804,18 @@ struct AgentRoutineChangeTests {
         let trigger: AutomationTrigger? = kind == "unknown" ? unknown : kind == "nested-unknown"
             ? .anyOf([.cron(expression: "@daily", timeZoneIdentifier: "UTC"), unknown]) : nil
         let f = try await fixture(trigger: trigger); defer { try? FileManager.default.removeItem(at: f.root) }
-        try await f.automations.answerSpendGuard(.pause, at: Date(timeIntervalSince1970: 2_000))
+        try await f.automations.answerSpendGuard(.pause, agentID: f.owner.id, at: Date(timeIntervalSince1970: 2_000))
         let before = await f.automations.list(agentID: f.peer.id)
-        var expectedGuard = await f.automations.spendGuardState()
+        var expectedGuard = await f.automations.spendGuardState(agentID: f.owner.id)
         expectedGuard.guardPausedAutomationIDs.remove(f.routine.id)
         let session = f.session()
         _ = try await session.tools(for: f.owner.id)[2].execute(call(f, action: "delete"), context: f.context)
-        let remaining = await f.automations.list(), guardAfter = await f.automations.spendGuardState()
+        let remaining = await f.automations.list(), guardAfter = await f.automations.spendGuardState(agentID: f.owner.id)
         expectNoDifference(remaining, before); expectNoDifference(guardAfter, expectedGuard)
         let restored = try AutomationService(storeURL: f.file)
-        let durable = await restored.list(), durableGuard = await restored.spendGuardState()
+        let durable = await restored.list(), durableGuard = await restored.spendGuardState(agentID: f.owner.id)
         expectNoDifference(durable, before); expectNoDifference(durableGuard, try persisted(expectedGuard))
-        try await restored.answerSpendGuard(.resume, at: Date(timeIntervalSince1970: 3_000))
+        try await restored.answerSpendGuard(.resume, agentID: f.owner.id, at: Date(timeIntervalSince1970: 3_000))
         let revived = await restored.list(agentID: f.owner.id)
         expectNoDifference(revived, [])
         session.close()
@@ -1966,14 +1969,14 @@ struct AgentRoutineChangeTests {
         let f = try await fixture(enabled: false, trigger: trigger); defer { try? FileManager.default.removeItem(at: f.root) }
         if kind == "guard" {
             try await f.automations.setEnabled(id: f.routine.id, enabled: true)
-            try await f.automations.answerSpendGuard(.pause)
+            try await f.automations.answerSpendGuard(.pause, agentID: f.owner.id)
         }
-        let before = await f.automations.list(), guardBefore = await f.automations.spendGuardState()
+        let before = await f.automations.list(), guardBefore = await f.automations.spendGuardState(agentID: f.owner.id)
         let session = f.session(authorize: { _, _, _, _ in Issue.record("Protected resume must not offer approval") })
         await #expect(throws: AutomationStateChangeError.protected) {
             _ = try await session.tools(for: f.owner.id)[2].execute(call(f, action: "resume"), context: f.context)
         }
-        let after = await f.automations.list(), guardAfter = await f.automations.spendGuardState()
+        let after = await f.automations.list(), guardAfter = await f.automations.spendGuardState(agentID: f.owner.id)
         expectNoDifference(after, before); expectNoDifference(guardAfter, guardBefore)
         session.close()
     }

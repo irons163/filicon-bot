@@ -246,6 +246,38 @@ private struct RoutineDirectProvider: InteractiveToolProvider {
         let sharedCount = await probe.shared.count
         expectNoDifference(sharedCount, 1)
     }
+    @Test(arguments: [SpendGuardAnswer.keep, .resume, .neverAsk])
+    func continuingAfterGuardPausePreservesReviewedDirectConsent(answer: SpendGuardAnswer) async throws {
+        let (root, model, automation, id, _) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try await approve(model, automation: automation, id: id)
+        let binding = try #require(model.automationDirectBindings.first { $0.automationID == automation.id })
+        // The first fixture scheduler is suspended and no run is active. Seed
+        // a saved host pause, then reopen only the isolated test model/store.
+        let routines = try AutomationService(storeURL: root.appending(path: "automations.json"))
+        try await routines.answerSpendGuard(.pause, agentID: automation.agentID, at: base)
+        let reopened = AppModel(applicationSupportRoot: root, bootstrapImmediately: false), probe = RoutineDirectProbe()
+        await reopened.registry.register(RoutineDirectProvider(probe: probe))
+        await reopened.reloadWorkspaceData()
+        reopened.conversations = try await ConversationStore(fileURL: root.appending(path: "conversations.json")).load()
+        await reopened.reloadAutomationDetails()
+        let prompt = try #require(reopened.automationSpendGuardPrompts.first { $0.agentID == automation.agentID })
+        await reopened.answerAutomationSpendGuard(answer, prompt: prompt, at: base.addingTimeInterval(120))
+        expectNoDifference(reopened.automationDirectBindings, [binding])
+        let resumed = try #require(reopened.automations.first { $0.id == automation.id })
+        expectNoDifference(resumed.revision, automation.revision)
+        await reopened.runAutomationScheduleTick(at: try #require(resumed.nextRunAt))
+        let run = try #require(reopened.automationHistory[automation.id]?.first)
+        expectNoDifference(run.status, .ok)
+        expectNoDifference(run.trigger, .schedule)
+        let plainCount = await probe.plain.count, sharedCount = await probe.shared.count
+        expectNoDifference(plainCount, 0)
+        expectNoDifference(sharedCount, 1)
+        #expect(reopened.conversations.first { $0.id == id }?.messages.contains { $0.id == run.id } == true)
+        let savedBindings = try AutomationDirectSessionBindingStore(url: root.appending(path: "automation-direct-sessions.json"))
+        let durableBindings = await savedBindings.list()
+        expectNoDifference(durableBindings, [binding])
+    }
     @Test func questionSuspendsAndBlocksAnotherBackgroundRun() async throws {
         let (root, model, automation, id, probe) = try await fixture(question: true)
         defer { try? FileManager.default.removeItem(at: root) }

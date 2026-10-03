@@ -183,7 +183,7 @@ struct TeamsRoutineEditorTests {
             var expected = before; expected.trigger = try draft.change.automation.trigger; expected.revision += 1
             expectNoDifference(model.automations, [expected])
             let reopened = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
-            await reopened.reloadAutomationDetails(markViewed: false)
+            await reopened.reloadAutomationDetails()
             // Compare the full persisted representation, including the store's
             // millisecond Date round-trip rather than submillisecond clock bits.
             let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .millisecondsSince1970

@@ -57,7 +57,7 @@ struct ManualRoutineEditTests {
         let current = try #require(await service.list().first)
         let history = await service.history(automationID: id)
         let wakes = await service.pendingWakes()
-        let guardState = await service.spendGuardState()
+        let guardState = await service.spendGuardState(agentID: owner)
         var proposal = before; proposal.name = " Updated "; proposal.prompt = " Updated task "
         // Runtime fields from an old or forged UI snapshot are never restored.
         proposal.lastRunAt = .distantPast; proposal.nextRunAt = .distantPast
@@ -68,7 +68,7 @@ struct ManualRoutineEditTests {
         expectNoDifference(saved, expected)
         expectNoDifference(lifetime.committed(for: edit), saved)
         let afterHistory = await service.history(automationID: id), afterWakes = await service.pendingWakes()
-        let afterGuard = await service.spendGuardState()
+        let afterGuard = await service.spendGuardState(agentID: owner)
         expectNoDifference(afterHistory, history); expectNoDifference(afterWakes, wakes); expectNoDifference(afterGuard, guardState)
         let restored = try AutomationService(storeURL: folder.appending(path: "automations.json"))
         let restoredDefinitions = await restored.list()
@@ -120,14 +120,14 @@ struct ManualRoutineEditTests {
     func disabledAndSpendProtectedDefinitionsRemainPaused(guardPaused: Bool) async throws {
         let (folder, service) = try fixture(); defer { try? FileManager.default.removeItem(at: folder) }
         _ = try await service.save(routine, now: now)
-        if guardPaused { try await service.answerSpendGuard(.pause, at: now) }
+        if guardPaused { try await service.answerSpendGuard(.pause, agentID: owner, at: now) }
         else { try await service.setEnabled(id: id, enabled: false, now: now) }
         let before = try #require(await service.list().first)
-        let spend = await service.spendGuardState()
+        let spend = await service.spendGuardState(agentID: owner)
         let saved = try await service.updateManualDefinition(change(before, trigger: .cron(expression: "@every 2h", timeZoneIdentifier: "UTC")), lifetime: .init(), now: now)
         expectNoDifference(saved.enabled, false); expectNoDifference(saved.guardPaused, guardPaused)
         #expect(saved.nextRunAt == nil)
-        let afterSpend = await service.spendGuardState()
+        let afterSpend = await service.spendGuardState(agentID: owner)
         expectNoDifference(afterSpend, spend)
     }
 
@@ -151,7 +151,7 @@ struct ManualRoutineEditTests {
             try await service.setEnabled(id: id, enabled: false, now: now)
             try await service.setEnabled(id: id, enabled: true, now: now)
         case "delete": try await service.delete(id: id)
-        default: try await service.answerSpendGuard(.pause, at: now)
+        default: try await service.answerSpendGuard(.pause, agentID: owner, at: now)
         }
         let current = await service.list(), lifetime = AutomationStateChangeLifetime(), edit = change(before)
         await #expect(throws: AutomationEditError.stale) { try await service.updateManualDefinition(edit, lifetime: lifetime, now: now) }

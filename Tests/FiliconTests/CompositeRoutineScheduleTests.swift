@@ -129,7 +129,7 @@ struct CompositeRoutineScheduleTests {
     @Test func spendGuardPauseKeepsBothPathsStoppedUntilUserResumes() async throws {
         try await fixture { service, file in
             let saved = try await service.save(routine([cron("@every 1h"), slack()]), now: now)
-            try await service.answerSpendGuard(.pause, at: now)
+            try await service.answerSpendGuard(.pause, agentID: agentID, at: now)
             let restored = try AutomationService(storeURL: file)
             let paused = try #require(await restored.list().first)
             expectNoDifference(paused.guardPaused, true); expectNoDifference(paused.nextRunAt, nil)
@@ -139,7 +139,7 @@ struct CompositeRoutineScheduleTests {
             let skippedTime = await restored.fireDue(at: now.addingTimeInterval(7_200), executor: CompositeScheduleExecutor())
             let skippedEvent = await restored.fire(events: [event("guard-paused")], executor: CompositeScheduleExecutor(), now: now)
             expectNoDifference(skippedTime, []); expectNoDifference(skippedEvent, [])
-            try await restored.answerSpendGuard(.resume, at: now.addingTimeInterval(7_200))
+            try await restored.answerSpendGuard(.resume, agentID: agentID, at: now.addingTimeInterval(7_200))
             let resumed = await restored.list().first, history = await restored.history(automationID: saved.id)
             expectNoDifference(resumed?.guardPaused, false)
             expectNoDifference(resumed?.nextRunAt, now.addingTimeInterval(10_800))

@@ -52,6 +52,22 @@ enum GlobalSearchState: Equatable {
     case unavailable(String)
 }
 
+struct AutomationSpendGuardPrompt: Identifiable, Hashable, Sendable {
+    let id: UUID
+    let agentID: UUID
+    let agentName: String
+    let accountID: String
+    let generation: UInt64
+    let state: AutomationSpendGuardState
+    var isPaused: Bool { !state.guardPausedAutomationIDs.isEmpty }
+}
+
+struct AutomationAgentReadContext: Hashable, Sendable {
+    let agentID: UUID
+    let accountID: String
+    let generation: UInt64
+}
+
 @MainActor
 final class AppModel: ObservableObject {
     @Published var conversations: [Conversation] = []
@@ -119,7 +135,9 @@ final class AppModel: ObservableObject {
     @Published var automations: [Automation] = []
     @Published var automationHistory: [UUID: [AutomationRun]] = [:]
     @Published var automationWakes: [AutomationWake] = []
-    @Published var automationSpendGuard = AutomationSpendGuardState()
+    @Published private(set) var automationSpendGuardPrompts: [AutomationSpendGuardPrompt] = []
+    @Published private(set) var answeringAutomationSpendGuardIDs: Set<UUID> = []
+    private var automationSpendGuardLifetimes: [UUID: (agentID: UUID, lifetime: AutomationSpendGuardLifetime)] = [:]
     @Published var automationIngressRoutes: [AutomationIngressRoute] = []
     @Published var automationIngressAudit: [AutomationIngressAuditEntry] = []
     @Published var automationIngressStatus = AutomationIngressStatus()
@@ -822,7 +840,7 @@ final class AppModel: ObservableObject {
         if let automationIngress {
             try? await automationIngress.restoreIfNeeded(localNetworkOptIn: UserDefaults.standard.bool(forKey: "FiliconAutomationIngressLANOptIn"))
         }
-        await reloadAutomationDetails(markViewed: false)
+        await reloadAutomationDetails()
         observeAutomationState()
         await reloadWorkflows()
         startWorkflowScheduleCoordinator()
@@ -983,7 +1001,7 @@ final class AppModel: ObservableObject {
         setRoute(value, recordingHistory: true)
         if value == .agents { Task { await markAgentsViewed() } }
         if value == .sharedRooms { Task { await refreshSharedRooms() } }
-        if value == .automations { Task { await reloadAutomationDetails(markViewed: true) } }
+        if value == .automations { Task { await reloadAutomationDetails() } }
         if case .some(.conversation(let id)) = value, id != selection {
             persistCurrentDraftImmediately()
             selection = id
@@ -1054,7 +1072,7 @@ final class AppModel: ObservableObject {
         }
         if value == .agents { Task { await markAgentsViewed() } }
         if value == .sharedRooms { Task { await refreshSharedRooms() } }
-        if value == .automations { Task { await reloadAutomationDetails(markViewed: true) } }
+        if value == .automations { Task { await reloadAutomationDetails() } }
     }
 
     private func scheduleNavigationPersistence() {
@@ -1961,7 +1979,7 @@ final class AppModel: ObservableObject {
                 throw TranscriptCardActionRoutingError.mismatchedTarget
             }
             try await automationService.setEnabled(id: id, enabled: true)
-            await reloadAutomationDetails(markViewed: false)
+            await reloadAutomationDetails()
         case (.provideSecret, .secretRequest(let request)):
             guard let secret, !secret.isEmpty,
                   Self.isSafeCredentialComponent(request.service),
@@ -3969,6 +3987,8 @@ final class AppModel: ObservableObject {
 
     func archiveAgent(id: UUID) async {
         guard let agentService else { return }
+        for mutation in automationSpendGuardLifetimes.values where mutation.agentID == id { mutation.lifetime.cancel() }
+        automationSpendGuardPrompts.removeAll { $0.agentID == id }
         for conversation in conversations where conversation.agentBinding?.agentID == id {
             if backgroundDirectExecutions[conversation.id] != nil { cancelConversationWork(conversation.id) }
             cancelDirectMessaging(conversationID: conversation.id)
@@ -7904,7 +7924,7 @@ final class AppModel: ObservableObject {
             _ = try await quotaWrite(scope: "automation", key: proposed.id.uuidString, data: data) { [automationService, proposed] in
                 try await automationService.save(proposed)
             }
-            await reloadAutomationDetails(markViewed: false)
+            await reloadAutomationDetails()
         } catch { errorMessage = error.localizedDescription }
     }
 
@@ -7951,7 +7971,7 @@ final class AppModel: ObservableObject {
         guard let automationService else { return }
         let affected = invalidateRoutineGroupExecutions(automationID: id)
         for groupID in affected { await stopGroup(id: groupID) }
-        do { try await automationService.setEnabled(id: id, enabled: enabled); await reloadAutomationDetails(markViewed: false) }
+        do { try await automationService.setEnabled(id: id, enabled: enabled); await reloadAutomationDetails() }
         catch { errorMessage = error.localizedDescription }
     }
 
@@ -7959,7 +7979,7 @@ final class AppModel: ObservableObject {
         guard let automationService else { return }
         let affected = invalidateRoutineGroupExecutions(automationID: id)
         for groupID in affected { await stopGroup(id: groupID) }
-        do { try await automationService.delete(id: id); await reloadAutomationDetails(markViewed: false) }
+        do { try await automationService.delete(id: id); await reloadAutomationDetails() }
         catch { errorMessage = error.localizedDescription }
     }
 
@@ -7967,7 +7987,7 @@ final class AppModel: ObservableObject {
         guard let automationService, let agentService else { return }
         do {
             _ = try await automationService.runNow(id: id, executor: makeAutomationExecutor(agents: agentService, lane: .user))
-            await reloadAutomationDetails(markViewed: false)
+            await reloadAutomationDetails()
         } catch { errorMessage = error.localizedDescription }
     }
 
@@ -7975,19 +7995,81 @@ final class AppModel: ObservableObject {
     /// not start the scheduler loop or connect external listeners.
     func runAutomationScheduleTick(at date: Date) async {
         await automationScheduler?.runOnce(at: date)
-        await reloadAutomationDetails(markViewed: false)
+        await reloadAutomationDetails()
     }
 
     func acknowledgeAutomationWake(id: UUID) async {
         guard let automationService else { return }
-        do { try await automationService.acknowledgeWake(id: id); await reloadAutomationDetails(markViewed: false) }
+        do { try await automationService.acknowledgeWake(id: id); await reloadAutomationDetails() }
         catch { errorMessage = error.localizedDescription }
     }
 
-    func answerAutomationSpendGuard(_ answer: SpendGuardAnswer) async {
-        guard let automationService else { return }
-        do { try await automationService.answerSpendGuard(answer); await reloadAutomationDetails(markViewed: true) }
-        catch { errorMessage = error.localizedDescription }
+    func answerAutomationSpendGuard(_ answer: SpendGuardAnswer, prompt: AutomationSpendGuardPrompt, at date: Date = Date()) async {
+        guard !agentMessagingAccountTransition, let automationService, let agentService,
+              prompt.accountID == (settings.accountScope ?? "local"),
+              prompt.generation == autoReviewAccountGeneration,
+              automationSpendGuardPrompts.contains(where: { $0.id == prompt.id && $0.agentID == prompt.agentID && $0.accountID == prompt.accountID }),
+              !answeringAutomationSpendGuardIDs.contains(prompt.id),
+              agents.contains(where: { $0.id == prompt.agentID && $0.archivedAt == nil }) else { return }
+        let generation = autoReviewAccountGeneration
+        let lifetime = AutomationSpendGuardLifetime(), mutationID = UUID()
+        automationSpendGuardLifetimes[mutationID] = (prompt.agentID, lifetime)
+        answeringAutomationSpendGuardIDs.insert(prompt.id)
+        defer {
+            lifetime.cancel()
+            automationSpendGuardLifetimes.removeValue(forKey: mutationID)
+            if generation == autoReviewAccountGeneration { answeringAutomationSpendGuardIDs.remove(prompt.id) }
+        }
+        do {
+            guard let owner = await agentService.profile(id: prompt.agentID), owner.archivedAt == nil,
+                  !agentMessagingAccountTransition, generation == autoReviewAccountGeneration,
+                  prompt.accountID == (settings.accountScope ?? "local") else { return }
+            try await automationService.answerSpendGuard(answer, agentID: prompt.agentID, cardID: prompt.id,
+                                                          at: date, lifetime: lifetime)
+            guard generation == autoReviewAccountGeneration, !agentMessagingAccountTransition,
+                  prompt.accountID == (settings.accountScope ?? "local") else { return }
+            await reloadAutomationDetails()
+        } catch is CancellationError {
+            return
+        } catch {
+            guard generation == autoReviewAccountGeneration, !agentMessagingAccountTransition,
+                  prompt.accountID == (settings.accountScope ?? "local") else { return }
+            errorMessage = FiliconLocalization.message(error.localizedDescription)
+            await reloadAutomationDetails()
+        }
+    }
+
+    /// Explicitly reading one owner's results must not clear another owner's
+    /// counters, nor dismiss either owner's unanswered activity card.
+    func beginAutomationAgentRead(id: UUID) -> AutomationAgentReadContext? {
+        guard !agentMessagingAccountTransition,
+              agents.contains(where: { $0.id == id && $0.archivedAt == nil }),
+              automations.contains(where: { $0.agentID == id }) else { return nil }
+        return .init(agentID: id, accountID: settings.accountScope ?? "local", generation: autoReviewAccountGeneration)
+    }
+
+    func markAutomationAgentViewed(_ context: AutomationAgentReadContext, at date: Date = Date()) async {
+        guard !agentMessagingAccountTransition, let automationService, let agentService,
+              context.accountID == (settings.accountScope ?? "local"), context.generation == autoReviewAccountGeneration,
+              agents.contains(where: { $0.id == context.agentID && $0.archivedAt == nil }) else { return }
+        let id = context.agentID, generation = context.generation, account = context.accountID
+        let lifetime = AutomationSpendGuardLifetime(), mutationID = UUID()
+        automationSpendGuardLifetimes[mutationID] = (id, lifetime)
+        defer { lifetime.cancel(); automationSpendGuardLifetimes.removeValue(forKey: mutationID) }
+        do {
+            guard let owner = await agentService.profile(id: id), owner.archivedAt == nil,
+                  generation == autoReviewAccountGeneration, !agentMessagingAccountTransition,
+                  account == (settings.accountScope ?? "local") else { return }
+            try await automationService.recordViewed(agentID: id, at: date, lifetime: lifetime)
+            guard generation == autoReviewAccountGeneration, !agentMessagingAccountTransition,
+                  account == (settings.accountScope ?? "local") else { return }
+            await reloadAutomationDetails()
+        } catch is CancellationError {
+            return
+        } catch {
+            guard generation == autoReviewAccountGeneration, account == (settings.accountScope ?? "local") else { return }
+            errorMessage = FiliconLocalization.message(error.localizedDescription)
+        }
     }
 
     func ingestAutomationEvent(_ event: AutomationEvent) async {
@@ -8000,22 +8082,36 @@ final class AppModel: ObservableObject {
         else { await automationScheduler?.suspend() }
     }
 
-    func reloadAutomationDetails(markViewed: Bool) async {
-        guard let automationService else { return }
-        if markViewed { try? await automationService.recordViewed() }
+    func reloadAutomationDetails() async {
+        guard !agentMessagingAccountTransition, let automationService else { return }
+        let generation = autoReviewAccountGeneration, account = settings.accountScope ?? "local"
+        // Opening the shared workspace cannot imply reading every agent's
+        // conversation. Owners are marked read by a separate scoped action.
         let definitions = await automationService.list()
         var histories: [UUID: [AutomationRun]] = [:]
         for automation in definitions { histories[automation.id] = await automationService.history(automationID: automation.id) }
+        let groupBindings = await automationGroupBindingStore?.list() ?? []
+        let directBindings = await automationDirectBindingStore?.list() ?? []
+        let wakes = await automationService.pendingWakes()
+        let spends = await automationService.spendGuardStates()
+        guard generation == autoReviewAccountGeneration, account == (settings.accountScope ?? "local"),
+              !agentMessagingAccountTransition else { return }
         automations = definitions
-        automationGroupBindings = await automationGroupBindingStore?.list() ?? []
-        automationDirectBindings = await automationDirectBindingStore?.list() ?? []
+        automationGroupBindings = groupBindings
+        automationDirectBindings = directBindings
         automationHistory = histories
-        automationWakes = await automationService.pendingWakes()
-        automationSpendGuard = await automationService.spendGuardState()
+        automationWakes = wakes
+        automationSpendGuardPrompts = agents.filter { $0.archivedAt == nil }.compactMap { agent in
+            guard let spend = spends[agent.id], let id = spend.cardID,
+                  spend.nudgedAt != nil || !spend.guardPausedAutomationIDs.isEmpty else { return nil }
+            return .init(id: id, agentID: agent.id, agentName: agent.name, accountID: account, generation: generation, state: spend)
+        }
         if let automationIngress {
-            automationIngressRoutes = await automationIngress.routes()
-            automationIngressAudit = await automationIngress.audits(limit: 100)
-            automationIngressStatus = await automationIngress.status()
+            let routes = await automationIngress.routes(), audit = await automationIngress.audits(limit: 100)
+            let status = await automationIngress.status()
+            guard generation == autoReviewAccountGeneration, account == (settings.accountScope ?? "local"),
+                  !agentMessagingAccountTransition else { return }
+            automationIngressRoutes = routes; automationIngressAudit = audit; automationIngressStatus = status
         }
     }
 
@@ -8027,7 +8123,7 @@ final class AppModel: ObservableObject {
             guard !trimmed.isEmpty else { throw AutomationIngressError.missingSecret }
             try await credentials.set(trimmed, for: CredentialRef(providerID: ProviderID(rawValue: "automation.ingress.\(reference)")))
             _ = try await automationIngress.saveRoute(.init(id: id, name: name, provider: provider, secretReference: reference))
-            await reloadAutomationDetails(markViewed: false)
+            await reloadAutomationDetails()
         } catch { errorMessage = error.localizedDescription }
     }
 
@@ -8036,7 +8132,7 @@ final class AppModel: ObservableObject {
         do {
             try await automationIngress.removeRoute(id: id)
             try? await credentials.remove(CredentialRef(providerID: ProviderID(rawValue: "automation.ingress.\(route.secretReference)")))
-            await reloadAutomationDetails(markViewed: false)
+            await reloadAutomationDetails()
         } catch { errorMessage = error.localizedDescription }
     }
 
@@ -8046,12 +8142,12 @@ final class AppModel: ObservableObject {
             UserDefaults.standard.set(lanOptIn, forKey: "FiliconAutomationIngressLANOptIn")
             try await automationIngress.start(bindMode: bindMode, port: port, localNetworkOptIn: lanOptIn)
             try? await Task.sleep(for: .milliseconds(150))
-            await reloadAutomationDetails(markViewed: false)
-        } catch { errorMessage = error.localizedDescription; await reloadAutomationDetails(markViewed: false) }
+            await reloadAutomationDetails()
+        } catch { errorMessage = error.localizedDescription; await reloadAutomationDetails() }
     }
 
     func stopAutomationIngress() async {
-        do { try await automationIngress?.stop(); await reloadAutomationDetails(markViewed: false) }
+        do { try await automationIngress?.stop(); await reloadAutomationDetails() }
         catch { errorMessage = error.localizedDescription }
     }
 
@@ -8066,7 +8162,7 @@ final class AppModel: ObservableObject {
                 do { try await Task.sleep(for: .seconds(5)) }
                 catch { return }
                 guard let self else { return }
-                if self.route == .automations { await self.reloadAutomationDetails(markViewed: false) }
+                if self.route == .automations { await self.reloadAutomationDetails() }
             }
         }
     }
@@ -8867,6 +8963,9 @@ final class AppModel: ObservableObject {
         // Queued peer work is scoped to the account that approved the exchange.
         agentMessagingAccountTransition = true
         workflowExecutionScope.suspend()
+        for mutation in automationSpendGuardLifetimes.values { mutation.lifetime.cancel() }
+        automationSpendGuardPrompts = []
+        answeringAutomationSpendGuardIDs = []
         for id in Array(backgroundDirectExecutions.keys) { cancelConversationWork(id) }
         memorySynthesisAccountLifetime.close()
         memorySynthesisAccountLifetime = .init()

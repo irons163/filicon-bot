@@ -1,5 +1,23 @@
 # 完成驗收入口（2026-09-27）
 
+## 擁有者隔離的自動化活動提醒與安全恢復（2026-10-03）
+
+reference `a9f633e09d49a85829b8236331b9e21f7e612634` 的 `source/host/extensions/transcript/automation-spend-guard-runtime.ts` 與 `sand-automation-spend-guard.ts` 已核對：狀態、提醒、暫停及 opt-out 限各 session／agent；閒置三天且未讀至少 15 或執行至少 20 次才提醒，三天未答才暫停。Keep／Resume 只恢復 guard 暫停的定義並延後下一次檢查 30 天；Never ask 亦恢復 guard 暫停項目，但只關閉此擁有者的活動檢查；不補跑錯過的定時或事件，不授予新工具權限。查看對話不是回答提醒，也不隱式解除暫停。此為活動保護，不是精確金額預算。
+
+Filicon 舊全域狀態已改為 schema 2 的 per-agent 狀態，schema 1 遷移只將已存在的定義、保留的 started runs 及 pending wakes 歸回各擁有者；舊 pause IDs 取該擁有者交集、提醒重新發卡，後來新增的代理人不繼承舊 opt-out。不支援的 schema／損壞的新版必須拒絕且不覆寫原檔。活動 counters 依目前保留資料計算，刪除定義及讀取後不再計入；不把晚到完成當成新的 started run。定時、事件及 scheduler 均在 admission 前檢查已逾期提醒；手動執行豁免。提醒回答、查看、暫停及恢復先計算完整候選再原子寫入，計算／磁碟失敗不部分發布、關卡或啟用。
+
+App 卡片綁定確切 owner／persisted card ID／account／generation；舊卡、錯 owner、重播、帳號離開再回到原帳號與封存拒絕。切帳號及封存同步取消 mutation lifetime，再由 service 最後同步提交 fence 核對；舊回呼不重新發布新帳號投影。打開共用「自動化」頁不再把所有代理人當成已讀；各排程內的「標示為已讀」限該 owner，仍保留未回答提醒與 pause ownership。
+
+自動 guard 暫停／恢復是 admission 狀態，不是任務定義修改，現在保留 definition revision，不能使原本已審核的 direct／group grant 無故失效。owner dispatch epoch 另行封閉暫停前已擷取但未 admission 的事件／定時 batch；恢復後舊事件及 coalesced 後續批次不能補跑，其他 owner 不受影響，寫入失敗也不提前推進 epoch。已 admission 的執行不在本批中取消，也不回滾完成效果；真正人工定義修改仍須重新審核。
+
+有效紅燈包含 `spend-guard-parity-red.log` 的 8 個語意問題、`spend-guard-account-cycle-red.log` 的 2 個 stale-generation 問題、`spend-guard-binding-red-valid.log` 的 24 個 direct／group 授權與 shared runner 問題，以及 `spend-guard-dispatch-red.log` 的 4 個舊事件重啟問題。編譯、未完成的 headless event harness 與不透明 render 修正日誌另保留，不當作產品缺陷的紅燈證據。最後聚焦 `spend-guard-focused-final-7.log` exit 0：156 tests／11 suites（核心 113／7、App 43／4），實際 App 驗證 Keep／Resume／Never ask 後兩種既有對話仍走經審核 runner、真實 run UUID 及 durable grant 不變。
+
+七語各 1,787 keys／0 missing，七語×明暗×nudge／paused 共 28 個窄版原生 render 通過並逐語檢視；長名稱、原生按鈕實際 frame／無重疊及水平不足時垂直排列均有斷言。修正法／西／日／韓語原有 Keep／Pause／Never ask／Resume／Stay paused 語意誤譯，另有七語逐項文字斷言。沒有以 headless AX 空集合宣稱 VoiceOver 或真人點擊已驗收。
+
+第一次 `spend-guard-full.log` 未明確指定 `--no-parallel` 並與重型原生建置重疊，出現既有期限／UI 核准等待失敗；保留日誌，不歸咎已解鎖的檔案保護，也不略過失敗測試。最後單獨串行 `spend-guard-full-final.log` exit 0：135 XCTest＋1,741 Swift Testing（219 suites；核心 911／106、App 596／83），包含先前失敗的期限與圖庫案例；兩項 opt-in live Codex 測試略過。最新 `spend-guard-native-final.log` BUILD SUCCEEDED；`spend-guard-package.log` 四個執行檔、deep strict 簽章及 app／XPC entitlements 通過。這是隔離 Debug／離線 fixture gate，不是 release／公證或 live 驗收；日誌及 PNG 位於 `.build/validation/`，不提交產物。
+
+尚未閉合的 reference 差異：`automation-run-path.ts` 明確以 `!isGroup && backgroundTrigger` 套用 guard，群組 session 豁免；本批 native per-agent 保守規則仍涵蓋經審核 group-bound routines。pending result wakes＋明確 owner 已讀不等同原版 transcript DB unread／lastViewedAt；本機卡片位於自動化工作區，未接原版聊天 widget／host reminder，單 card ID 也非原版多 widget entry ID。account generation fence 不代表已新增完整 persisted per-account core migration。上述均保留，不能以本批恢復測試、七語 render 或回歸綠燈關閉 AGENT-01／02／04、AUTO-03 或全 48 分類驗收。未 push、未重啟使用者 App／Xcode、未改真實帳號／群組／聊天資料。
+
 ## 回合用量歸屬與原版費用契約核對（2026-10-03）
 
 本批修正一般直接對話收尾的實際競態：原先於收尾讀取目前 conversation provider，並於非同步 settings 保存時讀取目前 account；已接收的用量可能因此歸到後來選取的帳號／供應商。現在沿用推論 admission 捕捉的 account＋provider，只更新已持久化的 `usageByAccount` 投影，不把舊 settings snapshot 蓋回畫面偏好。成功與收到 usage 後 transport 失敗均保留原始歸屬；不代表刪除／所有取消分支或群組／peer 用量已完整彙整。

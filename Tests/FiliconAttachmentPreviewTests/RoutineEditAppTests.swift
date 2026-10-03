@@ -105,7 +105,7 @@ struct RoutineEditAppTests {
             var expected = before; expected.name = "Saved edit"; expected.prompt = "Changed instruction"; expected.revision += 1
             expectNoDifference(saved, expected)
             let reopened = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
-            await reopened.reloadAutomationDetails(markViewed: false)
+            await reopened.reloadAutomationDetails()
             expectNoDifference(reopened.automations.map(\.name), ["Saved edit"])
             #expect(reopened.automationHistory.values.allSatisfy { $0.isEmpty })
         } else {

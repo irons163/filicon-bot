@@ -1,5 +1,13 @@
 # 協作能力核對紀錄（更新至 2026-10-03）
 
+## 自動化活動提醒：owner 隔離與既有審核恢復（2026-10-03）
+
+活動保護不再使用全域 pause／counter／opt-out。schema 2 依 owner 保存、舊版有界歸屬遷移，卡片依真實 owner／persisted ID／account generation 回答；查看工作區不回答所有提醒，獨立已讀不解除暫停。所有背景 dispatch 在 admission 前判斷逾期提醒；Keep／Resume／Never ask 只恢復 guard 暫停項目，不啟用人工停用、不補跑舊事件或取得新權限。自動 guard 變更保留已審核 definition revision，另外以 owner epoch 封閉已擷取舊 batch；原子保存失敗保留狀態、卡片與其他 owner。
+
+新增核心 schema／rollback／retention／admission／stale batch 及實際 App account-cycle／已讀／恢復測試；既有 direct／group 審核在三種繼續選項後仍使用真正 shared runner、durable grant 和 run UUID。最後聚焦 156 tests／11 suites；完整串行 `spend-guard-full-final.log` exit 0：135 XCTest＋1,741 Swift Testing（219 suites，核心 911／106、App 596／83，兩項 opt-in live Codex 測試略過）。七語各 1,787 keys／0 missing、28 個窄版明暗卡片 render 及七語 action 語意斷言通過。先前負載重疊／期限失敗與有效紅燈保留，未降低檔案保護；最新 `spend-guard-native-final.log` BUILD SUCCEEDED，`spend-guard-package.log` 四執行檔／deep strict 簽章與 app／XPC entitlements 通過，不冒充 release／公證。
+
+仍有明確 reference 差異：原版 group session 不套用此 guard；native 本批仍保守涵蓋 group-bound routine。結果 wakes／明確已讀不是 transcript unread／對話查看，工作區卡片不是聊天 widget／host reminder；account generation fence 不是完整 core 帳號資料遷移，也未驗真人點擊／VoiceOver、live 服務或 release。來源及恢復競態證據見 [完成驗收入口](Parity-completion-audit.md)。未 push、未重啟使用者 App／Xcode、未改真實資料，整體 parity 仍 partial。
+
 ## 回合用量的 request 歸屬與原版成本界線（2026-10-03）
 
 一般直接對話 `finishTurn` 不再以收尾時選取的供應商或 settings 保存時的帳號歸屬 usage；改傳入 admission 捕捉的 account＋provider。已持久化 receipt 只投影 `usageByAccount`，避免把等待期間的獨立畫面偏好蓋回舊值。實際 App send／假 provider／SettingsStore 的受控 gate 測試，覆蓋收到 usage 後改帳號、供應商或兩者 × 成功／transport 失敗六種情境；不冒充全部取消／刪除／群組／peer 成本彙整。

@@ -193,8 +193,8 @@
 "Automation trigger {0} is unavailable." = "자동화 방아쇠 {0}는 사용할 수 없습니다.";
 "Automation webhook ingress is unavailable." = "자동화 webhook ingress는 사용할 수 없습니다.";
 "Automations" = "자동화";
-"Automations have continued while you were away. Keep them running or pause them." = "자동화는 계속되고있다. 그 실행을 유지하거나 그들을 일시 중지.";
-"Automations were paused after prolonged unviewed activity." = "자동화는 장기간에 걸친 활동 후에 일시 중지되었습니다.";
+"Automations have continued while you were away. Keep them running or pause them." = "활동을 확인하지 않는 동안에도 자동화가 계속 실행되었습니다. 계속 실행하거나 일시 중지할 수 있습니다.";
+"Automations were paused after prolonged unviewed activity." = "오랫동안 활동을 확인하지 않아 자동화가 일시 중지되었습니다.";
 "Available" = "지원하다";
 "Avatar" = "아바타";
 "Avatar images must be smaller than 25 MB." = "아바타 이미지는 25 MB 보다는 더 작아야 합니다.";
@@ -535,7 +535,7 @@
 "Join a room" = "대화방 참여";
 "Join requests" = "참여 요청";
 "Jump to replied message" = "답장을 취소";
-"Keep running" = "계속하기";
+"Keep running" = "계속 실행";
 "Keychain account" = "키 체인 계정";
 "Keychain error {0}." = "키 체인 오류 {0}.";
 "Keychain reference" = "키 체인 참조";
@@ -740,7 +740,7 @@
 "Paste a filicon://shared-room/join invite" = "filicon://shared-room/join 초대 링크 붙여넣기";
 "Paste files" = "Paste 파일";
 "Path" = "오시는길";
-"Pause" = "팟캐스트";
+"Pause" = "일시 중지";
 "Pending" = "대기 중";
 "Pending results" = "결과 보정";
 "Permission" = "제출하기";
@@ -879,7 +879,7 @@
 "Respond as agent" = "응답할 에이전트";
 "Restore" = "복원";
 "Result" = "제품정보";
-"Resume" = "제품 설명";
+"Resume" = "재개";
 "Resync" = "Resync의 장점";
 "Retired" = "전체장편";
 "Retired Permission" = "폐기된 권한";
@@ -994,7 +994,7 @@
 "Starting" = "시작하다";
 "Starting recording…" = "녹음 시작 ...";
 "Status not loaded." = "로드되지 않은 상태.";
-"Stay paused" = "숙박 약관";
+"Stay paused" = "일시 중지 유지";
 "Stop" = "중지";
 "Stop and transcribe" = "정지 및 transcribe";
 "Stopped" = "뚱 베어";
@@ -1791,3 +1791,10 @@
 "Add action step" = "작업 단계 추가";
 "Source reference" = "원본 참조";
 "Editing preserves the ordered steps, source and enabled state. Changing the recipe requires reviewing its session consent again." = "편집 시 단계 순서, 원본 및 활성화 상태가 유지됩니다. 내용을 변경하면 세션 동의를 다시 검토해야 합니다.";
+
+// Owner-scoped automation activity checks.
+"This automation activity check is no longer current." = "이 자동화 활동 확인은 더 이상 유효하지 않습니다.";
+"This check affects only {0}'s routines." = "이 확인은 {0}의 루틴에만 영향을 줍니다.";
+"Keep running or Resume postpones the next activity check for 30 days; it does not run missed tasks." = "계속 실행 또는 재개를 선택하면 다음 활동 확인이 30일 뒤로 미뤄지며, 놓친 작업은 실행하지 않습니다.";
+"Never ask disables this check only for this agent." = "다시 묻지 않기는 이 에이전트의 활동 확인만 비활성화합니다.";
+"Mark as read" = "읽음으로 표시";

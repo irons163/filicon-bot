@@ -1,13 +1,56 @@
 import Foundation
 
 private struct AutomationPersistentState: Codable, Sendable {
-    var schemaVersion = 1
+    var schemaVersion = 2
     var automations: [Automation] = []
     var runs: [AutomationRun] = []
     var wakes: [AutomationWake] = []
     var claims: Set<String> = []
     var eventClaims: Set<String> = []
-    var spendGuard = AutomationSpendGuardState()
+    var spendGuards: [UUID: AutomationSpendGuardState] = [:]
+
+    private enum CodingKeys: String, CodingKey {
+        case schemaVersion, automations, runs, wakes, claims, eventClaims, spendGuards, spendGuard
+    }
+    init() {}
+    init(from decoder: any Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        let version = try values.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
+        guard version == 1 || version == 2 else {
+            throw DecodingError.dataCorruptedError(forKey: .schemaVersion, in: values, debugDescription: "Unsupported automation schema")
+        }
+        automations = try values.decode([Automation].self, forKey: .automations)
+        runs = try values.decode([AutomationRun].self, forKey: .runs)
+        wakes = try values.decode([AutomationWake].self, forKey: .wakes)
+        claims = try values.decode(Set<String>.self, forKey: .claims)
+        eventClaims = try values.decode(Set<String>.self, forKey: .eventClaims)
+        if version == 2 {
+            spendGuards = try values.decode([UUID: AutomationSpendGuardState].self, forKey: .spendGuards)
+        } else {
+            let legacy = try values.decode(AutomationSpendGuardState.self, forKey: .spendGuard)
+            for agentID in Set(automations.map(\.agentID)) {
+                let ids = Set(automations.filter { $0.agentID == agentID }.map(\.id))
+                var migrated = legacy
+                migrated.guardPausedAutomationIDs = legacy.guardPausedAutomationIDs.intersection(ids)
+                // Legacy global counters cannot be attributed to an arbitrary
+                // owner. Use only this owner's durable, bounded run/wake data.
+                migrated.firesSinceViewed = runs.filter { ids.contains($0.automationID) && $0.startedAt > legacy.lastViewedAt }.count
+                migrated.unreadCount = wakes.filter { $0.agentID == agentID && $0.createdAt > legacy.lastViewedAt }.count
+                migrated.cardID = migrated.nudgedAt != nil || !migrated.guardPausedAutomationIDs.isEmpty ? UUID() : nil
+                spendGuards[agentID] = migrated
+            }
+        }
+    }
+    func encode(to encoder: any Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(schemaVersion, forKey: .schemaVersion)
+        try values.encode(automations, forKey: .automations)
+        try values.encode(runs, forKey: .runs)
+        try values.encode(wakes, forKey: .wakes)
+        try values.encode(claims, forKey: .claims)
+        try values.encode(eventClaims, forKey: .eventClaims)
+        try values.encode(spendGuards, forKey: .spendGuards)
+    }
 }
 
 public actor AutomationService {
@@ -21,6 +64,10 @@ public actor AutomationService {
     private let storeURL: URL
     private var state: AutomationPersistentState
     private var activeAgents: Set<UUID> = []
+    // A guard pause changes admission, not the reviewed task/identity. Keep
+    // definition revisions stable and fence only this owner's suspended host
+    // dispatches. No epoch needs to survive a process restart: its batches do not.
+    private var guardDispatchEpochs: [UUID: UInt64] = [:]
 
     public init(storeURL: URL) throws {
         self.storeURL = storeURL
@@ -53,6 +100,9 @@ public actor AutomationService {
         try validate(trigger: value.trigger)
         if case .unknown = value.trigger { value.enabled = false }
         var candidate = state
+        if candidate.spendGuards[value.agentID] == nil {
+            candidate.spendGuards[value.agentID] = .init(lastViewedAt: now)
+        }
         if let index = candidate.automations.firstIndex(where: { $0.id == value.id }) {
             value.revision = max(candidate.automations[index].revision + 1, value.revision)
             value.nextRunAt = try computeNextRun(for: value, after: now)
@@ -98,7 +148,7 @@ public actor AutomationService {
                 try proposed.trigger.validateForManualEditing()
                 value.trigger = proposed.trigger
                 if timeConditions(current.trigger) != timeConditions(proposed.trigger) {
-                    value.nextRunAt = current.guardPaused || state.spendGuard.guardPausedAutomationIDs.contains(current.id)
+                    value.nextRunAt = current.guardPaused || spendGuardState(agentID: current.agentID).guardPausedAutomationIDs.contains(current.id)
                         ? nil : try computeNextRun(for: value, after: now)
                 }
             }
@@ -129,14 +179,19 @@ public actor AutomationService {
         candidate.automations[index].guardPaused = false
         candidate.automations[index].revision += 1
         candidate.automations[index].nextRunAt = enabled ? try computeNextRun(for: candidate.automations[index], after: now) : nil
+        candidate.spendGuards[candidate.automations[index].agentID]?.guardPausedAutomationIDs.remove(id)
         try Self.save(candidate, to: storeURL)
         state = candidate
     }
 
     public func delete(id: UUID) throws {
         guard state.automations.contains(where: { $0.id == id }) else { throw AutomationServiceError.unknownAutomation(id) }
-        state.automations.removeAll { $0.id == id }
-        try persist()
+        var candidate = state
+        let owner = candidate.automations.first { $0.id == id }!.agentID
+        candidate.automations.removeAll { $0.id == id }
+        candidate.spendGuards[owner]?.guardPausedAutomationIDs.remove(id)
+        try Self.save(candidate, to: storeURL)
+        state = candidate
     }
 
     @discardableResult
@@ -147,6 +202,9 @@ public actor AutomationService {
             if change.isDefinitionWrite {
                 var candidate = state
                 var value = change.automation
+                if candidate.spendGuards[value.agentID] == nil {
+                    candidate.spendGuards[value.agentID] = .init(lastViewedAt: now)
+                }
                 if change.operation == .update,
                    let index = candidate.automations.firstIndex(where: { $0.id == value.id }) {
                     let current = candidate.automations[index]
@@ -174,7 +232,7 @@ public actor AutomationService {
                 // The receipt returns the removed definition, not a live task.
                 // History, wakes, claims and in-flight executors are preserved.
                 candidate.automations.remove(at: index)
-                candidate.spendGuard.guardPausedAutomationIDs.remove(value.id)
+                candidate.spendGuards[value.agentID]?.guardPausedAutomationIDs.remove(value.id)
                 try Self.save(candidate, to: storeURL)
                 state = candidate
                 return value
@@ -203,7 +261,7 @@ public actor AutomationService {
         if change.operation == .delete { return }
         guard value.enabled != change.enabled else { throw AutomationStateChangeError.unavailable }
         if change.enabled {
-            guard !value.guardPaused, !state.spendGuard.guardPausedAutomationIDs.contains(value.id),
+            guard !value.guardPaused, !spendGuardState(agentID: value.agentID).guardPausedAutomationIDs.contains(value.id),
                   !containsUnknownTrigger(value.trigger) else { throw AutomationStateChangeError.protected }
             try validate(trigger: value.trigger)
         }
@@ -242,7 +300,7 @@ public actor AutomationService {
             case .anyOf: try validateAgentTrigger(current.trigger, now: now)
             default: throw AutomationStateChangeError.unsupportedSchedule
             }
-            guard !current.guardPaused, !state.spendGuard.guardPausedAutomationIDs.contains(current.id) else {
+            guard !current.guardPaused, !spendGuardState(agentID: current.agentID).guardPausedAutomationIDs.contains(current.id) else {
                 throw AutomationStateChangeError.protectedDefinition
             }
             guard proposed.name != current.name || proposed.prompt != current.prompt
@@ -252,8 +310,9 @@ public actor AutomationService {
         }
         // A new ID or enabled=true must not recreate an armed task around a
         // spend pause. Disabled drafts remain possible without future costs.
-        if proposed.enabled && (!state.spendGuard.guardPausedAutomationIDs.isEmpty
-                                || AutomationSpendGuard.evaluate(state.spendGuard, now: now) == .pause) {
+        let spend = spendGuardState(agentID: proposed.agentID)
+        if proposed.enabled && (!spend.guardPausedAutomationIDs.isEmpty
+                                || AutomationSpendGuard.evaluate(spend, now: now) == .pause) {
             throw AutomationStateChangeError.protectedDefinition
         }
     }
@@ -305,11 +364,13 @@ public actor AutomationService {
 
     public func fireDue(at now: Date = Date(), executor: any AutomationExecutor) async -> [AutomationRun] {
         let due = state.automations.filter { $0.enabled && $0.nextRunAt.map { $0 <= now } == true }
+        let guardEpochs = guardDispatchEpochs
         var results: [AutomationRun] = []
         for automation in due {
             let scheduled = automation.nextRunAt ?? now
             let claim = "schedule:\(automation.id):\(automation.revision):\(scheduled.timeIntervalSince1970)"
-            if let run = try? await fire(automation: automation, origin: .schedule, events: [], claim: claim, executor: executor, now: now) {
+            if let run = try? await fire(automation: automation, origin: .schedule, events: [], claim: claim, executor: executor,
+                                         now: now, guardEpoch: guardEpochs[automation.agentID] ?? 0) {
                 results.append(run)
             }
         }
@@ -324,8 +385,9 @@ public actor AutomationService {
         }
         guard !unique.isEmpty else { try? persist(); return [] }
         try? persist()
+        let definitions = state.automations.filter(\.enabled), guardEpochs = guardDispatchEpochs
         var results: [AutomationRun] = []
-        for automation in state.automations where automation.enabled {
+        for automation in definitions {
             var start = 0
             // One matching delivery must not forward other repositories/users
             // from the same ingress batch to this routine's model.
@@ -338,7 +400,8 @@ public actor AutomationService {
                 // making different batches share one execution claim.
                 let identities = batch.map { "\($0.connectorID):\($0.externalEventID)" }.sorted()
                 let claim = "event:v2:\(automation.id):" + identities.map { "\($0.utf8.count):\($0)" }.joined()
-                if let run = try? await fire(automation: automation, origin: .event, events: batch, claim: claim, executor: executor, now: now) {
+                if let run = try? await fire(automation: automation, origin: .event, events: batch, claim: claim, executor: executor,
+                                             now: now, guardEpoch: guardEpochs[automation.agentID] ?? 0) {
                     results.append(run)
                 }
                 start = end
@@ -363,63 +426,150 @@ public actor AutomationService {
         state.wakes.removeAll { $0.id == id }; try persist()
     }
 
-    public func spendGuardState() -> AutomationSpendGuardState { state.spendGuard }
-
-    public func recordViewed(at now: Date = Date()) throws {
-        state.spendGuard.lastViewedAt = now
-        state.spendGuard.unreadCount = 0
-        state.spendGuard.firesSinceViewed = 0
-        state.spendGuard.nudgedAt = nil
-        try persist()
+    public func spendGuardState(agentID: UUID) -> AutomationSpendGuardState {
+        var spend = state.spendGuards[agentID] ?? .init(lastViewedAt: .distantPast)
+        let ids = Set(state.automations.filter { $0.agentID == agentID }.map(\.id))
+        // The reference counts retained started runs of current definitions,
+        // not lifetime totals (deleted tasks must not keep causing nudges).
+        spend.firesSinceViewed = state.runs.filter { ids.contains($0.automationID) && $0.startedAt > spend.lastViewedAt }.count
+        // Local pending result wakes are this host's unread signal. This is
+        // not a claim of parity with the reference transcript unread counter.
+        spend.unreadCount = state.wakes.filter { $0.agentID == agentID && $0.createdAt > spend.lastViewedAt }.count
+        return spend
     }
 
-    public func evaluateSpendGuard(at now: Date = Date()) throws -> SpendGuardDecision {
-        let decision = AutomationSpendGuard.evaluate(state.spendGuard, now: now)
-        if decision == .nudge { state.spendGuard.nudgedAt = now }
-        if decision == .pause {
-            for index in state.automations.indices where state.automations[index].enabled {
-                state.automations[index].enabled = false
-                state.automations[index].guardPaused = true
-                state.automations[index].nextRunAt = nil
-                state.spendGuard.guardPausedAutomationIDs.insert(state.automations[index].id)
-            }
+    public func spendGuardStates() -> [UUID: AutomationSpendGuardState] {
+        state.spendGuards.keys.reduce(into: [:]) { values, agentID in
+            values[agentID] = spendGuardState(agentID: agentID)
         }
-        try persist(); return decision
     }
 
-    public func answerSpendGuard(_ answer: SpendGuardAnswer, at now: Date = Date()) throws {
-        switch answer {
-        case .keep:
-            state.spendGuard.snoozedUntil = now.addingTimeInterval(AutomationSpendGuard.snoozeInterval)
-            state.spendGuard.nudgedAt = nil
-        case .pause:
-            for index in state.automations.indices where state.automations[index].enabled {
-                state.automations[index].enabled = false; state.automations[index].guardPaused = true
-                state.automations[index].nextRunAt = nil
-                state.spendGuard.guardPausedAutomationIDs.insert(state.automations[index].id)
-            }
-        case .neverAsk:
-            state.spendGuard.optedOut = true; state.spendGuard.nudgedAt = nil
-        case .resume:
-            for index in state.automations.indices where state.spendGuard.guardPausedAutomationIDs.contains(state.automations[index].id) {
-                state.automations[index].enabled = true; state.automations[index].guardPaused = false
-                state.automations[index].nextRunAt = try computeNextRun(for: state.automations[index], after: now)
-            }
-            state.spendGuard.guardPausedAutomationIDs.removeAll(); state.spendGuard.nudgedAt = nil
-        case .stayPaused:
-            state.spendGuard.guardPausedAutomationIDs.removeAll(); state.spendGuard.nudgedAt = nil
+    public func recordViewed(agentID: UUID, at now: Date = Date(),
+                             lifetime: AutomationSpendGuardLifetime = .init()) throws {
+        try lifetime.commit {
+            guard state.spendGuards[agentID] != nil else { return }
+            var candidate = state
+            candidate.spendGuards[agentID]?.lastViewedAt = now
+            candidate.spendGuards[agentID]?.unreadCount = 0
+            candidate.spendGuards[agentID]?.firesSinceViewed = 0
+            // Viewing results is not an answer. Keep the host-issued card and
+            // pause ownership so that the user can still choose an outcome.
+            try Self.save(candidate, to: storeURL)
+            state = candidate
         }
-        try persist()
+    }
+
+    public func evaluateSpendGuards(at now: Date = Date()) throws {
+        for agentID in Set(state.automations.filter(\.enabled).map(\.agentID)).sorted(by: { $0.uuidString < $1.uuidString }) {
+            _ = try evaluateSpendGuard(agentID: agentID, at: now)
+        }
+    }
+
+    @discardableResult
+    public func evaluateSpendGuard(agentID: UUID, at now: Date = Date()) throws -> SpendGuardDecision {
+        let decision = AutomationSpendGuard.evaluate(spendGuardState(agentID: agentID), now: now)
+        guard decision == .nudge || decision == .pause else { return decision }
+        var candidate = state
+        var spend = spendGuardState(agentID: agentID)
+        var admissionChanged = false
+        if decision == .nudge {
+            spend.nudgedAt = now
+            spend.cardID = UUID()
+        } else {
+            admissionChanged = pauseEnabledRoutines(agentID: agentID, in: &candidate, spend: &spend)
+            if spend.cardID == nil { spend.cardID = UUID() }
+        }
+        candidate.spendGuards[agentID] = spend
+        try Self.save(candidate, to: storeURL)
+        state = candidate
+        if admissionChanged { advanceGuardDispatchEpoch(agentID: agentID) }
+        return decision
+    }
+
+    /// Only host UI calls this method. A presented answer must supply its exact
+    /// persisted card ID. The nil-card form is for explicit native host pauses,
+    /// not agent tools, which remain subject to validateStateChange protection.
+    public func answerSpendGuard(_ answer: SpendGuardAnswer, agentID: UUID, cardID: UUID? = nil,
+                                 at now: Date = Date(), lifetime: AutomationSpendGuardLifetime = .init()) throws {
+        try lifetime.commit {
+            guard state.spendGuards[agentID] != nil else { throw SpendGuardError.staleCard }
+            if let cardID { guard state.spendGuards[agentID]?.cardID == cardID else { throw SpendGuardError.staleCard } }
+            var candidate = state
+            var spend = spendGuardState(agentID: agentID)
+            var admissionChanged = false
+            switch answer {
+            case .keep, .resume, .neverAsk:
+                for index in candidate.automations.indices where candidate.automations[index].agentID == agentID
+                    && spend.guardPausedAutomationIDs.contains(candidate.automations[index].id)
+                    && candidate.automations[index].guardPaused && !candidate.automations[index].enabled {
+                    candidate.automations[index].enabled = true
+                    candidate.automations[index].guardPaused = false
+                    candidate.automations[index].nextRunAt = try computeNextRun(for: candidate.automations[index], after: now)
+                    admissionChanged = true
+                }
+                spend.guardPausedAutomationIDs.removeAll()
+                spend.optedOut = answer == .neverAsk
+                spend.snoozedUntil = answer == .neverAsk ? nil : now.addingTimeInterval(AutomationSpendGuard.snoozeInterval)
+                spend.nudgedAt = nil
+                spend.cardID = nil
+            case .pause:
+                admissionChanged = pauseEnabledRoutines(agentID: agentID, in: &candidate, spend: &spend)
+                spend.optedOut = false
+                spend.snoozedUntil = nil
+                spend.nudgedAt = nil
+                if spend.cardID == nil { spend.cardID = UUID() }
+            case .stayPaused:
+                for index in candidate.automations.indices where candidate.automations[index].agentID == agentID
+                    && spend.guardPausedAutomationIDs.contains(candidate.automations[index].id)
+                    && candidate.automations[index].guardPaused {
+                    candidate.automations[index].guardPaused = false
+                    admissionChanged = true
+                }
+                spend.guardPausedAutomationIDs.removeAll()
+                spend.optedOut = false
+                spend.snoozedUntil = nil
+                spend.nudgedAt = nil
+                spend.cardID = nil
+            }
+            candidate.spendGuards[agentID] = spend
+            // Schedule computation and the entire guarded write are atomic:
+            // failure cannot partially resume one task or dismiss its card.
+            try Self.save(candidate, to: storeURL)
+            state = candidate
+            if admissionChanged { advanceGuardDispatchEpoch(agentID: agentID) }
+        }
+    }
+
+    private func pauseEnabledRoutines(agentID: UUID, in candidate: inout AutomationPersistentState,
+                                      spend: inout AutomationSpendGuardState) -> Bool {
+        var changed = false
+        for index in candidate.automations.indices where candidate.automations[index].agentID == agentID
+            && candidate.automations[index].enabled {
+            candidate.automations[index].enabled = false
+            candidate.automations[index].guardPaused = true
+            candidate.automations[index].nextRunAt = nil
+            spend.guardPausedAutomationIDs.insert(candidate.automations[index].id)
+            changed = true
+        }
+        return changed
+    }
+
+    private func advanceGuardDispatchEpoch(agentID: UUID) {
+        guardDispatchEpochs[agentID] = (guardDispatchEpochs[agentID] ?? 0) &+ 1
     }
 
     private func fire(
         automation: Automation, origin: AutomationRunOrigin, events: [AutomationEvent],
-        claim: String, executor: any AutomationExecutor, now: Date
+        claim: String, executor: any AutomationExecutor, now: Date, guardEpoch: UInt64? = nil
     ) async throws -> AutomationRun {
         // fireDue/fire(events:) can suspend between tasks. A pause or edit
         // during that suspension must invalidate the old batch's snapshot.
         if origin != .manual {
-            guard let current = state.automations.first(where: { $0.id == automation.id }),
+            // Guard before admission, for schedule AND event deliveries. An
+            // expired nudge must not permit one more background inference.
+            _ = try evaluateSpendGuard(agentID: automation.agentID, at: now)
+            guard let guardEpoch, guardEpoch == (guardDispatchEpochs[automation.agentID] ?? 0),
+                  let current = state.automations.first(where: { $0.id == automation.id }),
                   current.enabled, current.revision == automation.revision else { throw AutomationServiceError.duplicateClaim }
             // An event/manual run advances the shared schedule without editing
             // the definition's revision. Do not fire an obsolete due snapshot.
@@ -462,7 +612,6 @@ public actor AutomationService {
         if let index = state.runs.firstIndex(where: { $0.id == run.id }) { state.runs[index] = run }
         trimHistory(automationID: automation.id)
         state.wakes.append(.init(agentID: automation.agentID, runID: run.id, status: run.status, detail: run.detail ?? ""))
-        state.spendGuard.unreadCount += 1; state.spendGuard.firesSinceViewed += 1
         activeAgents.remove(automation.agentID)
         try persist()
         return run
