@@ -1,5 +1,21 @@
 # 完成驗收入口（2026-09-27）
 
+## 回合用量歸屬與原版費用契約核對（2026-10-03）
+
+本批修正一般直接對話收尾的實際競態：原先於收尾讀取目前 conversation provider，並於非同步 settings 保存時讀取目前 account；已接收的用量可能因此歸到後來選取的帳號／供應商。現在沿用推論 admission 捕捉的 account＋provider，只更新已持久化的 `usageByAccount` 投影，不把舊 settings snapshot 蓋回畫面偏好。成功與收到 usage 後 transport 失敗均保留原始歸屬；不代表刪除／所有取消分支或群組／peer 用量已完整彙整。
+
+隔離測試走實際 App `send`／provider stream／收尾／SettingsStore 保存，使用受控 gate 確認先收到 usage，再變更 account、provider 或兩者，成功／失敗共六種情境。`usage-attribution-red-canonical.log` exit 1 有 16 個真實歸屬斷言失敗；先前 fixture 未準備好與 private setter 編譯失敗的日誌另保留，不當作缺陷重現證據。修正後最後 `usage-attribution-focused-final.log` exit 0：33 tests／3 suites，涵蓋 routine／workflow direct session 回歸及六種歸屬情境；並驗證獨立、尚未落盤的 theme 不被 usage 寫入覆蓋。
+
+reference `a9f633e09d49a85829b8236331b9e21f7e612634` 的來源界線：
+
+- `source/host/automations/automation.ts` 的 `AutomationRun` 與 `source/host/extensions/transcript/automation-run-path.ts` 的 `finishAutomationRun` 只記 run 身分、時間、狀態及 detail／event，未見每次 routine 的 token／price／cost 欄位或全群組／peer 成本彙整。
+- `source/host/runner/turn-usage.ts` 有獨立 turn token 契約；`source/host/extensions/transcript/run-lifecycle.ts/reportTurnUsage` 依真正 session ID、request IDs 與 source 向 telemetry 回報。這證明回合用量設計，不證明每次排程已產生完整帳單。
+- `source/host/extensions/transcript/sand-automation-spend-guard.ts` 依閒置三天、未讀至少 15 或執行至少 20 次提醒，再依未回覆時間暫停；不是精確金額預算。`source/shared/usage.ts` 的 weekly／on-demand 帳號投影來自外部服務契約，不是本機 per-routine 算價器。
+
+因此以下歷史段落的「完整成本彙整尚缺」保留為 Filicon 的已知統計限制／驗收邊界，不逕列為 reconstructed 原版已確認卻尚未補齊的使用者功能。provider `costMicros` 與隔離 fixture 數值不是核對過的帳單；automation 的未知成本仍保留 nil，不補零或虛構價格。live account／billing、群組／peer 完整統計及所有取消／刪除路徑仍需各自驗收。
+
+最後完整串行 `usage-attribution-full.log` exit 0：135 XCTest＋1,715 Swift Testing（217 suites；核心 893／105、App 588／82），兩項 opt-in live Codex 測試略過；既有 CoreData NSXPC 診斷不是測試失敗。`usage-attribution-native.log` BUILD SUCCEEDED；`usage-attribution-package.log` 四個執行檔、deep strict 簽章及 app／XPC entitlements 通過。七語各 1,782 keys／0 missing。這是隔離 Debug／離線 fixture 驗證，不是 release／公證或 live 帳單驗收；本機日誌不提交，未 push、未重啟使用者 App／Xcode、未改真實帳號／群組／聊天。
+
 ## Workflow 既有對話接線與無損編輯（2026-10-03）
 
 經人類審核的 workflow prompt steps 已接入既有 bound direct conversation 的 shared runner。入口為「自動化 → 工作流程 → 展開流程 → 審核工作流程對話」；審核涵蓋整份定義及已解析的引用，不借用 routine grant，也不把 workflow 偽裝成已保存的 automation。manual／scheduled／verified event／replay 均保留真正 runtime run ID。背景 saved facts 另行 opt-in，peer 不繼承；工具仍需原有核准，typed action steps 仍全部拒絕。問題卡片使用 `waitingForReply` 停止後續步驟，人類回覆不自動恢復整條 pipeline。這是經隔離 App fixtures 驗證的本機接線，不是 live 外部服務或整體 parity 完成證據。

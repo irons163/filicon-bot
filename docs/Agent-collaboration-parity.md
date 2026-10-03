@@ -1,5 +1,13 @@
 # 協作能力核對紀錄（更新至 2026-10-03）
 
+## 回合用量的 request 歸屬與原版成本界線（2026-10-03）
+
+一般直接對話 `finishTurn` 不再以收尾時選取的供應商或 settings 保存時的帳號歸屬 usage；改傳入 admission 捕捉的 account＋provider。已持久化 receipt 只投影 `usageByAccount`，避免把等待期間的獨立畫面偏好蓋回舊值。實際 App send／假 provider／SettingsStore 的受控 gate 測試，覆蓋收到 usage 後改帳號、供應商或兩者 × 成功／transport 失敗六種情境；不冒充全部取消／刪除／群組／peer 成本彙整。
+
+有效紅燈 `usage-attribution-red-canonical.log` 有 16 個歸屬斷言失敗；修正後最後聚焦 33 tests／3 suites、原生建置／四執行檔封裝 deep strict 簽章與 entitlements、七語各 1,782 keys／0 missing 通過。最後完整串行 `usage-attribution-full.log` exit 0：135 XCTest＋1,715 Swift Testing（217 suites；核心 893／105、App 588／82，兩項 opt-in live Codex 測試略過）。先前 fixture／編譯失敗日誌保留但不作缺陷證據。
+
+原版 `AutomationRun` 與 `finishAutomationRun` 未記錄 per-run token／price／cost，回合 token 另以 session／request 回報 telemetry；spend guard 依閒置、未讀與執行次數提醒／暫停，不是帳單金額預算，帳號 weekly／on-demand 依賴外部服務。因此下方「完整費用彙整」保留為 Filicon 的已知統計與外部驗收界線，不直接當成已確認原版功能缺口；未知不補零、provider 數值不當已核對帳單。詳細來源見 [完成驗收入口](Parity-completion-audit.md)。本批未 push、未重啟使用者 App／Xcode、未改真實資料，整體 parity 仍 partial。
+
 ## 經人類審核的 workflow 單獨聊天 runner 與無損編輯（2026-10-03）
 
 「自動化 → 工作流程 → 展開流程 → 審核工作流程對話」現在可審核整份 workflow 及已解析引用，再明確綁定至該 account／agent 的既有 bound direct conversation。四條 manual／scheduled／verified event／replay 入口使用真正 shared runner、實際 runtime run ID、持久 SendMessage／問題／SendToAgent 與原有工具核准，不借用 routine grant。暫時 wake 不偽造真人、不轉送歷史附件；saved facts 有獨立預設關閉同意，peer 不繼承。問題以 `waitingForReply` 結束目前流程，不執行後續步驟；人類回覆是新 supervised turn，不自動恢復整條 pipeline。

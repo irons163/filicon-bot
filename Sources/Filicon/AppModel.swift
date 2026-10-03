@@ -2441,7 +2441,8 @@ final class AppModel: ObservableObject {
                 running.remove(id); turnTasks.removeValue(forKey: id)
                 return
             }
-            finishTurn(conversationID: id, assistantID: assistantID, succeeded: succeeded)
+            finishTurn(conversationID: id, assistantID: assistantID, succeeded: succeeded,
+                accountID: accountScope, providerID: providerID)
             if succeeded, directPublicationIDs[assistantID]?.isEmpty == true,
                let ci = conversations.firstIndex(where: { $0.id == id }),
                let mi = conversations[ci].messages.firstIndex(where: { $0.id == assistantID }),
@@ -3063,7 +3064,8 @@ final class AppModel: ObservableObject {
         return receipt
     }
 
-    private func finishTurn(conversationID: UUID, assistantID: UUID, succeeded: Bool) {
+    private func finishTurn(conversationID: UUID, assistantID: UUID, succeeded: Bool,
+                            accountID: String, providerID: ProviderID) {
         guard let ci = conversations.firstIndex(where: { $0.id == conversationID }) else { return }
         if succeeded, let mi = conversations[ci].messages.firstIndex(where: { $0.id == assistantID }) {
             conversations[ci].messages[mi].deliveryStatus = .succeeded
@@ -3076,8 +3078,9 @@ final class AppModel: ObservableObject {
             conversations[ci].messages[mi].transcriptCards[card].lifecycle = status == .cancelled ? .cancelled : succeeded ? .succeeded : .failed
         }
         if let usage = pendingTurnUsage.removeValue(forKey: assistantID) {
-            let provider = conversations[ci].providerID.rawValue
-            Task { await recordUsage(providerID: provider, usage: usage) }
+            // Usage belongs to the admitted request, not whichever account or
+            // model happens to be selected when this asynchronous write runs.
+            Task { await recordUsage(accountID: accountID, providerID: providerID.rawValue, usage: usage) }
         }
         conversations[ci].updatedAt = Date()
     }
@@ -10206,21 +10209,26 @@ final class AppModel: ObservableObject {
         Int64((Date().timeIntervalSince1970 * 1_000).rounded(.down))
     }
 
-    private func recordUsage(providerID: String, usage: Usage) async {
-        await updateSettings {
-            $0.recordUsage(
-                accountID: $0.accountScope ?? "local",
-                providerID: providerID,
-                increment: UsageCounters(
-                    requests: 1,
-                    inputTokens: Int64(max(0, usage.inputTokens)),
-                    outputTokens: Int64(max(0, usage.outputTokens)),
-                    cacheReadTokens: Int64(max(0, usage.cacheReadTokens)),
-                    cacheWriteTokens: Int64(max(0, usage.cacheWriteTokens)),
-                    costMicros: max(0, usage.costMicros)
+    private func recordUsage(accountID: String, providerID: String, usage: Usage) async {
+        do {
+            let saved = try await settingsStore.update {
+                $0.recordUsage(
+                    accountID: accountID,
+                    providerID: providerID,
+                    increment: UsageCounters(
+                        requests: 1,
+                        inputTokens: Int64(max(0, usage.inputTokens)),
+                        outputTokens: Int64(max(0, usage.outputTokens)),
+                        cacheReadTokens: Int64(max(0, usage.cacheReadTokens)),
+                        cacheWriteTokens: Int64(max(0, usage.cacheWriteTokens)),
+                        costMicros: max(0, usage.costMicros)
+                    )
                 )
-            )
-        }
+            }
+            // Publishing this receipt must not restore an old account or
+            // overwrite a UI preference changed while the store was awaited.
+            settings.usageByAccount = saved.usageByAccount
+        } catch { errorMessage = error.localizedDescription }
     }
 
     private func updateSettings(_ transform: @Sendable @escaping (inout FiliconSettings) throws -> Void) async {

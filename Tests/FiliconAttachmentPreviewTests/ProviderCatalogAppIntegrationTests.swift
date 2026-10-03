@@ -5,6 +5,41 @@ import FiliconDomain
 import FiliconAppServices
 import FiliconPersistence
 import FiliconProviderKit
+import FiliconSettings
+import CustomDump
+
+private actor UsageAttributionGate {
+    private var isOpen = false
+    private var continuation: CheckedContinuation<Void, Never>?
+    func wait() async {
+        await withCheckedContinuation { value in
+            if isOpen { value.resume() } else { continuation = value }
+        }
+    }
+    func release() { isOpen = true; continuation?.resume(); continuation = nil }
+}
+
+private struct UsageAttributionProvider: AIProvider {
+    let gate: UsageAttributionGate
+    let fails: Bool
+    var descriptor: ProviderDescriptor {
+        .init(id: "fake", displayName: "Usage fixture", requiresAPIKey: false, supportsToolCalling: false)
+    }
+    func models() async throws -> [AIModel] { [.init(id: "fixture")] }
+    func stream(_ request: InferenceRequest) -> AsyncThrowingStream<InferenceEvent, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                continuation.yield(.usage(.init(inputTokens: 11, outputTokens: 4,
+                    cacheReadTokens: 3, cacheWriteTokens: 2, costMicros: 250)))
+                continuation.yield(.textDelta("USAGE_RECEIVED"))
+                await gate.wait()
+                if fails { continuation.finish(throwing: ProviderError.transport("Fixture failure after usage")) }
+                else { continuation.yield(.completed(.stop)); continuation.finish() }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+}
 
 private actor ProviderRequestProbe {
     private var requests: [InferenceRequest] = []
@@ -105,6 +140,64 @@ struct ProviderCatalogAppIntegrationTests {
         #expect(app.selectedProviderUsage?.requests == 2)
         #expect(app.selectedProviderUsage?.inputTokens == 10)
         #expect(app.selectedProviderUsage?.outputTokens == 5)
+    }
+
+    @Test(arguments: ["account", "provider", "both"], [false, true])
+    @MainActor func lateTurnUsageKeepsTheRequestAccountAndProvider(change: String, fails: Bool) async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "filicon-usage-attribution-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = SettingsStore(fileURL: root.appending(path: "settings.json"))
+        try await store.save(FiliconSettings(accountScope: "original"))
+        let conversation = Conversation(id: UUID(uuidString: "00000000-0000-0000-0000-000000000071")!,
+            providerID: "fake", modelID: "fixture", updatedAt: Date(timeIntervalSince1970: 1_000))
+        try await ConversationStore(fileURL: root.appending(path: "conversations.json")).save([conversation])
+        let app = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+        await app.bootstrap()
+        app.settings = try await store.update { $0.accountScope = "original" }
+        app.conversations = [conversation]
+        app.selection = conversation.id
+        let gate = UsageAttributionGate()
+        await app.registry.register(UsageAttributionProvider(gate: gate, fails: fails))
+        let id = try #require(app.selection)
+        let index = try #require(app.conversations.firstIndex(where: { $0.id == id }))
+        app.conversations[index].providerID = "fake"
+        app.conversations[index].modelID = "fixture"
+        await app.refreshModels()
+        app.draft = "Isolated usage fixture"
+        app.send()
+        let received = await waitUntil {
+            app.conversations.first(where: { $0.id == id })?.messages.contains(where: {
+                $0.role == .assistant && $0.text == "USAGE_RECEIVED"
+            }) == true
+        }
+        guard received else {
+            await gate.release()
+            Issue.record("The fixture never delivered usage: \(app.errorMessage ?? "no error")")
+            return
+        }
+
+        // The request has already incurred usage. A later UI/settings change
+        // cannot change which account and provider owned that request.
+        if change != "provider" {
+            app.settings = try await store.update { $0.accountScope = "other" }
+        }
+        if change != "account" { app.conversations[index].providerID = "other-provider" }
+        // This pending UI preference is independent of the usage writer.
+        app.settings.theme = .dark
+        await gate.release()
+        #expect(await waitUntil { !app.running.contains(id) })
+        #expect(await waitUntil { !app.settings.usageByAccount.isEmpty })
+        let saved = try await store.load()
+        let expected: [String: AccountUsageCounters] = ["original": .init(providers: ["fake": .init(
+            requests: 1, inputTokens: 11, outputTokens: 4,
+            cacheReadTokens: 3, cacheWriteTokens: 2, costMicros: 250)])]
+        expectNoDifference(saved.usageByAccount, expected)
+        expectNoDifference(app.settings.usageByAccount, expected)
+        #expect(saved.accountScope == (change == "provider" ? "original" : "other"))
+        #expect(app.settings.accountScope == saved.accountScope)
+        #expect(app.settings.theme == .dark)
+        #expect(saved.theme == .system)
+        if change != "provider" { #expect(app.selectedProviderUsage == nil) }
     }
 
     @Test @MainActor func refreshUsesRegistrySnapshotForceRefreshAndNeverReplacesRemovedModel() async throws {
