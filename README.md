@@ -221,7 +221,10 @@ existing/future workflows and routines may consume the body through references.
 Renaming can break name-based references. Known direct references are an advisory
 snapshot (count plus at most 100 names/IDs), not the complete or frozen audience.
 Do not put private history or credentials into a shared procedure without explicit
-authorization. Already running requests keep their captured content.
+authorization. Requests keep their captured content, but a changed or deleted
+definition cancels dependent runs managed by the workflow runtime; completed
+effects are not rolled back. Ordinary conversations and routines are not
+silently stopped or rewritten by a workflow edit.
 Stop/account changes revoke pending proposals; any library save through the same
 store invalidates pending workflow approval, even if values are later restored.
 This revision fence does not coordinate external edits or multiple app processes.
@@ -237,12 +240,35 @@ To delete an eligible owned definition, propose a separate call:
 Only those three fields are accepted. Deletion requires fresh **destructive approval**
 showing the entire current definition and known direct references; write/profile
 approvals do not authorize it. There is no undo. Existing run history remains visible
-by workflow ID, and runs that already captured the content are not cancelled.
+by workflow ID. Dependent workflow-runtime runs are cancelled, including runs
+referencing the deleted definition; this does not roll back completed effects.
 Other workflows and routines (including their schedules), files, sources, connections
 and permissions are unchanged. Future references may fail or silently omit the
 deleted content. The same owner/revision/Stop/account fences, shared four-change
 budget and exact-call receipts apply; deletion does not require new storage quota.
 This is bounded native support, not parity with every reference workflow operation.
+
+Manual entry: **Automations → Workflows → expand a workflow → Review workflow
+session**. Review the complete recipe and resolved references, choose that agent's
+existing bound conversation, then **Approve workflow session**. This host-owned
+consent is separate from routine grants and imported/model-authored definitions.
+Without it, prompt steps remain text-only; an invalid existing grant is rejected,
+not silently downgraded. Manual, scheduled, verified-event and replay runs use the
+reviewed conversation's shared runner and current tool/peer approvals.
+
+Background saved facts require a separate opt-in (off by default); delegated
+agents do not inherit it. The wake is not saved as a fake human message, and old
+attachments are not automatically sent to the provider. A published question stops
+later steps with **Waiting for reply**; answer in the conversation, but later steps
+are not automatically resumed. Busy or unanswered conversations are not interrupted
+or retried. Model costs may occur; full peer/group pricing is not yet aggregated.
+Typed workflow action steps remain denied even after session consent.
+
+**Edit** preserves ordered prompt/action steps, enabled state, source and creation
+time. Steps can be added, removed or moved individually; **Save** and **Cancel**
+remain fixed below the scrolling recipe (Return/Esc). Invalid drafts cannot be
+saved, and saving disables both controls. Changing a recipe/reference or the
+reviewed conversation identity requires reviewing its session consent again.
 
 Group and mailbox agents can propose **pausing, resuming or deleting their own existing
 automations** with `update_state(target:"routine", action:"pause"|"resume"|"delete", id:...)`.

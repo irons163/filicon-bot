@@ -24,11 +24,13 @@ extension AppModel {
         }
         if let executionLease { try? executionLease.commit(apply) }
         else { apply() }
+        await reloadWorkflowDirectSessions(executionLease: executionLease)
     }
 
     func saveWorkflow(_ proposed: AgentWorkflow, replacingID: String? = nil) async -> Bool {
         guard let workflowService else { workflowError = "Workflow storage is unavailable."; return false }
         do {
+            if let replacingID { invalidateWorkflowDirectExecutions(workflowID: replacingID) }
             if let replacingID { _ = try await workflowService.update(id: replacingID, with: proposed) }
             else { _ = try await workflowService.create(proposed) }
             await reloadWorkflows()
@@ -41,12 +43,14 @@ extension AppModel {
 
     func setWorkflowEnabled(id: String, enabled: Bool) async {
         guard let workflowService else { return }
+        invalidateWorkflowDirectExecutions(workflowID: id)
         do { _ = try await workflowService.setEnabled(enabled, id: id); await reloadWorkflows() }
         catch { workflowError = error.localizedDescription }
     }
 
     func deleteWorkflow(id: String) async {
         guard let workflowService else { return }
+        invalidateWorkflowDirectExecutions(workflowID: id)
         do { try await workflowService.delete(id: id); workflowNextRuns[id] = nil; await reloadWorkflows() }
         catch { workflowError = error.localizedDescription }
     }
@@ -61,11 +65,13 @@ extension AppModel {
     }
 
     func cancelWorkflow(id: String) async {
+        invalidateWorkflowDirectExecutions(workflowID: id)
         await workflowService?.cancel(workflowID: id)
         await reloadWorkflows()
     }
 
     func cancelWorkflowRun(id: UUID) async {
+        cancelWorkflowDirectRun(id)
         await workflowService?.cancel(runID: id)
         await reloadWorkflows()
     }
@@ -202,14 +208,21 @@ struct AppWorkflowPromptExecutor: AgentWorkflowPromptExecuting {
     let registry: ProviderRegistry
     let agents: AgentService
     let scheduler: AgentExecutionScheduler
+    let sharedSession: (@Sendable (AgentWorkflowPromptRequest) async throws -> String?)?
 
-    init(registry: ProviderRegistry, agents: AgentService, scheduler: AgentExecutionScheduler = AgentExecutionScheduler()) {
+    init(registry: ProviderRegistry, agents: AgentService, scheduler: AgentExecutionScheduler = AgentExecutionScheduler(),
+         sharedSession: (@Sendable (AgentWorkflowPromptRequest) async throws -> String?)? = nil) {
         self.registry = registry; self.agents = agents; self.scheduler = scheduler
+        self.sharedSession = sharedSession
     }
 
     func executePrompt(_ request: AgentWorkflowPromptRequest) async throws -> String {
         try Task.checkCancellation()
         try request.executionLease?.check()
+        // The shared runner owns the agent lane. Acquiring it here first
+        // would deadlock. Only absence of a host grant permits text-only use.
+        if let sharedSession, let output = try await sharedSession(request) { return output }
+        try Task.checkCancellation(); try request.executionLease?.check()
         guard let agentID = request.agentID else {
             throw ProviderError.transport("The workflow's selected agent or provider is unavailable.")
         }
@@ -257,7 +270,8 @@ struct AppWorkflowPromptExecutor: AgentWorkflowPromptExecuting {
     }
 }
 
-/// Workflows cannot obtain user-effect authority until the app adds an explicit per-run consent UI.
+/// Typed workflow actions still lack per-payload consent and native handlers.
+/// Reviewing a shared prompt session never authorizes these action steps.
 struct AppWorkflowNoAuthorityActionHandler: AgentWorkflowActionHandling {
     func perform(_ request: AgentWorkflowActionRequest) async throws -> String {
         throw AgentWorkflowError.actionDenied(request.action.rawValue)

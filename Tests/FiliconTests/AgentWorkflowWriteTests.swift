@@ -400,7 +400,7 @@ struct AgentWorkflowWriteTests {
         expectNoDifference(values, [before])
     }
 
-    @Test func deletingDefinitionKeepsCapturedRunAndDurableHistory() async throws {
+    @Test func deletingDefinitionCancelsCapturedRunAndKeepsDurableHistory() async throws {
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
         let gate = WorkflowWriteGate()
         let historyURL = f.root.appending(path: "history.json")
@@ -416,13 +416,13 @@ struct AgentWorkflowWriteTests {
         expectNoDifference(pendingStatuses, [.running])
         await gate.release()
         let result = try await run.value
-        expectNoDifference(result.status, .succeeded)
-        expectNoDifference(result.outputs, ["Captured body"])
+        expectNoDifference(result.status, .cancelled)
+        expectNoDifference(result.outputs, [])
         await #expect(throws: AgentWorkflowError.notFound) { _ = try await service.runNow(id: before.id) }
         let restored = try AgentWorkflowRuntime(executor: NeverRunWorkflow(), historyURL: historyURL)
         let restoredRuns = await restored.runs()
         expectNoDifference(restoredRuns.map(\.workflowID), [before.id])
-        expectNoDifference(restoredRuns.map(\.status), [.succeeded])
+        expectNoDifference(restoredRuns.map(\.status), [.cancelled])
     }
 
     @Test func identicalLibraryReplacementInvalidatesPendingDeletion() async throws {

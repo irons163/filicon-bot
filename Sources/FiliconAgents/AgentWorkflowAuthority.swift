@@ -1,7 +1,8 @@
 import Foundation
 
-/// The complete action surface available to persisted workflows. Deliberately absent are
-/// shell/process execution, URL fetching/opening, tool invocation, and permission changes.
+/// The complete typed action-step allowlist. Deliberately absent are shell/process
+/// execution, URL fetching/opening, tool invocation, and permission changes.
+/// A host's shared prompt runner independently requires session and tool consent.
 public enum AgentWorkflowAllowedAction: String, CaseIterable, Codable, Hashable, Sendable {
     case notify
     case createDraft = "create_draft"
@@ -12,6 +13,9 @@ public struct AgentWorkflowPromptRequest: Hashable, Sendable {
     public var workflowID: String
     public var agentID: UUID?
     public var runID: UUID
+    public var workflow: AgentWorkflow?
+    public var origin: AgentWorkflowRunOrigin
+    public var stepIndex: Int
     public var prompt: String
     public var referencedWorkflows: [AgentWorkflow]
     public var priorOutputs: [String]
@@ -19,10 +23,14 @@ public struct AgentWorkflowPromptRequest: Hashable, Sendable {
 
     public init(workflowID: String, agentID: UUID? = nil, runID: UUID, prompt: String,
                 referencedWorkflows: [AgentWorkflow], priorOutputs: [String],
-                executionLease: AgentWorkflowExecutionScope.Lease? = nil) {
+                executionLease: AgentWorkflowExecutionScope.Lease? = nil,
+                workflow: AgentWorkflow? = nil, origin: AgentWorkflowRunOrigin = .manual, stepIndex: Int = 0) {
         self.workflowID = workflowID
         self.agentID = agentID
         self.runID = runID
+        self.workflow = workflow
+        self.origin = origin
+        self.stepIndex = stepIndex
         self.prompt = prompt
         self.referencedWorkflows = referencedWorkflows
         self.priorOutputs = priorOutputs
@@ -93,7 +101,8 @@ public struct AuthorizedAgentWorkflowExecutor: AgentWorkflowStepExecutor {
                 prompt: prompt,
                 referencedWorkflows: request.referencedWorkflows,
                 priorOutputs: request.priorOutputs,
-                executionLease: request.executionLease
+                executionLease: request.executionLease,
+                workflow: request.workflow, origin: request.origin, stepIndex: request.stepIndex
             ))
         case .action(let name, let payload):
             guard let action = AgentWorkflowAllowedAction(rawValue: name) else {

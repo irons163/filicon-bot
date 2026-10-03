@@ -365,6 +365,7 @@ private struct RoutineDirectProvider: InteractiveToolProvider {
         let (root, model, automation, id, _) = try await fixture()
         defer { try? FileManager.default.removeItem(at: root) }
         let edit = try #require(model.beginRoutineDirectSessionEdit(automation))
+        var restoreProjection: Task<Void, Never>?
         switch change {
         case "definition": await model.setAutomationEnabled(id: automation.id, enabled: false)
         case "account": await model.cancelAutoReviewApprovals(nextAccountID: "other")
@@ -379,11 +380,16 @@ private struct RoutineDirectProvider: InteractiveToolProvider {
                     conversation, replacingLoadedMessageIDs: [], historyComplete: true)
             } else {
                 let index = try #require(model.conversations.firstIndex { $0.id == id })
+                let originalProjection = model.conversations
                 model.conversations[index] = conversation
+                // A queued canonical snapshot can restore the old projection
+                // at the first admission await. It must not hide this mismatch.
+                restoreProjection = Task { @MainActor in model.conversations = originalProjection }
             }
         default: model.deleteConversation(id: id)
         }
         #expect(await model.saveRoutineDirectSession(edit, conversationID: id, memoryAccess: .savedFacts) == false)
+        await restoreProjection?.value
         #expect(model.automationDirectBindings.isEmpty)
         let saved = try AutomationDirectSessionBindingStore(url: root.appending(path: "automation-direct-sessions.json"))
         let bindings = await saved.list()

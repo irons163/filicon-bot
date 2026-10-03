@@ -87,6 +87,7 @@
 		C4B68973293E9F14337EC76F9298E432 /* AutomationIngressSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB08D36427DB2ADCF54CAAACBA35A6E8 /* AutomationIngressSettingsView.swift */; };
 		A70200000000000000000001 /* RoutineGroupSessionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A70200000000000000000002 /* RoutineGroupSessionView.swift */; };
 		A70300000000000000000001 /* RoutineDirectSessionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A70300000000000000000002 /* RoutineDirectSessionView.swift */; };
+		A70400000000000000000001 /* WorkflowDirectSessionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A70400000000000000000002 /* WorkflowDirectSessionView.swift */; };
 		C72145E66E972C9AD7819E84E4AB6431 /* FiliconMCP in Frameworks */ = {isa = PBXBuildFile; productRef = 5F3C7A3369F3F6D2A14D4AAAA559D1C5 /* FiliconMCP */; };
 		D39F13AB84404D81BC9264620EF0B5FB /* FiliconSecurityKey in Frameworks */ = {isa = PBXBuildFile; productRef = 0B6AE8CCD9696872383BC90276E362BF /* FiliconSecurityKey */; };
 		D3B1AB3812DC8980D390ACE8F946937B /* FiliconLocalToolService.xpc in Embed XPC Services */ = {isa = PBXBuildFile; fileRef = 052C4C896FED416ABDF0BEA4265EA2C1 /* FiliconLocalToolService.xpc */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
@@ -210,6 +211,7 @@
 		773E5C8BF82838BECD4F9E253A73D846 /* FiliconLocalization.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = FiliconLocalization.swift; sourceTree = "<group>"; };
 		A70200000000000000000002 /* RoutineGroupSessionView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RoutineGroupSessionView.swift; sourceTree = "<group>"; };
 		A70300000000000000000002 /* RoutineDirectSessionView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RoutineDirectSessionView.swift; sourceTree = "<group>"; };
+		A70400000000000000000002 /* WorkflowDirectSessionView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WorkflowDirectSessionView.swift; sourceTree = "<group>"; };
 		7F1C70F528B6D3A0C988B899E902B5AE /* MCPAccountsView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MCPAccountsView.swift; sourceTree = "<group>"; };
 		869C2CF2D5DA9D071069ECEA564D57BB /* PetAvatarImage.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PetAvatarImage.swift; sourceTree = "<group>"; };
 		89E3BEF21F65831A148587445112ADAB /* WorkspaceFolderAccess.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WorkspaceFolderAccess.swift; sourceTree = "<group>"; };
@@ -426,6 +428,7 @@
 				5CC425B7CB00DB21587EFB65FB16E3BD /* RichMarkdownView.swift */,
 				A70200000000000000000002 /* RoutineGroupSessionView.swift */,
 				A70300000000000000000002 /* RoutineDirectSessionView.swift */,
+				A70400000000000000000002 /* WorkflowDirectSessionView.swift */,
 				36D2630173C329EF2F7DCBBE46920901 /* SecurityKeyConsentView.swift */,
 				95A2122EEA1CB86D30BD034B6952A64F /* SharedRoomsWorkspaceView.swift */,
 				0901093B1961045CE79E9802F2EBE80B /* SkillPublishingView.swift */,
@@ -759,6 +762,7 @@
 				C093B82DCCB0316E3483F6679D1E81A4 /* RichMarkdownView.swift in Sources */,
 				A70200000000000000000001 /* RoutineGroupSessionView.swift in Sources */,
 				A70300000000000000000001 /* RoutineDirectSessionView.swift in Sources */,
+				A70400000000000000000001 /* WorkflowDirectSessionView.swift in Sources */,
 				2E89DD8D5513BA89F49C0ECF027912F4 /* SecurityKeyConsentView.swift in Sources */,
 				A0F01A0854C5E2AC7B423A98188BBCAD /* SharedRoomsWorkspaceView.swift in Sources */,
 				A1BE0FC3F4F26F1413D211426324E463 /* SkillPublishingView.swift in Sources */,

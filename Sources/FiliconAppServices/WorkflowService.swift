@@ -44,10 +44,15 @@ public actor WorkflowService {
     public func writeSnapshot() async -> AgentWorkflowLibrarySnapshot { await store.writeSnapshot() }
     public func applyAgentWrite(_ change: AgentWorkflowWrite, lifetime: AgentWorkflowWriteLifetime,
                                 at date: Date = .now) async throws -> AgentWorkflow {
-        try await store.applyAgentWrite(change, lifetime: lifetime, at: date)
+        let before = await store.list()
+        let saved = try await store.applyAgentWrite(change, lifetime: lifetime, at: date)
+        if let previous = change.previous { await cancelAffectedRuns(id: previous.id, library: before) }
+        return saved
     }
     public func applyAgentDeletion(_ change: AgentWorkflowDeletion, lifetime: AgentWorkflowDeletionLifetime) async throws {
+        let before = await store.list()
         try await store.applyAgentDeletion(change, lifetime: lifetime)
+        await cancelAffectedRuns(id: change.workflow.id, library: before)
     }
     public func runs(workflowID: String? = nil) async -> [AgentWorkflowRun] {
         await runtime.runs(workflowID: workflowID)
@@ -60,15 +65,37 @@ public actor WorkflowService {
 
     @discardableResult
     public func update(id: String, with workflow: AgentWorkflow) async throws -> AgentWorkflow {
-        try await store.update(id, with: workflow)
+        let before = await store.list()
+        let saved = try await store.update(id, with: workflow)
+        await cancelAffectedRuns(id: id, library: before)
+        return saved
     }
 
     @discardableResult
     public func setEnabled(_ enabled: Bool, id: String) async throws -> AgentWorkflow {
-        try await store.setEnabled(enabled, id: id)
+        let before = await store.list()
+        let saved = try await store.setEnabled(enabled, id: id)
+        await cancelAffectedRuns(id: id, library: before)
+        return saved
     }
 
-    public func delete(id: String) async throws { try await store.delete(id) }
+    public func delete(id: String) async throws {
+        let before = await store.list()
+        try await store.delete(id)
+        await cancelAffectedRuns(id: id, library: before)
+    }
+
+    private func cancelAffectedRuns(id: String, library: [AgentWorkflow]) async {
+        let byID = Dictionary(uniqueKeysWithValues: library.map { ($0.id, $0) })
+        for workflow in library {
+            var visited = Set<String>(), pending = [workflow.id]
+            while let next = pending.popLast() {
+                guard visited.insert(next).inserted else { continue }
+                if next == id { await runtime.cancel(workflowID: workflow.id); break }
+                if let value = byID[next] { pending += AgentWorkflowReferenceResolver.mentionedIDs(in: value, library: library) }
+            }
+        }
+    }
 
     @discardableResult
     public func importText(_ markdown: String, fallbackName: String? = nil) async throws -> AgentWorkflow {
@@ -101,7 +128,7 @@ public actor WorkflowService {
     public func ensureLearningWorkflow(agentID: UUID?) async throws -> AgentWorkflow {
         if var existing = await store.get("learn-from-demonstration") {
             if !existing.isEnabled {
-                existing = try await store.setEnabled(true, id: existing.id)
+                existing = try await setEnabled(true, id: existing.id)
             }
             return existing
         }

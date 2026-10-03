@@ -1,5 +1,11 @@
 # Filicon / Grok Bot 0.18 功能 parity matrix（current implementation）
 
+2026-10-03 workflow 接線與無損編輯增量：經人類審核的 workflow prompt steps 現在使用該 account／agent 的既有 bound direct conversation 和真正 shared runner；審核包含完整定義及引用，獨立於 routine grant，manual／scheduled／verified event／replay 保留 runtime 真正 run ID。背景 saved facts 預設關閉、peer 不繼承；SendMessage／問題／委派與本機工具仍保有既有核准。問題使流程進入 `waitingForReply`、停止後續步驟，人類回答不自動續跑整條 pipeline。過期、跨帳號、忙碌及已撤銷審核不得 fallback；定義及引用修改／刪除會取消依賴它的 runtime，保留歷史、不回滾完成效果。workflow／routine 保存第一個 await 前及其後均驗證對話身分，補上舊 UI 投影被 queued snapshot 蓋回後審核誤通過的競態。
+
+編輯器逐步保留 prompt／action 順序、啟用狀態、來源及建立時間，不再 flatten；完整定義 bounds validation、固定底部原生保存／取消、Return／Esc 及 saving 狀態已有實際測試。最後 `workflow-review-race-full.log` exit 0：135 XCTest＋1,714 Swift Testing（217 suites；核心 893／105、App 587／82，兩項 opt-in live Codex 測試略過）；65 tests／9 suites 聚焦、原生建置／四執行檔封裝簽章、七語各 1,782 keys／0 missing 及審核／編輯器各 28 張明暗頂部／底部 render 通過。歷史失敗及鎖定日誌保留，未降低檔案保護。
+
+下方日期段落保留當批歷史，「workflow 全為 text-only」由本次接線取代；未綁定 prompt 仍為有界 text-only。typed action 是 Filicon native 擴充且仍拒絕執行，不逕當作已確認原版缺口。完整成本彙整、遠端 session／cloud metadata、外部服務、release 及全 48 分類獨立驗收仍保留，整體 partial 不上調。詳見 [完成驗收入口的「Workflow 既有對話接線與無損編輯」](Parity-completion-audit.md)。未 push、未重啟使用者 App／Xcode、未改真實帳號或群組資料。
+
 2026-10-03 一般代理人排程接線增量：人類現在可將 routine 綁定至該代理人的既有單獨聊天，使用相同持久對話、persona／模型及 shared tool runner。背景喚醒是暫時 host 資料，不偽造人類訊息、不自動轉送歷史附件；SendMessage、問題卡片、SendToAgent 及本機工具保留真實核准。背景 saved facts 仍須獨立 opt-in，委派不繼承。過期審核／忙碌對話拒絕執行，撤銷／切帳號／刪除／身分變更及最後 SQLite 寫入均有 fence。一般及群組 session 不可互相默默取代；workflow prompt／action、費用彙整、雲端／外部平台及全 48 分類驗收仍保留，整體 partial 不上調。詳見 [完成驗收入口的「經審核 routine 的既有單獨聊天」](Parity-completion-audit.md)。
 
 本批最後串行 gate `routine-direct-session-full-post-translation.log` exit 0：135 XCTest＋1,682 Swift Testing（210 suites；核心 887／103、App 563／78，兩項 opt-in live Codex 測試略過）。原生建置／封裝簽章、七語各 1,754 keys／0 missing 與 14 個明暗 render 通過；最後修正既有日文／韓文 Conversation 誤譯並補語意斷言。驗收僅限隔離 fixtures，不取代 live 帳號、release 或其他分類驗收。

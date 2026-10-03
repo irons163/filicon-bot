@@ -10,12 +10,16 @@ public struct AgentWorkflowStepRequest: Hashable, Sendable {
     public var referencedWorkflows: [AgentWorkflow]
     public var priorOutputs: [String]
     public var executionLease: AgentWorkflowExecutionScope.Lease?
+    public var workflow: AgentWorkflow?
+    public var origin: AgentWorkflowRunOrigin
     public init(workflowID: String, agentID: UUID? = nil, runID: UUID, generation: UInt64, stepIndex: Int,
                 step: AgentWorkflowStep, referencedWorkflows: [AgentWorkflow], priorOutputs: [String],
-                executionLease: AgentWorkflowExecutionScope.Lease? = nil) {
+                executionLease: AgentWorkflowExecutionScope.Lease? = nil,
+                workflow: AgentWorkflow? = nil, origin: AgentWorkflowRunOrigin = .manual) {
         self.workflowID = workflowID; self.agentID = agentID; self.runID = runID; self.generation = generation; self.stepIndex = stepIndex
         self.step = step; self.referencedWorkflows = referencedWorkflows; self.priorOutputs = priorOutputs
         self.executionLease = executionLease
+        self.workflow = workflow; self.origin = origin
     }
 }
 
@@ -31,8 +35,19 @@ public enum AgentWorkflowRunOrigin: Hashable, Codable, Sendable {
 }
 
 public enum AgentWorkflowRunStatus: String, Codable, Hashable, Sendable {
-    case running, succeeded, failed, cancelled, deadlineExceeded
+    case running, succeeded, failed, cancelled, deadlineExceeded, waitingForReply
     public var isTerminal: Bool { self != .running }
+}
+
+/// A shared runner has durably published a question. Stop the pipeline; do not
+/// execute later steps or imply task completion while waiting for a human.
+public struct AgentWorkflowPromptSuspension: Error, Sendable {
+    public let output: String
+    public init(output: String) { self.output = output }
+}
+
+private struct AgentWorkflowPipelineSuspension: Error {
+    let outputs: [String]
 }
 
 public struct AgentWorkflowRun: Identifiable, Codable, Hashable, Sendable {
@@ -219,7 +234,8 @@ public actor AgentWorkflowRuntime {
         do { try persistHistory() }
         catch {
             history.removeAll { $0.id == run.id }
-            return terminal(workflow, run: run, status: .failed, failure: String(describing: error))
+            return terminal(workflow, run: run, status: .failed,
+                failure: (error as? LocalizedError)?.errorDescription ?? String(describing: error))
         }
         let executor = self.executor
         let task = Task<[String], Error> {
@@ -228,9 +244,18 @@ public actor AgentWorkflowRuntime {
                 var outputs: [String] = []
                 for (index, step) in workflow.steps.enumerated() {
                     try lease.check()
-                    let output = try await executor.execute(.init(workflowID: workflow.id, agentID: workflow.agentID, runID: run.id, generation: generation,
-                                                                  stepIndex: index, step: step, referencedWorkflows: references, priorOutputs: outputs,
-                                                                  executionLease: lease))
+                    let output: String
+                    do {
+                        output = try await executor.execute(.init(workflowID: workflow.id, agentID: workflow.agentID, runID: run.id, generation: generation,
+                            stepIndex: index, step: step, referencedWorkflows: references, priorOutputs: outputs,
+                            executionLease: lease, workflow: workflow, origin: origin))
+                    } catch let pending as AgentWorkflowPromptSuspension {
+                        try lease.check()
+                        guard pending.output.utf8.count <= AgentWorkflowLimits.maximumBodyBytes,
+                              outputs.reduce(0, { $0 + $1.utf8.count }) + pending.output.utf8.count <= AgentWorkflowLimits.maximumBodyBytes
+                        else { throw AgentWorkflowError.boundsExceeded("step outputs") }
+                        throw AgentWorkflowPipelineSuspension(outputs: outputs + [pending.output])
+                    }
                     try lease.check()
                     guard output.utf8.count <= AgentWorkflowLimits.maximumBodyBytes,
                           outputs.reduce(0, { $0 + $1.utf8.count }) + output.utf8.count <= AgentWorkflowLimits.maximumBodyBytes
@@ -256,7 +281,16 @@ public actor AgentWorkflowRuntime {
             if let workflowError = error as? AgentWorkflowError, workflowError == .deadlineExceeded {
                 return terminal(workflow, run: run, status: .deadlineExceeded, failure: AgentWorkflowError.deadlineExceeded.localizedDescription)
             }
-            return terminal(workflow, run: run, status: .failed, failure: String(describing: error))
+            if let pending = error as? AgentWorkflowPipelineSuspension {
+                do {
+                    return try lease.commit {
+                        guard generations[workflow.id] == generation else { throw CancellationError() }
+                        return terminal(workflow, run: run, status: .waitingForReply, outputs: pending.outputs)
+                    }
+                } catch { return terminal(workflow, run: run, status: .cancelled, failure: AgentWorkflowError.cancelled.localizedDescription) }
+            }
+            return terminal(workflow, run: run, status: .failed,
+                failure: (error as? LocalizedError)?.errorDescription ?? String(describing: error))
         }
     }
 

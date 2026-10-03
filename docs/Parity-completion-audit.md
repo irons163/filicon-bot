@@ -1,5 +1,19 @@
 # 完成驗收入口（2026-09-27）
 
+## Workflow 既有對話接線與無損編輯（2026-10-03）
+
+經人類審核的 workflow prompt steps 已接入既有 bound direct conversation 的 shared runner。入口為「自動化 → 工作流程 → 展開流程 → 審核工作流程對話」；審核涵蓋整份定義及已解析的引用，不借用 routine grant，也不把 workflow 偽裝成已保存的 automation。manual／scheduled／verified event／replay 均保留真正 runtime run ID。背景 saved facts 另行 opt-in，peer 不繼承；工具仍需原有核准，typed action steps 仍全部拒絕。問題卡片使用 `waitingForReply` 停止後續步驟，人類回覆不自動恢復整條 pipeline。這是經隔離 App fixtures 驗證的本機接線，不是 live 外部服務或整體 parity 完成證據。
+
+`workflow-review-race-focused.log` exit 0：65 tests／9 suites（核心 24／3、App 39／5、step context 2／1）。實際 App 路徑驗證指定歷史、memory off/on、無假真人訊息、private assistant 不發表、持久 SendMessage／peer／question、雙層本機寫入核准、四條 dispatch、真實 run UUID、忙碌／silence／provider 降級拒絕、六類晚到取消及跨帳號 grant 不能取代／撤銷。reference 變更撤銷整條多步驟流程；批准的模型 workflow 刪除亦取消依賴它的 runtime，保留取消歷史而不回滾已完成效果。
+
+編輯器不再 flatten 多個 prompt 或丟失 action／source／停用狀態；保留完整原始定義、順序與建立時間，逐步新增／移動／移除並執行完整 bounds validation。固定底部使用 macOS 原生按鈕，Return／Esc 與 saving／invalid 狀態皆有實際行為斷言；捲動至底部仍可保存／取消。七語×明暗的審核及編輯器各 28 張頂部／底部 render 通過，並逐語視覺檢查；fixture 正文／action 名稱不是 UI 翻譯。修正繁中／簡中／法文誤譯的 `@every` 語法並補七語語意斷言。七語各 1,782 keys／0 missing。
+
+歷史紅燈保留：`workflow-final-full.log` exit 1，既有刪除測試仍預期 captured run 成功，與本批取消政策衝突，已改為斷言取消、無晚到 outputs 及 durable cancelled history。該回歸亦重現一次 visible conversation identity 在 admission await 期間被 queued canonical snapshot 覆蓋，舊審核竟獲准；workflow／routine save 現在第一個 await 前即拒絕已不相符的投影，並於 await 後再驗 canonical／projection。新增受控 queued-restore 案例，未略過失敗。另一批大量 agents 讀取失敗伴隨 `IOConsoleLocked = Yes`／Cocoa 257／EPERM；未降低 `.completeFileProtectionUnlessOpen`，不將其他語意失敗一律歸為鎖定。解鎖後最後完整串行 `workflow-review-race-full.log` exit 0：135 XCTest＋1,714 Swift Testing（217 suites；核心 893／105、App 587／82），上述刪除、過期審核、圖片圖庫及 MCP 多帳號測試均通過；兩項 opt-in live Codex 測試略過，不冒充 live 驗收。
+
+`workflow-review-race-native.log` BUILD SUCCEEDED，`workflow-review-race-package.log` 四個執行檔、deep strict 簽章及 app／XPC entitlements 通過；這是隔離 Debug 驗證，不是 release／公證。日誌與 PNG 位於 `.build/validation/`，不提交產物。本批未 push，未啟動或重啟使用者 App／Xcode、未改真實帳號／群組／聊天。
+
+剩餘邊界：typed action handlers／逐 payload 人類權限、原版遠端 background session／cloud group metadata、完整成本彙整、外部平台與全部分類獨立驗收仍保留。Filicon 的多步驟／action enum 是 native 擴充，不是 reconstructed 原版已存在同名模型的證據；無損編輯通過不代表這些 action 已可執行，也不把 native 擴充逕列為已確認原版功能缺口。以下有日期的 routine／text-only 段落保留當批歷史狀態，由本節的 workflow 接線取代其「workflow 全為 text-only」描述。
+
 2026-10-03 一般代理人排程接線增量：routine 現可經人類審核綁定至既有單獨聊天，走真正 shared runner、持久 publication／問題／委派及原有工具核准，使用 service 的實際 run ID。暫時 wake 不偽造人類訊息，舊附件不自動送往 provider；saved facts 另有預設關閉的獨立同意。過期身分、忙碌／問題等待、撤銷與晚到寫入均拒絕，普通／群組 grant 不可默默互換。以下「經審核 routine 的既有單獨聊天」記錄本批證據；未綁定 routine／workflow prompt 仍是 text-only，workflow action／完整費用彙整／外部平台／全 48 分類仍須補齊或驗收。
 
 本批最後串行 gate `routine-direct-session-full-post-translation.log` exit 0：135 XCTest＋1,682 Swift Testing（210 suites，核心 887／103、App 563／78；兩項 opt-in live Codex 測試略過）。原生建置／封裝簽章、七語各 1,754 keys／0 missing 與 14 個明暗 render 通過；最後日文／韓文既有 Conversation 誤譯修正亦由此 gate 覆蓋。不以隔離測試取代 live 外部服務驗收。

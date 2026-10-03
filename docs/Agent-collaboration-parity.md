@@ -1,5 +1,15 @@
 # 協作能力核對紀錄（更新至 2026-10-03）
 
+## 經人類審核的 workflow 單獨聊天 runner 與無損編輯（2026-10-03）
+
+「自動化 → 工作流程 → 展開流程 → 審核工作流程對話」現在可審核整份 workflow 及已解析引用，再明確綁定至該 account／agent 的既有 bound direct conversation。四條 manual／scheduled／verified event／replay 入口使用真正 shared runner、實際 runtime run ID、持久 SendMessage／問題／SendToAgent 與原有工具核准，不借用 routine grant。暫時 wake 不偽造真人、不轉送歷史附件；saved facts 有獨立預設關閉同意，peer 不繼承。問題以 `waitingForReply` 結束目前流程，不執行後續步驟；人類回覆是新 supervised turn，不自動恢復整條 pipeline。
+
+定義或引用修改／刪除會撤銷依賴它的 runtime；Stop、帳號／persona／模型變更、對話刪除與晚到核准有原始 scope／lease 和最終持久化 fence。無 grant 才容許有界 text-only；過期、跨帳號或無效 grant 不 fallback，也不能借另一帳號的 receipt 取代／撤銷。workflow 與 routine 保存均補第一個 await 前的 visible identity 檢查，防止 queued canonical snapshot 蓋回錯誤投影後讓過期審核通過，await 後仍再次核對。
+
+編輯器現在保留完整多步驟、action payload、source、啟用狀態與建立時間；逐步新增／移動／移除及完整 bounds validation、原生固定底部保存／取消與 Return／Esc 已驗證。最後聚焦 65 tests／9 suites、完整串行 `workflow-review-race-full.log` exit 0：135 XCTest＋1,714 Swift Testing（217 suites；核心 893／105、App 587／82，兩項 opt-in live Codex 測試略過）；原生建置／封裝簽章、七語各 1,782 keys／0 missing 及審核／編輯器各 28 張頂部／底部明暗 render 通過。先前鎖定、刪除政策測試與過期審核競態失敗記錄保留，未降低檔案保護；繁中／簡中／法文的 `@every` 語法誤譯已修正。
+
+這取代下方歷史段落的「workflow prompt 全為 text-only」，不取代其餘獨立驗收。未綁定 prompt 仍 text-only，Filicon native typed action handlers 仍拒絕；完整費用彙整、原版遠端 session／cloud metadata、live 平台、release 及全 48 分類仍保留。細節見 [完成驗收入口](Parity-completion-audit.md)。未 push、未重啟使用者 App／Xcode、未改真實資料。
+
 ## 經人類審核的 routine 單獨聊天 runner（2026-10-03）
 
 「自動化 → 展開排程 → 背景代理人對話」現在可將 routine 明確綁定至該 account／agent 的既有 bound direct conversation，審閱 persona／provider／model 與 task 後才保存獨立 grant。普通／群組 session 不可默默互換，跨帳號 grant 有明確提示；背景 saved facts 另行 opt-in、預設關閉。manual／scheduled／event 走同一 shared runner callback，使用 service 實際 run UUID、持久 SendMessage／問題卡片／SendToAgent 與原有工具核准。

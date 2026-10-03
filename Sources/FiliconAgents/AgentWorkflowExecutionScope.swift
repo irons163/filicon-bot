@@ -24,6 +24,18 @@ public final class AgentWorkflowExecutionScope: @unchecked Sendable {
         }
         private let tickets: [Ticket]
 
+        private init(tickets: [Ticket]) { self.tickets = tickets }
+
+        /// Preserve two independently admitted lifetimes (for example a
+        /// workflow run and the host account) without recapturing either.
+        public func inheriting(_ other: Lease) throws -> Lease {
+            var combined = tickets
+            for ticket in other.tickets where !combined.contains(ticket) { combined.append(ticket) }
+            let result = Lease(tickets: combined)
+            try result.check()
+            return result
+        }
+
         fileprivate init(scope: AgentWorkflowExecutionScope, generation: UInt64, inherited: Lease?) {
             let current = Ticket(scope: scope, generation: generation)
             var tickets = inherited?.tickets ?? []
