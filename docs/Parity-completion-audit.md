@@ -1,5 +1,21 @@
 # 完成驗收入口（2026-09-27）
 
+## 活動提醒改讀 canonical 單獨聊天狀態（2026-10-03）
+
+再次核對 reference `a9f633e09d49a85829b8236331b9e21f7e612634`：`automation-spend-guard-runtime.ts` 的 `evaluate` 直接讀 `session.db.getUnreadState()`，並以該 `lastViewedAt` 計算現存 definitions 的 retained runs；pause transition 亦重新評估。native 的 trusted host 現在為非 reviewed-group routine 解析目前 account／exact agent 的唯一 canonical bound direct chat，包含未載入側欄與 hidden histories。count 與 view time 不再由 pending wakes 或 routine 建立時間取代；有 canonical source 時不把 wakes 加進聊天 count。沒有 canonical bound chat 的明確 legacy／text-only host 才保留舊 fallback，歧義／缺失或損壞 read row 不 fallback、不按名稱或 prompt 猜 owner。
+
+repository-owned live observation 跟隨同一 repository 的 content／read-state 成功提交更新，不把 reconcile 時的一次 snapshot 當成之後的真實 count。它以原 owner／conversation／hidden 狀態註冊，重綁、歧義、hide／delete 與 close 後不復活；同一 owner 重用 projection，weak registry 不因重新整理保留無用觀測。SQL transaction 先解析各 observation 下一值，COMMIT 成功後才發布；owner 不變的 activity／read 保存錯誤保留全部舊 projection。owner 變更的保存嘗試會保守先撤銷舊 observation，即使保存失敗也不復活。guard 同步決策與自己 store 的保存持有 read-publication fence；source 不是 Codable definition／model tool input，也不是新的檔案／工具／記憶 grant。原始 account generation／可撤銷 lifetime 仍限制批次；已審核 group 的豁免與人工停用不變。
+
+activity 卡片的明確「標示為已讀」也會更新其 exact canonical chat，而非只改 automation timestamp；聊天 read／unread／view 不回答卡片、不自動恢復任務、不清除 pause ownership／snooze／opt-out。canonical reconcile 故障顯示錯誤並保留已有卡片，未發布猜測的新 activity。重啟後重新從 DB 解析 count／view，既有未回答 card ID 保留。
+
+有效紅燈 `spend-guard-canonical-unread-red-valid.log` 重現 15 則 canonical 未讀但沒有 wakes 時，native count、view time 與 nudge 決策三項差異。`spend-guard-canonical-unread-red.log` 的 Array／Set 型別及 `spend-guard-canonical-unread-focused-v4.log` 的 fixture 修改唯讀 ID 編譯失敗保留，與產品語意紅燈分開。最後聚焦 `spend-guard-canonical-unread-focused-final.log` exit 0：172 tests／24 suites（核心 96／15、App 65／7、Automations 9／1、Agents 2／1）。新增 11 個測試方法，包括四種 queued batch、兩種 invalid source、兩種 owner lifetime、四種 observation revocation，以及 rollback、manual unread、重開、explicit activity read、15 wakes／20 runs 不能覆蓋 canonical read marker；固定日期、隔離 stores 與受控 gate 不用真實模型或服務。
+
+最後 source 的完整串行 `spend-guard-canonical-unread-full.log` exit 0：135 XCTest＋1,795 Swift Testing（220 suites；核心 939／107、App 622／83），兩項 opt-in live Codex 測試略過，不冒充外部服務驗收。七語各 1,789 keys／0 missing；沒有新增 UI layout 或文字，完整套件的既有 render 斷言通過，不新增真人視覺／VoiceOver 驗收。
+
+`spend-guard-canonical-unread-native.log` BUILD SUCCEEDED；`spend-guard-canonical-unread-package.log` 四個執行檔、deep strict 簽章及 app／XPC entitlements 通過。隔離產物 `.build/validation/SpendCanonicalUnreadPackage/Filicon.app` 為 Debug／離線 gate，不是 release／公證；未執行列印的 launch smoke。日誌及產物僅保留在忽略的 `.build/validation/`。
+
+本節只取代下面歷史「guard canonical count 未接線」的 bound direct-chat 部分。group read state、聊天 widget／host reminder、legacy unbound fallback、真人 UI／VoiceOver、雲端 session、完整 core 帳號資料遷移、live／release 與全 48 分類仍各自保留，整體 partial 不上調。observation 僅 fence 同一 repository，不宣稱跨獨立 repository／process 的 live fence、跨聊天 DB／automation store 原子交易或任意 snapshot 的跨 process CAS；未 push、啟動或重啟使用者 App／Xcode、改真實帳號／群組／聊天資料。
+
 ## 單獨聊天的 canonical 未讀畫面接線（2026-10-03）
 
 接續 `d1ced91` storage foundation：主工作區 focused／active／可見的當前單獨聊天會更新 canonical read state，不要求一定有 routine 或 agent binding；有 binding 時仍限當前帳號、未封存的 exact owner。manual unread 不因取得焦點或新訊息而清除，右鍵提供「標示為已讀／未讀」；人類明確點選側欄開啟聊天則走 read，對齊 reference `activateSession` 的 activation 與單純 focus 差別，不把任何程式呼叫 `selectRoute` 當成這份人工證據。側欄從 canonical count 顯示未讀數（大於 99 顯示 `99+`，可存取標籤仍保留完整數字）。七語提供動作與標籤；分頁載入、workspace reload 與訊息保存後重新查詢狀態，不按每個文字 delta 清除手動旗標。

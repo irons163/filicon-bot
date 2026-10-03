@@ -32,6 +32,85 @@ struct ConversationUnreadTests {
         try #require(sqlite3_exec(handle, statement, nil, nil, nil) == SQLITE_OK)
     }
 
+    @Test func liveUnreadObservationTracksOnlyDurableReadAndArrivalPublications() async throws {
+        let root = try directory(); defer { try? FileManager.default.removeItem(at: root) }
+        let repo = try ConversationRepository(databaseURL: root.appending(path: "conversations.sqlite3"))
+        var value = chat(); value.messages = [message()]
+        try await repo.save([value], activityAt: now)
+        let observation = try #require(try await repo.observeUniqueUnreadState(accountID: binding.accountID, agentID: binding.agentID))
+        expectNoDifference(try observation.withReadState { $0 }, .init(lastActivityAt: now, unreadCount: 1))
+        let read = try await repo.updateReadState(conversationID: value.id, action: .read,
+            at: now.addingTimeInterval(1), expectedBinding: binding)
+        expectNoDifference(try observation.withReadState { $0 }, read)
+        value.messages.append(message(21))
+        try await repo.save([value], activityAt: now.addingTimeInterval(2))
+        let arrival = try #require(try await repo.unreadState(conversationID: value.id))
+        expectNoDifference(try observation.withReadState { $0 }, arrival)
+        expectNoDifference(arrival.unreadCount, 1)
+        let manual = try await repo.updateReadState(conversationID: value.id, action: .unread,
+            at: now.addingTimeInterval(3), expectedBinding: binding)
+        expectNoDifference(try observation.withReadState { $0 }, manual)
+        _ = try await repo.updateReadState(conversationID: value.id, action: .viewed(preserveManualUnread: true),
+            at: now.addingTimeInterval(4), expectedBinding: binding)
+        expectNoDifference(try observation.withReadState { $0 }, manual)
+    }
+
+    @Test(arguments: ["rebind-cycle", "duplicate", "delete", "hide"])
+    func liveUnreadObservationCannotSurviveOwnerOrUniquenessRevocation(change: String) async throws {
+        let root = try directory(); defer { try? FileManager.default.removeItem(at: root) }
+        let repo = try ConversationRepository(databaseURL: root.appending(path: "conversations.sqlite3"))
+        var value = chat(); value.messages = [message()]
+        try await repo.save([value], activityAt: now)
+        let observation = try #require(try await repo.observeUniqueUnreadState(accountID: binding.accountID, agentID: binding.agentID))
+        switch change {
+        case "rebind-cycle":
+            value.agentBinding = .init(accountID: "other", agentID: id(2))
+            try await repo.save([value], activityAt: now.addingTimeInterval(1))
+            value.agentBinding = binding
+            try await repo.save([value], activityAt: now.addingTimeInterval(2))
+        case "duplicate": try await repo.save([value, chat(11)], activityAt: now.addingTimeInterval(1))
+        case "delete": try await repo.delete(id: value.id)
+        case "hide": value.hiddenAt = now; try await repo.save([value], activityAt: now.addingTimeInterval(1))
+        default: break
+        }
+        expectNoDifference(observation.isActive, false)
+        #expect(throws: CancellationError.self) { try observation.withReadState { $0 } }
+    }
+
+    @Test func aFailedSQLPublicationKeepsEveryLiveUnreadProjectionUnchanged() async throws {
+        let root = try directory(); defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appending(path: "conversations.sqlite3"), repo = try ConversationRepository(databaseURL: url)
+        var value = chat(); value.messages = [message()]
+        var peer = chat(11); peer.agentBinding = .init(accountID: "peer", agentID: id(2)); peer.messages = [message(22)]
+        try await repo.save([value, peer], activityAt: now)
+        let first = try #require(try await repo.observeUniqueUnreadState(accountID: binding.accountID, agentID: binding.agentID))
+        let second = try #require(try await repo.observeUniqueUnreadState(accountID: "peer", agentID: id(2)))
+        let sameOwner = try #require(try await repo.observeUniqueUnreadState(accountID: binding.accountID, agentID: binding.agentID))
+        expectNoDifference(first === sameOwner, true)
+        let before = try first.withReadState { $0 }
+        try sql("CREATE TRIGGER reject_read_publication BEFORE UPDATE ON conversation_read_state BEGIN SELECT RAISE(ABORT, 'fixture failure'); END", at: url)
+        await #expect(throws: (any Error).self) {
+            try await repo.updateReadState(conversationID: value.id, action: .read, at: now.addingTimeInterval(1), expectedBinding: binding)
+        }
+        value.messages.append(message(21))
+        await #expect(throws: (any Error).self) { try await repo.save([value, peer], activityAt: now.addingTimeInterval(2)) }
+        expectNoDifference(try first.withReadState { $0 }, before)
+        expectNoDifference(try second.withReadState { $0 }, before)
+        let durable = try await repo.unreadState(conversationID: value.id), content = try await repo.load()
+        expectNoDifference(durable, before)
+        expectNoDifference(content.first { $0.id == value.id }?.messages.map(\.id), [id(20)])
+    }
+
+    @Test func canonicalObservationRejectsMissingStateInsteadOfInventingAnEmptyChat() async throws {
+        let root = try directory(); defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appending(path: "conversations.sqlite3"), repo = try ConversationRepository(databaseURL: url)
+        try await repo.save([chat()], activityAt: now)
+        try sql("DELETE FROM conversation_read_state", at: url)
+        await #expect(throws: PersistenceError.self) { try await repo.observeUniqueUnreadState(accountID: binding.accountID, agentID: binding.agentID) }
+        let absent = try await repo.observeUniqueUnreadState(accountID: "absent", agentID: binding.agentID)
+        expectNoDifference(absent == nil, true)
+    }
+
     @Test func manualUnreadSurvivesAutomaticViewsAndExplicitReadIsMonotonic() {
         var state = ConversationUnreadState()
         state.markActivity(at: now, count: 2)

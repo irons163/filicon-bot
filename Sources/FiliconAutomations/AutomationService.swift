@@ -430,17 +430,39 @@ public actor AutomationService {
     }
 
     public func spendGuardState(agentID: UUID) -> AutomationSpendGuardState {
-        spendGuardState(agentID: agentID, excluding: groupExemptAutomationIDs())
+        let exempt = groupExemptAutomationIDs()
+        guard let context = spendGuardContext(agentID: agentID) else {
+            return spendGuardState(agentID: agentID, excluding: exempt)
+        }
+        var result: AutomationSpendGuardState?
+        do {
+            try context.withActivity { activity in result = spendGuardState(agentID: agentID, excluding: exempt, activity: activity) }
+        } catch {
+            // Do not turn a revoked/failed canonical lookup into zero unread or
+            // a different wake-based source. Admission rejects it separately.
+            return state.spendGuards[agentID] ?? .init(lastViewedAt: .distantPast)
+        }
+        return result ?? (state.spendGuards[agentID] ?? .init(lastViewedAt: .distantPast))
     }
 
-    private func spendGuardState(agentID: UUID, excluding exempt: Set<UUID>) -> AutomationSpendGuardState {
+    private func spendGuardContext(agentID: UUID) -> AutomationSpendGuardContext? {
+        let contexts = guardContexts.values.filter { value in
+            value.automation.agentID == agentID
+                && state.automations.contains { $0.id == value.automation.id && $0.revision == value.automation.revision && $0.agentID == agentID }
+        }
+        return (contexts.first { $0.context.activitySource != nil } ?? contexts.first)?.context
+    }
+
+    private func spendGuardState(agentID: UUID, excluding exempt: Set<UUID>, activity: AutomationSpendGuardActivity? = nil) -> AutomationSpendGuardState {
         var spend = state.spendGuards[agentID] ?? .init(lastViewedAt: .distantPast)
+        if let activity { spend.lastViewedAt = activity.lastViewedAt; spend.unreadCount = activity.unreadCount }
         let ids = Set(state.automations.filter { $0.agentID == agentID && !exempt.contains($0.id) }.map(\.id))
         // The reference counts retained started runs of current definitions,
         // not lifetime totals (deleted tasks must not keep causing nudges).
         spend.firesSinceViewed = state.runs.filter { ids.contains($0.automationID) && $0.startedAt > spend.lastViewedAt }.count
-        // Local pending result wakes are this host's unread signal. This is
-        // not a claim of parity with the reference transcript unread counter.
+        if activity != nil { return spend }
+        // Legacy/unbound text-only hosts have no canonical transcript source.
+        // Keep their explicit fallback; never add wakes to canonical chat counts.
         let runDefinitions = Dictionary(state.runs.map { ($0.id, $0.automationID) }, uniquingKeysWith: { first, _ in first })
         spend.unreadCount = ids.isEmpty ? 0 : state.wakes.filter {
             guard $0.agentID == agentID && $0.createdAt > spend.lastViewedAt else { return false }
@@ -460,7 +482,7 @@ public actor AutomationService {
         var next: [UUID: (automation: Automation, context: AutomationSpendGuardContext)] = [:]
         for automation in definitions {
             let context = try await executor.spendGuardContext(for: automation)
-            try context.commit {}
+            try context.withActivity { _ in }
             next[automation.id] = (automation, context)
         }
         for value in next.values {
@@ -516,18 +538,23 @@ public actor AutomationService {
     @discardableResult
     public func evaluateSpendGuard(agentID: UUID, at now: Date = Date()) throws -> SpendGuardDecision {
         let exempt = groupExemptAutomationIDs()
-        if let context = guardContexts.values.first(where: { $0.automation.agentID == agentID })?.context {
-            return try context.commit { try evaluateSpendGuard(agentID: agentID, at: now, excluding: exempt) }
+        if let context = spendGuardContext(agentID: agentID) {
+            var result: SpendGuardDecision?
+            try context.withActivity { activity in
+                result = try evaluateSpendGuard(agentID: agentID, at: now, excluding: exempt, activity: activity)
+            }
+            guard let result else { throw CancellationError() }
+            return result
         }
         return try evaluateSpendGuard(agentID: agentID, at: now, excluding: exempt)
     }
 
-    private func evaluateSpendGuard(agentID: UUID, at now: Date, excluding exempt: Set<UUID>) throws -> SpendGuardDecision {
+    private func evaluateSpendGuard(agentID: UUID, at now: Date, excluding exempt: Set<UUID>, activity: AutomationSpendGuardActivity? = nil) throws -> SpendGuardDecision {
         guard state.automations.contains(where: { $0.agentID == agentID && !exempt.contains($0.id) }) else { return .belowThresholds }
-        let decision = AutomationSpendGuard.evaluate(spendGuardState(agentID: agentID, excluding: exempt), now: now)
+        let decision = AutomationSpendGuard.evaluate(spendGuardState(agentID: agentID, excluding: exempt, activity: activity), now: now)
         guard decision == .nudge || decision == .pause else { return decision }
         var candidate = state
-        var spend = spendGuardState(agentID: agentID, excluding: exempt)
+        var spend = spendGuardState(agentID: agentID, excluding: exempt, activity: activity)
         var admissionChanged = false
         if decision == .nudge {
             spend.nudgedAt = now
@@ -630,8 +657,10 @@ public actor AutomationService {
         if origin != .manual {
             // Guard before admission, for schedule AND event deliveries. An
             // expired nudge must not permit one more background inference.
-            try context.commit {
-                _ = try evaluateSpendGuard(agentID: automation.agentID, at: now, excluding: exempt)
+            try context.withActivity { activity in
+                if context.reviewedGroupBindingID == nil {
+                    _ = try evaluateSpendGuard(agentID: automation.agentID, at: now, excluding: exempt, activity: activity)
+                }
             }
             guard context.reviewedGroupBindingID != nil || guardEpoch == (guardDispatchEpochs[automation.agentID] ?? 0),
                   let current = state.automations.first(where: { $0.id == automation.id }),

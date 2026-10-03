@@ -7704,10 +7704,23 @@ final class AppModel: ObservableObject {
             }
             if membersActive { reviewedGroupID = saved.id }
         }
+        var activitySource: AutomationSpendGuardActivitySource?
+        if reviewedGroupID == nil {
+            if let observation = try await store.observeUniqueUnreadState(accountID: account, agentID: automation.agentID) {
+                guard let profile = await agentService?.profile(id: automation.agentID), profile.archivedAt == nil else {
+                    observation.close(); throw CancellationError()
+                }
+                activitySource = { operation in
+                    try observation.withReadState { state in
+                        try operation(.init(lastViewedAt: state.lastViewedAt, unreadCount: state.unreadCount))
+                    }
+                }
+            }
+        }
         try lease.check()
         guard generation == autoReviewAccountGeneration, account == (settings.accountScope ?? "local"),
               !agentMessagingAccountTransition, lifetime.isCurrent else { throw CancellationError() }
-        return .init(reviewedGroupBindingID: reviewedGroupID, lifetime: lifetime)
+        return .init(reviewedGroupBindingID: reviewedGroupID, lifetime: lifetime, activitySource: activitySource)
     }
 
     private func validateBackgroundDirectExecution(_ execution: BackgroundDirectExecution) async throws {
@@ -8412,7 +8425,27 @@ final class AppModel: ObservableObject {
             guard let owner = await agentService.profile(id: id), owner.archivedAt == nil,
                   generation == autoReviewAccountGeneration, !agentMessagingAccountTransition,
                   account == (settings.accountScope ?? "local") else { return }
-            try await automationService.recordViewed(agentID: id, at: date, lifetime: lifetime)
+            let readLease: ConversationBindingLease?
+            if let chat = try await store.uniqueBoundConversation(accountID: account, agentID: id) {
+                readLease = try await store.leaseUniqueBinding(accountID: account, agentID: id, conversationID: chat.id)
+            } else { readLease = nil }
+            defer { readLease?.close() }
+            guard generation == autoReviewAccountGeneration, !agentMessagingAccountTransition,
+                  account == (settings.accountScope ?? "local"), lifetime.isCurrent else { return }
+            if let readLease {
+                let state = try await store.updateReadState(conversationID: readLease.conversationID, action: .read,
+                    at: date, expectedBinding: readLease.binding,
+                    commit: { operation in try lifetime.commit { try readLease.withValidBinding(operation) } })
+                guard generation == autoReviewAccountGeneration, !agentMessagingAccountTransition,
+                      account == (settings.accountScope ?? "local"), lifetime.isCurrent else { return }
+                if conversations.first(where: { $0.id == readLease.conversationID })?.agentBinding == readLease.binding {
+                    publishConversationUnreadState(state, id: readLease.conversationID)
+                }
+            }
+            try await automationService.recordViewed(agentID: id, at: date, lifetime: lifetime,
+                commit: { operation in
+                    if let readLease { try readLease.withValidBinding(operation) } else { try operation() }
+                })
             guard generation == autoReviewAccountGeneration, !agentMessagingAccountTransition,
                   account == (settings.accountScope ?? "local") else { return }
             await reloadAutomationDetails()
@@ -8437,7 +8470,15 @@ final class AppModel: ObservableObject {
     func reloadAutomationDetails() async {
         guard !agentMessagingAccountTransition, let automationService else { return }
         let generation = autoReviewAccountGeneration, account = settings.accountScope ?? "local"
-        if let agentService { _ = try? await automationService.reconcileSpendGuardContexts(executor: makeAutomationExecutor(agents: agentService)) }
+        if let agentService {
+            do { _ = try await automationService.reconcileSpendGuardContexts(executor: makeAutomationExecutor(agents: agentService)) }
+            catch {
+                guard generation == autoReviewAccountGeneration, account == (settings.accountScope ?? "local"),
+                      !agentMessagingAccountTransition else { return }
+                if !(error is CancellationError) { errorMessage = FiliconLocalization.message(error.localizedDescription) }
+                return
+            }
+        }
         // Opening the shared workspace cannot imply reading every agent's
         // conversation. Owners are marked read by a separate scoped action.
         let definitions = await automationService.list()

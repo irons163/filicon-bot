@@ -54,13 +54,39 @@ public final class AutomationSpendGuardLifetime: @unchecked Sendable {
 /// fences account, definition and consent changes before durable admission.
 public struct AutomationSpendGuardContext: Sendable {
     public let reviewedGroupBindingID: UUID?
+    let activitySource: AutomationSpendGuardActivitySource?
     let lifetime: AutomationSpendGuardLifetime
-    public init(reviewedGroupBindingID: UUID? = nil, lifetime: AutomationSpendGuardLifetime = .init()) {
+    public init(reviewedGroupBindingID: UUID? = nil, lifetime: AutomationSpendGuardLifetime = .init(),
+                activitySource: AutomationSpendGuardActivitySource? = nil) {
         self.reviewedGroupBindingID = reviewedGroupBindingID; self.lifetime = lifetime
+        self.activitySource = activitySource
     }
     var isCurrent: Bool { lifetime.isCurrent }
     func commit<Value>(_ operation: () throws -> Value) throws -> Value { try lifetime.commit(operation) }
+    func withActivity(_ operation: (AutomationSpendGuardActivity?) throws -> Void) throws {
+        try lifetime.commit {
+            if let activitySource {
+                try activitySource { activity in
+                    guard activity.lastViewedAt.timeIntervalSince1970.isFinite, activity.unreadCount >= 0 else {
+                        throw AutomationServiceError.invalidDefinition
+                    }
+                    try operation(activity)
+                }
+            } else { try operation(nil) }
+        }
+    }
 }
+
+/// Trusted host projection of a canonical chat, not Codable/model/definition
+/// input. The source holds its read-publication fence through the operation.
+public struct AutomationSpendGuardActivity: Sendable {
+    public let lastViewedAt: Date
+    public let unreadCount: Int
+    public init(lastViewedAt: Date, unreadCount: Int) {
+        self.lastViewedAt = lastViewedAt; self.unreadCount = unreadCount
+    }
+}
+public typealias AutomationSpendGuardActivitySource = @Sendable (_ operation: (AutomationSpendGuardActivity) throws -> Void) throws -> Void
 
 public enum AutomationSpendGuard {
     public static let idleInterval: TimeInterval = 3 * 24 * 60 * 60

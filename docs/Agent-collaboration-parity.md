@@ -1,5 +1,13 @@
 # 協作能力核對紀錄（更新至 2026-10-03）
 
+## 活動 guard 接上 canonical direct-chat count（2026-10-03）
+
+trusted host 從當前 account／exact agent 的唯一 canonical bound chat 建立 live read projection；正常內容／read transaction 成功後才發布，guard 的同步決策／保存受同 repository fence 保護。reference 的 DB unread／view time 不再被 wakes 或 routine creation date 代替；retained fires 以 canonical view 為界。沒有 bound chat 的明確 legacy text-only 分支仍是 fallback，缺失／損壞／歧義 source 則失敗，不以名稱、模型或匯入 hint 取得權限。帳號／owner lifetime、群組豁免與工具／記憶同意不放寬。
+
+explicit activity read 亦標記 exact canonical chat，仍不回答、清除或恢復既有卡片／pause ownership。新增隔離 App queued batch 檢查：第一個 routine 等待期間 human read 成功，下一 owner 不誤 pause；未讀不變／保存失敗仍受保護，account cycle 不執行舊批次。缺失 row／未載入的重複 owner 不發布新卡片投影；重啟保留原 card。11 個新增方法及既有回歸共 172 tests／24 suites 聚焦通過；最後完整串行 gate exit 0：135 XCTest＋1,795 Swift Testing（220 suites，兩項 opt-in live 測試略過），七語各 1,789 keys／0 missing。來源、失敗類別及 native gates 見 [完成驗收入口](Parity-completion-audit.md)。
+
+這取代下方歷史 bound-chat counter 未接線的部分，不關閉 group read state、chat widget／host reminder、真人 UI／VoiceOver、雲端／完整 core 帳號資料遷移、live／release 或全 48 分類。read observation 不涵蓋獨立 repository／process 或跨 store 原子交易，整體 partial 不上調。未 push、重啟使用者 App／Xcode 或改真實資料。
+
 ## 單獨聊天未讀／手動未讀的 native UI（2026-10-03）
 
 canonical count 現在顯示於側欄，右鍵提供七語 read／unread 動作；focused／active／visible 的當前 native direct chat 自動 viewed，manual unread 保留，無 routine 或 unbound chat 也可使用。人類側欄開啟聊天則明確 read，與單純 focus 不同；focus 不可取代已排隊的人工選擇。native action 在 Task 前擷取身分，account generation、exact binding 及 lifetime 保護保存；automatic view 再核對原 epoch／最新訊息 witness。換帳號或換綁定再回來、新 arrival、失焦、封存、刪除與新 action 不讓舊工作復活；read-state 故障不發布假零，不回答或恢復 automation card。這局部取代下面 UI 未接線的歷史，guard canonical unread counter、group state、widget／reminder、完整 core account migration、真人 UI／VoiceOver、雲端／live／release／全 48 分類仍保留。最後 source 的驗收與 cross-store／cross-process 邊界見 [完成驗收入口](Parity-completion-audit.md)。整體 partial 不上調；未 push、未重啟使用者 App／Xcode、未改真實資料。

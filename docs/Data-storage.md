@@ -82,8 +82,23 @@ epoch and newest-message witness. Loading/persistence refreshes canonical state;
 stale refreshes cannot overwrite a newer action's projection. A failed read-state
 write does not publish a zero unread count or answer an automation activity card.
 
-The automation guard's canonical unread counter, group-chat read state, chat
-widgets/host reminders and live UI/release validation remain separate. Chat and
-automation timestamps reside in separate stores, not one cross-store transaction.
+For a non-group routine with one canonical bound direct chat, the host now feeds
+the automation activity guard that chat's count and view time, not pending result
+wakes. A repository-owned live observation is updated only after a successful SQL
+commit. It holds a synchronous read-publication fence during guard decisions and
+the guard's separate-store save. With unchanged owners, failed SQL publications
+leave all projections unchanged. An ownership-change attempt conservatively
+revokes the old projection even if that write fails; rollback cannot revive it.
+Exact binding/uniqueness/hidden-state changes revoke the old projection, and an
+account or owner lifetime change rejects old batches. Missing or corrupt
+state and ambiguous bindings fail instead of selecting a wake-based source.
+Explicit activity-card Mark as read also reads its unique bound canonical chat;
+it does not answer a card, resume routines or alter execution consent. Unbound
+legacy/text-only hosts explicitly retain their fallback.
+
+Group-chat read state, chat widgets/host reminders and live UI/release validation
+remain separate. An observation fences only mutations through its own repository,
+not independent repository instances/processes. Chat and automation timestamps
+reside in separate stores, not one cross-store transaction.
 A read-state transaction does not provide a cross-process CAS for arbitrary
 conversation snapshots or complete account isolation of legacy unbound chats.

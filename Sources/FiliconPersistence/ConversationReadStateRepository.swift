@@ -3,6 +3,57 @@ import CSQLite
 import FiliconDomain
 
 extension ConversationRepository {
+    /// Canonical lookup and registration happen together. No paged UI cache or
+    /// routine title can establish the owner. Missing/invalid state is an error.
+    public func observeUniqueUnreadState(accountID: String, agentID: UUID) throws -> ConversationUnreadObservation? {
+        try database.transaction("observe owned conversation read state") {
+            guard let conversation = try uniqueBoundConversation(accountID: accountID, agentID: agentID),
+                  let binding = conversation.agentBinding else { return nil }
+            let state = try requireUnreadState(conversation.id)
+            unreadObservations.removeAll { $0.value?.isActive != true }
+            if let current = unreadObservations.compactMap(\.value).first(where: {
+                $0.conversationID == conversation.id && $0.binding == binding && $0.legacyHiddenAt == conversation.hiddenAt
+            }) {
+                current.publish(state)
+                return current
+            }
+            let observation = ConversationUnreadObservation(conversationID: conversation.id,
+                binding: binding, legacyHiddenAt: conversation.hiddenAt, state: state)
+            unreadObservations.append(.init(value: observation))
+            return observation
+        }
+    }
+
+    /// All live projections are locked in registration order. Resolve their
+    /// next values before COMMIT; a failed write/query rolls SQL back and never
+    /// publishes a partly updated projection. Only this repository is fenced.
+    func withUnreadObservationTransaction<Value>(_ operation: String, _ body: () throws -> Value) throws -> Value {
+        unreadObservations.removeAll { $0.value?.isActive != true }
+        let observations = unreadObservations.compactMap(\.value)
+        func perform(_ index: Int) throws -> Value {
+            guard index < observations.count else {
+                let (result, publications) = try database.transaction(operation) {
+                    let result = try body()
+                    let publications = try observations.map { observation -> ConversationUnreadState? in
+                        let current: Conversation?
+                        do { current = try uniqueBoundConversation(accountID: observation.binding.accountID, agentID: observation.binding.agentID) }
+                        catch BoundConversationLookupError.ambiguous { return nil }
+                        guard let current, current.id == observation.conversationID,
+                              current.hiddenAt == observation.legacyHiddenAt else { return nil }
+                        return try requireUnreadState(current.id)
+                    }
+                    return (result, publications)
+                }
+                for (observation, state) in zip(observations, publications) {
+                    if let state { observation.publish(state) } else { observation.close() }
+                }
+                return result
+            }
+            return try observations[index].withPublicationLock { try perform(index + 1) }
+        }
+        return try perform(0)
+    }
+
     public func unreadState(conversationID: UUID) throws -> ConversationUnreadState? {
         guard try unreadBinding(conversationID).exists else { return nil }
         return try requireUnreadState(conversationID)
@@ -28,7 +79,7 @@ extension ConversationRepository {
         }
         var result: ConversationUnreadState?
         try commit {
-            result = try database.transaction("update conversation read state") {
+            result = try withUnreadObservationTransaction("update conversation read state") {
                 let current = try unreadBinding(conversationID)
                 guard current.exists, current.binding == expectedBinding else { throw CancellationError() }
                 var state = try requireUnreadState(conversationID)

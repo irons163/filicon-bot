@@ -11,10 +11,15 @@ public enum BoundConversationLookupError: Error, Equatable, Sendable {
     case invalidAccount
 }
 
+struct WeakConversationUnreadObservation {
+    weak var value: ConversationUnreadObservation?
+}
+
 public actor ConversationRepository {
     public static let currentSchemaVersion = 17
     let database: SQLiteDatabase
     private var bindingLeases: [ConversationBindingLease] = []
+    var unreadObservations: [WeakConversationUnreadObservation] = []
     public nonisolated let initialRecoveryReport: PersistenceRecoveryReport?
 
     public init(databaseURL: URL) throws {
@@ -177,7 +182,12 @@ public actor ConversationRepository {
                 || matches.first?.hiddenAt != lease.legacyHiddenAt { lease.close() }
         }
         bindingLeases.removeAll { !$0.isActive }
-        try database.transaction("save conversations") {
+        for observation in unreadObservations.compactMap(\.value) {
+            let matches = values.filter { $0.agentBinding == observation.binding }
+            if matches.count != 1 || matches.first?.id != observation.conversationID
+                || matches.first?.hiddenAt != observation.legacyHiddenAt { observation.close() }
+        }
+        try withUnreadObservationTransaction("save conversations") {
             let keep = Set(values.map { $0.id.uuidString })
             let existing = try database.prepare("SELECT id FROM conversations", operation: "list conversations for pruning")
             var remove: [String] = []

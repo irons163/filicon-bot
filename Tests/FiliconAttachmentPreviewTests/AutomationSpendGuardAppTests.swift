@@ -27,6 +27,51 @@ private struct ConversationReadFixtureProvider: AIProvider {
     }
 }
 
+private struct ConversationSpendGuardFixtureExecutor: AutomationExecutor {
+    let context: @Sendable (Automation) async throws -> AutomationSpendGuardContext
+    func spendGuardContext(for automation: Automation) async throws -> AutomationSpendGuardContext {
+        try await context(automation)
+    }
+    func execute(automation: Automation, prompt: String, events: [AutomationEvent]) async throws -> AutomationExecutionResult {
+        .init(detail: "Isolated spend guard fixture; no inference or external tools")
+    }
+}
+
+private actor CanonicalSpendGuardBatchExecutor: AutomationExecutor {
+    let context: @Sendable (Automation) async throws -> AutomationSpendGuardContext
+    private var entered: [UUID] = []
+    private var first: CheckedContinuation<AutomationExecutionResult, Never>?
+    private var observers: [CheckedContinuation<Void, Never>] = []
+
+    init(context: @escaping @Sendable (Automation) async throws -> AutomationSpendGuardContext) { self.context = context }
+    func spendGuardContext(for automation: Automation) async throws -> AutomationSpendGuardContext {
+        try await context(automation)
+    }
+    func execute(automation: Automation, prompt: String, events: [AutomationEvent]) async throws -> AutomationExecutionResult {
+        entered.append(automation.id)
+        if entered.count == 1 {
+            return await withCheckedContinuation { continuation in
+                first = continuation
+                for observer in observers { observer.resume() }; observers.removeAll()
+            }
+        }
+        return .init(detail: "Later isolated fixture; no inference or external tools")
+    }
+    func waitForFirst() async { if first == nil { await withCheckedContinuation { observers.append($0) } } }
+    func finishFirst() { first?.resume(returning: .init(detail: "First isolated fixture")); first = nil }
+    func observed() -> [UUID] { entered }
+}
+
+private struct CanonicalSpendGuardStoreSeed: Encodable {
+    let schemaVersion = 2
+    let automations: [Automation]
+    let runs: [AutomationRun]
+    let wakes: [AutomationWake]
+    let claims: Set<String> = []
+    let eventClaims: Set<String> = []
+    let spendGuards: [UUID: AutomationSpendGuardState]
+}
+
 @Suite("Automation activity check app integration", .timeLimit(.minutes(1)))
 @MainActor struct AutomationSpendGuardAppTests {
     private let now = Date(timeIntervalSince1970: 1_800_000_000)
@@ -84,6 +129,244 @@ private struct ConversationReadFixtureProvider: AIProvider {
         await model.loadLatestMessages(for: chat.id)
         model.setConversationWindowFocused(true)
         return (root, model, owner, peer, chat)
+    }
+
+    @Test func theActivityGuardUsesCanonicalUnreadMessagesEvenWithoutResultWakes() async throws {
+        let (root, model, owner, _, original) = try await visibleChatFixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        model.setConversationWindowFocused(false)
+        let service = try AutomationService(storeURL: root.appending(path: "automations.json"))
+        try await service.answerSpendGuard(.stayPaused, agentID: owner.id, at: now)
+        try await service.setEnabled(id: owner.id, enabled: true, now: now)
+        var chat = original
+        for index in 1...14 {
+            chat.messages.append(.init(id: UUID(uuidString: String(format: "00000000-0000-0000-0000-%012d", 170 + index))!,
+                role: .assistant, text: "Canonical unread fixture \(index)", createdAt: now.addingTimeInterval(1)))
+        }
+        let store = ConversationStore(fileURL: root.appending(path: "conversations.json"))
+        try await store.upsert(chat, replacingLoadedMessageIDs: Set(original.messages.map(\.id)), historyComplete: true,
+            activityAt: now.addingTimeInterval(1))
+        let canonical = try #require(try await store.unreadState(conversationID: chat.id))
+        expectNoDifference(canonical.unreadCount, 15)
+        let executor = ConversationSpendGuardFixtureExecutor { try await model.automationSpendGuardContext(for: $0) }
+        try await service.reconcileSpendGuardContexts(executor: executor)
+        let wakes = await service.pendingWakes(agentID: owner.id), state = await service.spendGuardState(agentID: owner.id)
+        expectNoDifference(wakes, [])
+        expectNoDifference(state.unreadCount, canonical.unreadCount)
+        expectNoDifference(state.lastViewedAt, canonical.lastViewedAt)
+        let decision = try await service.evaluateSpendGuard(agentID: owner.id,
+            at: now.addingTimeInterval(AutomationSpendGuard.idleInterval + 1))
+        expectNoDifference(decision, .nudge)
+        let nudged = await service.spendGuardState(agentID: owner.id)
+        let read = try #require(model.beginConversationRead(id: chat.id, action: .read))
+        let viewedAt = now.addingTimeInterval(AutomationSpendGuard.idleInterval + 2)
+        let readSaved = await model.recordConversationRead(read, at: viewedAt)
+        expectNoDifference(readSaved, true)
+        let reopened = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+        await reopened.reloadWorkspaceData()
+        let durableService = try AutomationService(storeURL: root.appending(path: "automations.json"))
+        try await durableService.reconcileSpendGuardContexts(executor: ConversationSpendGuardFixtureExecutor {
+            try await reopened.automationSpendGuardContext(for: $0)
+        })
+        let durable = await durableService.spendGuardState(agentID: owner.id)
+        expectNoDifference(durable.unreadCount, 0)
+        expectNoDifference(durable.lastViewedAt, viewedAt)
+        expectNoDifference(durable.cardID, nudged.cardID)
+        expectNoDifference(durable.nudgedAt, nudged.nudgedAt)
+    }
+
+    @Test func resultWakesAndRunsCannotReplaceTheCanonicalChatReadMarker() async throws {
+        let (root, model, owner, _, chat) = try await visibleChatFixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        var definition = try #require(model.automations.first { $0.agentID == owner.id })
+        definition.enabled = true; definition.guardPaused = false
+        definition.nextRunAt = now.addingTimeInterval(3_600)
+        let runs = (0..<20).map { index in
+            var run = AutomationRun(id: UUID(uuidString: String(format: "00000000-0000-0000-0000-%012d", 210 + index))!,
+                automationID: definition.id, trigger: .manual, startedAt: now.addingTimeInterval(1))
+            run.status = .ok; run.finishedAt = now.addingTimeInterval(1)
+            return run
+        }
+        let wakes = runs.prefix(15).map {
+            AutomationWake(agentID: owner.id, runID: $0.id, status: .ok, detail: "Isolated old wake",
+                createdAt: now.addingTimeInterval(1), automationID: definition.id)
+        }
+        let seed = CanonicalSpendGuardStoreSeed(automations: [definition], runs: runs, wakes: wakes,
+            spendGuards: [owner.id: .init(lastViewedAt: now)])
+        let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .millisecondsSince1970
+        try encoder.encode(seed).write(to: root.appending(path: "automations.json"))
+        let read = try #require(model.beginConversationRead(id: chat.id, action: .read))
+        let saved = await model.recordConversationRead(read, at: now.addingTimeInterval(2))
+        expectNoDifference(saved, true)
+        let service = try AutomationService(storeURL: root.appending(path: "automations.json"))
+        try await service.reconcileSpendGuardContexts(executor: ConversationSpendGuardFixtureExecutor {
+            try await model.automationSpendGuardContext(for: $0)
+        })
+        let state = await service.spendGuardState(agentID: owner.id), retained = await service.pendingWakes(agentID: owner.id)
+        expectNoDifference(state.unreadCount, 0)
+        expectNoDifference(state.firesSinceViewed, 0)
+        expectNoDifference(state.lastViewedAt, now.addingTimeInterval(2))
+        expectNoDifference(retained, wakes)
+        let decision = try await service.evaluateSpendGuard(agentID: owner.id,
+            at: now.addingTimeInterval(AutomationSpendGuard.idleInterval + 5))
+        expectNoDifference(decision, .belowThresholds)
+    }
+
+    @Test(arguments: ["read", "unchanged", "write-failure", "account-cycle"])
+    func aQueuedBatchRechecksCanonicalActivityBeforeItsNextOwner(change: String) async throws {
+        let (root, model, owner, peer, chat) = try await visibleChatFixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let before = try #require(model.conversationUnreadState(id: chat.id))
+        var definitions = try [#require(model.automations.first { $0.agentID == peer.id }),
+            #require(model.automations.first { $0.agentID == owner.id })]
+        for index in definitions.indices {
+            definitions[index].enabled = true; definitions[index].guardPaused = false
+            definitions[index].nextRunAt = now.addingTimeInterval(3_600)
+        }
+        let card = UUID(uuidString: "00000000-0000-0000-0000-000000000241")!
+        let seed = CanonicalSpendGuardStoreSeed(automations: definitions, runs: [], wakes: [],
+            spendGuards: [peer.id: .init(lastViewedAt: now), owner.id: .init(lastViewedAt: now, nudgedAt: now, cardID: card)])
+        // Separate automation store avoids two independent service instances
+        // overwriting each other when the real App read action saves its marker.
+        let file = root.appending(path: "queued-automations.json")
+        let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .millisecondsSince1970
+        try encoder.encode(seed).write(to: file)
+        let service = try AutomationService(storeURL: file)
+        let executor = CanonicalSpendGuardBatchExecutor { try await model.automationSpendGuardContext(for: $0) }
+        let firedAt = now.addingTimeInterval(AutomationSpendGuard.idleInterval + AutomationSpendGuard.pauseDelay + 2)
+        let batch = Task { await service.fireDue(at: firedAt, executor: executor) }
+        defer { Task { await executor.finishFirst() } }
+        await executor.waitForFirst()
+        if change == "write-failure" {
+            var database: OpaquePointer?
+            try #require(sqlite3_open(root.appending(path: "conversations.sqlite3").path, &database) == SQLITE_OK)
+            defer { sqlite3_close(database) }
+            try #require(sqlite3_exec(database,
+                "CREATE TRIGGER reject_guard_read BEFORE UPDATE ON conversation_read_state BEGIN SELECT RAISE(ABORT, 'fixture failure'); END",
+                nil, nil, nil) == SQLITE_OK)
+        }
+        if change == "read" || change == "write-failure" {
+            let read = try #require(model.beginConversationRead(id: chat.id, action: .read))
+            let saved = await model.recordConversationRead(read, at: firedAt)
+            expectNoDifference(saved, change == "read")
+        } else if change == "account-cycle" {
+            await model.cancelAutoReviewApprovals(nextAccountID: "other-fixture-account")
+            model.settings.accountScope = "other-fixture-account"
+            await model.cancelAutoReviewApprovals(nextAccountID: "local")
+            model.settings.accountScope = "local"
+        }
+        await executor.finishFirst()
+        let runs = await batch.value, entered = await executor.observed(), current = await service.list()
+        expectNoDifference(runs.map(\.automationID), change == "read" ? [peer.id, owner.id] : [peer.id])
+        expectNoDifference(entered, runs.map(\.automationID))
+        #expect(runs.allSatisfy { $0.status == .ok })
+        let ownerDefinition = try #require(current.first { $0.agentID == owner.id })
+        let paused = change == "unchanged" || change == "write-failure"
+        expectNoDifference(ownerDefinition.enabled, !paused)
+        expectNoDifference(ownerDefinition.guardPaused, paused)
+        expectNoDifference(ownerDefinition.revision, definitions[1].revision)
+        let spend = await service.spendGuardState(agentID: owner.id)
+        expectNoDifference(spend.cardID, card)
+        expectNoDifference(spend.guardPausedAutomationIDs, paused ? [owner.id] : [])
+        if change != "account-cycle" {
+            expectNoDifference(spend.lastViewedAt, change == "read" ? firedAt : before.lastViewedAt)
+            expectNoDifference(spend.unreadCount, change == "read" ? 0 : before.unreadCount)
+        }
+    }
+
+    @Test(arguments: ["missing-read-row", "ambiguous-owner"])
+    func anInvalidCanonicalSourceCannotPublishGuessedActivityOrReplaceTheCurrentCards(change: String) async throws {
+        let (root, model, owner, _, chat) = try await visibleChatFixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        await model.reloadAutomationDetails()
+        let before = model.automationSpendGuardPrompts, definitions = model.automations
+        if change == "missing-read-row" {
+            var database: OpaquePointer?
+            try #require(sqlite3_open(root.appending(path: "conversations.sqlite3").path, &database) == SQLITE_OK)
+            defer { sqlite3_close(database) }
+            try #require(sqlite3_exec(database, "DELETE FROM conversation_read_state", nil, nil, nil) == SQLITE_OK)
+        } else {
+            var duplicate = Conversation(id: UUID(uuidString: "00000000-0000-0000-0000-000000000242")!,
+                title: "Not in the loaded sidebar", providerID: owner.providerID, modelID: owner.modelID, updatedAt: now)
+            duplicate.agentBinding = chat.agentBinding
+            try await ConversationStore(fileURL: root.appending(path: "conversations.json")).upsert(
+                duplicate, replacingLoadedMessageIDs: [], historyComplete: true, activityAt: now)
+        }
+        await #expect(throws: (any Error).self) {
+            try await model.automationSpendGuardContext(for: #require(definitions.first { $0.agentID == owner.id }))
+        }
+        model.errorMessage = nil
+        await model.reloadAutomationDetails()
+        #expect(model.errorMessage != nil)
+        expectNoDifference(model.automationSpendGuardPrompts, before)
+        expectNoDifference(model.automations, definitions)
+    }
+
+    @Test(arguments: ["account-cycle", "archive"])
+    func aResolvedCanonicalGuardCannotCrossItsOriginalOwnerLifetime(change: String) async throws {
+        let (root, model, owner, _, _) = try await visibleChatFixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let service = try AutomationService(storeURL: root.appending(path: "automations.json"))
+        try await service.reconcileSpendGuardContexts(executor: ConversationSpendGuardFixtureExecutor {
+            try await model.automationSpendGuardContext(for: $0)
+        })
+        let definitions = await service.list(), before = await service.spendGuardState(agentID: owner.id)
+        if change == "archive" { await model.archiveAgent(id: owner.id) }
+        else {
+            await model.cancelAutoReviewApprovals(nextAccountID: "other-fixture-account")
+            model.settings.accountScope = "other-fixture-account"
+            await model.cancelAutoReviewApprovals(nextAccountID: "local")
+            model.settings.accountScope = "local"
+        }
+        await #expect(throws: CancellationError.self) {
+            try await service.evaluateSpendGuard(agentID: owner.id, at: now.addingTimeInterval(AutomationSpendGuard.idleInterval + 1))
+        }
+        let after = await service.list(), durable = try AutomationService(storeURL: root.appending(path: "automations.json"))
+        let card = await durable.spendGuardState(agentID: owner.id)
+        expectNoDifference(after, definitions)
+        expectNoDifference(card.cardID, before.cardID)
+        expectNoDifference(card.guardPausedAutomationIDs, before.guardPausedAutomationIDs)
+    }
+
+    @Test func aReconciledGuardReadsLaterCanonicalReadActionsWithoutAnotherReload() async throws {
+        let (root, model, owner, _, chat) = try await visibleChatFixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let service = try AutomationService(storeURL: root.appending(path: "automations.json"))
+        let executor = ConversationSpendGuardFixtureExecutor { try await model.automationSpendGuardContext(for: $0) }
+        try await service.reconcileSpendGuardContexts(executor: executor)
+        let initial = await service.spendGuardState(agentID: owner.id)
+        expectNoDifference(initial.unreadCount, 1)
+        let read = try #require(model.beginConversationRead(id: chat.id, action: .read))
+        let saved = await model.recordConversationRead(read, at: now.addingTimeInterval(60))
+        expectNoDifference(saved, true)
+        let after = await service.spendGuardState(agentID: owner.id)
+        var expected = initial; expected.lastViewedAt = now.addingTimeInterval(60); expected.unreadCount = 0
+        expectNoDifference(after, expected)
+        let unread = try #require(model.beginConversationRead(id: chat.id, action: .unread))
+        let marked = await model.recordConversationRead(unread, at: now.addingTimeInterval(61))
+        expectNoDifference(marked, true)
+        let manual = try #require(model.conversationUnreadState(id: chat.id)), guarded = await service.spendGuardState(agentID: owner.id)
+        expectNoDifference(guarded.unreadCount, manual.unreadCount)
+        expectNoDifference(guarded.lastViewedAt, manual.lastViewedAt)
+        expectNoDifference(guarded.cardID, initial.cardID)
+        expectNoDifference(guarded.guardPausedAutomationIDs, initial.guardPausedAutomationIDs)
+    }
+
+    @Test func theExplicitActivityReadActionAlsoReadsOnlyItsExactCanonicalChat() async throws {
+        let (root, model, owner, peer, chat) = try await visibleChatFixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        await model.reloadAutomationDetails()
+        let before = model.automationSpendGuardPrompts, definitions = model.automations
+        let action = try #require(model.beginAutomationAgentRead(id: owner.id))
+        await model.markAutomationAgentViewed(action, at: now.addingTimeInterval(60))
+        let state = try #require(model.conversationUnreadState(id: chat.id))
+        expectNoDifference(state.unreadCount, 0)
+        expectNoDifference(state.lastViewedAt, now.addingTimeInterval(60))
+        expectNoDifference(model.automations, definitions)
+        expectNoDifference(model.automationSpendGuardPrompts.map(\.id), before.map(\.id))
+        expectNoDifference(model.automationSpendGuardPrompts.first { $0.agentID == peer.id }, before.first { $0.agentID == peer.id })
+        expectNoDifference(model.automationSpendGuardPrompts.first { $0.agentID == owner.id }?.state.guardPausedAutomationIDs,
+            before.first { $0.agentID == owner.id }?.state.guardPausedAutomationIDs)
     }
 
     @Test func viewingTheExactBoundChatUpdatesOnlyItsOwnerWithoutAnsweringTheCard() async throws {
