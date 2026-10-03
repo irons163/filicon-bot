@@ -131,6 +131,255 @@ private struct CanonicalSpendGuardStoreSeed: Encodable {
         return (root, model, owner, peer, chat)
     }
 
+    @Test func anActivityCheckIsActuallyVisibleInsideItsOwnersChat() async throws {
+        let (root, model, _, _, chat) = try await visibleChatFixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        await model.reloadAutomationDetails()
+        try await withUIRenderTurn(language: "en") {
+            let host = NSHostingView(rootView: ChatDetailView(conversation: chat)
+                .environmentObject(model).environment(\.locale, Locale(identifier: "en"))
+                .environment(\.colorScheme, .light))
+            host.sizingOptions = []
+            host.appearance = NSAppearance(named: .aqua)
+            host.frame = .init(x: 0, y: 0, width: 640, height: 900)
+            let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+            window.appearance = host.appearance; window.contentView = host
+            defer { window.contentView = nil }
+            host.layoutSubtreeIfNeeded(); host.displayIfNeeded()
+            let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.appearance?.performAsCurrentDrawingAppearance { host.cacheDisplay(in: host.bounds, to: bitmap) }
+            let recognition = VNRecognizeTextRequest()
+            recognition.recognitionLevel = .accurate
+            try VNImageRequestHandler(cgImage: try #require(bitmap.cgImage)).perform([recognition])
+            let text = recognition.results?.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ") ?? ""
+            #expect(text.contains("Resume") && text.contains("Stay paused"), "The real chat must show its activity check actions: \(text)")
+            if let path = ProcessInfo.processInfo.environment["FILICON_UI_REVIEW_OUTPUT"] {
+                let output = URL(fileURLWithPath: path)
+                try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+                try #require(bitmap.representation(using: .png, properties: [:])).write(to: output.appending(path: "spend-guard-owner-chat.png"))
+            }
+        }
+    }
+
+    private func chatActivityFixture(paused: Bool) async throws -> (URL, AppModel, AgentProfile, AgentProfile, Conversation) {
+        let (root, initial, owner, peer, chat) = try await visibleChatFixture()
+        var definitions = initial.automations
+        var spends = Dictionary(uniqueKeysWithValues: initial.automationSpendGuardPrompts.map { ($0.agentID, $0.state) })
+        if !paused {
+            let index = try #require(definitions.firstIndex { $0.agentID == owner.id })
+            definitions[index].enabled = true; definitions[index].guardPaused = false
+            definitions[index].nextRunAt = now.addingTimeInterval(3_600)
+            spends[owner.id]?.guardPausedAutomationIDs = []
+            spends[owner.id]?.nudgedAt = now.addingTimeInterval(1)
+        }
+        definitions.append(.init(id: UUID(uuidString: "00000000-0000-0000-0000-000000000998")!, agentID: owner.id,
+            name: "Human disabled fixture", prompt: "No inference", trigger: definitions[0].trigger, enabled: false, createdAt: now))
+        let seed = CanonicalSpendGuardStoreSeed(automations: definitions, runs: [], wakes: [], spendGuards: spends)
+        let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .millisecondsSince1970
+        try encoder.encode(seed).write(to: root.appending(path: "automations.json"))
+        // Reopen the host after seeding; two automation actors must not compete
+        // to overwrite one file. This never bootstraps or starts a scheduler.
+        let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+        await model.registry.register(ConversationReadFixtureProvider())
+        let canonicalStore = ConversationStore(fileURL: root.appending(path: "conversations.json"))
+        model.conversations = try await canonicalStore.conversationPage().items
+        await model.reloadWorkspaceData(); await model.reloadAutomationDetails()
+        model.selection = chat.id; model.route = .conversation(chat.id)
+        await model.loadLatestMessages(for: chat.id)
+        return (root, model, owner, peer, chat)
+    }
+
+    @Test func chatChecksUseCanonicalBindingsNotTitlesAndViewingDoesNotAnswerThem() async throws {
+        let (root, model, owner, peer, chat) = try await visibleChatFixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        var other = Conversation(id: UUID(uuidString: "00000000-0000-0000-0000-000000000997")!,
+            title: owner.name, providerID: peer.providerID, modelID: peer.modelID, updatedAt: now)
+        other.agentBinding = .init(accountID: "local", agentID: peer.id)
+        let unbound = Conversation(id: UUID(uuidString: "00000000-0000-0000-0000-000000000996")!, title: owner.name, updatedAt: now)
+        let store = ConversationStore(fileURL: root.appending(path: "conversations.json"))
+        try await store.upsert(other, replacingLoadedMessageIDs: [], historyComplete: true, activityAt: now)
+        try await store.upsert(unbound, replacingLoadedMessageIDs: [], historyComplete: true, activityAt: now)
+        model.conversations = [chat, other, unbound]
+        await model.reloadAutomationDetails()
+        let card = try #require(model.conversationSpendGuardPresentation(id: chat.id))
+        let peerCard = try #require(model.conversationSpendGuardPresentation(id: other.id))
+        expectNoDifference(card.prompt.agentID, owner.id); expectNoDifference(peerCard.prompt.agentID, peer.id)
+        expectNoDifference(card.prompt.id, model.automationSpendGuardPrompts.first { $0.agentID == owner.id }?.id)
+        expectNoDifference(model.conversationSpendGuardPresentation(id: unbound.id) == nil, true)
+        let definitions = model.automations, peerPrompt = peerCard.prompt
+        let read = try #require(model.beginConversationRead(id: chat.id, action: .read))
+        let saved = await model.recordConversationRead(read, at: now.addingTimeInterval(60))
+        expectNoDifference(saved, true)
+        await model.reloadAutomationDetails()
+        expectNoDifference(model.automations, definitions)
+        expectNoDifference(model.conversationSpendGuardPresentation(id: chat.id)?.prompt.id, card.prompt.id)
+        expectNoDifference(model.conversationSpendGuardPresentation(id: other.id)?.prompt, peerPrompt)
+        #expect(card.bindingLease.isActive)
+        let reopened = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+        reopened.conversations = try await store.conversationPage().items
+        await reopened.reloadWorkspaceData(); await reopened.reloadAutomationDetails()
+        expectNoDifference(reopened.conversationSpendGuardPresentation(id: chat.id)?.prompt.id, card.prompt.id)
+        expectNoDifference(reopened.conversationSpendGuardPresentation(id: other.id)?.prompt.id, peerCard.prompt.id)
+    }
+
+    @Test(arguments: ["keep", "pause", "neverAsk", "resume", "stayPaused"])
+    func chatAnswersShareThePersistedGuardAndNeverGrantToolOrPeerAuthority(value: String) async throws {
+        let answer = try #require(SpendGuardAnswer(rawValue: value))
+        let (root, model, owner, peer, chat) = try await chatActivityFixture(paused: [.resume, .stayPaused].contains(answer))
+        defer { try? FileManager.default.removeItem(at: root) }
+        let presentation = try #require(model.conversationSpendGuardPresentation(id: chat.id))
+        let peers = model.automations.filter { $0.agentID == peer.id }
+        let disabled = try #require(model.automations.first { $0.name == "Human disabled fixture" })
+        let settings = model.settings, messages = model.conversations, grants = model.automationDirectBindings
+        let groups = model.automationGroupBindings, prompt = model.automationSpendGuardPrompts.first { $0.agentID == peer.id }
+        await model.answerConversationSpendGuard(answer, presentation: presentation, at: now.addingTimeInterval(60))
+        expectNoDifference(model.automations.filter { $0.agentID == peer.id }, peers)
+        expectNoDifference(model.automations.first { $0.id == disabled.id }, disabled)
+        expectNoDifference(model.automationSpendGuardPrompts.first { $0.agentID == peer.id }, prompt)
+        expectNoDifference(model.settings, settings); expectNoDifference(model.conversations, messages)
+        expectNoDifference(model.automationDirectBindings, grants); expectNoDifference(model.automationGroupBindings, groups)
+        expectNoDifference(model.selection, chat.id); expectNoDifference(model.answeringAutomationSpendGuardIDs, [])
+        let routine = try #require(model.automations.first { $0.id == owner.id })
+        let enabled = [.keep, .resume, .neverAsk].contains(answer)
+        expectNoDifference(routine.enabled, enabled)
+        expectNoDifference(routine.guardPaused, answer == .pause)
+        expectNoDifference(routine.nextRunAt, enabled ? now.addingTimeInterval(answer == .resume ? 3_660 : 3_600) : nil)
+        let durable = try AutomationService(storeURL: root.appending(path: "automations.json"))
+        let spend = await durable.spendGuardState(agentID: owner.id), history = await durable.history(automationID: owner.id)
+        expectNoDifference(spend.optedOut, answer == .neverAsk)
+        expectNoDifference(spend.snoozedUntil, [.keep, .resume].contains(answer) ? now.addingTimeInterval(60 + AutomationSpendGuard.snoozeInterval) : nil)
+        expectNoDifference(history, [])
+        expectNoDifference(presentation.bindingLease.isActive, false)
+        let beforeReplay = model.automations
+        await model.answerConversationSpendGuard(.resume, presentation: presentation, at: now.addingTimeInterval(61))
+        expectNoDifference(model.automations, beforeReplay)
+        if answer == .pause {
+            let paused = try #require(model.conversationSpendGuardPresentation(id: chat.id))
+            expectNoDifference(paused.prompt.id, presentation.prompt.id)
+            #expect(paused.prompt.isPaused)
+            await model.answerConversationSpendGuard(.resume, presentation: paused, at: now.addingTimeInterval(62))
+            #expect(model.automations.first { $0.id == owner.id }?.enabled == true)
+        } else { expectNoDifference(model.conversationSpendGuardPresentation(id: chat.id) == nil, true) }
+    }
+
+    @Test(arguments: ["rebind-cycle", "remove-cycle", "hide-cycle", "sidebar-hide-cycle", "duplicate-cycle", "archive-cycle", "account-cycle", "foreign-account", "forged-lease", "durable-rebind", "durable-ambiguous"])
+    func staleChatButtonsCannotReviveAfterAnOwnershipCycle(mode: String) async throws {
+        let (root, model, owner, peer, chat) = try await visibleChatFixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        await model.reloadAutomationDetails()
+        let presentation = try #require(model.conversationSpendGuardPresentation(id: chat.id))
+        let definitions = model.automations
+        var callback = presentation
+        switch mode {
+        case "rebind-cycle":
+            model.conversations[0].agentBinding = .init(accountID: "local", agentID: peer.id)
+            model.conversations[0].agentBinding = chat.agentBinding
+        case "remove-cycle": model.conversations = []; model.conversations = [chat]
+        case "hide-cycle": model.conversations[0].hiddenAt = now; model.conversations[0].hiddenAt = nil
+        case "sidebar-hide-cycle":
+            let hidden = await model.saveBoundConversationVisibility(id: chat.id, hidden: true)
+            let shown = await model.saveBoundConversationVisibility(id: chat.id, hidden: false)
+            expectNoDifference(hidden, true); expectNoDifference(shown, true)
+        case "duplicate-cycle":
+            var duplicate = Conversation(id: UUID(uuidString: "00000000-0000-0000-0000-000000000995")!, updatedAt: now)
+            duplicate.agentBinding = chat.agentBinding
+            model.conversations.append(duplicate); model.conversations.removeLast()
+        case "archive-cycle": await model.archiveAgent(id: owner.id); await model.restoreAgent(id: owner.id)
+        case "account-cycle":
+            await model.cancelAutoReviewApprovals(nextAccountID: "fixture-away")
+            model.settings.accountScope = "fixture-away"
+            await model.cancelAutoReviewApprovals(nextAccountID: "local"); model.settings.accountScope = "local"
+        case "foreign-account": model.conversations[0].agentBinding = .init(accountID: "other", agentID: owner.id)
+        case "forged-lease":
+            callback = .init(conversationID: chat.id, prompt: presentation.prompt,
+                bindingLease: .init(conversationID: chat.id, binding: try #require(chat.agentBinding)))
+        case "durable-rebind":
+            var replacement = chat; replacement.agentBinding = .init(accountID: "local", agentID: peer.id)
+            let store = ConversationStore(fileURL: root.appending(path: "conversations.json"))
+            try await store.upsert(replacement, replacingLoadedMessageIDs: Set(chat.messages.map(\.id)), historyComplete: true)
+        case "durable-ambiguous":
+            var duplicate = Conversation(id: UUID(uuidString: "00000000-0000-0000-0000-000000000994")!, hiddenAt: now)
+            duplicate.agentBinding = chat.agentBinding
+            let store = ConversationStore(fileURL: root.appending(path: "conversations.json"))
+            try await store.upsert(duplicate, replacingLoadedMessageIDs: [], historyComplete: true)
+        default: break
+        }
+        if !["durable-rebind", "foreign-account"].contains(mode) { await model.reloadAutomationDetails() }
+        await model.answerConversationSpendGuard(.resume, presentation: callback, at: now.addingTimeInterval(60))
+        expectNoDifference(model.automations, definitions)
+        let durable = try AutomationService(storeURL: root.appending(path: "automations.json"))
+        let after = await durable.list()
+        expectNoDifference(after, definitions)
+        if mode == "durable-ambiguous" {
+            expectNoDifference(model.conversationSpendGuardPresentation(id: chat.id) == nil, true)
+            #expect(model.errorMessage != nil)
+        }
+        if ["rebind-cycle", "remove-cycle", "hide-cycle", "sidebar-hide-cycle", "duplicate-cycle", "archive-cycle", "account-cycle"].contains(mode) {
+            #expect(!presentation.bindingLease.isActive)
+            let fresh = try #require(model.conversationSpendGuardPresentation(id: chat.id))
+            expectNoDifference(fresh.prompt.id, presentation.prompt.id)
+            await model.answerConversationSpendGuard(.resume, presentation: fresh, at: now.addingTimeInterval(61))
+            #expect(model.automations.first { $0.id == owner.id }?.enabled == true)
+        }
+    }
+
+    @Test func aModelWidgetOrWrongStageDoesNotAcquireActivityAnswerAuthority() async throws {
+        let (root, model, _, _, chat) = try await visibleChatFixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        await model.reloadAutomationDetails()
+        let presentation = try #require(model.conversationSpendGuardPresentation(id: chat.id))
+        let before = model.automations
+        await model.answerConversationSpendGuard(.neverAsk, presentation: presentation, at: now.addingTimeInterval(60))
+        expectNoDifference(model.automations, before)
+        let widget = TranscriptCard(id: presentation.prompt.id, lifecycle: .pending,
+            payload: .widget(.init(title: "Automation activity check", widgetKind: "automation-activity-check",
+                facts: ["cardID": presentation.prompt.id.uuidString])))
+        var fake = Conversation(id: UUID(uuidString: "00000000-0000-0000-0000-000000000993")!,
+            messages: [.init(role: .assistant, text: "A model claims this can resume routines", transcriptCards: [widget])])
+        fake.agentBinding = nil
+        model.conversations.append(fake)
+        await model.reloadAutomationDetails()
+        expectNoDifference(model.conversationSpendGuardPresentation(id: fake.id) == nil, true)
+        expectNoDifference(model.automations, before)
+    }
+
+    @Test func aFailedChatAnswerKeepsItsCardAndCanBeRetriedWithoutPartialResume() async throws {
+        let (root, model, _, _, chat) = try await visibleChatFixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        await model.reloadAutomationDetails()
+        let presentation = try #require(model.conversationSpendGuardPresentation(id: chat.id))
+        let before = model.automations, cards = model.automationSpendGuardPrompts
+        let file = root.appending(path: "automations.json"), backup = root.appending(path: "chat-answer-backup.json")
+        try FileManager.default.moveItem(at: file, to: backup)
+        try FileManager.default.createDirectory(at: file, withIntermediateDirectories: false)
+        await model.answerConversationSpendGuard(.resume, presentation: presentation, at: now.addingTimeInterval(60))
+        expectNoDifference(model.automations, before); expectNoDifference(model.automationSpendGuardPrompts, cards)
+        expectNoDifference(model.answeringAutomationSpendGuardIDs, [])
+        #expect(model.errorMessage != nil && presentation.bindingLease.isActive)
+        try FileManager.default.removeItem(at: file); try FileManager.default.moveItem(at: backup, to: file)
+        model.errorMessage = nil
+        await model.answerConversationSpendGuard(.resume, presentation: presentation, at: now.addingTimeInterval(61))
+        expectNoDifference(model.conversationSpendGuardPresentation(id: chat.id) == nil, true)
+        #expect(model.automations.first { $0.agentID == presentation.prompt.agentID }?.enabled == true)
+    }
+
+    @Test func navigatingElsewhereDoesNotRetargetAnAlreadyCapturedHumanAnswer() async throws {
+        let (root, model, owner, peer, chat) = try await visibleChatFixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        await model.reloadAutomationDetails()
+        let presentation = try #require(model.conversationSpendGuardPresentation(id: chat.id))
+        let peerDefinitions = model.automations.filter { $0.agentID == peer.id }
+        let peerCard = model.automationSpendGuardPrompts.first { $0.agentID == peer.id }
+        let other = Conversation(id: UUID(uuidString: "00000000-0000-0000-0000-000000000992")!, title: owner.name)
+        model.conversations.append(other); model.selection = other.id; model.route = .conversation(other.id)
+        await model.answerConversationSpendGuard(.resume, presentation: presentation, at: now.addingTimeInterval(60))
+        #expect(model.automations.first { $0.agentID == owner.id }?.enabled == true)
+        expectNoDifference(model.automations.filter { $0.agentID == peer.id }, peerDefinitions)
+        expectNoDifference(model.automationSpendGuardPrompts.first { $0.agentID == peer.id }, peerCard)
+        expectNoDifference(model.selection, other.id)
+        expectNoDifference(model.conversationSpendGuardPresentation(id: other.id) == nil, true)
+    }
+
     @Test func theActivityGuardUsesCanonicalUnreadMessagesEvenWithoutResultWakes() async throws {
         let (root, model, owner, _, original) = try await visibleChatFixture()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -852,6 +1101,52 @@ private struct CanonicalSpendGuardStoreSeed: Encodable {
         for (language, labels) in actionLabels {
             for (key, label) in zip(actionKeys, labels) {
                 expectNoDifference(FiliconLocalization.string(key, language: language), label)
+            }
+        }
+    }
+
+    @Test(.serialized, arguments: ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"])
+    func chatCardsRenderWithVisibleNonoverlappingActionsInBothAppearances(language: String) async throws {
+        let output = ProcessInfo.processInfo.environment["FILICON_UI_REVIEW_OUTPUT"].map { URL(fileURLWithPath: $0) }
+        for paused in [false, true] {
+            let (root, model, owner, _, chat) = try await chatActivityFixture(paused: paused)
+            defer { try? FileManager.default.removeItem(at: root) }
+            var profile = owner
+            profile.name = "A fixture owner with a deliberately long name"
+            let updated = await model.updateAgent(profile)
+            expectNoDifference(updated, true)
+            await model.reloadAutomationDetails()
+            let presentation = try #require(model.conversationSpendGuardPresentation(id: chat.id))
+            for dark in [false, true] {
+                try await withUIRenderTurn(language: language) {
+                    let host = NSHostingView(rootView: ConversationAutomationSpendGuardCard(presentation: presentation)
+                        .frame(width: 280, alignment: .leading).padding(16)
+                        .frame(width: 312, height: 700, alignment: .topLeading)
+                        .background(FiliconTheme.canvas).environmentObject(model)
+                        .environment(\.locale, Locale(identifier: language)).environment(\.colorScheme, dark ? .dark : .light))
+                    host.sizingOptions = []
+                    host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+                    host.frame = .init(x: 0, y: 0, width: 312, height: 700)
+                    let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+                    window.appearance = host.appearance; window.contentView = host
+                    defer { window.contentView = nil }
+                    host.layoutSubtreeIfNeeded(); host.displayIfNeeded()
+                    let controls = host.subviews.filter { !$0.frame.isEmpty }
+                    expectNoDifference(controls.count, paused ? 2 : 3)
+                    let bounds = controls.map { host.convert($0.bounds, from: $0) }
+                    for (index, frame) in bounds.enumerated() {
+                        #expect(host.bounds.contains(frame))
+                        for other in bounds.dropFirst(index + 1) { #expect(!frame.intersects(other)) }
+                    }
+                    let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                    host.appearance?.performAsCurrentDrawingAppearance { host.cacheDisplay(in: host.bounds, to: bitmap) }
+                    let png = try #require(bitmap.representation(using: .png, properties: [:]))
+                    #expect(!png.isEmpty)
+                    if let output {
+                        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+                        try png.write(to: output.appending(path: "spend-guard-chat-\(language)-\(paused ? "paused" : "nudge")-\(dark ? "dark" : "light").png"))
+                    }
+                }
             }
         }
     }

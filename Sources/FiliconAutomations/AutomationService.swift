@@ -574,54 +574,64 @@ public actor AutomationService {
     /// persisted card ID. The nil-card form is for explicit native host pauses,
     /// not agent tools, which remain subject to validateStateChange protection.
     public func answerSpendGuard(_ answer: SpendGuardAnswer, agentID: UUID, cardID: UUID? = nil,
-                                 at now: Date = Date(), lifetime: AutomationSpendGuardLifetime = .init()) throws {
+                                 at now: Date = Date(), lifetime: AutomationSpendGuardLifetime = .init(),
+                                 expectedPaused: Bool? = nil, commit: AutomationSpendGuardCommitGuard = { try $0() }) throws {
         try lifetime.commit {
-            guard state.spendGuards[agentID] != nil else { throw SpendGuardError.staleCard }
-            if let cardID { guard state.spendGuards[agentID]?.cardID == cardID else { throw SpendGuardError.staleCard } }
-            var candidate = state
-            var spend = spendGuardState(agentID: agentID)
-            var admissionChanged = false
-            switch answer {
-            case .keep, .resume, .neverAsk:
-                for index in candidate.automations.indices where candidate.automations[index].agentID == agentID
-                    && spend.guardPausedAutomationIDs.contains(candidate.automations[index].id)
-                    && candidate.automations[index].guardPaused && !candidate.automations[index].enabled {
-                    candidate.automations[index].enabled = true
-                    candidate.automations[index].guardPaused = false
-                    candidate.automations[index].nextRunAt = try computeNextRun(for: candidate.automations[index], after: now)
-                    admissionChanged = true
-                }
-                spend.guardPausedAutomationIDs.removeAll()
-                spend.optedOut = answer == .neverAsk
-                spend.snoozedUntil = answer == .neverAsk ? nil : now.addingTimeInterval(AutomationSpendGuard.snoozeInterval)
-                spend.nudgedAt = nil
-                spend.cardID = nil
-            case .pause:
-                admissionChanged = pauseEnabledRoutines(agentID: agentID, in: &candidate, spend: &spend, excluding: groupExemptAutomationIDs())
-                spend.optedOut = false
-                spend.snoozedUntil = nil
-                spend.nudgedAt = nil
-                if spend.cardID == nil { spend.cardID = UUID() }
-            case .stayPaused:
-                for index in candidate.automations.indices where candidate.automations[index].agentID == agentID
-                    && spend.guardPausedAutomationIDs.contains(candidate.automations[index].id)
-                    && candidate.automations[index].guardPaused {
-                    candidate.automations[index].guardPaused = false
-                    admissionChanged = true
-                }
-                spend.guardPausedAutomationIDs.removeAll()
-                spend.optedOut = false
-                spend.snoozedUntil = nil
-                spend.nudgedAt = nil
-                spend.cardID = nil
-            }
-            candidate.spendGuards[agentID] = spend
-            // Schedule computation and the entire guarded write are atomic:
-            // failure cannot partially resume one task or dismiss its card.
-            try Self.save(candidate, to: storeURL)
-            state = candidate
-            if admissionChanged { advanceGuardDispatchEpoch(agentID: agentID) }
+            try commit { try applySpendGuardAnswer(answer, agentID: agentID, cardID: cardID, expectedPaused: expectedPaused, at: now) }
         }
+    }
+
+    private func applySpendGuardAnswer(_ answer: SpendGuardAnswer, agentID: UUID, cardID: UUID?, expectedPaused: Bool?, at now: Date) throws {
+        guard let saved = state.spendGuards[agentID] else { throw SpendGuardError.staleCard }
+        if let cardID { guard saved.cardID == cardID else { throw SpendGuardError.staleCard } }
+        var spend = spendGuardState(agentID: agentID)
+        if let expectedPaused {
+            // Match the host's current projection, including the reviewed
+            // group exemption, rather than reviving an old card stage.
+            guard !spend.guardPausedAutomationIDs.isEmpty == expectedPaused else { throw SpendGuardError.staleCard }
+        }
+        var candidate = state
+        var admissionChanged = false
+        switch answer {
+        case .keep, .resume, .neverAsk:
+            for index in candidate.automations.indices where candidate.automations[index].agentID == agentID
+                && spend.guardPausedAutomationIDs.contains(candidate.automations[index].id)
+                && candidate.automations[index].guardPaused && !candidate.automations[index].enabled {
+                candidate.automations[index].enabled = true
+                candidate.automations[index].guardPaused = false
+                candidate.automations[index].nextRunAt = try computeNextRun(for: candidate.automations[index], after: now)
+                admissionChanged = true
+            }
+            spend.guardPausedAutomationIDs.removeAll()
+            spend.optedOut = answer == .neverAsk
+            spend.snoozedUntil = answer == .neverAsk ? nil : now.addingTimeInterval(AutomationSpendGuard.snoozeInterval)
+            spend.nudgedAt = nil
+            spend.cardID = nil
+        case .pause:
+            admissionChanged = pauseEnabledRoutines(agentID: agentID, in: &candidate, spend: &spend, excluding: groupExemptAutomationIDs())
+            spend.optedOut = false
+            spend.snoozedUntil = nil
+            spend.nudgedAt = nil
+            if spend.cardID == nil { spend.cardID = UUID() }
+        case .stayPaused:
+            for index in candidate.automations.indices where candidate.automations[index].agentID == agentID
+                && spend.guardPausedAutomationIDs.contains(candidate.automations[index].id)
+                && candidate.automations[index].guardPaused {
+                candidate.automations[index].guardPaused = false
+                admissionChanged = true
+            }
+            spend.guardPausedAutomationIDs.removeAll()
+            spend.optedOut = false
+            spend.snoozedUntil = nil
+            spend.nudgedAt = nil
+            spend.cardID = nil
+        }
+        candidate.spendGuards[agentID] = spend
+        // Schedule computation and the entire guarded write are atomic:
+        // failure cannot partially resume one task or dismiss its card.
+        try Self.save(candidate, to: storeURL)
+        state = candidate
+        if admissionChanged { advanceGuardDispatchEpoch(agentID: agentID) }
     }
 
     private func pauseEnabledRoutines(agentID: UUID, in candidate: inout AutomationPersistentState,

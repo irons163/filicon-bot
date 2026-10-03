@@ -1018,6 +1018,7 @@ struct ChatDetailView: View {
         let _ = uiLocale.identifier
         let references = model.directMessageReferences(for: conversation.id)
         let referenceGeneration = model.directReferenceGeneration
+        let activityCheck = model.conversationSpendGuardPresentation(id: conversation.id)
         VStack(spacing: 0) {
             FiliconChatHeader(
                 title: conversation.title == "New conversation" ? l10n("New Conversation") : conversation.title,
@@ -1041,7 +1042,7 @@ struct ChatDetailView: View {
                     HStack(alignment: .top, spacing: 0) {
                         Spacer(minLength: 16)
                         LazyVStack(alignment: .leading, spacing: 16) {
-                        if conversation.messages.isEmpty && !model.loadingMessageHistory.contains(conversation.id) {
+                        if conversation.messages.isEmpty && activityCheck == nil && !model.loadingMessageHistory.contains(conversation.id) {
                             VStack(spacing: 14) {
                                 PetAvatarImage(pet: .codex).frame(width: 72, height: 80)
                                 Text(l10n("New Conversation")).font(.system(size: 23, weight: .semibold, design: .rounded))
@@ -1081,6 +1082,10 @@ struct ChatDetailView: View {
                             )
                             .id(message.id)
                         }
+                        if let activityCheck {
+                            ConversationAutomationSpendGuardCard(presentation: activityCheck)
+                                .id(activityCheck.prompt.id)
+                        }
                         }
                         .frame(maxWidth: 690)
                         Spacer(minLength: 16)
@@ -1101,6 +1106,9 @@ struct ChatDetailView: View {
                 .onChange(of: model.requestedMessageJumpID) { _, id in
                     guard let id else { return }
                     performGlobalJump(id, proxy: proxy)
+                }
+                .onChange(of: activityCheck?.prompt.id) { _, id in
+                    if let id { withAnimation { proxy.scrollTo(id, anchor: .bottom) } }
                 }
             }
             WorkspaceFolderAccessPanel(conversationID: conversation.id)
@@ -1223,7 +1231,7 @@ struct ChatDetailView: View {
             .padding(.bottom, 17)
             .background(FiliconTheme.canvas)
             .disabled(!model.isBootstrapped)
-        }.navigationTitle(conversation.title).task(id: conversation.id) { await model.refreshModels() }
+        }.navigationTitle(conversation.title).task(id: conversation.id) { await chatPresented() }
             .task(id: "\(conversation.id)-\(conversation.messages.contains { $0.role == .assistant && $0.text.contains("sand-msg:") })") {
                 await model.prepareDirectMessageReferences(for: conversation.id)
             }
@@ -1259,6 +1267,12 @@ struct ChatDetailView: View {
                     }
                 }
             }
+    }
+
+    private func chatPresented() async {
+        await model.reloadAutomationDetails()
+        guard !Task.isCancelled else { return }
+        await model.refreshModels()
     }
 
     private var findBar: some View {
@@ -2130,6 +2144,30 @@ struct RoutineAutomationWorkspaceView: View {
         case .anyOf(let values): l10n("\(values.count) listeners")
         case .unknown(let kind, _): l10n("Unavailable: \(kind)")
         }
+    }
+}
+
+@MainActor
+struct ConversationAutomationSpendGuardCard: View {
+    @Environment(\.locale) private var uiLocale
+    @EnvironmentObject private var model: AppModel
+    let presentation: ConversationAutomationSpendGuardPresentation
+
+    var body: some View {
+        let _ = uiLocale.identifier
+        VStack(alignment: .leading, spacing: 6) {
+            Label(l10n("Automation activity check"), systemImage: "clock.badge.exclamationmark")
+                .font(.subheadline.weight(.semibold)).foregroundStyle(FiliconTheme.textSecondary)
+            AutomationSpendGuardCard(prompt: presentation.prompt,
+                isAnswering: model.answeringAutomationSpendGuardIDs.contains(presentation.prompt.id)) { answer in
+                await model.answerConversationSpendGuard(answer, presentation: presentation)
+            }
+        }
+        .padding(14)
+        .foregroundStyle(FiliconTheme.textPrimary)
+        .background(FiliconTheme.incomingBubble, in: RoundedRectangle(cornerRadius: 15, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 15, style: .continuous).stroke(FiliconTheme.border, lineWidth: 0.8))
+        .accessibilityIdentifier("conversation-automation-spend-guard-\(presentation.prompt.id)")
     }
 }
 

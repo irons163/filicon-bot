@@ -2,6 +2,7 @@ import CustomDump
 import Foundation
 import Testing
 import FiliconAutomations
+import FiliconDomain
 
 private struct SpendGuardExecutor: AutomationExecutor {
     func execute(automation: Automation, prompt: String, events: [AutomationEvent]) async throws -> AutomationExecutionResult {
@@ -403,6 +404,42 @@ struct AutomationSpendGuardParityTests {
         }
         let after = await service.list(), afterSpends = await service.spendGuardStates()
         expectNoDifference(after, before); expectNoDifference(afterSpends, spends)
+    }
+
+    @Test func aChatLeaseIsCheckedAtTheFinalAnswerCommitNotOnlyAtPresentation() async throws {
+        let (root, service, _, _) = try await fixture(); defer { try? FileManager.default.removeItem(at: root) }
+        try await service.answerSpendGuard(.pause, agentID: owner, at: now)
+        let card = try #require(await service.spendGuardState(agentID: owner).cardID)
+        let definitions = await service.list(), spends = await service.spendGuardStates()
+        let file = root.appending(path: "automations.json"), bytes = try Data(contentsOf: file)
+        let lease = ConversationBindingLease(conversationID: owner, binding: .init(accountID: "local", agentID: owner))
+        await #expect(throws: CancellationError.self) {
+            try await service.answerSpendGuard(.resume, agentID: owner, cardID: card, at: now,
+                expectedPaused: true, commit: { operation in
+                    // A native lifecycle revokes after presentation/preflight
+                    // but before the service actor's final synchronous write.
+                    lease.close()
+                    try lease.withValidBinding(operation)
+                })
+        }
+        let after = await service.list(), afterSpends = await service.spendGuardStates()
+        expectNoDifference(after, definitions); expectNoDifference(afterSpends, spends)
+        expectNoDifference(try Data(contentsOf: file), bytes)
+    }
+
+    @Test(arguments: [false, true])
+    func anAnswerForTheWrongCardStageCannotCommitEvenWhenTheIDIsUnchanged(paused: Bool) async throws {
+        let (root, service, routine, _) = try await fixture(); defer { try? FileManager.default.removeItem(at: root) }
+        if paused { try await service.answerSpendGuard(.pause, agentID: owner, at: now) }
+        else { try await nudge(service, routine: routine) }
+        let card = try #require(await service.spendGuardState(agentID: owner).cardID)
+        let definitions = await service.list(), spends = await service.spendGuardStates()
+        await #expect(throws: SpendGuardError.staleCard) {
+            try await service.answerSpendGuard(paused ? .keep : .resume, agentID: owner, cardID: card, at: nudgeAt,
+                expectedPaused: !paused)
+        }
+        let after = await service.list(), afterSpends = await service.spendGuardStates()
+        expectNoDifference(after, definitions); expectNoDifference(afterSpends, spends)
     }
 
     @Test(arguments: ["schedule", "event", "scheduler"])

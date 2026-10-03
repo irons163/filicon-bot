@@ -27,6 +27,11 @@ public enum SpendGuardDecision: String, Codable, Hashable, Sendable {
 }
 public enum SpendGuardAnswer: String, Codable, Hashable, Sendable { case keep, pause, neverAsk, resume, stayPaused }
 
+/// Native host ownership fence held through the synchronous guard-store write.
+/// This is not Codable or a model tool argument. It must not suspend or call
+/// back into the automation service or the repository that issued its lease.
+public typealias AutomationSpendGuardCommitGuard = @Sendable (_ operation: () throws -> Void) throws -> Void
+
 public enum SpendGuardError: String, Error, LocalizedError, Sendable {
     case staleCard = "This automation activity check is no longer current."
     public var errorDescription: String? { rawValue }

@@ -1,5 +1,19 @@
 # 完成驗收入口（2026-09-27）
 
+## 聊天內的原生活動提醒卡片（2026-10-03）
+
+reference `a9f633e09d49a85829b8236331b9e21f7e612634` 的 `automation-spend-guard-runtime.ts` 以 `issueGuardCard` 在 active／background session 保存 host-issued `send-message` widget，`handleWidgetAnswer` 驗證 entry ID 與 widget 選項並回傳 acknowledgment；這不是模型說已產生按鈕。Filicon 本批先補實際 bound direct chat 的 native 操作入口，重用工作區的已保存 card ID、五種回答及既有核准／pause／resume 保存邏輯，不另建一套回答權限。
+
+presentation 由當前 account／generation、未封存 owner、唯一 canonical binding 與原始 repository lease 建立，不按聊天標題／名稱推斷。hidden／unpaged 的第二綁定同樣造成拒絕，舊 callback 在重綁、移除、隱藏、封存、帳號離開再回來或 card phase 改變後不復活。最終同步 guard-store 保存仍持有原 lease；不在延遲回答時尋找新的 lease。較新 reload 的 epoch 防止舊投影覆蓋或關閉被重用的有效 lease。單純導航不撤銷已捕捉的人類回答，但它只作用於原 owner，不能改投目前選取的聊天。
+
+查看、read／unread 及重新開啟不回答或解除 pause；原本持久化 card ID 重開後仍可解析。錯階段選項與模型／匯入 widget 沒有 native authority。寫入失敗保留未回答卡片及定義，清除 UI answering 狀態後可重試，不部分恢復；已審核 group 豁免、人工停用、peer／tool／background-memory 同意不放寬。這批不把卡片保存成假真人或模型訊息，不增加聊天 arrival／未讀計數。
+
+有效紅燈 `spend-guard-chat-card-red.log` 的實際 `ChatDetailView` OCR 重現缺少 Resume／Stay paused 按鈕（1 test／1 semantic issue）。`focused-v2`／`focused-v3` 的新 fixture 沒有預先載入 canonical metadata、`focused-v4` 的 Keep／Never ask fixture 錯誤期待已啟用任務重新排程，各日誌保留而不當成新的產品紅燈。修正 fixture 後最後 `spend-guard-chat-card-focused-final.log` exit 0：126 tests／6 suites（核心 48／2、Automations 9／1、App 69／3），包含五種回答、十一種身分失效、同名不同 owner、重開、失敗重試、最終 lease 撤銷與 phase fence。七語×明暗×兩階段共 28 個 280-point native 卡片 render 通過實際按鈕 bounds／無重疊斷言，逐張檢視換行與內容，另有 640×900 完整聊天 OCR／PNG；這不是 live 點擊或 VoiceOver 驗收。
+
+最後完整串行 `spend-guard-chat-card-full.log` exit 0：135 XCTest＋1,805 Swift Testing（220 suites；核心 941／107、App 630／83）；兩項 opt-in live Codex 測試略過，不當作 live 驗收。七語各 1,789 keys／0 missing。`spend-guard-chat-card-native.log` BUILD SUCCEEDED；`spend-guard-chat-card-package.log` 四個執行檔、deep strict 簽章及 app／XPC entitlements 通過，隔離產物 `.build/validation/SpendChatCardPackage/Filicon.app` 為 Debug／離線 gate，不是 release／公證，沒有執行列印的 launch smoke。日誌及 PNG 僅保留在忽略的 `.build/validation/`。
+
+本節只取代「只有自動化工作區入口」；這仍是 live native projection，不是永久 transcript widget entries、搜尋／歷史中的多 entry ID 或回答確認，host reminder 尚待接線。group read state、legacy unbound fallback／完整帳號遷移、雲端 session、真人 UI／VoiceOver、live／release 及全 48 分類仍各自保留，整體 partial 不上調。lease 只 fence 同 repository，不宣稱獨立 repository／process 的 live fence、跨聊天 DB／automation store 原子交易或 arbitrary snapshot CAS。未 push、啟動或重啟使用者 App／Xcode、改真實帳號／群組／聊天資料。
+
 ## 活動提醒改讀 canonical 單獨聊天狀態（2026-10-03）
 
 再次核對 reference `a9f633e09d49a85829b8236331b9e21f7e612634`：`automation-spend-guard-runtime.ts` 的 `evaluate` 直接讀 `session.db.getUnreadState()`，並以該 `lastViewedAt` 計算現存 definitions 的 retained runs；pause transition 亦重新評估。native 的 trusted host 現在為非 reviewed-group routine 解析目前 account／exact agent 的唯一 canonical bound direct chat，包含未載入側欄與 hidden histories。count 與 view time 不再由 pending wakes 或 routine 建立時間取代；有 canonical source 時不把 wakes 加進聊天 count。沒有 canonical bound chat 的明確 legacy／text-only host 才保留舊 fallback，歧義／缺失或損壞 read row 不 fallback、不按名稱或 prompt 猜 owner。

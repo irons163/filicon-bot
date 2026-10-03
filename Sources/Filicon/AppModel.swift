@@ -62,6 +62,15 @@ struct AutomationSpendGuardPrompt: Identifiable, Hashable, Sendable {
     var isPaused: Bool { !state.guardPausedAutomationIDs.isEmpty }
 }
 
+/// Captured by native chat UI, never decoded from a model/imported widget.
+/// Keep this exact lease through a queued answer; looking up a replacement at
+/// click time would revive a callback after an ownership-away-and-back cycle.
+struct ConversationAutomationSpendGuardPresentation: Sendable {
+    let conversationID: UUID
+    let prompt: AutomationSpendGuardPrompt
+    let bindingLease: ConversationBindingLease
+}
+
 struct AutomationAgentReadContext: Hashable, Sendable {
     let agentID: UUID
     let accountID: String
@@ -97,6 +106,19 @@ struct ConversationReadContext: Sendable {
 final class AppModel: ObservableObject {
     @Published var conversations: [Conversation] = [] {
         didSet {
+            if oldValue.count != conversations.count || !zip(oldValue, conversations).allSatisfy({ before, after in
+                before.id == after.id && before.agentBinding == after.agentBinding && before.hiddenAt == after.hiddenAt
+            }) {
+                invalidateConversationSpendGuardPresentations { id in
+                    let before = oldValue.first { $0.id == id }, after = conversations.first { $0.id == id }
+                    guard let before, let after else { return true }
+                    return before.agentBinding != after.agentBinding || before.hiddenAt != after.hiddenAt
+                        || before.agentBinding.map { binding in
+                            oldValue.filter { $0.agentBinding == binding }.count != 1
+                                || conversations.filter { $0.agentBinding == binding }.count != 1
+                        } == true
+                }
+            }
             // Invalidate queued callbacks before they have a receipt too. A
             // rebind-and-restore must not revive the original visible owner.
             if let id = selection,
@@ -170,9 +192,18 @@ final class AppModel: ObservableObject {
     @Published private(set) var globalSearchFocusRequestID = UUID()
     @Published private(set) var requestedMessageJumpID: UUID?
     @Published var agents: [AgentProfile] = [] {
-        didSet { invalidateConversationReadContexts() }
+        didSet {
+            invalidateConversationReadContexts()
+            invalidateConversationSpendGuardPresentations { id in
+                guard let owner = conversations.first(where: { $0.id == id })?.agentBinding?.agentID else { return true }
+                let before = oldValue.first { $0.id == owner }, after = agents.first { $0.id == owner }
+                return before?.archivedAt != after?.archivedAt || (before == nil) != (after == nil)
+            }
+        }
     }
-    @Published private(set) var agentSidebarVisibility: [AgentSidebarVisibility] = []
+    @Published private(set) var agentSidebarVisibility: [AgentSidebarVisibility] = [] {
+        didSet { if oldValue != agentSidebarVisibility { invalidateConversationSpendGuardPresentations { _ in true } } }
+    }
     private var sidebarVisibilityRevision: UInt64?
     private var sidebarSettingsLeases: [UUID: ConversationBindingLease] = [:]
     private var manualSidebarChanges: [UUID: AgentSettingsChangeLifetime] = [:]
@@ -196,6 +227,9 @@ final class AppModel: ObservableObject {
     @Published var automationHistory: [UUID: [AutomationRun]] = [:]
     @Published var automationWakes: [AutomationWake] = []
     @Published private(set) var automationSpendGuardPrompts: [AutomationSpendGuardPrompt] = []
+    @Published private(set) var conversationSpendGuardPresentations: [UUID: ConversationAutomationSpendGuardPresentation] = [:]
+    private var conversationSpendGuardPresentationEpochs: [UUID: UInt64] = [:]
+    private var automationSpendGuardLoadEpoch: UInt64 = 0
     @Published private(set) var answeringAutomationSpendGuardIDs: Set<UUID> = []
     private var automationSpendGuardLifetimes: [UUID: (agentID: UUID, lifetime: AutomationSpendGuardLifetime)] = [:]
     private var visibleConversationReadContext: VisibleConversationReadContext?
@@ -4057,6 +4091,9 @@ final class AppModel: ObservableObject {
 
     func archiveAgent(id: UUID) async {
         guard let agentService else { return }
+        invalidateConversationSpendGuardPresentations { chatID in
+            conversations.first(where: { $0.id == chatID })?.agentBinding?.agentID == id
+        }
         for context in Array(conversationReadContexts.values) where context.binding?.agentID == id {
             context.lifetime.cancel()
             conversationReadContexts.removeValue(forKey: context.conversationID)
@@ -8137,12 +8174,55 @@ final class AppModel: ObservableObject {
     }
 
     func answerAutomationSpendGuard(_ answer: SpendGuardAnswer, prompt: AutomationSpendGuardPrompt, at date: Date = Date()) async {
+        await answerAutomationSpendGuard(answer, prompt: prompt, presentation: nil, at: date)
+    }
+
+    func conversationSpendGuardPresentation(id: UUID) -> ConversationAutomationSpendGuardPresentation? {
+        guard let presentation = conversationSpendGuardPresentations[id],
+              acceptsConversationSpendGuardPresentation(presentation) else { return nil }
+        return presentation
+    }
+
+    func answerConversationSpendGuard(_ answer: SpendGuardAnswer, presentation: ConversationAutomationSpendGuardPresentation,
+                                     at date: Date = Date()) async {
+        let choices: Set<SpendGuardAnswer> = presentation.prompt.isPaused ? [.resume, .stayPaused] : [.keep, .pause, .neverAsk]
+        guard choices.contains(answer), acceptsConversationSpendGuardPresentation(presentation) else { return }
+        await answerAutomationSpendGuard(answer, prompt: presentation.prompt, presentation: presentation, at: date)
+    }
+
+    private func acceptsConversationSpendGuardPresentation(_ presentation: ConversationAutomationSpendGuardPresentation) -> Bool {
+        let prompt = presentation.prompt, lease = presentation.bindingLease
+        guard !agentMessagingAccountTransition, lease.isActive,
+              prompt.accountID == (settings.accountScope ?? "local"), prompt.generation == autoReviewAccountGeneration,
+              conversationSpendGuardPresentations[presentation.conversationID]?.bindingLease === lease,
+              let current = automationSpendGuardPrompts.first(where: { $0.id == prompt.id && $0.agentID == prompt.agentID }),
+              current.accountID == prompt.accountID, current.generation == prompt.generation, current.isPaused == prompt.isPaused,
+              agents.contains(where: { $0.id == prompt.agentID && $0.archivedAt == nil }),
+              !deletedConversationIDs.contains(presentation.conversationID),
+              let chat = conversations.first(where: { $0.id == presentation.conversationID }),
+              chat.agentBinding == lease.binding, chat.hiddenAt == lease.legacyHiddenAt, !isConversationHidden(chat),
+              conversations.filter({ $0.agentBinding == lease.binding }).count == 1 else { return false }
+        return true
+    }
+
+    private func invalidateConversationSpendGuardPresentations(where shouldInvalidate: (UUID) -> Bool) {
+        let ids = Set(conversations.map(\.id)).union(conversationSpendGuardPresentationEpochs.keys)
+            .union(conversationSpendGuardPresentations.keys)
+        for id in ids where shouldInvalidate(id) {
+            conversationSpendGuardPresentationEpochs[id, default: 0] &+= 1
+            conversationSpendGuardPresentations.removeValue(forKey: id)?.bindingLease.close()
+        }
+    }
+
+    private func answerAutomationSpendGuard(_ answer: SpendGuardAnswer, prompt: AutomationSpendGuardPrompt,
+                                           presentation: ConversationAutomationSpendGuardPresentation?, at date: Date) async {
         guard !agentMessagingAccountTransition, let automationService, let agentService,
               prompt.accountID == (settings.accountScope ?? "local"),
               prompt.generation == autoReviewAccountGeneration,
               automationSpendGuardPrompts.contains(where: { $0.id == prompt.id && $0.agentID == prompt.agentID && $0.accountID == prompt.accountID }),
               !answeringAutomationSpendGuardIDs.contains(prompt.id),
               agents.contains(where: { $0.id == prompt.agentID && $0.archivedAt == nil }) else { return }
+        if let presentation, !acceptsConversationSpendGuardPresentation(presentation) { return }
         let generation = autoReviewAccountGeneration
         let lifetime = AutomationSpendGuardLifetime(), mutationID = UUID()
         automationSpendGuardLifetimes[mutationID] = (prompt.agentID, lifetime)
@@ -8156,8 +8236,22 @@ final class AppModel: ObservableObject {
             guard let owner = await agentService.profile(id: prompt.agentID), owner.archivedAt == nil,
                   !agentMessagingAccountTransition, generation == autoReviewAccountGeneration,
                   prompt.accountID == (settings.accountScope ?? "local") else { return }
+            let commit: AutomationSpendGuardCommitGuard
+            if let presentation {
+                let lease = presentation.bindingLease
+                guard acceptsConversationSpendGuardPresentation(presentation) else { return }
+                guard let canonical = try await store.uniqueBoundConversation(accountID: prompt.accountID, agentID: prompt.agentID),
+                      canonical.id == presentation.conversationID, canonical.agentBinding == lease.binding,
+                      canonical.hiddenAt == lease.legacyHiddenAt, acceptsConversationSpendGuardPresentation(presentation) else {
+                    if conversationSpendGuardPresentations[presentation.conversationID]?.bindingLease === lease {
+                        invalidateConversationSpendGuardPresentations { $0 == presentation.conversationID }
+                    }
+                    return
+                }
+                commit = { try lease.withValidBinding($0) }
+            } else { commit = { try $0() } }
             try await automationService.answerSpendGuard(answer, agentID: prompt.agentID, cardID: prompt.id,
-                                                          at: date, lifetime: lifetime)
+                                                          at: date, lifetime: lifetime, expectedPaused: prompt.isPaused, commit: commit)
             guard generation == autoReviewAccountGeneration, !agentMessagingAccountTransition,
                   prompt.accountID == (settings.accountScope ?? "local") else { return }
             await reloadAutomationDetails()
@@ -8469,12 +8563,15 @@ final class AppModel: ObservableObject {
 
     func reloadAutomationDetails() async {
         guard !agentMessagingAccountTransition, let automationService else { return }
+        automationSpendGuardLoadEpoch &+= 1
+        let loadEpoch = automationSpendGuardLoadEpoch
         let generation = autoReviewAccountGeneration, account = settings.accountScope ?? "local"
         if let agentService {
             do { _ = try await automationService.reconcileSpendGuardContexts(executor: makeAutomationExecutor(agents: agentService)) }
             catch {
-                guard generation == autoReviewAccountGeneration, account == (settings.accountScope ?? "local"),
+                guard loadEpoch == automationSpendGuardLoadEpoch, generation == autoReviewAccountGeneration, account == (settings.accountScope ?? "local"),
                       !agentMessagingAccountTransition else { return }
+                invalidateConversationSpendGuardPresentations { _ in true }
                 if !(error is CancellationError) { errorMessage = FiliconLocalization.message(error.localizedDescription) }
                 return
             }
@@ -8488,22 +8585,74 @@ final class AppModel: ObservableObject {
         let directBindings = await automationDirectBindingStore?.list() ?? []
         let wakes = await automationService.pendingWakes()
         let spends = await automationService.spendGuardStates()
-        guard generation == autoReviewAccountGeneration, account == (settings.accountScope ?? "local"),
+        guard loadEpoch == automationSpendGuardLoadEpoch, generation == autoReviewAccountGeneration, account == (settings.accountScope ?? "local"),
               !agentMessagingAccountTransition else { return }
+        let prompts: [AutomationSpendGuardPrompt] = agents.filter { $0.archivedAt == nil }.compactMap { agent in
+            guard let spend = spends[agent.id], let id = spend.cardID,
+                  spend.nudgedAt != nil || !spend.guardPausedAutomationIDs.isEmpty else { return nil }
+            return .init(id: id, agentID: agent.id, agentName: agent.name, accountID: account, generation: generation, state: spend)
+        }
+        var presentations: [UUID: ConversationAutomationSpendGuardPresentation] = [:]
+        var createdLeases: [ConversationBindingLease] = []
+        defer {
+            for lease in createdLeases where conversationSpendGuardPresentations[lease.conversationID]?.bindingLease !== lease {
+                lease.close()
+            }
+        }
+        for prompt in prompts {
+            let binding = DirectConversationAgentBinding(accountID: account, agentID: prompt.agentID)
+            let matches = conversations.filter { $0.agentBinding == binding }
+            guard matches.count == 1, let chat = matches.first, !isConversationHidden(chat) else { continue }
+            let epoch = conversationSpendGuardPresentationEpochs[chat.id, default: 0]
+            do {
+                guard let canonical = try await store.uniqueBoundConversation(accountID: account, agentID: prompt.agentID),
+                      canonical.id == chat.id, canonical.agentBinding == binding, canonical.hiddenAt == chat.hiddenAt else { continue }
+                let lease: ConversationBindingLease
+                if let previous = conversationSpendGuardPresentations[chat.id], previous.bindingLease.isActive,
+                   previous.prompt.id == prompt.id, previous.prompt.generation == generation,
+                   previous.prompt.accountID == account, previous.prompt.isPaused == prompt.isPaused,
+                   previous.bindingLease.binding == binding, previous.bindingLease.legacyHiddenAt == canonical.hiddenAt {
+                    lease = previous.bindingLease
+                } else {
+                    lease = try await store.leaseUniqueBinding(accountID: account, agentID: prompt.agentID, conversationID: chat.id)
+                    createdLeases.append(lease)
+                }
+                guard loadEpoch == automationSpendGuardLoadEpoch, generation == autoReviewAccountGeneration,
+                      account == (settings.accountScope ?? "local"), !agentMessagingAccountTransition,
+                      epoch == conversationSpendGuardPresentationEpochs[chat.id, default: 0], lease.isActive,
+                      conversations.first(where: { $0.id == chat.id })?.agentBinding == binding,
+                      !isConversationHidden(chat), agents.contains(where: { $0.id == prompt.agentID && $0.archivedAt == nil }) else {
+                    continue
+                }
+                presentations[chat.id] = .init(conversationID: chat.id, prompt: prompt, bindingLease: lease)
+            } catch {
+                guard loadEpoch == automationSpendGuardLoadEpoch, generation == autoReviewAccountGeneration,
+                      account == (settings.accountScope ?? "local"), !agentMessagingAccountTransition else { return }
+                if !(error is CancellationError) { errorMessage = FiliconLocalization.message(error.localizedDescription) }
+            }
+        }
+        guard loadEpoch == automationSpendGuardLoadEpoch, generation == autoReviewAccountGeneration,
+              account == (settings.accountScope ?? "local"), !agentMessagingAccountTransition else {
+            // Do not close a lease reused by a newer refresh.
+            for presentation in presentations.values where conversationSpendGuardPresentations[presentation.conversationID]?.bindingLease !== presentation.bindingLease {
+                presentation.bindingLease.close()
+            }
+            return
+        }
+        for previous in conversationSpendGuardPresentations.values where presentations[previous.conversationID]?.bindingLease !== previous.bindingLease {
+            previous.bindingLease.close()
+        }
+        conversationSpendGuardPresentations = presentations
         automations = definitions
         automationGroupBindings = groupBindings
         automationDirectBindings = directBindings
         automationHistory = histories
         automationWakes = wakes
-        automationSpendGuardPrompts = agents.filter { $0.archivedAt == nil }.compactMap { agent in
-            guard let spend = spends[agent.id], let id = spend.cardID,
-                  spend.nudgedAt != nil || !spend.guardPausedAutomationIDs.isEmpty else { return nil }
-            return .init(id: id, agentID: agent.id, agentName: agent.name, accountID: account, generation: generation, state: spend)
-        }
+        automationSpendGuardPrompts = prompts
         if let automationIngress {
             let routes = await automationIngress.routes(), audit = await automationIngress.audits(limit: 100)
             let status = await automationIngress.status()
-            guard generation == autoReviewAccountGeneration, account == (settings.accountScope ?? "local"),
+            guard loadEpoch == automationSpendGuardLoadEpoch, generation == autoReviewAccountGeneration, account == (settings.accountScope ?? "local"),
                   !agentMessagingAccountTransition else { return }
             automationIngressRoutes = routes; automationIngressAudit = audit; automationIngressStatus = status
         }
@@ -8557,6 +8706,10 @@ final class AppModel: ObservableObject {
                 catch { return }
                 guard let self else { return }
                 if self.route == .automations { await self.reloadAutomationDetails() }
+                else if case .conversation(let id) = self.route,
+                        self.conversations.first(where: { $0.id == id })?.agentBinding != nil {
+                    await self.reloadAutomationDetails()
+                }
             }
         }
     }
@@ -9356,6 +9509,7 @@ final class AppModel: ObservableObject {
         for lifetime in manualSidebarChanges.values { lifetime.close() }
         // Queued peer work is scoped to the account that approved the exchange.
         agentMessagingAccountTransition = true
+        invalidateConversationSpendGuardPresentations { _ in true }
         for context in conversationReadContexts.values { context.lifetime.cancel() }
         conversationReadContexts.removeAll()
         conversationUnreadStates.removeAll()

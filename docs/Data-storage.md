@@ -96,8 +96,21 @@ Explicit activity-card Mark as read also reads its unique bound canonical chat;
 it does not answer a card, resume routines or alter execution consent. Unbound
 legacy/text-only hosts explicitly retain their fallback.
 
-Group-chat read state, chat widgets/host reminders and live UI/release validation
-remain separate. An observation fences only mutations through its own repository,
+Native activity checks now also appear in the owner's unique visible bound direct
+chat. This is a live projection of the same persisted automation card ID used in
+the workspace, not a new transcript row or a model-generated widget. Reopening
+resolves that saved card again; merely viewing it neither answers nor resumes it.
+A native presentation retains its original repository binding lease through the
+final synchronous guard-store save. Account/owner cycles, hidden or ambiguous
+bindings, archive/delete and an obsolete nudge/paused stage reject old callbacks;
+a queued human answer never retargets the currently selected chat. Failed saves
+retain the unanswered card and allow a retry without partial schedule changes.
+No conversation, tool grant, peer grant or background-memory consent is created
+by this projection or by its answer.
+
+Durable transcript widget entries, answer acknowledgements and host reminders
+are still separate work, as are group-chat read state and live UI/release validation.
+An observation or binding lease fences only mutations through its own repository,
 not independent repository instances/processes. Chat and automation timestamps
 reside in separate stores, not one cross-store transaction.
 A read-state transaction does not provide a cross-process CAS for arbitrary

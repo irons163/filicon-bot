@@ -1,5 +1,13 @@
 # 協作能力核對紀錄（更新至 2026-10-03）
 
+## 活動提醒接入 exact owner 單獨聊天（2026-10-03）
+
+原生聊天現在顯示該 owner 的自動化活動卡，與工作區共用已保存的 card ID 及五種回答；重新開啟會解析未回答卡片，查看不等於回答。native presentation 由唯一 canonical account／agent binding 發出，不按名稱或模型 widget 猜 owner。原始 lease 保留至最終 guard-store 保存，重綁／隱藏／移除／封存／帳號循環、歧義與舊階段均拒絕；切換聊天不改投已捕捉的人類回答。保存失敗保留卡片可重試，人工停用及 peer／tool／background-memory 同意不變。
+
+有效紅燈為實際 `ChatDetailView` 沒有回答按鈕；126 tests／6 suites 聚焦通過，涵蓋五種回答、十一種身分失效、同名但不同綁定、重開、錯階段、保存失敗及最終 lease fence。七語×明暗×兩階段共 28 個 280-point 卡片 render 通過原生按鈕 bounds／無重疊斷言，逐張視覺檢視，另有完整聊天 OCR。最後完整／native／封裝 gate 及日誌類別見 [完成驗收入口](Parity-completion-audit.md)。SwiftUI 技能使聊天共用既有卡片而不複製另一套回答邏輯；測試仍用固定商業時間／ID、離線依賴與隔離 stores。
+
+這是 live native 卡片入口，不是永久 transcript widget entry、搜尋／歷史中的多 entry ID 或回答確認；host reminder 亦未補。group read state、雲端 session、完整帳號遷移、真人 UI／VoiceOver、live／release 與全 48 分類仍保留，整體 partial 不上調。lease 僅限同 repository，沒有跨 process 或跨 store 原子交易保證；未 push、啟動或重啟使用者 App／Xcode、改真實資料。
+
 ## 活動 guard 接上 canonical direct-chat count（2026-10-03）
 
 trusted host 從當前 account／exact agent 的唯一 canonical bound chat 建立 live read projection；正常內容／read transaction 成功後才發布，guard 的同步決策／保存受同 repository fence 保護。reference 的 DB unread／view time 不再被 wakes 或 routine creation date 代替；retained fires 以 canonical view 為界。沒有 bound chat 的明確 legacy text-only 分支仍是 fallback，缺失／損壞／歧義 source 則失敗，不以名稱、模型或匯入 hint 取得權限。帳號／owner lifetime、群組豁免與工具／記憶同意不放寬。
