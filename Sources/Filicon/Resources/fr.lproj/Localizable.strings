@@ -1794,7 +1794,7 @@
 
 // Owner-scoped automation activity checks.
 "This automation activity check is no longer current." = "Cette vérification d’activité des automatisations n’est plus à jour.";
-"This check affects only {0}'s routines." = "Cette vérification concerne uniquement les routines de {0}.";
+"This check affects only {0}'s individual routines; reviewed group sessions are excluded." = "Cette vérification concerne uniquement les tâches individuelles de {0} ; les sessions de groupe validées sont exclues.";
 "Keep running or Resume postpones the next activity check for 30 days; it does not run missed tasks." = "Continuer ou Reprendre reporte la prochaine vérification d’activité de 30 jours, sans exécuter les tâches manquées.";
 "Never ask disables this check only for this agent." = "Ne plus demander désactive cette vérification uniquement pour cet agent.";
 "Mark as read" = "Marquer comme lu";

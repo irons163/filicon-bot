@@ -1794,7 +1794,7 @@
 
 // Owner-scoped automation activity checks.
 "This automation activity check is no longer current." = "この自動化の活動確認は古くなっています。";
-"This check affects only {0}'s routines." = "この確認は「{0}」のルーチンにのみ影響します。";
+"This check affects only {0}'s individual routines; reviewed group sessions are excluded." = "この確認は {0} の個人ルーチンのみを対象とし、承認済みのグループセッションは対象外です。";
 "Keep running or Resume postpones the next activity check for 30 days; it does not run missed tasks." = "「実行を続ける」または「再開」は次の活動確認を30日後に延期します。実行されなかったタスクを遡って実行することはありません。";
 "Never ask disables this check only for this agent." = "「今後は確認しない」は、このエージェントの活動確認のみを無効にします。";
 "Mark as read" = "既読にする";

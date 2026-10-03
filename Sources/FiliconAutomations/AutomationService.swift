@@ -68,6 +68,7 @@ public actor AutomationService {
     // definition revisions stable and fence only this owner's suspended host
     // dispatches. No epoch needs to survive a process restart: its batches do not.
     private var guardDispatchEpochs: [UUID: UInt64] = [:]
+    private var guardContexts: [UUID: (automation: Automation, context: AutomationSpendGuardContext)] = [:]
 
     public init(storeURL: URL) throws {
         self.storeURL = storeURL
@@ -80,7 +81,7 @@ public actor AutomationService {
                 state.runs[index].finishedAt = now
                 let run = state.runs[index]
                 if let automation = state.automations.first(where: { $0.id == run.automationID }) {
-                    state.wakes.append(.init(agentID: automation.agentID, runID: run.id, status: .interrupted, detail: "The app restarted before this automation finished.", createdAt: now))
+                    state.wakes.append(.init(agentID: automation.agentID, runID: run.id, status: .interrupted, detail: "The app restarted before this automation finished.", createdAt: now, automationID: automation.id))
                 }
             }
             try Self.save(state, to: storeURL)
@@ -365,12 +366,13 @@ public actor AutomationService {
     public func fireDue(at now: Date = Date(), executor: any AutomationExecutor) async -> [AutomationRun] {
         let due = state.automations.filter { $0.enabled && $0.nextRunAt.map { $0 <= now } == true }
         let guardEpochs = guardDispatchEpochs
+        guard let contexts = try? await reconcileSpendGuardContexts(executor: executor) else { return [] }
         var results: [AutomationRun] = []
         for automation in due {
             let scheduled = automation.nextRunAt ?? now
             let claim = "schedule:\(automation.id):\(automation.revision):\(scheduled.timeIntervalSince1970)"
             if let run = try? await fire(automation: automation, origin: .schedule, events: [], claim: claim, executor: executor,
-                                         now: now, guardEpoch: guardEpochs[automation.agentID] ?? 0) {
+                                         now: now, guardEpoch: guardEpochs[automation.agentID] ?? 0, context: contexts[automation.id]) {
                 results.append(run)
             }
         }
@@ -386,6 +388,7 @@ public actor AutomationService {
         guard !unique.isEmpty else { try? persist(); return [] }
         try? persist()
         let definitions = state.automations.filter(\.enabled), guardEpochs = guardDispatchEpochs
+        guard let contexts = try? await reconcileSpendGuardContexts(executor: executor) else { return [] }
         var results: [AutomationRun] = []
         for automation in definitions {
             var start = 0
@@ -401,7 +404,7 @@ public actor AutomationService {
                 let identities = batch.map { "\($0.connectorID):\($0.externalEventID)" }.sorted()
                 let claim = "event:v2:\(automation.id):" + identities.map { "\($0.utf8.count):\($0)" }.joined()
                 if let run = try? await fire(automation: automation, origin: .event, events: batch, claim: claim, executor: executor,
-                                             now: now, guardEpoch: guardEpochs[automation.agentID] ?? 0) {
+                                             now: now, guardEpoch: guardEpochs[automation.agentID] ?? 0, context: contexts[automation.id]) {
                     results.append(run)
                 }
                 start = end
@@ -427,15 +430,57 @@ public actor AutomationService {
     }
 
     public func spendGuardState(agentID: UUID) -> AutomationSpendGuardState {
+        spendGuardState(agentID: agentID, excluding: groupExemptAutomationIDs())
+    }
+
+    private func spendGuardState(agentID: UUID, excluding exempt: Set<UUID>) -> AutomationSpendGuardState {
         var spend = state.spendGuards[agentID] ?? .init(lastViewedAt: .distantPast)
-        let ids = Set(state.automations.filter { $0.agentID == agentID }.map(\.id))
+        let ids = Set(state.automations.filter { $0.agentID == agentID && !exempt.contains($0.id) }.map(\.id))
         // The reference counts retained started runs of current definitions,
         // not lifetime totals (deleted tasks must not keep causing nudges).
         spend.firesSinceViewed = state.runs.filter { ids.contains($0.automationID) && $0.startedAt > spend.lastViewedAt }.count
         // Local pending result wakes are this host's unread signal. This is
         // not a claim of parity with the reference transcript unread counter.
-        spend.unreadCount = state.wakes.filter { $0.agentID == agentID && $0.createdAt > spend.lastViewedAt }.count
+        let runDefinitions = Dictionary(state.runs.map { ($0.id, $0.automationID) }, uniquingKeysWith: { first, _ in first })
+        spend.unreadCount = ids.isEmpty ? 0 : state.wakes.filter {
+            guard $0.agentID == agentID && $0.createdAt > spend.lastViewedAt else { return false }
+            if let id = $0.automationID ?? runDefinitions[$0.runID] { return ids.contains(id) }
+            // An old wake without either relationship cannot be attributed to
+            // a group; retain the conservative unread signal, never guess it.
+            return true
+        }.count
         return spend
+    }
+
+    /// Resolve only through the trusted executor, never a definition flag or
+    /// untrusted event hint. Publish the classification snapshot as one batch.
+    @discardableResult
+    public func reconcileSpendGuardContexts(executor: any AutomationExecutor) async throws -> [UUID: AutomationSpendGuardContext] {
+        let definitions = state.automations
+        var next: [UUID: (automation: Automation, context: AutomationSpendGuardContext)] = [:]
+        for automation in definitions {
+            let context = try await executor.spendGuardContext(for: automation)
+            try context.commit {}
+            next[automation.id] = (automation, context)
+        }
+        for value in next.values {
+            guard value.context.isCurrent, let current = state.automations.first(where: { $0.id == value.automation.id }),
+                  current.agentID == value.automation.agentID, current.revision == value.automation.revision else {
+                throw AutomationServiceError.duplicateClaim
+            }
+        }
+        guard Set(state.automations.map(\.id)) == Set(definitions.map(\.id)) else { throw AutomationServiceError.duplicateClaim }
+        guardContexts = next
+        return next.mapValues(\.context)
+    }
+
+    private func groupExemptAutomationIDs() -> Set<UUID> {
+        Set(state.automations.compactMap { automation in
+            guard let saved = guardContexts[automation.id], saved.automation.agentID == automation.agentID,
+                  saved.automation.revision == automation.revision, saved.context.isCurrent,
+                  saved.context.reviewedGroupBindingID != nil else { return nil }
+            return automation.id
+        })
     }
 
     public func spendGuardStates() -> [UUID: AutomationSpendGuardState] {
@@ -467,16 +512,25 @@ public actor AutomationService {
 
     @discardableResult
     public func evaluateSpendGuard(agentID: UUID, at now: Date = Date()) throws -> SpendGuardDecision {
-        let decision = AutomationSpendGuard.evaluate(spendGuardState(agentID: agentID), now: now)
+        let exempt = groupExemptAutomationIDs()
+        if let context = guardContexts.values.first(where: { $0.automation.agentID == agentID })?.context {
+            return try context.commit { try evaluateSpendGuard(agentID: agentID, at: now, excluding: exempt) }
+        }
+        return try evaluateSpendGuard(agentID: agentID, at: now, excluding: exempt)
+    }
+
+    private func evaluateSpendGuard(agentID: UUID, at now: Date, excluding exempt: Set<UUID>) throws -> SpendGuardDecision {
+        guard state.automations.contains(where: { $0.agentID == agentID && !exempt.contains($0.id) }) else { return .belowThresholds }
+        let decision = AutomationSpendGuard.evaluate(spendGuardState(agentID: agentID, excluding: exempt), now: now)
         guard decision == .nudge || decision == .pause else { return decision }
         var candidate = state
-        var spend = spendGuardState(agentID: agentID)
+        var spend = spendGuardState(agentID: agentID, excluding: exempt)
         var admissionChanged = false
         if decision == .nudge {
             spend.nudgedAt = now
             spend.cardID = UUID()
         } else {
-            admissionChanged = pauseEnabledRoutines(agentID: agentID, in: &candidate, spend: &spend)
+            admissionChanged = pauseEnabledRoutines(agentID: agentID, in: &candidate, spend: &spend, excluding: exempt)
             if spend.cardID == nil { spend.cardID = UUID() }
         }
         candidate.spendGuards[agentID] = spend
@@ -513,7 +567,7 @@ public actor AutomationService {
                 spend.nudgedAt = nil
                 spend.cardID = nil
             case .pause:
-                admissionChanged = pauseEnabledRoutines(agentID: agentID, in: &candidate, spend: &spend)
+                admissionChanged = pauseEnabledRoutines(agentID: agentID, in: &candidate, spend: &spend, excluding: groupExemptAutomationIDs())
                 spend.optedOut = false
                 spend.snoozedUntil = nil
                 spend.nudgedAt = nil
@@ -541,10 +595,10 @@ public actor AutomationService {
     }
 
     private func pauseEnabledRoutines(agentID: UUID, in candidate: inout AutomationPersistentState,
-                                      spend: inout AutomationSpendGuardState) -> Bool {
+                                      spend: inout AutomationSpendGuardState, excluding exempt: Set<UUID>) -> Bool {
         var changed = false
         for index in candidate.automations.indices where candidate.automations[index].agentID == agentID
-            && candidate.automations[index].enabled {
+            && candidate.automations[index].enabled && !exempt.contains(candidate.automations[index].id) {
             candidate.automations[index].enabled = false
             candidate.automations[index].guardPaused = true
             candidate.automations[index].nextRunAt = nil
@@ -560,15 +614,23 @@ public actor AutomationService {
 
     private func fire(
         automation: Automation, origin: AutomationRunOrigin, events: [AutomationEvent],
-        claim: String, executor: any AutomationExecutor, now: Date, guardEpoch: UInt64? = nil
+        claim: String, executor: any AutomationExecutor, now: Date, guardEpoch: UInt64? = nil,
+        context capturedContext: AutomationSpendGuardContext? = nil
     ) async throws -> AutomationRun {
+        let context = capturedContext ?? .init()
+        let exempt = groupExemptAutomationIDs()
+        guard context.reviewedGroupBindingID == nil || executor is any AutomationRunExecutor else {
+            throw AutomationServiceError.invalidDefinition
+        }
         // fireDue/fire(events:) can suspend between tasks. A pause or edit
         // during that suspension must invalidate the old batch's snapshot.
         if origin != .manual {
             // Guard before admission, for schedule AND event deliveries. An
             // expired nudge must not permit one more background inference.
-            _ = try evaluateSpendGuard(agentID: automation.agentID, at: now)
-            guard let guardEpoch, guardEpoch == (guardDispatchEpochs[automation.agentID] ?? 0),
+            try context.commit {
+                _ = try evaluateSpendGuard(agentID: automation.agentID, at: now, excluding: exempt)
+            }
+            guard context.reviewedGroupBindingID != nil || guardEpoch == (guardDispatchEpochs[automation.agentID] ?? 0),
                   let current = state.automations.first(where: { $0.id == automation.id }),
                   current.enabled, current.revision == automation.revision else { throw AutomationServiceError.duplicateClaim }
             // An event/manual run advances the shared schedule without editing
@@ -590,14 +652,18 @@ public actor AutomationService {
         }
         // Publish the claim/busy state only after schedule computation and the
         // durable write succeed, so failed scheduled starts remain retryable.
-        try Self.save(candidate, to: storeURL)
-        state = candidate
-        activeAgents.insert(automation.agentID)
+        try context.commit {
+            try Self.save(candidate, to: storeURL)
+            state = candidate
+            activeAgents.insert(automation.agentID)
+        }
         let prompt = buildPrompt(automation: automation, events: events)
         do {
+            try context.commit {}
             let result: AutomationExecutionResult
             if let runner = executor as? any AutomationRunExecutor {
-                result = try await runner.execute(.init(automation: automation, run: run, prompt: prompt, events: events))
+                result = try await runner.execute(.init(automation: automation, run: run, prompt: prompt, events: events,
+                                                       reviewedGroupBindingID: context.reviewedGroupBindingID))
             } else {
                 result = try await executor.execute(automation: automation, prompt: prompt, events: events)
             }
@@ -611,7 +677,7 @@ public actor AutomationService {
         run.finishedAt = Date()
         if let index = state.runs.firstIndex(where: { $0.id == run.id }) { state.runs[index] = run }
         trimHistory(automationID: automation.id)
-        state.wakes.append(.init(agentID: automation.agentID, runID: run.id, status: run.status, detail: run.detail ?? ""))
+        state.wakes.append(.init(agentID: automation.agentID, runID: run.id, status: run.status, detail: run.detail ?? "", automationID: automation.id))
         activeAgents.remove(automation.agentID)
         try persist()
         return run

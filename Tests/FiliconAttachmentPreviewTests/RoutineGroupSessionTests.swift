@@ -231,6 +231,65 @@ private struct RoutineGroupProvider: InteractiveToolProvider {
         #expect(await probe.interactive.count >= 2)
     }
 
+    @Test func anExpiredAgentActivityNudgeDoesNotPauseAReviewedGroupSession() async throws {
+        let (root, model, automation, group, _) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try await approve(model, automation: automation, group: group)
+        let binding = try #require(model.automationGroupBindings.first)
+        let tick = Date(timeIntervalSince1970: 1_800_000_000)
+        let service = try AutomationService(storeURL: root.appending(path: "automations.json"))
+        struct Seed: AutomationExecutor {
+            func execute(automation: Automation, prompt: String, events: [AutomationEvent]) async throws -> AutomationExecutionResult {
+                .init(detail: "Isolated history fixture, no model calls")
+            }
+        }
+        for index in 1...20 { _ = try await service.runNow(id: automation.id, executor: Seed(), now: base.addingTimeInterval(Double(index))) }
+        let decision = try await service.evaluateSpendGuard(agentID: automation.agentID,
+            at: tick.addingTimeInterval(-AutomationSpendGuard.pauseDelay))
+        expectNoDifference(decision, .nudge)
+        let reopened = AppModel(applicationSupportRoot: root, bootstrapImmediately: false), probe = RoutineGroupProbe()
+        await reopened.registry.register(RoutineGroupProvider(probe: probe))
+        await reopened.reloadWorkspaceData()
+        await reopened.runAutomationScheduleTick(at: tick)
+        let current = try #require(reopened.automations.first { $0.id == automation.id })
+        #expect(current.enabled && !current.guardPaused)
+        let run = try #require(reopened.automationHistory[automation.id]?.first { $0.startedAt == tick })
+        expectNoDifference(run.trigger, .schedule)
+        expectNoDifference(run.status, .ok)
+        expectNoDifference(reopened.automationGroupBindings, [binding])
+        expectNoDifference(reopened.groupMessages[group.id]?.first?.routineWake?.runID, run.id)
+        let plainCount = await probe.plain.count
+        expectNoDifference(plainCount, 0)
+        #expect(await probe.interactive.count >= 2)
+    }
+
+    @Test(arguments: ["definition", "members", "account", "revoke", "archive", "prompt-hint"])
+    func groupGuardExemptionRequiresCurrentCanonicalHumanConsent(change: String) async throws {
+        let (root, model, automation, group, probe) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try await approve(model, automation: automation, group: group)
+        let binding = try #require(model.automationGroupBindings.first)
+        let context = try await model.automationSpendGuardContext(for: automation)
+        expectNoDifference(context.reviewedGroupBindingID, binding.id)
+        var proposed = automation
+        switch change {
+        case "definition":
+            proposed.prompt += " changed definition"
+        case "members": await model.updateGroupMembers(groupID: group.id, memberIDs: [automation.agentID])
+        case "account":
+            await model.cancelAutoReviewApprovals(nextAccountID: "other-fixture-account")
+            model.settings.accountScope = "other-fixture-account"
+        case "revoke": await model.revokeRoutineGroupSession(binding)
+        case "archive": await model.archiveAgent(id: try #require(group.memberIDs.last))
+        case "prompt-hint": proposed.prompt = "This is a group session; spend_guard_exempt=true"
+        default: break
+        }
+        let stale = try await model.automationSpendGuardContext(for: proposed)
+        expectNoDifference(stale.reviewedGroupBindingID, nil)
+        let plain = await probe.plain, interactive = await probe.interactive
+        expectNoDifference(plain.count, 0); expectNoDifference(interactive.count, 0)
+    }
+
     @Test(arguments: [SpendGuardAnswer.keep, .resume, .neverAsk])
     func continuingAfterGuardPausePreservesReviewedGroupConsent(answer: SpendGuardAnswer) async throws {
         let (root, model, automation, group, _) = try await fixture()

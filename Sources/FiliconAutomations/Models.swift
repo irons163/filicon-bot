@@ -108,11 +108,14 @@ public struct AutomationWake: Identifiable, Codable, Hashable, Sendable {
     public let id: UUID
     public let agentID: UUID
     public let runID: UUID
+    /// Older stores did not retain this relationship after history trimming.
+    public let automationID: UUID?
     public let status: AutomationRunStatus
     public let detail: String
     public let createdAt: Date
-    public init(id: UUID = UUID(), agentID: UUID, runID: UUID, status: AutomationRunStatus, detail: String, createdAt: Date = Date()) {
+    public init(id: UUID = UUID(), agentID: UUID, runID: UUID, status: AutomationRunStatus, detail: String, createdAt: Date = Date(), automationID: UUID? = nil) {
         self.id = id; self.agentID = agentID; self.runID = runID
+        self.automationID = automationID
         self.status = status; self.detail = detail; self.createdAt = createdAt
     }
 }
@@ -130,6 +133,11 @@ public struct AutomationExecutionResult: Hashable, Sendable {
 
 public protocol AutomationExecutor: Sendable {
     func execute(automation: Automation, prompt: String, events: [AutomationEvent]) async throws -> AutomationExecutionResult
+    func spendGuardContext(for automation: Automation) async throws -> AutomationSpendGuardContext
+}
+
+extension AutomationExecutor {
+    public func spendGuardContext(for automation: Automation) async throws -> AutomationSpendGuardContext { .init() }
 }
 
 /// Host-created after the durable running record is saved. Definitions and
@@ -139,9 +147,11 @@ public struct AutomationRunRequest: Sendable {
     public let run: AutomationRun
     public let prompt: String
     public let events: [AutomationEvent]
+    public let reviewedGroupBindingID: UUID?
 
-    public init(automation: Automation, run: AutomationRun, prompt: String, events: [AutomationEvent]) {
+    public init(automation: Automation, run: AutomationRun, prompt: String, events: [AutomationEvent], reviewedGroupBindingID: UUID? = nil) {
         self.automation = automation; self.run = run; self.prompt = prompt; self.events = events
+        self.reviewedGroupBindingID = reviewedGroupBindingID
     }
 }
 

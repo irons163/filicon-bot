@@ -39,6 +39,7 @@ public final class AutomationSpendGuardLifetime: @unchecked Sendable {
     private var cancelled = false
     public init() {}
     public func cancel() { lock.withLock { cancelled = true } }
+    public var isCurrent: Bool { lock.withLock { !cancelled } }
     public func commit<Value>(_ operation: () throws -> Value) throws -> Value {
         try lock.withLock {
             try Task.checkCancellation()
@@ -46,6 +47,19 @@ public final class AutomationSpendGuardLifetime: @unchecked Sendable {
             return try operation()
         }
     }
+}
+
+/// Host-only classification of an already reviewed execution target. This is
+/// neither Codable nor part of routine/event/model tool input. Its lifetime
+/// fences account, definition and consent changes before durable admission.
+public struct AutomationSpendGuardContext: Sendable {
+    public let reviewedGroupBindingID: UUID?
+    let lifetime: AutomationSpendGuardLifetime
+    public init(reviewedGroupBindingID: UUID? = nil, lifetime: AutomationSpendGuardLifetime = .init()) {
+        self.reviewedGroupBindingID = reviewedGroupBindingID; self.lifetime = lifetime
+    }
+    var isCurrent: Bool { lifetime.isCurrent }
+    func commit<Value>(_ operation: () throws -> Value) throws -> Value { try lifetime.commit(operation) }
 }
 
 public enum AutomationSpendGuard {

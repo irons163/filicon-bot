@@ -2100,7 +2100,7 @@ struct AutomationSpendGuardCard: View {
         let _ = uiLocale.identifier
         VStack(alignment: .leading, spacing: 10) {
             Text(prompt.agentName).font(.headline).fixedSize(horizontal: false, vertical: true)
-            Text(l10n("This check affects only \(prompt.agentName)'s routines."))
+            Text(l10n("This check affects only \(prompt.agentName)'s individual routines; reviewed group sessions are excluded."))
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             Text(prompt.isPaused ? l10n("Automations were paused after prolonged unviewed activity.")
                  : l10n("Automations have continued while you were away. Keep them running or pause them."))

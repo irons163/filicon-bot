@@ -36,6 +36,33 @@ private actor SpendGuardBatchExecutor: AutomationExecutor {
     func finish() async { await gate.finish() }
 }
 
+private actor SpendGuardReviewedGroupExecutor: AutomationRunExecutor {
+    let bindings: [UUID: UUID]
+    let lifetime: AutomationSpendGuardLifetime
+    let blocksFirst: Bool
+    private let gate = SpendGuardGate()
+    private var requests: [AutomationRunRequest] = []
+    init(bindings: [UUID: UUID], lifetime: AutomationSpendGuardLifetime = .init(), blocksFirst: Bool = false) {
+        self.bindings = bindings; self.lifetime = lifetime; self.blocksFirst = blocksFirst
+    }
+    func spendGuardContext(for automation: Automation) async throws -> AutomationSpendGuardContext {
+        .init(reviewedGroupBindingID: bindings[automation.id], lifetime: lifetime)
+    }
+    func execute(automation: Automation, prompt: String, events: [AutomationEvent]) async throws -> AutomationExecutionResult {
+        .init(detail: "Isolated fixture")
+    }
+    func execute(_ request: AutomationRunRequest) async throws -> AutomationExecutionResult {
+        requests.append(request)
+        if blocksFirst && requests.count == 1 {
+            return try await gate.execute(automation: request.automation, prompt: request.prompt, events: request.events)
+        }
+        return .init(detail: "Isolated reviewed group fixture")
+    }
+    func observed() -> [AutomationRunRequest] { requests }
+    func waitForEntry() async { await gate.waitForEntry() }
+    func finish() async { await gate.finish() }
+}
+
 private struct SpendGuardStoreFixture: Encodable {
     var schemaVersion: Int
     var automations: [Automation]
@@ -80,6 +107,89 @@ struct AutomationSpendGuardParityTests {
     private func write(_ fixture: SpendGuardStoreFixture, to file: URL) throws {
         let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .millisecondsSince1970
         try encoder.encode(fixture).write(to: file)
+    }
+
+    @Test func reviewedGroupHistoryDoesNotCauseAnIndividualRoutineToBeNudged() async throws {
+        let (root, service, individual, _) = try await fixture(); defer { try? FileManager.default.removeItem(at: root) }
+        let group = try await service.save(.init(agentID: owner, name: "Reviewed group fixture", prompt: "Fixture",
+            trigger: individual.trigger, createdAt: now.addingTimeInterval(1)), now: now)
+        let executor = SpendGuardReviewedGroupExecutor(bindings: [group.id: group.id])
+        for index in 1...40 { _ = try await service.runNow(id: group.id, executor: executor, now: now.addingTimeInterval(Double(index))) }
+        try await service.reconcileSpendGuardContexts(executor: executor)
+        let history = await service.history(automationID: group.id), wakes = await service.pendingWakes()
+        expectNoDifference(history.count, AutomationService.maximumHistory)
+        expectNoDifference(wakes.count, 40)
+        #expect(wakes.allSatisfy { $0.automationID == group.id })
+        let spend = await service.spendGuardState(agentID: owner)
+        expectNoDifference(spend.firesSinceViewed, 0)
+        expectNoDifference(spend.unreadCount, 0)
+        let decision = try await service.evaluateSpendGuard(agentID: owner, at: nudgeAt)
+        expectNoDifference(decision, .belowThresholds)
+        let definitions = await service.list()
+        #expect(definitions.filter(\.enabled).count == 2)
+        expectNoDifference(spend.cardID, nil)
+    }
+
+    @Test func aTextOnlyExecutorCannotClaimAGroupSessionExemption() async throws {
+        let (root, service, individual, _) = try await fixture(); defer { try? FileManager.default.removeItem(at: root) }
+        struct NoSession: AutomationExecutor {
+            func spendGuardContext(for automation: Automation) async throws -> AutomationSpendGuardContext {
+                .init(reviewedGroupBindingID: automation.id)
+            }
+            func execute(automation: Automation, prompt: String, events: [AutomationEvent]) async throws -> AutomationExecutionResult {
+                Issue.record("A group exemption must not route to a text-only executor")
+                return .init(detail: "Must not execute")
+            }
+        }
+        let runs = await service.fireDue(at: now.addingTimeInterval(3_600), executor: NoSession())
+        let history = await service.history(automationID: individual.id)
+        expectNoDifference(runs, []); expectNoDifference(history, [])
+    }
+
+    @Test func anExpiredIndividualNudgeDoesNotPauseItsOwnersReviewedGroupRoutine() async throws {
+        let (root, service, individual, _) = try await fixture(); defer { try? FileManager.default.removeItem(at: root) }
+        let group = try await service.save(.init(agentID: owner, name: "Reviewed group fixture", prompt: "Fixture",
+            trigger: individual.trigger, createdAt: now.addingTimeInterval(1)), now: now)
+        try await nudge(service, routine: individual)
+        let executor = SpendGuardReviewedGroupExecutor(bindings: [group.id: group.id])
+        let runs = await service.fireDue(at: pauseAt, executor: executor)
+        expectNoDifference(runs.map(\.automationID), [group.id])
+        expectNoDifference(runs.first?.status, .ok)
+        let spend = await service.spendGuardState(agentID: owner), definitions = await service.list()
+        expectNoDifference(spend.guardPausedAutomationIDs, [individual.id])
+        #expect(definitions.first { $0.id == group.id }?.enabled == true)
+        #expect(definitions.first { $0.id == group.id }?.guardPaused == false)
+        let requests = await executor.observed()
+        expectNoDifference(requests.first?.reviewedGroupBindingID, group.id)
+        expectNoDifference(requests.first?.run.id, runs.first?.id)
+    }
+
+    @Test func aRevokedClassificationCannotRouteAnOldEventBatchToAReplacementGroup() async throws {
+        let (root, service, original, _) = try await fixture(); defer { try? FileManager.default.removeItem(at: root) }
+        let connector = UUID(uuidString: "00000000-0000-0000-0000-000000000086")!
+        var first = original; first.trigger = .event(.init(connectorID: connector, kind: "fixture"))
+        first = try await service.save(first, now: now)
+        let group = try await service.save(.init(agentID: peer, name: "Reviewed group fixture", prompt: "Fixture",
+            trigger: first.trigger, createdAt: now.addingTimeInterval(1)), now: now)
+        let lifetime = AutomationSpendGuardLifetime()
+        let executor = SpendGuardReviewedGroupExecutor(bindings: [group.id: group.id], lifetime: lifetime, blocksFirst: true)
+        let oldEvent = AutomationEvent(connectorID: connector, kind: "fixture", externalEventID: "before-revoke",
+            payloadJSON: Data(#"{"group":true,"spend_guard_exempt":true}"#.utf8), occurredAt: now)
+        let batch = Task { await service.fire(events: [oldEvent], executor: executor, now: now.addingTimeInterval(1)) }
+        await executor.waitForEntry()
+        lifetime.cancel()
+        await executor.finish()
+        let oldRuns = await batch.value, oldRequests = await executor.observed()
+        expectNoDifference(oldRuns.map(\.automationID), [first.id])
+        expectNoDifference(oldRequests.map(\.automation.id), [first.id])
+        let replacementID = UUID(uuidString: "00000000-0000-0000-0000-000000000087")!
+        let replacement = SpendGuardReviewedGroupExecutor(bindings: [group.id: replacementID])
+        let freshEvent = AutomationEvent(connectorID: connector, kind: "fixture", externalEventID: "after-revoke",
+            payloadJSON: Data("{}".utf8), occurredAt: now.addingTimeInterval(2))
+        let fresh = await service.fire(events: [freshEvent], executor: replacement, now: now.addingTimeInterval(2))
+        expectNoDifference(Set(fresh.map(\.automationID)), [first.id, group.id])
+        let replacementRequests = await replacement.observed()
+        expectNoDifference(replacementRequests.first { $0.automation.id == group.id }?.reviewedGroupBindingID, replacementID)
     }
 
     @Test(arguments: [SpendGuardAnswer.keep, .resume, .neverAsk])

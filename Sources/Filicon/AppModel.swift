@@ -138,6 +138,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var automationSpendGuardPrompts: [AutomationSpendGuardPrompt] = []
     @Published private(set) var answeringAutomationSpendGuardIDs: Set<UUID> = []
     private var automationSpendGuardLifetimes: [UUID: (agentID: UUID, lifetime: AutomationSpendGuardLifetime)] = [:]
+    private var automationSpendGuardContextLifetimes: [UUID: AutomationSpendGuardLifetime] = [:]
+    private var automationSpendGuardContextOwners: [UUID: UUID] = [:]
     @Published var automationIngressRoutes: [AutomationIngressRoute] = []
     @Published var automationIngressAudit: [AutomationIngressAuditEntry] = []
     @Published var automationIngressStatus = AutomationIngressStatus()
@@ -3988,6 +3990,7 @@ final class AppModel: ObservableObject {
     func archiveAgent(id: UUID) async {
         guard let agentService else { return }
         for mutation in automationSpendGuardLifetimes.values where mutation.agentID == id { mutation.lifetime.cancel() }
+        automationSpendGuardContextLifetimes.removeValue(forKey: id)?.cancel()
         automationSpendGuardPrompts.removeAll { $0.agentID == id }
         for conversation in conversations where conversation.agentBinding?.agentID == id {
             if backgroundDirectExecutions[conversation.id] != nil { cancelConversationWork(conversation.id) }
@@ -7375,6 +7378,10 @@ final class AppModel: ObservableObject {
     }
 
     private func invalidateRoutineGroupExecutions(automationID: UUID) -> Set<UUID> {
+        if let owner = automationSpendGuardContextOwners.removeValue(forKey: automationID)
+            ?? automations.first(where: { $0.id == automationID })?.agentID {
+            automationSpendGuardContextLifetimes.removeValue(forKey: owner)?.cancel()
+        }
         invalidateBackgroundDirectExecutions(automationID: automationID)
         let affected = routineGroupExecutions.values.filter { $0.automationID == automationID }
         for execution in affected { execution.scope.invalidate() }
@@ -7591,8 +7598,44 @@ final class AppModel: ObservableObject {
             groupSession: { [weak self] request in
                 guard let self else { throw CancellationError() }
                 if let result = try await self.executeRoutineGroupSessionIfBound(request) { return result }
+                guard request.reviewedGroupBindingID == nil else { throw AutomationGroupSessionError.reviewRequired }
                 return try await self.executeRoutineDirectSessionIfBound(request)
+            }, guardContext: { [weak self] automation in
+                guard let self else { throw CancellationError() }
+                return try await self.automationSpendGuardContext(for: automation)
             })
+    }
+
+    /// Classification is derived from canonical, human-reviewed consent, not
+    /// from routine text, model output or an imported execution-mode flag.
+    func automationSpendGuardContext(for automation: Automation) async throws -> AutomationSpendGuardContext {
+        guard !agentMessagingAccountTransition else { throw CancellationError() }
+        let generation = autoReviewAccountGeneration, account = settings.accountScope ?? "local"
+        let lease = try workflowExecutionScope.capture()
+        automationSpendGuardContextOwners[automation.id] = automation.agentID
+        let lifetime: AutomationSpendGuardLifetime
+        if let current = automationSpendGuardContextLifetimes[automation.agentID] { lifetime = current }
+        else {
+            lifetime = .init(); automationSpendGuardContextLifetimes[automation.agentID] = lifetime
+        }
+        let saved = await automationGroupBindingStore?.binding(automationID: automation.id)
+        let direct = await automationDirectBindingStore?.binding(automationID: automation.id)
+        let group = if let saved { await groupService?.list().first { $0.id == saved.groupID } } else { nil as AgentGroup? }
+        var reviewedGroupID: UUID?
+        if let saved, let group, direct == nil,
+           saved.matches(automation: automation, accountID: account, group: group) {
+            var membersActive = true
+            for id in saved.memberIDs {
+                guard let profile = await agentService?.profile(id: id), profile.archivedAt == nil else {
+                    membersActive = false; break
+                }
+            }
+            if membersActive { reviewedGroupID = saved.id }
+        }
+        try lease.check()
+        guard generation == autoReviewAccountGeneration, account == (settings.accountScope ?? "local"),
+              !agentMessagingAccountTransition, lifetime.isCurrent else { throw CancellationError() }
+        return .init(reviewedGroupBindingID: reviewedGroupID, lifetime: lifetime)
     }
 
     private func validateBackgroundDirectExecution(_ execution: BackgroundDirectExecution) async throws {
@@ -7801,7 +7844,11 @@ final class AppModel: ObservableObject {
         guard let store = automationGroupBindingStore else { throw AutomationGroupSessionError.unavailable }
         let saved = await store.binding(automationID: request.automation.id)
         try accountLease.check()
-        guard let binding = saved else { return nil }
+        guard let binding = saved else {
+            guard request.reviewedGroupBindingID == nil else { throw AutomationGroupSessionError.reviewRequired }
+            return nil
+        }
+        if let expected = request.reviewedGroupBindingID, expected != binding.id { throw AutomationGroupSessionError.reviewRequired }
         guard let directStore = automationDirectBindingStore,
               await directStore.binding(automationID: request.automation.id) == nil else {
             throw AutomationDirectSessionError.conflictingSession
@@ -8085,6 +8132,7 @@ final class AppModel: ObservableObject {
     func reloadAutomationDetails() async {
         guard !agentMessagingAccountTransition, let automationService else { return }
         let generation = autoReviewAccountGeneration, account = settings.accountScope ?? "local"
+        if let agentService { _ = try? await automationService.reconcileSpendGuardContexts(executor: makeAutomationExecutor(agents: agentService)) }
         // Opening the shared workspace cannot imply reading every agent's
         // conversation. Owners are marked read by a separate scoped action.
         let definitions = await automationService.list()
@@ -8964,6 +9012,9 @@ final class AppModel: ObservableObject {
         agentMessagingAccountTransition = true
         workflowExecutionScope.suspend()
         for mutation in automationSpendGuardLifetimes.values { mutation.lifetime.cancel() }
+        for lifetime in automationSpendGuardContextLifetimes.values { lifetime.cancel() }
+        automationSpendGuardContextLifetimes = [:]
+        automationSpendGuardContextOwners = [:]
         automationSpendGuardPrompts = []
         answeringAutomationSpendGuardIDs = []
         for id in Array(backgroundDirectExecutions.keys) { cancelConversationWork(id) }
@@ -10920,8 +10971,11 @@ private struct AppAutomationExecutor: AutomationRunExecutor {
     let scheduler: AgentExecutionScheduler
     var lane: AgentExecutionLane = .background
     var groupSession: @Sendable (AutomationRunRequest) async throws -> AutomationExecutionResult? = { _ in nil }
+    var guardContext: @Sendable (Automation) async throws -> AutomationSpendGuardContext = { _ in .init() }
+    func spendGuardContext(for automation: Automation) async throws -> AutomationSpendGuardContext { try await guardContext(automation) }
     func execute(_ request: AutomationRunRequest) async throws -> AutomationExecutionResult {
         if let result = try await groupSession(request) { return result }
+        guard request.reviewedGroupBindingID == nil else { throw AutomationGroupSessionError.reviewRequired }
         return try await executeTextOnly(automation: request.automation, prompt: request.prompt, conversationID: request.run.id)
     }
     func execute(automation: Automation, prompt: String, events: [AutomationEvent]) async throws -> AutomationExecutionResult {

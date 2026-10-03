@@ -121,7 +121,7 @@ import FiliconAutomations
     }
 
     @Test func cardMessagesAreAvailableInSevenLanguagesWithoutReinterpretingAgentNames() {
-        let keys = [SpendGuardError.staleCard.rawValue, "This check affects only {0}'s routines.",
+        let keys = [SpendGuardError.staleCard.rawValue, "This check affects only {0}'s individual routines; reviewed group sessions are excluded.",
             "Keep running or Resume postpones the next activity check for 30 days; it does not run missed tasks.",
             "Never ask disables this check only for this agent.", "Mark as read"]
         for language in ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"] {

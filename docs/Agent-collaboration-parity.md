@@ -1,5 +1,11 @@
 # 協作能力核對紀錄（更新至 2026-10-03）
 
+## 群組 routine 不再受單人活動保護暫停（2026-10-03）
+
+對齊 reference `!isGroup && backgroundTrigger`：群組豁免來自當前 canonical 人類審核、account、任務 digest 與群組／成員，不是模型 mode 欄位。captured binding ID／host lifetime 隨 batch 送到 session executor，撤銷、帳號切換或換綁定不能讓舊事件轉往別處或降級 pure text；同 owner 的單人排程仍受原保護，真正人工停用及工具權限不放寬。group wakes 新增可向後讀取的 optional 排程關聯，40 次群組結果即使只留 20 筆 run history，也不誤觸單人提醒；無法歸屬的舊資料維持保守 signal。
+
+實際 App 紅燈重現兩項群組誤停用／未執行問題；177 tests／12 suites 聚焦通過。最後 source 的完整串行 `spend-guard-group-exemption-full.log` exit 0：135 XCTest＋1,747 Swift Testing（219 suites，核心 915／106、App 598／83，兩項 opt-in live Codex 測試略過）；七語各 1,787 keys／0 missing、明示 group 豁免的 28 個窄版 render、原生建置及四執行檔封裝／deep strict 簽章／entitlements 通過。證據見 [完成驗收入口](Parity-completion-audit.md)，Debug／離線 gate 不冒充 release 或 live 驗收。不自動重啟之前 guard-paused 的群組；不以此補齊 reference 真正 transcript unread／對話查看、widget／host reminder、雲端 metadata／session、完整帳號資料遷移或外部／release／全 48 分類驗收。未 push、未重啟使用者 App／Xcode、未改真實資料，整體 parity 仍 partial。
+
 ## 自動化活動提醒：owner 隔離與既有審核恢復（2026-10-03）
 
 活動保護不再使用全域 pause／counter／opt-out。schema 2 依 owner 保存、舊版有界歸屬遷移，卡片依真實 owner／persisted ID／account generation 回答；查看工作區不回答所有提醒，獨立已讀不解除暫停。所有背景 dispatch 在 admission 前判斷逾期提醒；Keep／Resume／Never ask 只恢復 guard 暫停項目，不啟用人工停用、不補跑舊事件或取得新權限。自動 guard 變更保留已審核 definition revision，另外以 owner epoch 封閉已擷取舊 batch；原子保存失敗保留狀態、卡片與其他 owner。

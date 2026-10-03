@@ -66,7 +66,10 @@ public actor AutomationScheduler {
         if let explicitNow { now = explicitNow }
         else { now = await clock.now() }
         // Reconcile owner-scoped cards before firing, never after a new run.
-        do { try await service.evaluateSpendGuards(at: now) }
+        do {
+            try await service.reconcileSpendGuardContexts(executor: executor)
+            try await service.evaluateSpendGuards(at: now)
+        }
         catch { return [] }
         return await service.fireDue(at: now, executor: executor)
     }

@@ -1,5 +1,19 @@
 # 完成驗收入口（2026-09-27）
 
+## 經審核群組排程的活動保護豁免（2026-10-03）
+
+本批補上下一節仍保留的群組差異：reference `automation-run-path.ts` 只對 `!isGroup && backgroundTrigger` 套用 guard。Filicon 現在於定時／事件批次及 scheduler 檢查前，由 trusted executor 解析 canonical human group binding、account、完整任務 digest、群組／成員及 direct binding 衝突；只對仍有效的已審核 group session 豁免。分類不進入 Codable definition、匯入或模型工具參數，模型文字／事件 `group`／`spend_guard_exempt` 提示不能指定豁免，text-only executor 也不能冒充 session executor。
+
+同一 owner 的單人排程仍保護，已審核群組排程不因其逾期提醒、owner pause epoch 或卡片回答而被停用；真正人工停用及 definition revision 檢查不放寬。批次捕捉 group binding ID 及 host lifetime，帳號切換、封存與 routine／consent 撤銷同步撤銷舊分類。executor 必須再次匹配原 binding ID；失去或換了 binding 不可轉投其他 group／direct／plain 路徑。舊版已被 guard 暫停的群組不自動重啟，仍由人類回覆恢復；不是重新授予工具或背景記憶權限。
+
+group runs 不計入單人 fires／pending wakes。新結果保存 optional `automationID` 關聯，歷史裁至最近 20 次仍不把群組結果誤算成單人未讀；重啟中斷結果亦保留關聯。舊 wake 缺少關聯時只利用仍保留的真實 run 解析；若兩者都沒有且 owner 同時有單人排程，保留保守計數、不捏造來源。這仍不是 reference transcript DB unread，未知舊資料與聊天查看／widget 接線仍保留驗收差異。
+
+有效紅燈 `spend-guard-group-exemption-red.log` exit 1：實際 App 已審核群組因過期提醒被停用、沒有 schedule run，共兩項語意失敗。修正後聚焦 `spend-guard-group-exemption-focused-final.log` exit 0：177 tests／12 suites；涵蓋同 owner 混合排程、40 個 group wakes／20 筆 retained history、舊事件分類撤銷、真人綁定的六種失效情境及真實 group runner／run UUID／grant 保持。最終 source 另加 text-only 分類拒絕及七語明示豁免說明，最後完整串行 `spend-guard-group-exemption-full.log` exit 0：135 XCTest＋1,747 Swift Testing（219 suites，核心 915／106、App 598／83，兩項 opt-in live Codex 測試略過）。既有 CoreData NSXPC 診斷不是測試失敗，也不冒充 live 服務驗收。
+
+最後 source 的七語各 1,787 keys／0 missing；七語×明暗×nudge／paused 共 28 個窄版原生 render 通過並逐語檢視 group 豁免說明、長名稱及按鈕換行／無重疊。`spend-guard-group-exemption-native.log` BUILD SUCCEEDED；`spend-guard-group-exemption-package.log` 四個執行檔、deep strict 簽章及 app／XPC entitlements 通過。隔離產物為 `.build/validation/SpendGuardGroupPackage/Filicon.app`；這是 Debug／離線 fixtures，不是 release／公證或啟動使用者 App。日誌與 PNG 只保留於忽略的 `.build/validation/`。
+
+這只補本機已審核 group routine 分支，不宣稱雲端 group session／metadata、真實 transcript unread／對話查看、聊天 widget／host reminder、完整帳號資料遷移、真人 UI／VoiceOver、live 平台、release 或全 48 分類已驗收。既有 AGENT-01／02／04、AUTO-03 整體仍 partial；未 push、未重啟使用者 App／Xcode、未改真實帳號／群組／聊天資料。
+
 ## 擁有者隔離的自動化活動提醒與安全恢復（2026-10-03）
 
 reference `a9f633e09d49a85829b8236331b9e21f7e612634` 的 `source/host/extensions/transcript/automation-spend-guard-runtime.ts` 與 `sand-automation-spend-guard.ts` 已核對：狀態、提醒、暫停及 opt-out 限各 session／agent；閒置三天且未讀至少 15 或執行至少 20 次才提醒，三天未答才暫停。Keep／Resume 只恢復 guard 暫停的定義並延後下一次檢查 30 天；Never ask 亦恢復 guard 暫停項目，但只關閉此擁有者的活動檢查；不補跑錯過的定時或事件，不授予新工具權限。查看對話不是回答提醒，也不隱式解除暫停。此為活動保護，不是精確金額預算。
