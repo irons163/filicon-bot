@@ -78,6 +78,21 @@ struct VisibleConversationReadContext: Sendable {
     let bindingLease: ConversationBindingLease?
 }
 
+/// Captured synchronously by a native view before its Task is queued. Neither
+/// transcript/model input nor permission to answer an automation activity card.
+struct ConversationReadContext: Sendable {
+    let id: UUID
+    let conversationID: UUID
+    let binding: DirectConversationAgentBinding?
+    let accountID: String
+    let generation: UInt64
+    let action: ConversationReadAction
+    let visibleEpoch: UInt64?
+    let newestMessageID: UUID?
+    let newestDeliveryStatus: MessageDeliveryStatus?
+    let lifetime: AutomationSpendGuardLifetime
+}
+
 @MainActor
 final class AppModel: ObservableObject {
     @Published var conversations: [Conversation] = [] {
@@ -85,15 +100,31 @@ final class AppModel: ObservableObject {
             // Invalidate queued callbacks before they have a receipt too. A
             // rebind-and-restore must not revive the original visible owner.
             if let id = selection,
-               oldValue.first(where: { $0.id == id })?.agentBinding
-                != conversations.first(where: { $0.id == id })?.agentBinding {
+               (oldValue.first(where: { $0.id == id })?.agentBinding
+                    != conversations.first(where: { $0.id == id })?.agentBinding
+                || oldValue.first(where: { $0.id == id })?.messages.last?.id
+                    != conversations.first(where: { $0.id == id })?.messages.last?.id
+                || oldValue.first(where: { $0.id == id })?.messages.last?.deliveryStatus
+                    != conversations.first(where: { $0.id == id })?.messages.last?.deliveryStatus) {
                 cancelVisibleConversationRead()
             } else if let read = visibleConversationReadContext,
                conversations.first(where: { $0.id == read.conversationID })?.agentBinding != read.binding {
                 cancelVisibleConversationRead()
             }
+            invalidateConversationReadContexts()
+            for id in Array(conversationUnreadStates.keys) {
+                if !conversations.contains(where: { $0.id == id })
+                    || oldValue.first(where: { $0.id == id })?.agentBinding
+                        != conversations.first(where: { $0.id == id })?.agentBinding {
+                    conversationUnreadStates.removeValue(forKey: id)
+                    conversationUnreadLoadEpochs[id, default: 0] &+= 1
+                }
+            }
         }
     }
+    @Published private(set) var conversationUnreadStates: [UUID: ConversationUnreadState] = [:]
+    private var conversationReadContexts: [UUID: ConversationReadContext] = [:]
+    private var conversationUnreadLoadEpochs: [UUID: UInt64] = [:]
     @Published var selection: UUID? {
         didSet { if selection != oldValue { cancelVisibleConversationRead() } }
     }
@@ -138,7 +169,9 @@ final class AppModel: ObservableObject {
     @Published private(set) var globalSearchState: GlobalSearchState = .idle
     @Published private(set) var globalSearchFocusRequestID = UUID()
     @Published private(set) var requestedMessageJumpID: UUID?
-    @Published var agents: [AgentProfile] = []
+    @Published var agents: [AgentProfile] = [] {
+        didSet { invalidateConversationReadContexts() }
+    }
     @Published private(set) var agentSidebarVisibility: [AgentSidebarVisibility] = []
     private var sidebarVisibilityRevision: UInt64?
     private var sidebarSettingsLeases: [UUID: ConversationBindingLease] = [:]
@@ -839,6 +872,7 @@ final class AppModel: ObservableObject {
             conversations = page.items
             conversationContinuation = page.continuation
             hasMoreConversations = page.continuation != nil
+            await reloadConversationUnreadStates()
         } catch {
             rootResilience.fail(error, ticket: rootTicket)
             rootConnection = rootResilience.connection
@@ -1298,6 +1332,7 @@ final class AppModel: ObservableObject {
             conversations.append(contentsOf: page.items.filter { !existingIDs.contains($0.id) })
             conversationContinuation = page.continuation
             hasMoreConversations = page.continuation != nil
+            await reloadConversationUnreadStates()
         } catch { errorMessage = error.localizedDescription }
     }
 
@@ -1323,6 +1358,7 @@ final class AppModel: ObservableObject {
             messageContinuations[conversationID] = page.continuation
             if page.continuation == nil { completeMessageHistories.insert(conversationID) }
             else { completeMessageHistories.remove(conversationID) }
+            await reloadConversationUnreadState(id: conversationID)
         } catch {
             guard conversationLoadFence.accepts(ticket, selectedConversationID: selection) else { return }
             errorMessage = error.localizedDescription
@@ -3182,6 +3218,7 @@ final class AppModel: ObservableObject {
         } else {
             try await operation()
         }
+        await reloadConversationUnreadState(id: conversation.id)
     }
 
     private func scheduleDraftPersistence() {
@@ -3790,6 +3827,7 @@ final class AppModel: ObservableObject {
             groupMessages = values
         }
         if let automationService { automations = await automationService.list() }
+        await reloadConversationUnreadStates()
         automationGroupBindings = await automationGroupBindingStore?.list() ?? []
         automationDirectBindings = await automationDirectBindingStore?.list() ?? []
         if let channelService {
@@ -4019,6 +4057,10 @@ final class AppModel: ObservableObject {
 
     func archiveAgent(id: UUID) async {
         guard let agentService else { return }
+        for context in Array(conversationReadContexts.values) where context.binding?.agentID == id {
+            context.lifetime.cancel()
+            conversationReadContexts.removeValue(forKey: context.conversationID)
+        }
         for mutation in automationSpendGuardLifetimes.values where mutation.agentID == id { mutation.lifetime.cancel() }
         automationSpendGuardContextLifetimes.removeValue(forKey: id)?.cancel()
         automationSpendGuardPrompts.removeAll { $0.agentID == id }
@@ -8124,8 +8166,148 @@ final class AppModel: ObservableObject {
 
     var visibleConversationReadGeneration: UInt64 { autoReviewAccountGeneration }
 
+    private func conversationHasCurrentReadOwner(_ conversation: Conversation) -> Bool {
+        guard !agentMessagingAccountTransition, !deletedConversationIDs.contains(conversation.id) else { return false }
+        guard let binding = conversation.agentBinding else { return true }
+        return binding.accountID == (settings.accountScope ?? "local")
+            && agents.contains(where: { $0.id == binding.agentID && $0.archivedAt == nil })
+    }
+
+    func canMarkConversationRead(id: UUID) -> Bool {
+        conversations.first(where: { $0.id == id }).map(conversationHasCurrentReadOwner) ?? false
+    }
+
+    func conversationUnreadState(id: UUID) -> ConversationUnreadState? {
+        guard canMarkConversationRead(id: id) else { return nil }
+        return conversationUnreadStates[id]
+    }
+
+    private func acceptsConversationRead(_ context: ConversationReadContext) -> Bool {
+        guard context.lifetime.isCurrent, context.generation == autoReviewAccountGeneration,
+              context.accountID == (settings.accountScope ?? "local"),
+              conversationReadContexts[context.conversationID]?.id == context.id,
+              let conversation = conversations.first(where: { $0.id == context.conversationID }),
+              conversationHasCurrentReadOwner(conversation), conversation.agentBinding == context.binding else { return false }
+        guard let epoch = context.visibleEpoch else { return true }
+        return epoch == visibleConversationReadEpoch && canReadVisibleConversation && conversationWindowIsFocused
+            && route == .conversation(context.conversationID) && selection == context.conversationID
+            && !loadingMessageHistory.contains(context.conversationID)
+            && conversation.messages.last?.id == context.newestMessageID
+            && conversation.messages.last?.deliveryStatus == context.newestDeliveryStatus
+    }
+
+    private func invalidateConversationReadContexts() {
+        for context in Array(conversationReadContexts.values) where !acceptsConversationRead(context) {
+            context.lifetime.cancel()
+            conversationReadContexts.removeValue(forKey: context.conversationID)
+        }
+    }
+
+    func beginConversationRead(id: UUID, action: ConversationReadAction) -> ConversationReadContext? {
+        guard let conversation = conversations.first(where: { $0.id == id }),
+              conversationHasCurrentReadOwner(conversation) else { return nil }
+        let epoch: UInt64?
+        if case .viewed = action {
+            guard canReadVisibleConversation, conversationWindowIsFocused, selection == id,
+                  route == .conversation(id), !loadingMessageHistory.contains(id) else { return nil }
+            // Focus/arrival bookkeeping cannot revoke a queued human read or
+            // unread choice. Only another human action may supersede it.
+            if conversationReadContexts[id]?.visibleEpoch == nil, conversationReadContexts[id] != nil { return nil }
+            epoch = visibleConversationReadEpoch
+        } else {
+            if selection == id { cancelVisibleConversationRead() }
+            epoch = nil
+        }
+        conversationReadContexts[id]?.lifetime.cancel()
+        let context = ConversationReadContext(id: UUID(), conversationID: id, binding: conversation.agentBinding,
+            accountID: settings.accountScope ?? "local", generation: autoReviewAccountGeneration,
+            action: action, visibleEpoch: epoch, newestMessageID: conversation.messages.last?.id,
+            newestDeliveryStatus: conversation.messages.last?.deliveryStatus, lifetime: .init())
+        conversationReadContexts[id] = context
+        return context
+    }
+
+    func beginSidebarConversationActivation(id: UUID) -> ConversationReadContext? {
+        selectRoute(.conversation(id))
+        return beginConversationRead(id: id, action: .read)
+    }
+
+    @discardableResult
+    func recordSidebarConversationActivation(_ context: ConversationReadContext, at date: Date = Date()) async -> Bool {
+        guard await recordConversationRead(context, at: date) else { return false }
+        let epoch = visibleConversationReadEpoch
+        if let read = await beginVisibleConversationRead(id: context.conversationID, epoch: epoch) {
+            _ = await recordVisibleConversationRead(read, at: date)
+        }
+        return true
+    }
+
+    @discardableResult
+    func recordConversationRead(_ context: ConversationReadContext, at date: Date = Date()) async -> Bool {
+        defer {
+            context.lifetime.cancel()
+            if conversationReadContexts[context.conversationID]?.id == context.id {
+                conversationReadContexts.removeValue(forKey: context.conversationID)
+            }
+        }
+        guard acceptsConversationRead(context) else { return false }
+        do {
+            if let binding = context.binding {
+                guard let profile = await agentService?.profile(id: binding.agentID), profile.archivedAt == nil,
+                      acceptsConversationRead(context) else { return false }
+            }
+            let state = try await store.updateReadState(conversationID: context.conversationID,
+                action: context.action, at: date, expectedBinding: context.binding,
+                commit: { operation in try context.lifetime.commit(operation) })
+            guard acceptsConversationRead(context) else { return false }
+            publishConversationUnreadState(state, id: context.conversationID)
+            return true
+        } catch is CancellationError { return false }
+        catch {
+            if acceptsConversationRead(context) { errorMessage = FiliconLocalization.message(error.localizedDescription) }
+            return false
+        }
+    }
+
+    private func publishConversationUnreadState(_ state: ConversationUnreadState, id: UUID) {
+        conversationUnreadLoadEpochs[id, default: 0] &+= 1
+        conversationUnreadStates[id] = state
+    }
+
+    func reloadConversationUnreadStates() async {
+        let generation = autoReviewAccountGeneration
+        for id in conversations.map(\.id) {
+            guard generation == autoReviewAccountGeneration, !agentMessagingAccountTransition else { return }
+            await reloadConversationUnreadState(id: id)
+        }
+    }
+
+    func reloadConversationUnreadState(id: UUID) async {
+        guard let conversation = conversations.first(where: { $0.id == id }),
+              conversationHasCurrentReadOwner(conversation) else { conversationUnreadStates.removeValue(forKey: id); return }
+        let generation = autoReviewAccountGeneration, account = settings.accountScope ?? "local"
+        conversationUnreadLoadEpochs[id, default: 0] &+= 1
+        let epoch = conversationUnreadLoadEpochs[id]
+        do {
+            let state = try await store.unreadState(conversationID: id, expectedBinding: conversation.agentBinding)
+            guard generation == autoReviewAccountGeneration, account == (settings.accountScope ?? "local"),
+                  epoch == conversationUnreadLoadEpochs[id], canMarkConversationRead(id: id),
+                  conversations.first(where: { $0.id == id })?.agentBinding == conversation.agentBinding else { return }
+            conversationUnreadStates[id] = state
+        } catch is CancellationError { return }
+        catch {
+            guard generation == autoReviewAccountGeneration, account == (settings.accountScope ?? "local"),
+                  epoch == conversationUnreadLoadEpochs[id] else { return }
+            errorMessage = FiliconLocalization.message(error.localizedDescription)
+        }
+    }
+
     func cancelVisibleConversationRead() {
         visibleConversationReadEpoch &+= 1
+        for context in Array(conversationReadContexts.values) where context.visibleEpoch != nil {
+            context.lifetime.cancel()
+            conversationReadContexts.removeValue(forKey: context.conversationID)
+        }
         guard let read = visibleConversationReadContext else { return }
         read.lifetime.cancel()
         read.bindingLease?.close()
@@ -8190,6 +8372,13 @@ final class AppModel: ObservableObject {
               lease.conversationID == read.conversationID, lease.binding == read.binding,
               let automationService else { return false }
         do {
+            let state = try await store.updateReadState(conversationID: read.conversationID,
+                action: .viewed(preserveManualUnread: true), at: date, expectedBinding: read.binding,
+                commit: { operation in try read.lifetime.commit { try lease.withValidBinding(operation) } })
+            guard acceptsVisibleConversationRead(read) else { return false }
+            publishConversationUnreadState(state, id: read.conversationID)
+            // A focus callback is not the user's explicit Mark as read action.
+            if state.isManuallyUnread { return true }
             try await automationService.recordViewed(agentID: read.binding.agentID, at: date,
                 lifetime: read.lifetime, commit: { operation in try lease.withValidBinding(operation) })
             guard acceptsVisibleConversationRead(read) else { return false }
@@ -9126,6 +9315,10 @@ final class AppModel: ObservableObject {
         for lifetime in manualSidebarChanges.values { lifetime.close() }
         // Queued peer work is scoped to the account that approved the exchange.
         agentMessagingAccountTransition = true
+        for context in conversationReadContexts.values { context.lifetime.cancel() }
+        conversationReadContexts.removeAll()
+        conversationUnreadStates.removeAll()
+        conversationUnreadLoadEpochs.removeAll()
         workflowExecutionScope.suspend()
         cancelVisibleConversationRead()
         for mutation in automationSpendGuardLifetimes.values { mutation.lifetime.cancel() }

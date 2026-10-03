@@ -250,28 +250,32 @@ struct ContentView: View {
 
     private struct ConversationReadPresentation: Equatable {
         let id: UUID
-        let binding: DirectConversationAgentBinding
+        let binding: DirectConversationAgentBinding?
         let newestMessageID: UUID?
         let newestDeliveryStatus: MessageDeliveryStatus?
+        let lastActivityAt: Date?
         let generation: UInt64
     }
 
     private var conversationReadPresentation: ConversationReadPresentation? {
         guard model.canReadVisibleConversation, case .conversation(let id) = model.route,
               model.selection == id, !model.loadingMessageHistory.contains(id),
-              let chat = model.selectedConversation, let binding = chat.agentBinding,
-              model.agents.contains(where: { $0.id == binding.agentID && $0.archivedAt == nil }) else { return nil }
-        return .init(id: id, binding: binding, newestMessageID: chat.messages.last?.id,
-            newestDeliveryStatus: chat.messages.last?.deliveryStatus, generation: model.visibleConversationReadGeneration)
+              let chat = model.selectedConversation, model.canMarkConversationRead(id: id) else { return nil }
+        return .init(id: id, binding: chat.agentBinding, newestMessageID: chat.messages.last?.id,
+            newestDeliveryStatus: chat.messages.last?.deliveryStatus,
+            lastActivityAt: model.conversationUnreadState(id: id)?.lastActivityAt,
+            generation: model.visibleConversationReadGeneration)
     }
 
     private func conversationVisibilityChanged() {
         let focused = scenePhase == .active && AppWindowStateController.shared.isWorkspaceWindowFocused
         model.setConversationWindowFocused(focused)
         guard focused,
-              let presented = conversationReadPresentation else { return }
+              let presented = conversationReadPresentation,
+              let canonicalRead = model.beginConversationRead(id: presented.id, action: .viewed(preserveManualUnread: true)) else { return }
         let viewedAt = Date(), epoch = model.visibleConversationReadEpoch
         Task {
+            guard await model.recordConversationRead(canonicalRead, at: viewedAt) else { return }
             guard let read = await model.beginVisibleConversationRead(id: presented.id, epoch: epoch) else { return }
             await model.recordVisibleConversationRead(read, at: viewedAt)
         }

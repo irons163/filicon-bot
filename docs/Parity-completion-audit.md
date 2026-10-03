@@ -1,5 +1,19 @@
 # 完成驗收入口（2026-09-27）
 
+## 單獨聊天的 canonical 未讀畫面接線（2026-10-03）
+
+接續 `d1ced91` storage foundation：主工作區 focused／active／可見的當前單獨聊天會更新 canonical read state，不要求一定有 routine 或 agent binding；有 binding 時仍限當前帳號、未封存的 exact owner。manual unread 不因取得焦點或新訊息而清除，右鍵提供「標示為已讀／未讀」；人類明確點選側欄開啟聊天則走 read，對齊 reference `activateSession` 的 activation 與單純 focus 差別，不把任何程式呼叫 `selectRoute` 當成這份人工證據。側欄從 canonical count 顯示未讀數（大於 99 顯示 `99+`，可存取標籤仍保留完整數字）。七語提供動作與標籤；分頁載入、workspace reload 與訊息保存後重新查詢狀態，不按每個文字 delta 清除手動旗標。
+
+原始 native action 在排入 Task 前同步捕捉 account／generation／exact binding／可撤銷 lifetime；換帳號再回來、換綁定再換回來、移除／封存、舊 action replay 與較新的 action 可使其失效。automatic view 另限原 window／route／selection／epoch／最新訊息 ID 及 delivery status；新訊息到達同步撤銷舊 bound activity receipt，不等待下一次 SwiftUI render。讀取 projection 在同筆 SQLite transaction 重驗 binding，refresh epoch 避免舊 reload 覆蓋新手動操作。失敗不發布假零值、不把缺失 state 當已讀；查看或手動 read／unread 不回答、清除或恢復 spend guard 卡片／任務／權限。已手動未讀的聊天不再因 focus 更新 automation 的 viewed time。
+
+有效紅燈 `conversation-unread-ui-red.log` 重現 canonical count 未清除及 manual unread 誤更新 guard，共 3 issues；`conversation-unread-ui-arrival-race-red.log` 重現已解析的 bound receipt 在新訊息未 render 時仍清除未讀並更新 guard，共 3 issues；`conversation-unread-ui-human-action-race-red.log` 重現 focus 回呼撤銷排隊中的人類 read／unread，兩種情境共 7 issues。修正後 automatic view 不覆蓋待提交的人工動作。`conversation-unread-ui-focused-final-v2.log` 的單一失敗另屬 fixture 未註冊假 provider，造成不可用提示覆蓋聊天而正確拒絕 bound viewed time；只補 fixture 的離線模型目錄，不放寬 error-cover gate，不當成新的產品語意紅燈。
+
+最後聚焦 `conversation-unread-ui-focused-final-v3.log` exit 0：173 tests／24 suites（核心 69／15、App 102／8、Agents 2／1），涵蓋無 routine／unbound、explicit activation、手動旗標持久化、原始帳號／binding／arrival witness、replay、較新 action 與保存失敗。最後完整串行 `conversation-unread-ui-full.log` exit 0：135 XCTest＋1,784 Swift Testing（220 suites；核心 935／107、App 615／83）；兩項 opt-in live Codex 測試略過，不當成 live 驗收。七語各 1,789 keys／0 missing；七語×明暗共 14 個 224-point 窄版 render 通過 bounds／OCR 斷言，並逐張檢視徽章、spinner 與長標題／預覽截斷，沒有重疊；這不是真人點擊或 VoiceOver 驗收。
+
+`conversation-unread-ui-native.log` BUILD SUCCEEDED；`conversation-unread-ui-package.log` 四個執行檔、deep strict 簽章及 app／XPC entitlements 通過。隔離產物 `.build/validation/SpendUnreadUIPackage/Filicon.app` 為 Debug／離線 gate，不是 release／公證；未執行其 launch smoke。日誌與 PNG 僅保留於忽略的 `.build/validation/`。本批使用受控 AppModel 與離屏 render，不啟動或重啟使用者 App／Xcode、不改真實群組或聊天。
+
+本節只取代下面歷史「manual／automatic direct-chat UI 尚未接線」的部分。guard canonical unread counter、group read state、聊天 widget／host reminder、真人 UI／VoiceOver、雲端 session、完整 core 帳號資料遷移、live／release 及全 48 分類仍保留。unbound chats 的舊 core 資料仍不宣稱完整帳號隔離；聊天與 automation viewed time 是兩個 store，不宣稱跨 store 原子交易或任意 snapshot 的跨 process CAS。整體 partial 不上調，未 push。
+
 ## 聊天資料庫未讀／手動未讀基礎（2026-10-03）
 
 reference `a9f633e09d49a85829b8236331b9e21f7e612634` 的 `source/host/extensions/session/agent-db.ts` 保存 `lastActivityAt`／`lastViewedAt`／`isManuallyUnread`／`unreadCount`，`source/host/extensions/transcript/session-runtime.ts` 對 message／send-message／user-attachment 記錄活動，排除 `fromAgent` 的 incoming peer；`automation-spend-guard-runtime.ts` 使用這份 DB 狀態而非結果 wake 數。本批先補 native canonical storage，並未完成後兩者的 UI／guard 接線。

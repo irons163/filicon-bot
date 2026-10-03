@@ -7,7 +7,25 @@ import FiliconAgents
 import FiliconAutomations
 import FiliconAppServices
 import FiliconDomain
+import FiliconProviderKit
+import CSQLite
+import Vision
 @testable import Filicon
+
+private struct ConversationReadFixtureProvider: AIProvider {
+    var descriptor: ProviderDescriptor {
+        .init(id: "fixture", displayName: "Conversation read fixture", requiresAPIKey: false, supportsToolCalling: false)
+    }
+
+    func models() async throws -> [AIModel] { [.init(id: "fixture")] }
+
+    func stream(_ request: InferenceRequest) -> AsyncThrowingStream<InferenceEvent, Error> {
+        Issue.record("Conversation read fixtures must not perform inference.")
+        return AsyncThrowingStream { continuation in
+            continuation.finish(throwing: ProviderError.transport("No inference in the conversation read fixture"))
+        }
+    }
+}
 
 @Suite("Automation activity check app integration", .timeLimit(.minutes(1)))
 @MainActor struct AutomationSpendGuardAppTests {
@@ -28,6 +46,7 @@ import FiliconDomain
         }
         // No bootstrap, scheduler, external listeners or user app launch.
         let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+        await model.registry.register(ConversationReadFixtureProvider())
         await model.reloadWorkspaceData()
         await model.reloadAutomationDetails()
         return (root, model, owner, peer)
@@ -58,7 +77,7 @@ import FiliconDomain
         chat.agentBinding = .init(accountID: "local", agentID: owner.id)
         chat.messages = [.init(role: .assistant, text: "Isolated visible result", createdAt: now)]
         let store = ConversationStore(fileURL: root.appending(path: "conversations.json"))
-        try await store.upsert(chat, replacingLoadedMessageIDs: [], historyComplete: true)
+        try await store.upsert(chat, replacingLoadedMessageIDs: [], historyComplete: true, activityAt: now)
         model.conversations = [chat]
         model.selection = chat.id
         model.route = .conversation(chat.id)
@@ -85,6 +104,281 @@ import FiliconDomain
         expectNoDifference(spend.lastViewedAt, now.addingTimeInterval(60))
         expectNoDifference(spend.cardID, before.first { $0.agentID == owner.id }?.id)
         expectNoDifference(spend.guardPausedAutomationIDs, [owner.id])
+    }
+
+    @Test func aVisibleChatReadAlsoClearsTheCanonicalConversationUnreadCount() async throws {
+        let (root, model, _, _, chat) = try await visibleChatFixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = ConversationStore(fileURL: root.appending(path: "conversations.json"))
+        let before = try #require(try await store.unreadState(conversationID: chat.id))
+        expectNoDifference(before.unreadCount, 1)
+        let read = try #require(await model.beginVisibleConversationRead(id: chat.id))
+        let saved = await model.recordVisibleConversationRead(read, at: now.addingTimeInterval(60))
+        expectNoDifference(saved, true)
+        let after = try #require(try await store.unreadState(conversationID: chat.id))
+        expectNoDifference(after.unreadCount, 0)
+        expectNoDifference(after.lastViewedAt, now.addingTimeInterval(60))
+        expectNoDifference(after.isManuallyUnread, false)
+    }
+
+    @Test func aNewArrivalRevokesAnAlreadyResolvedBoundActivityReadBeforeTheViewUpdates() async throws {
+        let (root, model, _, _, chat) = try await visibleChatFixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = ConversationStore(fileURL: root.appending(path: "conversations.json"))
+        let before = try await store.unreadState(conversationID: chat.id), prompts = model.automationSpendGuardPrompts
+        let read = try #require(await model.beginVisibleConversationRead(id: chat.id))
+        model.conversations[0].messages.append(.init(role: .assistant, text: "An arrival not yet rendered", createdAt: now.addingTimeInterval(1)))
+        let saved = await model.recordVisibleConversationRead(read, at: now.addingTimeInterval(60))
+        expectNoDifference(saved, false)
+        let after = try await store.unreadState(conversationID: chat.id)
+        expectNoDifference(after, before)
+        expectNoDifference(model.automationSpendGuardPrompts, prompts)
+    }
+
+    @Test func aVisibleManualUnreadChatDoesNotClearItsFlagOrAdvanceTheActivityGuard() async throws {
+        let (root, model, _, _, chat) = try await visibleChatFixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = ConversationStore(fileURL: root.appending(path: "conversations.json"))
+        let before = try await store.updateReadState(conversationID: chat.id, action: .unread,
+            at: now.addingTimeInterval(20), expectedBinding: chat.agentBinding)
+        let prompts = model.automationSpendGuardPrompts, definitions = model.automations
+        let read = try #require(await model.beginVisibleConversationRead(id: chat.id))
+        let saved = await model.recordVisibleConversationRead(read, at: now.addingTimeInterval(60))
+        expectNoDifference(saved, true)
+        let after = try #require(try await store.unreadState(conversationID: chat.id))
+        expectNoDifference(after, before)
+        expectNoDifference(model.automationSpendGuardPrompts, prompts)
+        expectNoDifference(model.automations, definitions)
+    }
+
+    @Test func explicitChatReadAndUnreadPersistAndCannotAnswerOrResumeAnActivityCard() async throws {
+        let (root, model, _, _, chat) = try await visibleChatFixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let beforePrompts = model.automationSpendGuardPrompts, definitions = model.automations
+        let unread = try #require(model.beginConversationRead(id: chat.id, action: .unread))
+        let marked = await model.recordConversationRead(unread, at: now.addingTimeInterval(30))
+        expectNoDifference(marked, true)
+        let state = try #require(model.conversationUnreadState(id: chat.id))
+        expectNoDifference(state.isManuallyUnread, true)
+        expectNoDifference(state.unreadCount, 1)
+        let replay = await model.recordConversationRead(unread, at: now.addingTimeInterval(50))
+        expectNoDifference(replay, false)
+        let auto = try #require(model.beginConversationRead(id: chat.id, action: .viewed(preserveManualUnread: true)))
+        let viewed = await model.recordConversationRead(auto, at: now.addingTimeInterval(60))
+        expectNoDifference(viewed, true)
+        expectNoDifference(model.conversationUnreadState(id: chat.id), state)
+        let read = try #require(model.beginConversationRead(id: chat.id, action: .read))
+        let cleared = await model.recordConversationRead(read, at: now.addingTimeInterval(70))
+        expectNoDifference(cleared, true)
+        let final = try #require(model.conversationUnreadState(id: chat.id))
+        expectNoDifference(final.unreadCount, 0)
+        expectNoDifference(final.isManuallyUnread, false)
+        expectNoDifference(final.lastViewedAt, now.addingTimeInterval(70))
+        expectNoDifference(model.automationSpendGuardPrompts, beforePrompts)
+        expectNoDifference(model.automations, definitions)
+        let reopened = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+        reopened.conversations = [chat]
+        await reopened.reloadWorkspaceData()
+        expectNoDifference(reopened.conversationUnreadState(id: chat.id), final)
+    }
+
+    @Test(arguments: [true, false])
+    func aFocusCallbackCannotSupersedeAnAlreadyQueuedHumanReadAction(unread: Bool) async throws {
+        let (root, model, _, _, chat) = try await visibleChatFixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let human = try #require(model.beginConversationRead(id: chat.id, action: unread ? .unread : .read))
+        let automatic = model.beginConversationRead(id: chat.id, action: .viewed(preserveManualUnread: true))
+        expectNoDifference(automatic == nil, true)
+        expectNoDifference(human.lifetime.isCurrent, true)
+        let saved = await model.recordConversationRead(human, at: now.addingTimeInterval(60))
+        expectNoDifference(saved, true)
+        expectNoDifference(model.conversationUnreadState(id: chat.id)?.isManuallyUnread, unread)
+    }
+
+    @Test func explicitlyOpeningAChatFromTheSidebarClearsManualUnreadButKeepsItsActivityCard() async throws {
+        let (root, model, owner, peer, chat) = try await visibleChatFixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = ConversationStore(fileURL: root.appending(path: "conversations.json"))
+        _ = try await store.updateReadState(conversationID: chat.id, action: .unread,
+            at: now.addingTimeInterval(30), expectedBinding: chat.agentBinding)
+        let prompts = model.automationSpendGuardPrompts, definitions = model.automations
+        model.selectRoute(.agents)
+        let activation = try #require(model.beginSidebarConversationActivation(id: chat.id))
+        expectNoDifference(model.route, .conversation(chat.id))
+        let saved = await model.recordSidebarConversationActivation(activation, at: now.addingTimeInterval(60))
+        expectNoDifference(saved, true)
+        expectNoDifference(model.conversationUnreadState(id: chat.id)?.isManuallyUnread, false)
+        expectNoDifference(model.conversationUnreadState(id: chat.id)?.unreadCount, 0)
+        expectNoDifference(model.automations, definitions)
+        expectNoDifference(model.automationSpendGuardPrompts.map(\.id), prompts.map(\.id))
+        expectNoDifference(model.automationSpendGuardPrompts.first { $0.agentID == owner.id }?.state.lastViewedAt, now.addingTimeInterval(60))
+        expectNoDifference(model.automationSpendGuardPrompts.first { $0.agentID == peer.id }, prompts.first { $0.agentID == peer.id })
+    }
+
+    @Test(arguments: [true, false])
+    func nativeChatReadDoesNotRequireARoutineOrAnAgentBinding(bound: Bool) async throws {
+        let (root, model, _, _, original) = try await visibleChatFixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        var chat = Conversation(id: UUID(uuidString: "00000000-0000-0000-0000-000000000161")!,
+            title: "Native chat without a routine", providerID: "fixture", modelID: "fixture", updatedAt: now)
+        chat.agentBinding = bound ? original.agentBinding : nil
+        chat.messages = [.init(role: .assistant, text: "Native arrival", createdAt: now)]
+        try await ConversationStore(fileURL: root.appending(path: "conversations.json")).upsert(
+            chat, replacingLoadedMessageIDs: [], historyComplete: true, activityAt: now)
+        model.automations = []
+        model.conversations = [chat]; model.selection = chat.id; model.route = .conversation(chat.id)
+        await model.loadLatestMessages(for: chat.id)
+        await model.reloadConversationUnreadStates()
+        expectNoDifference(model.conversationUnreadState(id: chat.id)?.unreadCount, 1)
+        let read = try #require(model.beginConversationRead(id: chat.id, action: .viewed(preserveManualUnread: true)))
+        let saved = await model.recordConversationRead(read, at: now.addingTimeInterval(60))
+        expectNoDifference(saved, true)
+        expectNoDifference(model.conversationUnreadState(id: chat.id)?.unreadCount, 0)
+        expectNoDifference(model.errorMessage, nil)
+    }
+
+    @Test(arguments: ["account-cycle", "archive", "rebind", "rebind-cycle", "remove", "new-action", "durable-rebind"])
+    func aQueuedHumanReadCannotSurviveOwnerRevocationOrSupersedeANewAction(change: String) async throws {
+        let (root, model, owner, peer, chat) = try await visibleChatFixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = ConversationStore(fileURL: root.appending(path: "conversations.json"))
+        let read = try #require(model.beginConversationRead(id: chat.id, action: .read))
+        var current: ConversationReadContext?
+        switch change {
+        case "account-cycle":
+            await model.cancelAutoReviewApprovals(nextAccountID: "other-fixture-account")
+            model.settings.accountScope = "other-fixture-account"
+            await model.cancelAutoReviewApprovals(nextAccountID: "local")
+            model.settings.accountScope = "local"
+        case "archive": await model.archiveAgent(id: owner.id)
+        case "rebind": model.conversations[0].agentBinding = .init(accountID: "local", agentID: peer.id)
+        case "rebind-cycle":
+            model.conversations[0].agentBinding = .init(accountID: "local", agentID: peer.id)
+            model.conversations[0].agentBinding = chat.agentBinding
+        case "remove": model.conversations = []
+        case "new-action": current = try #require(model.beginConversationRead(id: chat.id, action: .unread))
+        case "durable-rebind":
+            var replacement = chat; replacement.agentBinding = .init(accountID: "local", agentID: peer.id)
+            try await store.upsert(replacement, replacingLoadedMessageIDs: [], historyComplete: true)
+        default: break
+        }
+        let before = try await store.unreadState(conversationID: chat.id)
+        let saved = await model.recordConversationRead(read, at: now.addingTimeInterval(60))
+        expectNoDifference(saved, false)
+        expectNoDifference(read.lifetime.isCurrent, false)
+        let after = try await store.unreadState(conversationID: chat.id)
+        expectNoDifference(after, before)
+        if let current {
+            expectNoDifference(current.lifetime.isCurrent, true)
+            let fresh = await model.recordConversationRead(current, at: now.addingTimeInterval(61))
+            expectNoDifference(fresh, true)
+            expectNoDifference(model.conversationUnreadState(id: chat.id)?.isManuallyUnread, true)
+        }
+    }
+
+    @Test(arguments: ["blur", "route", "selection", "covered", "new-message"])
+    func aQueuedAutomaticChatReadRequiresTheOriginalVisiblePresentation(change: String) async throws {
+        let (root, model, _, _, chat) = try await visibleChatFixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = ConversationStore(fileURL: root.appending(path: "conversations.json"))
+        let before = try await store.unreadState(conversationID: chat.id)
+        let read = try #require(model.beginConversationRead(id: chat.id, action: .viewed(preserveManualUnread: true)))
+        switch change {
+        case "blur": model.setConversationWindowFocused(false)
+        case "route": model.route = .groups
+        case "selection": model.selection = nil
+        case "covered": model.showingOnboarding = true
+        case "new-message": model.conversations[0].messages.append(.init(role: .assistant, text: "Not the captured visible arrival", createdAt: now.addingTimeInterval(1)))
+        default: break
+        }
+        let saved = await model.recordConversationRead(read, at: now.addingTimeInterval(60))
+        expectNoDifference(saved, false)
+        let after = try await store.unreadState(conversationID: chat.id)
+        expectNoDifference(after, before)
+    }
+
+    @Test func unreadProjectionRejectsForeignArchivedAndChangedCanonicalOwners() async throws {
+        let (root, model, owner, peer, chat) = try await visibleChatFixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        await model.reloadConversationUnreadStates()
+        expectNoDifference(model.conversationUnreadState(id: chat.id)?.unreadCount, 1)
+        model.conversations[0].agentBinding = .init(accountID: "foreign", agentID: owner.id)
+        expectNoDifference(model.conversationUnreadState(id: chat.id), nil)
+        expectNoDifference(model.beginConversationRead(id: chat.id, action: .read) == nil, true)
+        model.conversations[0].agentBinding = .init(accountID: "local", agentID: peer.id)
+        await model.reloadConversationUnreadState(id: chat.id)
+        expectNoDifference(model.conversationUnreadState(id: chat.id), nil)
+        model.conversations[0].agentBinding = chat.agentBinding
+        await model.reloadConversationUnreadState(id: chat.id)
+        expectNoDifference(model.conversationUnreadState(id: chat.id)?.unreadCount, 1)
+        await model.archiveAgent(id: owner.id)
+        expectNoDifference(model.conversationUnreadState(id: chat.id), nil)
+    }
+
+    @Test func unreadLabelsAreLocalizedWithoutChangingTheCount() {
+        let labels = ["en": "Mark as unread", "zh-Hant": "標示為未讀", "zh-Hans": "标记为未读",
+            "fr": "Marquer comme non lu", "es": "Marcar como no leído", "ja": "未読にする", "ko": "읽지 않음으로 표시"]
+        for (language, label) in labels {
+            expectNoDifference(FiliconLocalization.string("Mark as unread", language: language), label)
+            let message = FiliconLocalization.render(.init(key: "Unread messages: {0}", arguments: ["123"]), language: language)
+            #expect(message.contains("123") && !message.contains("{0}"))
+            expectNoDifference(message == "Unread messages: 123", language == "en")
+        }
+    }
+
+    @Test func unreadStorageFailureDoesNotPublishZeroOrReadTheAutomationOwner() async throws {
+        let (root, model, _, _, chat) = try await visibleChatFixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        await model.reloadConversationUnreadStates()
+        let before = model.conversationUnreadState(id: chat.id), prompts = model.automationSpendGuardPrompts
+        var database: OpaquePointer?
+        try #require(sqlite3_open(root.appending(path: "conversations.sqlite3").path, &database) == SQLITE_OK)
+        defer { sqlite3_close(database) }
+        try #require(sqlite3_exec(database, "DELETE FROM conversation_read_state", nil, nil, nil) == SQLITE_OK)
+        let read = try #require(model.beginConversationRead(id: chat.id, action: .read))
+        let saved = await model.recordConversationRead(read, at: now.addingTimeInterval(60))
+        expectNoDifference(saved, false)
+        expectNoDifference(model.conversationUnreadState(id: chat.id), before)
+        expectNoDifference(model.automationSpendGuardPrompts, prompts)
+        #expect(model.errorMessage != nil)
+    }
+
+    @Test(.serialized, arguments: ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"])
+    func unreadBadgesRenderAtNarrowSidebarWidthInBothAppearances(language: String) async throws {
+        let output = ProcessInfo.processInfo.environment["FILICON_UI_REVIEW_OUTPUT"].map { URL(fileURLWithPath: $0) }
+        for dark in [false, true] {
+            try await withUIRenderTurn(language: language) {
+                let host = NSHostingView(rootView: VStack(spacing: 3) {
+                    ChatListRow(title: "Long fixture conversation title for a narrow sidebar", subtitle: "Long preview retained beside the badge",
+                        date: now, selected: true, unreadCount: 1) { Image(systemName: "person") }
+                    ChatListRow(title: "A second long fixture title", subtitle: "An active conversation with a large count",
+                        isWorking: true, unreadCount: 123) { Image(systemName: "person") }
+                }.padding(8).frame(width: 224, height: 160, alignment: .top)
+                    .background(FiliconTheme.sidebar)
+                    .environment(\.locale, Locale(identifier: language)).environment(\.colorScheme, dark ? .dark : .light))
+                host.sizingOptions = []
+                host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+                host.frame = .init(x: 0, y: 0, width: 224, height: 160)
+                let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+                window.appearance = host.appearance; window.contentView = host
+                defer { window.contentView = nil }
+                host.layoutSubtreeIfNeeded(); host.displayIfNeeded()
+                #expect(host.fittingSize.width <= 224 && host.fittingSize.height <= 160)
+                let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                host.appearance?.performAsCurrentDrawingAppearance { host.cacheDisplay(in: host.bounds, to: bitmap) }
+                let image = try #require(bitmap.cgImage)
+                let recognition = VNRecognizeTextRequest()
+                recognition.recognitionLevel = .accurate
+                try VNImageRequestHandler(cgImage: image).perform([recognition])
+                let text = recognition.results?.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ") ?? ""
+                #expect(text.contains("99+"), "Large unread count must remain visible: \(text)")
+                let png = try #require(bitmap.representation(using: .png, properties: [:]))
+                if let output {
+                    try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+                    try png.write(to: output.appending(path: "unread-sidebar-\(language)-\(dark ? "dark" : "light").png"))
+                }
+            }
+        }
     }
 
     @Test(arguments: ["route", "selection", "blur", "rebind", "removed-projection", "account-cycle", "archive", "covered"])

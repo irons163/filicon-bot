@@ -1798,3 +1798,5 @@
 "Keep running or Resume postpones the next activity check for 30 days; it does not run missed tasks." = "Continuar o Reanudar aplaza la próxima comprobación de actividad 30 días; no ejecuta las tareas omitidas.";
 "Never ask disables this check only for this agent." = "No volver a preguntar desactiva esta comprobación solo para este agente.";
 "Mark as read" = "Marcar como leído";
+"Mark as unread" = "Marcar como no leído";
+"Unread messages: {0}" = "Mensajes sin leer: {0}";

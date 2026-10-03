@@ -71,8 +71,19 @@ rejected/missing state and conservatively leaves that chat needing attention.
 Valid read markers and deleted-message receipts survive salvage; irrecoverable
 receipt IDs cannot be reconstructed from absent message rows.
 
-This storage layer is not yet wired to automatic chat viewing, manual read/unread
-UI, or the automation guard's canonical unread counter. Those integration steps,
-group-chat read state, chat widgets/host reminders and live UI/release validation
-remain separate. A read-state transaction does not provide a cross-process CAS
-for arbitrary conversation snapshots.
+Native direct-chat viewing now records read state only for the current focused,
+visible presentation. Manual unread survives focus/arrival callbacks until an
+explicit Mark as read action or a human sidebar activation. The sidebar projects
+canonical counts and offers both manual actions. A focus callback cannot supersede
+an already queued human choice. An action captures its account, exact binding
+and host lifetime before its Task is queued; account cycles, rebinding, deletion and
+archival revoke it. Automatic callbacks also require the original presentation
+epoch and newest-message witness. Loading/persistence refreshes canonical state;
+stale refreshes cannot overwrite a newer action's projection. A failed read-state
+write does not publish a zero unread count or answer an automation activity card.
+
+The automation guard's canonical unread counter, group-chat read state, chat
+widgets/host reminders and live UI/release validation remain separate. Chat and
+automation timestamps reside in separate stores, not one cross-store transaction.
+A read-state transaction does not provide a cross-process CAS for arbitrary
+conversation snapshots or complete account isolation of legacy unbound chats.

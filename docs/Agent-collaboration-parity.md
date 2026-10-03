@@ -1,5 +1,9 @@
 # 協作能力核對紀錄（更新至 2026-10-03）
 
+## 單獨聊天未讀／手動未讀的 native UI（2026-10-03）
+
+canonical count 現在顯示於側欄，右鍵提供七語 read／unread 動作；focused／active／visible 的當前 native direct chat 自動 viewed，manual unread 保留，無 routine 或 unbound chat 也可使用。人類側欄開啟聊天則明確 read，與單純 focus 不同；focus 不可取代已排隊的人工選擇。native action 在 Task 前擷取身分，account generation、exact binding 及 lifetime 保護保存；automatic view 再核對原 epoch／最新訊息 witness。換帳號或換綁定再回來、新 arrival、失焦、封存、刪除與新 action 不讓舊工作復活；read-state 故障不發布假零，不回答或恢復 automation card。這局部取代下面 UI 未接線的歷史，guard canonical unread counter、group state、widget／reminder、完整 core account migration、真人 UI／VoiceOver、雲端／live／release／全 48 分類仍保留。最後 source 的驗收與 cross-store／cross-process 邊界見 [完成驗收入口](Parity-completion-audit.md)。整體 partial 不上調；未 push、未重啟使用者 App／Xcode、未改真實資料。
+
 ## 聊天未讀狀態先落在 canonical DB（2026-10-03）
 
 新增 schema 17 每單獨聊天的活動／查看時間、manual unread 與 count；read marker 與 content snapshot 分離，message ID receipts 跟正文同筆保存，重存、編輯或刪除後還原不重計。incoming peer 不等同使用者活動；該聊天 exact binding 的空正文 secret-request 發表可計入，無憑證值。歷史 import／migration seed 已發表 ID、不創造整批未讀，尚未完成 draft 後續完成可計入。換綁定不帶走舊 owner 的狀態，read action 在最終 transaction 重驗 exact owner；這是 bookkeeping，不回答 spend guard、不放寬任何工具核准。

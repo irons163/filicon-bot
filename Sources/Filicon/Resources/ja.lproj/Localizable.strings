@@ -1798,3 +1798,5 @@
 "Keep running or Resume postpones the next activity check for 30 days; it does not run missed tasks." = "「実行を続ける」または「再開」は次の活動確認を30日後に延期します。実行されなかったタスクを遡って実行することはありません。";
 "Never ask disables this check only for this agent." = "「今後は確認しない」は、このエージェントの活動確認のみを無効にします。";
 "Mark as read" = "既読にする";
+"Mark as unread" = "未読にする";
+"Unread messages: {0}" = "未読メッセージ：{0}";

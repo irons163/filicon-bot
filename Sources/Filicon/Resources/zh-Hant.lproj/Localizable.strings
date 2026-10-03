@@ -1798,3 +1798,5 @@
 "Keep running or Resume postpones the next activity check for 30 days; it does not run missed tasks." = "「繼續執行」或「恢復」會將下次活動提醒延後 30 天；不會補跑錯過的任務。";
 "Never ask disables this check only for this agent." = "「不再詢問」只會關閉這位代理人的活動提醒。";
 "Mark as read" = "標示為已讀";
+"Mark as unread" = "標示為未讀";
+"Unread messages: {0}" = "未讀訊息：{0}";

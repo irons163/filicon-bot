@@ -222,6 +222,7 @@ struct ChatListRow<Avatar: View>: View {
     var selected = false
     var isWorking = false
     var needsFolderSelection = false
+    var unreadCount = 0
     @ViewBuilder var avatar: Avatar
 
     var body: some View {
@@ -245,12 +246,30 @@ struct ChatListRow<Avatar: View>: View {
                     } else if isWorking {
                         ProgressView().controlSize(.mini)
                     }
+                    if unreadCount > 0 { ConversationUnreadBadge(count: unreadCount) }
                 }
             }
         }
         .padding(.horizontal, 10).padding(.vertical, 10)
         .background(selected ? FiliconTheme.surfaceRaised : .clear, in: RoundedRectangle(cornerRadius: 10))
         .contentShape(Rectangle())
+    }
+}
+
+struct ConversationUnreadBadge: View {
+    @Environment(\.locale) private var locale
+    let count: Int
+    private var label: String {
+        FiliconLocalization.render(.init(key: "Unread messages: {0}", arguments: [String(count)]), language: locale.identifier)
+    }
+    var body: some View {
+        Text(count > 99 ? "99+" : String(count))
+            .font(.system(size: 10, weight: .semibold)).monospacedDigit()
+            .foregroundStyle(FiliconTheme.textPrimary)
+            .padding(.horizontal, 5).padding(.vertical, 2)
+            .background(FiliconTheme.surfaceRaised, in: Capsule())
+            .fixedSize().help(label).accessibilityLabel(label)
+            .accessibilityIdentifier("conversation-unread-count")
     }
 }
 
@@ -263,17 +282,23 @@ struct ConversationSidebarRow: View {
 
     var body: some View {
         let _ = locale.identifier
-        Button { model.selectRoute(.conversation(conversation.id)) } label: {
+        Button(action: conversationButtonTapped) {
             ChatListRow(
                 title: conversation.title == "New conversation" ? l10n("New Conversation") : conversation.title,
                 subtitle: conversation.messages.last?.text ?? "",
                 date: conversation.messages.last?.createdAt,
                 selected: model.route == .conversation(conversation.id),
-                isWorking: model.isConversationWorking(conversation.id)
+                isWorking: model.isConversationWorking(conversation.id),
+                unreadCount: model.conversationUnreadState(id: conversation.id)?.unreadCount ?? 0
             ) { PetAvatarImage(pet: .codex).padding(1) }
         }
         .buttonStyle(.plain)
         .contextMenu {
+            Button(l10n("Mark as read")) { markReadButtonTapped(.read) }
+                .disabled(!model.canMarkConversationRead(id: conversation.id))
+            Button(l10n("Mark as unread")) { markReadButtonTapped(.unread) }
+                .disabled(!model.canMarkConversationRead(id: conversation.id))
+            Divider()
             Button(l10n("Rename…"), action: beginRename)
             Button(l10n("Hide")) { model.setConversationHidden(id: conversation.id, hidden: true) }
             Divider()
@@ -294,6 +319,16 @@ struct ConversationSidebarRow: View {
 
     private func beginRename() { title = conversation.title; showingRename = true }
     private func rename() { model.renameConversation(id: conversation.id, title: title); showingRename = false }
+    private func markReadButtonTapped(_ action: ConversationReadAction) {
+        guard let context = model.beginConversationRead(id: conversation.id, action: action) else { return }
+        let at = Date()
+        Task { await model.recordConversationRead(context, at: at) }
+    }
+    private func conversationButtonTapped() {
+        guard let context = model.beginSidebarConversationActivation(id: conversation.id) else { return }
+        let at = Date()
+        Task { await model.recordSidebarConversationActivation(context, at: at) }
+    }
 }
 
 struct GroupAvatar: View {

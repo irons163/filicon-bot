@@ -97,6 +97,12 @@ public actor ConversationStore {
         return try await repository.unreadState(conversationID: conversationID)
     }
 
+    public func unreadState(conversationID: UUID, expectedBinding: DirectConversationAgentBinding?) async throws -> ConversationUnreadState? {
+        let repository = try resolveRepository()
+        try await importLegacyIfNeeded(into: repository)
+        return try await repository.unreadState(conversationID: conversationID, expectedBinding: expectedBinding)
+    }
+
     @discardableResult
     public func updateReadState(conversationID: UUID, action: ConversationReadAction, at: Date,
                                expectedBinding: DirectConversationAgentBinding?,

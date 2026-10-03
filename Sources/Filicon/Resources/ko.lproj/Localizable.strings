@@ -1798,3 +1798,5 @@
 "Keep running or Resume postpones the next activity check for 30 days; it does not run missed tasks." = "계속 실행 또는 재개를 선택하면 다음 활동 확인이 30일 뒤로 미뤄지며, 놓친 작업은 실행하지 않습니다.";
 "Never ask disables this check only for this agent." = "다시 묻지 않기는 이 에이전트의 활동 확인만 비활성화합니다.";
 "Mark as read" = "읽음으로 표시";
+"Mark as unread" = "읽지 않음으로 표시";
+"Unread messages: {0}" = "읽지 않은 메시지: {0}";

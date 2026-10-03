@@ -8,6 +8,15 @@ extension ConversationRepository {
         return try requireUnreadState(conversationID)
     }
 
+    public func unreadState(conversationID: UUID, expectedBinding: DirectConversationAgentBinding?) throws -> ConversationUnreadState? {
+        try database.transaction("load owned conversation read state") {
+            let owner = try unreadBinding(conversationID)
+            guard owner.exists else { return nil }
+            guard owner.binding == expectedBinding else { throw CancellationError() }
+            return try requireUnreadState(conversationID)
+        }
+    }
+
     /// The exact binding (including an explicitly unbound chat) is rechecked
     /// inside the final transaction. A caller may additionally fence its UI life.
     @discardableResult
