@@ -490,17 +490,20 @@ public actor AutomationService {
     }
 
     public func recordViewed(agentID: UUID, at now: Date = Date(),
-                             lifetime: AutomationSpendGuardLifetime = .init()) throws {
+                             lifetime: AutomationSpendGuardLifetime = .init(),
+                             commit: @Sendable (_ operation: () throws -> Void) throws -> Void = { try $0() }) throws {
         try lifetime.commit {
-            guard state.spendGuards[agentID] != nil else { return }
-            var candidate = state
-            candidate.spendGuards[agentID]?.lastViewedAt = now
-            candidate.spendGuards[agentID]?.unreadCount = 0
-            candidate.spendGuards[agentID]?.firesSinceViewed = 0
-            // Viewing results is not an answer. Keep the host-issued card and
-            // pause ownership so that the user can still choose an outcome.
-            try Self.save(candidate, to: storeURL)
-            state = candidate
+            try commit {
+                guard let spend = state.spendGuards[agentID], now > spend.lastViewedAt else { return }
+                var candidate = state
+                candidate.spendGuards[agentID]?.lastViewedAt = now
+                candidate.spendGuards[agentID]?.unreadCount = 0
+                candidate.spendGuards[agentID]?.firesSinceViewed = 0
+                // Viewing results is not an answer. Keep the host-issued card and
+                // pause ownership so that the user can still choose an outcome.
+                try Self.save(candidate, to: storeURL)
+                state = candidate
+            }
         }
     }
 

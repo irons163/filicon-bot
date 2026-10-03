@@ -263,6 +263,35 @@ struct AutomationSpendGuardParityTests {
         expectNoDifference(answered.cardID, nil)
     }
 
+    @Test func aDelayedViewReceiptCannotMoveTheOwnersReadTimeBackwards() async throws {
+        let (root, service, routine, _) = try await fixture(); defer { try? FileManager.default.removeItem(at: root) }
+        try await nudge(service, routine: routine)
+        try await service.recordViewed(agentID: owner, at: nudgeAt.addingTimeInterval(60))
+        let current = await service.spendGuardState(agentID: owner)
+        try await service.recordViewed(agentID: owner, at: now)
+        try await service.recordViewed(agentID: owner, at: current.lastViewedAt)
+        let after = await service.spendGuardState(agentID: owner)
+        expectNoDifference(after, current)
+        let reopened = try AutomationService(storeURL: root.appending(path: "automations.json"))
+        let durable = await reopened.spendGuardState(agentID: owner)
+        expectNoDifference(durable, current)
+    }
+
+    @Test func aRejectedViewCommitCannotPublishOrPersistReadCounters() async throws {
+        let (root, service, routine, _) = try await fixture(); defer { try? FileManager.default.removeItem(at: root) }
+        try await nudge(service, routine: routine)
+        let before = await service.spendGuardStates(), definitions = await service.list()
+        await #expect(throws: CancellationError.self) {
+            try await service.recordViewed(agentID: owner, at: nudgeAt.addingTimeInterval(60),
+                commit: { _ in throw CancellationError() })
+        }
+        let after = await service.spendGuardStates(), afterDefinitions = await service.list()
+        expectNoDifference(after, before); expectNoDifference(afterDefinitions, definitions)
+        let reopened = try AutomationService(storeURL: root.appending(path: "automations.json"))
+        let durable = await reopened.spendGuardStates()
+        expectNoDifference(durable, before)
+    }
+
     @Test func staleWrongOwnerAndReplayedCardsCannotMutateState() async throws {
         let (root, service, _, _) = try await fixture(); defer { try? FileManager.default.removeItem(at: root) }
         _ = try await addPeer(to: service)

@@ -68,10 +68,35 @@ struct AutomationAgentReadContext: Hashable, Sendable {
     let generation: UInt64
 }
 
+/// A native visible-chat receipt, not a model input or a durable permission.
+struct VisibleConversationReadContext: Sendable {
+    let id: UUID
+    let conversationID: UUID
+    let binding: DirectConversationAgentBinding
+    let generation: UInt64
+    let lifetime: AutomationSpendGuardLifetime
+    let bindingLease: ConversationBindingLease?
+}
+
 @MainActor
 final class AppModel: ObservableObject {
-    @Published var conversations: [Conversation] = []
-    @Published var selection: UUID?
+    @Published var conversations: [Conversation] = [] {
+        didSet {
+            // Invalidate queued callbacks before they have a receipt too. A
+            // rebind-and-restore must not revive the original visible owner.
+            if let id = selection,
+               oldValue.first(where: { $0.id == id })?.agentBinding
+                != conversations.first(where: { $0.id == id })?.agentBinding {
+                cancelVisibleConversationRead()
+            } else if let read = visibleConversationReadContext,
+               conversations.first(where: { $0.id == read.conversationID })?.agentBinding != read.binding {
+                cancelVisibleConversationRead()
+            }
+        }
+    }
+    @Published var selection: UUID? {
+        didSet { if selection != oldValue { cancelVisibleConversationRead() } }
+    }
     @Published var descriptors: [ProviderDescriptor] = []
     @Published var availableModels: [AIModel] = []
     @Published private(set) var isLoadingModels = false
@@ -97,7 +122,9 @@ final class AppModel: ObservableObject {
     @Published private(set) var rootConnection = WorkspaceRootConnection()
     @Published private(set) var quotaUsage: StorageQuotaUsage?
     @Published var running: Set<UUID> = []
-    @Published var route: WorkspaceRoute? = .search
+    @Published var route: WorkspaceRoute? = .search {
+        didSet { if route != oldValue { cancelVisibleConversationRead() } }
+    }
     @Published private(set) var navigationHistory = WorkspaceNavigationHistory()
     @Published var searchQuery = "" {
         didSet { scheduleGlobalSearch() }
@@ -138,6 +165,9 @@ final class AppModel: ObservableObject {
     @Published private(set) var automationSpendGuardPrompts: [AutomationSpendGuardPrompt] = []
     @Published private(set) var answeringAutomationSpendGuardIDs: Set<UUID> = []
     private var automationSpendGuardLifetimes: [UUID: (agentID: UUID, lifetime: AutomationSpendGuardLifetime)] = [:]
+    private var visibleConversationReadContext: VisibleConversationReadContext?
+    private var conversationWindowIsFocused = false
+    private(set) var visibleConversationReadEpoch: UInt64 = 0
     private var automationSpendGuardContextLifetimes: [UUID: AutomationSpendGuardLifetime] = [:]
     private var automationSpendGuardContextOwners: [UUID: UUID] = [:]
     @Published var automationIngressRoutes: [AutomationIngressRoute] = []
@@ -8086,6 +8116,92 @@ final class AppModel: ObservableObject {
         }
     }
 
+    var canReadVisibleConversation: Bool {
+        !agentMessagingAccountTransition && !showingOnboarding && !showingFeedback && !isUpdateRequired
+            && !(accountEntitlement.map { [.paymentRequired, .unavailable].contains($0.state) } ?? false)
+            && pendingToolApprovals.isEmpty && errorMessage == nil
+    }
+
+    var visibleConversationReadGeneration: UInt64 { autoReviewAccountGeneration }
+
+    func cancelVisibleConversationRead() {
+        visibleConversationReadEpoch &+= 1
+        guard let read = visibleConversationReadContext else { return }
+        read.lifetime.cancel()
+        read.bindingLease?.close()
+        automationSpendGuardLifetimes.removeValue(forKey: read.id)
+        visibleConversationReadContext = nil
+    }
+
+    func setConversationWindowFocused(_ focused: Bool) {
+        conversationWindowIsFocused = focused
+        cancelVisibleConversationRead()
+    }
+
+    private func acceptsVisibleConversationRead(_ read: VisibleConversationReadContext) -> Bool {
+        canReadVisibleConversation && conversationWindowIsFocused && read.lifetime.isCurrent
+            && read.generation == autoReviewAccountGeneration
+            && read.binding.accountID == (settings.accountScope ?? "local")
+            && route == .conversation(read.conversationID) && selection == read.conversationID
+            && !loadingMessageHistory.contains(read.conversationID)
+            && !deletedConversationIDs.contains(read.conversationID)
+            && conversations.first(where: { $0.id == read.conversationID })?.agentBinding == read.binding
+            && agents.contains(where: { $0.id == read.binding.agentID && $0.archivedAt == nil })
+            && visibleConversationReadContext?.id == read.id
+    }
+
+    func beginVisibleConversationRead(id: UUID, epoch: UInt64? = nil) async -> VisibleConversationReadContext? {
+        guard canReadVisibleConversation, conversationWindowIsFocused,
+              epoch == nil || epoch == visibleConversationReadEpoch,
+              route == .conversation(id), selection == id,
+              !loadingMessageHistory.contains(id), let agentService, automationService != nil,
+              let binding = conversations.first(where: { $0.id == id })?.agentBinding,
+              binding.accountID == (settings.accountScope ?? "local"),
+              automations.contains(where: { $0.agentID == binding.agentID }) else { return nil }
+        cancelVisibleConversationRead()
+        let pending = VisibleConversationReadContext(id: UUID(), conversationID: id, binding: binding,
+            generation: autoReviewAccountGeneration, lifetime: .init(), bindingLease: nil)
+        visibleConversationReadContext = pending
+        automationSpendGuardLifetimes[pending.id] = (binding.agentID, pending.lifetime)
+        do {
+            let lease = try await store.leaseUniqueBinding(accountID: binding.accountID, agentID: binding.agentID, conversationID: id)
+            guard acceptsVisibleConversationRead(pending),
+                  let profile = await agentService.profile(id: binding.agentID), profile.archivedAt == nil,
+                  acceptsVisibleConversationRead(pending), lease.isActive else {
+                lease.close(); throw CancellationError()
+            }
+            let ready = VisibleConversationReadContext(id: pending.id, conversationID: id, binding: binding,
+                generation: pending.generation, lifetime: pending.lifetime, bindingLease: lease)
+            visibleConversationReadContext = ready
+            return ready
+        } catch {
+            if visibleConversationReadContext?.id == pending.id { cancelVisibleConversationRead() }
+            return nil
+        }
+    }
+
+    @discardableResult
+    func recordVisibleConversationRead(_ read: VisibleConversationReadContext, at date: Date = Date()) async -> Bool {
+        defer {
+            if visibleConversationReadContext?.id == read.id { cancelVisibleConversationRead() }
+            else { read.lifetime.cancel(); read.bindingLease?.close() }
+        }
+        guard acceptsVisibleConversationRead(read), let lease = read.bindingLease,
+              lease.conversationID == read.conversationID, lease.binding == read.binding,
+              let automationService else { return false }
+        do {
+            try await automationService.recordViewed(agentID: read.binding.agentID, at: date,
+                lifetime: read.lifetime, commit: { operation in try lease.withValidBinding(operation) })
+            guard acceptsVisibleConversationRead(read) else { return false }
+            await reloadAutomationDetails()
+            return acceptsVisibleConversationRead(read)
+        } catch is CancellationError { return false }
+        catch {
+            if acceptsVisibleConversationRead(read) { errorMessage = FiliconLocalization.message(error.localizedDescription) }
+            return false
+        }
+    }
+
     /// Explicitly reading one owner's results must not clear another owner's
     /// counters, nor dismiss either owner's unanswered activity card.
     func beginAutomationAgentRead(id: UUID) -> AutomationAgentReadContext? {
@@ -9011,6 +9127,7 @@ final class AppModel: ObservableObject {
         // Queued peer work is scoped to the account that approved the exchange.
         agentMessagingAccountTransition = true
         workflowExecutionScope.suspend()
+        cancelVisibleConversationRead()
         for mutation in automationSpendGuardLifetimes.values { mutation.lifetime.cancel() }
         for lifetime in automationSpendGuardContextLifetimes.values { lifetime.cancel() }
         automationSpendGuardContextLifetimes = [:]

@@ -5,6 +5,7 @@ import FiliconSettings
 @MainActor
 final class AppWindowStateController {
     static let shared = AppWindowStateController()
+    static let workspaceWindowAttachedNotification = Notification.Name("FiliconWorkspaceWindowAttached")
 
     private var attachedWindow: NSWindow?
     private var observers: [NSObjectProtocol] = []
@@ -13,10 +14,17 @@ final class AppWindowStateController {
 
     private init() {}
 
+    var isWorkspaceWindowFocused: Bool {
+        guard let window = attachedWindow else { return false }
+        return NSApplication.shared.isActive && window.isKeyWindow && window.isVisible
+            && !window.isMiniaturized && window.occlusionState.contains(.visible)
+    }
+
     func attach(_ window: NSWindow) {
         guard attachedWindow !== window else { return }
         detach()
         attachedWindow = window
+        NotificationCenter.default.post(name: Self.workspaceWindowAttachedNotification, object: window)
         let workAreas = NSScreen.screens.map { screen -> WindowBounds in
             let frame = screen.visibleFrame
             return WindowBounds(

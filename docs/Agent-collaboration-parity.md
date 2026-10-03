@@ -1,5 +1,11 @@
 # 協作能力核對紀錄（更新至 2026-10-03）
 
+## 綁定單獨聊天查看更新該 owner 的活動時間（2026-10-03）
+
+主工作區的 focused／active／可見 bound direct chat 現在解析 canonical 唯一 owner，最新訊息載入／完成與聊天切換會更新該 owner 的 automation 查看時間；不以名稱、一般設定視窗焦點或共用工作區當成所有人已讀。queued epoch、account generation、可撤銷 lifetime 及同 repository binding lease 拒絕失焦、切換、封存、歧義、換綁定再換回來及晚到工作。舊 receipt 不取消新 receipt，舊日期不覆蓋新日期；保存拒絕不提前發布狀態。
+
+查看不回答 spend guard，不清除未回答卡片／pause ownership，不恢復任務或改 grant。有效時間倒退與 queued rebind 紅燈保留，最後聚焦 43 tests／3 suites 通過；最後 source 完整串行 `spend-guard-chat-view-full-post-rebind.log` exit 0：135 XCTest＋1,753 Swift Testing（219 suites，核心 917／106、App 602／83，兩項 opt-in live Codex 測試略過），原生建置／四執行檔封裝簽章、七語各 1,787 keys／0 missing 與 28 個窄版明暗 render 通過。來源與受控／原生驗收範圍見 [完成驗收入口的「綁定單獨聊天的可見活動時間」](Parity-completion-audit.md)。這只取代先前「對話查看完全未接線」的部分；真正 transcript unread／manual-unread、聊天 widget／host reminder、雲端 session、完整帳號資料遷移、真人 UI／VoiceOver、live／release 與全 48 分類仍保留。pending wakes 仍是近似 signal，整體 partial 不上調。未 push、未重啟使用者 App／Xcode、未改真實資料。
+
 ## 群組 routine 不再受單人活動保護暫停（2026-10-03）
 
 對齊 reference `!isGroup && backgroundTrigger`：群組豁免來自當前 canonical 人類審核、account、任務 digest 與群組／成員，不是模型 mode 欄位。captured binding ID／host lifetime 隨 batch 送到 session executor，撤銷、帳號切換或換綁定不能讓舊事件轉往別處或降級 pure text；同 owner 的單人排程仍受原保護，真正人工停用及工具權限不放寬。group wakes 新增可向後讀取的 optional 排程關聯，40 次群組結果即使只留 20 筆 run history，也不誤觸單人提醒；無法歸屬的舊資料維持保守 signal。

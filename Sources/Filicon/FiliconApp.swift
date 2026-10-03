@@ -228,6 +228,7 @@ struct ContentView: View {
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { model.systemNotifications.markAllViewed() }
+            conversationVisibilityChanged()
             Task {
                 await model.setAutomationRuntimeActive(phase == .active)
                 model.setWorkflowRuntimeActive(phase == .active)
@@ -235,6 +236,44 @@ struct ContentView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
             Task { await model.shutdownComputerIntegration() }
+        }
+        .onAppear { conversationVisibilityChanged() }
+        .onDisappear { model.setConversationWindowFocused(false) }
+        .onChange(of: conversationReadPresentation) { _, _ in conversationVisibilityChanged() }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in conversationVisibilityChanged() }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didResignKeyNotification)) { _ in conversationVisibilityChanged() }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didChangeOcclusionStateNotification)) { _ in conversationVisibilityChanged() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in conversationVisibilityChanged() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in conversationVisibilityChanged() }
+        .onReceive(NotificationCenter.default.publisher(for: AppWindowStateController.workspaceWindowAttachedNotification)) { _ in conversationVisibilityChanged() }
+    }
+
+    private struct ConversationReadPresentation: Equatable {
+        let id: UUID
+        let binding: DirectConversationAgentBinding
+        let newestMessageID: UUID?
+        let newestDeliveryStatus: MessageDeliveryStatus?
+        let generation: UInt64
+    }
+
+    private var conversationReadPresentation: ConversationReadPresentation? {
+        guard model.canReadVisibleConversation, case .conversation(let id) = model.route,
+              model.selection == id, !model.loadingMessageHistory.contains(id),
+              let chat = model.selectedConversation, let binding = chat.agentBinding,
+              model.agents.contains(where: { $0.id == binding.agentID && $0.archivedAt == nil }) else { return nil }
+        return .init(id: id, binding: binding, newestMessageID: chat.messages.last?.id,
+            newestDeliveryStatus: chat.messages.last?.deliveryStatus, generation: model.visibleConversationReadGeneration)
+    }
+
+    private func conversationVisibilityChanged() {
+        let focused = scenePhase == .active && AppWindowStateController.shared.isWorkspaceWindowFocused
+        model.setConversationWindowFocused(focused)
+        guard focused,
+              let presented = conversationReadPresentation else { return }
+        let viewedAt = Date(), epoch = model.visibleConversationReadEpoch
+        Task {
+            guard let read = await model.beginVisibleConversationRead(id: presented.id, epoch: epoch) else { return }
+            await model.recordVisibleConversationRead(read, at: viewedAt)
         }
     }
 

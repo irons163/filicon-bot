@@ -5,6 +5,8 @@ import SwiftUI
 import Testing
 import FiliconAgents
 import FiliconAutomations
+import FiliconAppServices
+import FiliconDomain
 @testable import Filicon
 
 @Suite("Automation activity check app integration", .timeLimit(.minutes(1)))
@@ -47,6 +49,134 @@ import FiliconAutomations
         let reopened = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
         await reopened.reloadWorkspaceData(); await reopened.reloadAutomationDetails()
         expectNoDifference(reopened.automationSpendGuardPrompts, after)
+    }
+
+    private func visibleChatFixture() async throws -> (URL, AppModel, AgentProfile, AgentProfile, Conversation) {
+        let (root, model, owner, peer) = try await fixture()
+        var chat = Conversation(id: UUID(uuidString: "00000000-0000-0000-0000-000000000159")!,
+            title: peer.name, providerID: owner.providerID, modelID: owner.modelID, updatedAt: now)
+        chat.agentBinding = .init(accountID: "local", agentID: owner.id)
+        chat.messages = [.init(role: .assistant, text: "Isolated visible result", createdAt: now)]
+        let store = ConversationStore(fileURL: root.appending(path: "conversations.json"))
+        try await store.upsert(chat, replacingLoadedMessageIDs: [], historyComplete: true)
+        model.conversations = [chat]
+        model.selection = chat.id
+        model.route = .conversation(chat.id)
+        await model.loadLatestMessages(for: chat.id)
+        model.setConversationWindowFocused(true)
+        return (root, model, owner, peer, chat)
+    }
+
+    @Test func viewingTheExactBoundChatUpdatesOnlyItsOwnerWithoutAnsweringTheCard() async throws {
+        let (root, model, owner, peer, chat) = try await visibleChatFixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let before = model.automationSpendGuardPrompts, definitions = model.automations
+        let read = try #require(await model.beginVisibleConversationRead(id: chat.id))
+        let saved = await model.recordVisibleConversationRead(read, at: now.addingTimeInterval(60))
+        expectNoDifference(saved, true)
+        expectNoDifference(model.automations, definitions)
+        expectNoDifference(model.automationSpendGuardPrompts.map(\.id), before.map(\.id))
+        expectNoDifference(model.automationSpendGuardPrompts.first { $0.agentID == owner.id }?.state.lastViewedAt, now.addingTimeInterval(60))
+        expectNoDifference(model.automationSpendGuardPrompts.first { $0.agentID == peer.id }, before.first { $0.agentID == peer.id })
+        let replay = await model.recordVisibleConversationRead(read, at: now.addingTimeInterval(120))
+        expectNoDifference(replay, false)
+        let durable = try AutomationService(storeURL: root.appending(path: "automations.json"))
+        let spend = await durable.spendGuardState(agentID: owner.id)
+        expectNoDifference(spend.lastViewedAt, now.addingTimeInterval(60))
+        expectNoDifference(spend.cardID, before.first { $0.agentID == owner.id }?.id)
+        expectNoDifference(spend.guardPausedAutomationIDs, [owner.id])
+    }
+
+    @Test(arguments: ["route", "selection", "blur", "rebind", "removed-projection", "account-cycle", "archive", "covered"])
+    func aNoLongerVisibleOrOwnedChatCannotCommitALateRead(change: String) async throws {
+        let (root, model, owner, peer, chat) = try await visibleChatFixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let read = try #require(await model.beginVisibleConversationRead(id: chat.id))
+        switch change {
+        case "route": model.selectRoute(.groups)
+        case "selection": model.selection = nil
+        case "blur": model.setConversationWindowFocused(false)
+        case "rebind": model.conversations[0].agentBinding = .init(accountID: "local", agentID: peer.id)
+        case "removed-projection": model.conversations.removeAll { $0.id == chat.id }
+        case "account-cycle":
+            await model.cancelAutoReviewApprovals(nextAccountID: "other-fixture-account")
+            model.settings.accountScope = "other-fixture-account"
+            await model.cancelAutoReviewApprovals(nextAccountID: "local")
+            model.settings.accountScope = "local"
+        case "archive": await model.archiveAgent(id: owner.id)
+        case "covered": model.showingOnboarding = true
+        default: break
+        }
+        let saved = await model.recordVisibleConversationRead(read, at: now.addingTimeInterval(60))
+        expectNoDifference(saved, false)
+        expectNoDifference(read.lifetime.isCurrent, false)
+        expectNoDifference(read.bindingLease?.isActive, false)
+        let durable = try AutomationService(storeURL: root.appending(path: "automations.json"))
+        let spend = await durable.spendGuardState(agentID: owner.id)
+        expectNoDifference(spend.lastViewedAt, now)
+    }
+
+    @Test func anExpiredReceiptCannotCancelTheNewVisibleReceipt() async throws {
+        let (root, model, owner, _, chat) = try await visibleChatFixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let first = try #require(await model.beginVisibleConversationRead(id: chat.id))
+        let second = try #require(await model.beginVisibleConversationRead(id: chat.id))
+        let oldSaved = await model.recordVisibleConversationRead(first, at: now.addingTimeInterval(120))
+        expectNoDifference(oldSaved, false)
+        expectNoDifference(second.lifetime.isCurrent, true)
+        expectNoDifference(second.bindingLease?.isActive, true)
+        let newSaved = await model.recordVisibleConversationRead(second, at: now.addingTimeInterval(60))
+        expectNoDifference(newSaved, true)
+        let durable = try AutomationService(storeURL: root.appending(path: "automations.json"))
+        let spend = await durable.spendGuardState(agentID: owner.id)
+        expectNoDifference(spend.lastViewedAt, now.addingTimeInterval(60))
+    }
+
+    @Test(arguments: ["unfocused", "unbound", "foreign-account", "ambiguous", "queued-epoch", "queued-rebind", "queued-rebind-cycle"])
+    func aChatReadMustResolveCurrentUniqueOwnershipAndVisibility(rejection: String) async throws {
+        let (root, model, owner, peer, chat) = try await visibleChatFixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let epoch = model.visibleConversationReadEpoch
+        switch rejection {
+        case "unfocused": model.setConversationWindowFocused(false)
+        case "unbound": model.conversations[0].agentBinding = nil
+        case "foreign-account": model.conversations[0].agentBinding = .init(accountID: "foreign", agentID: owner.id)
+        case "ambiguous":
+            var second = Conversation(id: UUID(uuidString: "00000000-0000-0000-0000-000000000160")!,
+                title: "Not in the loaded sidebar", providerID: owner.providerID, modelID: owner.modelID, updatedAt: now)
+            second.agentBinding = chat.agentBinding
+            try await ConversationStore(fileURL: root.appending(path: "conversations.json")).upsert(
+                second, replacingLoadedMessageIDs: [], historyComplete: true)
+        case "queued-epoch":
+            model.setConversationWindowFocused(false)
+            model.setConversationWindowFocused(true)
+        case "queued-rebind":
+            var replacement = chat; replacement.agentBinding = .init(accountID: "local", agentID: peer.id)
+            try await ConversationStore(fileURL: root.appending(path: "conversations.json")).upsert(
+                replacement, replacingLoadedMessageIDs: [], historyComplete: true)
+            model.conversations[0].agentBinding = replacement.agentBinding
+        case "queued-rebind-cycle":
+            model.conversations[0].agentBinding = .init(accountID: "local", agentID: peer.id)
+            model.conversations[0].agentBinding = chat.agentBinding
+        default: break
+        }
+        let read = await model.beginVisibleConversationRead(id: chat.id, epoch: epoch)
+        expectNoDifference(read == nil, true)
+        model.cancelVisibleConversationRead()
+        let durable = try AutomationService(storeURL: root.appending(path: "automations.json"))
+        let spend = await durable.spendGuardState(agentID: owner.id)
+        expectNoDifference(spend.lastViewedAt, now)
+        if ["queued-rebind", "queued-rebind-cycle"].contains(rejection) {
+            let fresh = try #require(await model.beginVisibleConversationRead(id: chat.id, epoch: model.visibleConversationReadEpoch))
+            let saved = await model.recordVisibleConversationRead(fresh, at: now.addingTimeInterval(60))
+            expectNoDifference(saved, true)
+            let target = rejection == "queued-rebind" ? peer.id : owner.id
+            let reopened = try AutomationService(storeURL: root.appending(path: "automations.json"))
+            let current = await reopened.spendGuardState(agentID: target)
+            let untouched = await reopened.spendGuardState(agentID: target == peer.id ? owner.id : peer.id)
+            expectNoDifference(current.lastViewedAt, now.addingTimeInterval(60))
+            expectNoDifference(untouched.lastViewedAt, now)
+        }
     }
 
     @Test func oneCardsAnswerResumesOnlyItsOwnerAndCannotBeReplayed() async throws {

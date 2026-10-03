@@ -1,5 +1,19 @@
 # 完成驗收入口（2026-09-27）
 
+## 綁定單獨聊天的可見活動時間（2026-10-03）
+
+reference `a9f633e09d49a85829b8236331b9e21f7e612634` 的 `source/host/extensions/transcript/session-runtime.ts` 將 focused active session 的活動、取得焦點與啟用聊天接到 `markSessionViewed`；`source/host/extensions/session/agent-db.ts` 的查看與回答 spend guard 是兩條不同流程。Filicon 本批接上主工作區的真實 active／key／visible／非最小化／occlusion 狀態，設定視窗取得焦點不當成聊天已讀。首次 window attach、選取聊天、最新訊息 ID／delivery status 變化及 account generation 均重新解析；不按每個串流文字 delta 更新。
+
+只接受目前 route＋selection、已載入最新訊息、未被 onboarding／feedback／強制更新／entitlement／工具核准／error 覆蓋、當前帳號未封存 owner 且有排程的明確 binding。canonical lookup 涵蓋未分頁／hidden histories，歧義不猜名稱；await 前註冊原始 generation／lifetime，取得 lease 後再核對 canonical profile 與畫面身分。route、selection、失焦、切帳號、封存、移除畫面或 binding 變化撤銷工作；即使工作尚未開始，換綁定再換回來也不能復活舊 epoch。新 receipt 不被晚到舊 receipt 的清理取消。最終同步提交以 lifetime＋binding lease 保護，lease 只保護同一 repository 的 mutation，不宣稱跨 repository／process 原子 CAS。
+
+viewedAt 在畫面事件時捕捉；service 只接受比既有時間新的值，較舊／相同 callback 不倒退或重新計入舊 fires。原子保存失敗或 host commit 被拒絕不發布記憶中狀態。只更新該 owner，不回答或清除未回答卡片、snooze／opt-out／pause ownership，不恢復排程、不修改 definition／revision／工具核准。這是查看時間接線，不是人類批准無人值守執行。
+
+有效紅燈保留於 `spend-guard-chat-view-monotonic-red.log`（舊回呼使查看時間／執行計數倒退）及 `spend-guard-chat-view-queued-rebind-red.log`（排隊前換綁定與換回原 owner 共兩種舊工作誤接受）；最初 `spend-guard-chat-view-focused.log` 是兩處 fixture upsert 缺少參數的編譯錯誤，不當成產品缺陷證據。最後聚焦 `spend-guard-chat-view-focused-post-rebind.log` exit 0：43 tests／3 suites，包含 service 時間順序／提交拒絕及 App 的 owner 隔離、replay、八種晚到取消、七種 lookup／queued 拒絕、新 receipt 仍可完成與 durable 重開。UI 焦點由受控 AppModel fixture 驗證，沒有啟動或操作使用者 App。
+
+排隊換綁定修正後重新跑最後 source：`spend-guard-chat-view-full-post-rebind.log` exit 0，135 XCTest＋1,753 Swift Testing（219 suites；核心 917／106、App 602／83，兩項 opt-in live Codex 測試略過）；先前 full／native 日誌亦保留，但不替代最後 gate。七語各 1,787 keys／0 missing；七語×明暗×nudge／paused 共 28 個窄版 render 斷言通過，逐語檢視既有卡片換行／無重疊，這批沒有新增卡片 layout 或文字。`spend-guard-chat-view-native-post-rebind.log` BUILD SUCCEEDED；`spend-guard-chat-view-package.log` 四個執行檔、deep strict 簽章及 app／XPC entitlements 通過。隔離產物 `.build/validation/SpendGuardChatViewPackage/Filicon.app` 為 Debug／離線 gate，不是 release／公證或 live 焦點驗收；日誌與 PNG 只保留在忽略的 `.build/validation/`。
+
+真正 transcript unread／manual-unread 仍未完成：reference `automation-spend-guard-runtime.ts` 讀取聊天 DB 的 `getUnreadState()`；native 仍由 pending result wakes 與 retained runs 近似計數。沒有新增每聊天 unread DB、手動未讀旗標、聊天 widget／host reminder；未綁定聊天不靠名稱推斷 owner，仍保留明確已讀入口。真人焦點／VoiceOver、雲端 metadata／session、完整 persisted account migration、live／release 及全 48 分類仍待各自驗收，整體 partial 不上調。下方較早「對話查看未接線」由本節局部取代，其他歷史 gate 不作最後 source 的證明。未 push、未重啟使用者 App／Xcode、未改真實帳號／群組／聊天資料。
+
 ## 經審核群組排程的活動保護豁免（2026-10-03）
 
 本批補上下一節仍保留的群組差異：reference `automation-run-path.ts` 只對 `!isGroup && backgroundTrigger` 套用 guard。Filicon 現在於定時／事件批次及 scheduler 檢查前，由 trusted executor 解析 canonical human group binding、account、完整任務 digest、群組／成員及 direct binding 衝突；只對仍有效的已審核 group session 豁免。分類不進入 Codable definition、匯入或模型工具參數，模型文字／事件 `group`／`spend_guard_exempt` 提示不能指定豁免，text-only executor 也不能冒充 session executor。
