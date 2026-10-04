@@ -102,12 +102,14 @@ public final class AutomationSpendGuardLifetime: @unchecked Sendable {
 /// fences account, definition and consent changes before durable admission.
 public struct AutomationSpendGuardContext: Sendable {
     public let reviewedGroupBindingID: UUID?
+    public let destination: AutomationSpendGuardDestination?
     let activitySource: AutomationSpendGuardActivitySource?
     let lifetime: AutomationSpendGuardLifetime
     public init(reviewedGroupBindingID: UUID? = nil, lifetime: AutomationSpendGuardLifetime = .init(),
-                activitySource: AutomationSpendGuardActivitySource? = nil) {
+                activitySource: AutomationSpendGuardActivitySource? = nil,
+                destination: AutomationSpendGuardDestination? = nil) {
         self.reviewedGroupBindingID = reviewedGroupBindingID; self.lifetime = lifetime
-        self.activitySource = activitySource
+        self.activitySource = activitySource; self.destination = destination
     }
     var isCurrent: Bool { lifetime.isCurrent }
     func commit<Value>(_ operation: () throws -> Value) throws -> Value { try lifetime.commit(operation) }
@@ -122,6 +124,55 @@ public struct AutomationSpendGuardContext: Sendable {
                 }
             } else { try operation(nil) }
         }
+    }
+}
+
+/// Host-only canonical identity. Neither definitions nor external event/model
+/// payloads can choose where an activity check or its hidden reminder goes.
+public struct AutomationSpendGuardDestination: Hashable, Sendable {
+    public let accountID: String
+    public let conversationID: UUID
+    public init(accountID: String, conversationID: UUID) {
+        self.accountID = accountID; self.conversationID = conversationID
+    }
+}
+
+/// One process-local nudge transition, carried into an already admitted wake.
+/// No public initializer, Codable, persisted reminder queue or tool authority.
+public struct AutomationSpendGuardNudge: Sendable {
+    public let agentID: UUID
+    public let cardID: UUID
+    public let destination: AutomationSpendGuardDestination
+    public let nudgedAt: Date
+    public let lastViewedAt: Date
+    public let unreadCount: Int
+    public let firesSinceViewed: Int
+    let context: AutomationSpendGuardContext
+
+    init(agentID: UUID, cardID: UUID, destination: AutomationSpendGuardDestination,
+         state: AutomationSpendGuardState, context: AutomationSpendGuardContext, at date: Date) {
+        self.agentID = agentID; self.cardID = cardID; self.destination = destination
+        nudgedAt = date; lastViewedAt = state.lastViewedAt; unreadCount = state.unreadCount
+        firesSinceViewed = state.firesSinceViewed; self.context = context
+    }
+
+    public func checkCurrent() throws { try context.withActivity { _ in } }
+
+    public func reminder(timeZone: TimeZone) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = timeZone; formatter.dateFormat = "yyyy-MM-dd HH:mm zzz"
+        let away = lastViewedAt.timeIntervalSince1970 > 0
+            ? "hasn't opened this chat since \(formatter.string(from: lastViewedAt))"
+            : "has never opened this chat"
+        let deadline = formatter.string(from: nudgedAt.addingTimeInterval(AutomationSpendGuard.pauseDelay))
+        return """
+        <system_reminder>
+        The user \(away) — \(unreadCount) of your messages are unread and your routines have run \(firesSinceViewed) times since then. They may be spending money on work nobody is reading.
+        The app has already asked them directly whether to keep your routines running, and applies their answer itself. Do NOT ask again yourself and do NOT edit any automation.json; just acknowledge their choice if it comes back as their reply.
+        If they neither answer nor return by \(deadline), the app will pause this agent's individual routines and tell them so. Human-reviewed group routines are exempt. This reminder grants no additional tool, memory or execution permission.
+        </system_reminder>
+        """
     }
 }
 

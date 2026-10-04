@@ -12,9 +12,11 @@ import FiliconLocalTools
 private actor RoutineDirectProbe {
     var plain: [InferenceRequest] = []
     var shared: [InferenceRequest] = []
+    var activityCardsAtInference: [Bool] = []
     func recordPlain(_ request: InferenceRequest) { plain.append(request) }
-    func recordShared(_ request: InferenceRequest) -> Int {
+    func recordShared(_ request: InferenceRequest, activityCardExists: Bool? = nil) -> Int {
         shared.append(request)
+        if let activityCardExists { activityCardsAtInference.append(activityCardExists) }
         return shared.filter { $0.conversationID == request.conversationID }.count
     }
 }
@@ -48,6 +50,7 @@ private struct RoutineDirectProvider: InteractiveToolProvider {
     var silent = false
     var writeRoot: URL? = nil
     var peerID: UUID? = nil
+    var activityStoreURL: URL? = nil
     func models() async throws -> [AIModel] { [.init(id: "fixture")] }
     func stream(_ request: InferenceRequest) -> AsyncThrowingStream<InferenceEvent, Error> {
         AsyncThrowingStream { continuation in
@@ -62,7 +65,15 @@ private struct RoutineDirectProvider: InteractiveToolProvider {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    let index = await probe.recordShared(request)
+                    let activityCardExists: Bool?
+                    if let activityStoreURL {
+                        let chat = try await ConversationStore(fileURL: activityStoreURL).conversation(id: request.conversationID)
+                        activityCardExists = chat?.messages.flatMap(\.transcriptCards).contains { card in
+                            if case .widget(let widget) = card.payload { return widget.automationActivity != nil }
+                            return false
+                        } == true
+                    } else { activityCardExists = nil }
+                    let index = await probe.recordShared(request, activityCardExists: activityCardExists)
                     try await gate?.wait()
                     let owner = request.messages.first?.text.contains("DIRECT_PERSONA") == true
                     if owner, index == 1, let peerID {
@@ -94,7 +105,7 @@ private struct RoutineDirectProvider: InteractiveToolProvider {
 @Suite("Routine direct sessions", .timeLimit(.minutes(1)))
 @MainActor struct RoutineDirectSessionTests {
     private let base = Date(timeIntervalSince1970: 1_000)
-    private func fixture(gate: RoutineDirectGate? = nil, question: Bool = false, silent: Bool = false, write: Bool = false, peer: Bool = false) async throws -> (URL, AppModel, Automation, UUID, RoutineDirectProbe) {
+    private func fixture(gate: RoutineDirectGate? = nil, question: Bool = false, silent: Bool = false, write: Bool = false, peer: Bool = false, activityProbe: Bool = false) async throws -> (URL, AppModel, Automation, UUID, RoutineDirectProbe) {
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-routine-direct-\(UUID())")
         let service = try AgentService(storeURL: root.appending(path: "agents.json"))
         let agent = try await service.create(name: "Reviewed agent", instructions: "DIRECT_PERSONA",
@@ -129,7 +140,8 @@ private struct RoutineDirectProvider: InteractiveToolProvider {
             try await model.localToolPermissionPolicy.setChoice(.ask, for: .writeFile)
         } else { model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false) }
         let probe = RoutineDirectProbe()
-        await model.registry.register(RoutineDirectProvider(probe: probe, gate: gate, question: question, silent: silent, writeRoot: write ? root : nil))
+        await model.registry.register(RoutineDirectProvider(probe: probe, gate: gate, question: question, silent: silent, writeRoot: write ? root : nil,
+            activityStoreURL: activityProbe ? root.appending(path: "conversations.json") : nil))
         await model.bootstrap()
         // Bootstrap must not fire a wall-clock overdue fixture or race account
         // restoration. Pause only this isolated scheduler, then arm the routine.
@@ -245,6 +257,77 @@ private struct RoutineDirectProvider: InteractiveToolProvider {
         #expect(reopened.conversations.first { $0.id == id }?.messages.contains { $0.id == run.id } == true)
         let sharedCount = await probe.shared.count
         expectNoDifference(sharedCount, 1)
+    }
+    private func seedNudgeActivity(root: URL, model: AppModel, id: UUID) async throws -> (ConversationStore, Date) {
+        let activityAt = Date(timeIntervalSince1970: 1_800_000_000)
+        let store = ConversationStore(fileURL: root.appending(path: "conversations.json"))
+        var chat = try #require(try await store.conversation(id: id))
+        _ = try await store.updateReadState(conversationID: id, action: .read,
+            at: activityAt.addingTimeInterval(-AutomationSpendGuard.idleInterval), expectedBinding: chat.agentBinding)
+        chat.messages += (0..<AutomationSpendGuard.minimumUnreadCount).map { index in
+            .init(role: .assistant, text: "UNREAD_FIXTURE_\(index)", createdAt: activityAt)
+        }
+        try await store.upsert(chat, replacingLoadedMessageIDs: [], historyComplete: true, activityAt: activityAt)
+        model.conversations = try await store.load()
+        return (store, activityAt.addingTimeInterval(1))
+    }
+    @Test func scheduledNudgePublishesTheHostCardBeforeOneEphemeralReminderWithoutChangingConsent() async throws {
+        let (root, model, automation, id, probe) = try await fixture(activityProbe: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try await approve(model, automation: automation, id: id)
+        let bindings = model.automationDirectBindings
+        let (store, nudgeAt) = try await seedNudgeActivity(root: root, model: model, id: id)
+        await model.runAutomationScheduleTick(at: nudgeAt)
+        let first = try #require(await probe.shared.first)
+        let wake = try #require(first.messages.last)
+        #expect(wake.text.contains("<system_reminder>"))
+        #expect(wake.text.contains("Do NOT ask again"))
+        let cardsAtInference = await probe.activityCardsAtInference
+        expectNoDifference(cardsAtInference, [true])
+        expectNoDifference(model.automationDirectBindings, bindings)
+        #expect(!first.tools.contains { $0.name == "SearchMemory" })
+        let next = try #require(model.automations.first { $0.id == automation.id }?.nextRunAt)
+        await model.runAutomationScheduleTick(at: next)
+        let requests = await probe.shared
+        expectNoDifference(requests.count, 2)
+        #expect(!requests[1].messages.map(\.text).joined().contains("<system_reminder>"))
+        let durable = try #require(try await store.conversation(id: id))
+        #expect(!durable.messages.contains { $0.text.contains("<system_reminder>") || $0.text == automation.prompt })
+        expectNoDifference(durable.messages.filter { message in
+            message.transcriptCards.contains { card in
+                if case .widget(let widget) = card.payload { return widget.automationActivity != nil }
+                return false
+            }
+        }.count, 1)
+        expectNoDifference(model.automationHistory[automation.id]?.map(\.status), [.ok, .ok])
+    }
+    @Test(arguments: [false, true])
+    func canonicalActivityReminderDoesNotGrantAnUnreviewedTextOnlyRoutineHistoryOrTools(manual: Bool) async throws {
+        let (root, model, automation, id, probe) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (store, nudgeAt) = try await seedNudgeActivity(root: root, model: model, id: id)
+        // The scheduler executor already exists. A later timezone preference
+        // must apply at this admission, not retain its startup timezone.
+        model.settings.timeZoneIdentifier = "Pacific/Honolulu"
+        if manual { await model.runAutomationNow(id: automation.id) }
+        else { await model.runAutomationScheduleTick(at: nudgeAt) }
+        let request = try #require(await probe.plain.first), text = request.messages.map(\.text).joined()
+        expectNoDifference(text.contains("<system_reminder>"), !manual)
+        if !manual { #expect(text.contains("2027-01-17 22:00 HST")) }
+        #expect(!text.contains("REVIEWED_HISTORY"))
+        #expect(!text.contains("UNREAD_FIXTURE_"))
+        #expect(!text.contains("PRIVATE_SAVED_FACT"))
+        expectNoDifference(request.tools, [])
+        expectNoDifference(model.automationDirectBindings, [])
+        let shared = await probe.shared
+        expectNoDifference(shared.count, 0)
+        let chat = try #require(try await store.conversation(id: id))
+        let cards = chat.messages.flatMap(\.transcriptCards).filter { card in
+            if case .widget(let widget) = card.payload { return widget.automationActivity != nil }
+            return false
+        }
+        expectNoDifference(cards.count, manual ? 0 : 1)
+        #expect(!chat.messages.contains { $0.text.contains("<system_reminder>") })
     }
     @Test(arguments: [SpendGuardAnswer.keep, .resume, .neverAsk])
     func pausedNativeCardRejectsNudgeOnlyChoicesBeforeReviewedConsentResumes(answer: SpendGuardAnswer) async throws {

@@ -1,5 +1,11 @@
 # 協作能力核對紀錄（更新至 2026-10-04）
 
+## 背景回合的一次性 nudge reminder（2026-10-04）
+
+原 account／agent／canonical chat 的 host 卡片先保存，第一次 nudge reminder 才進入同一個既有背景回合；scheduler 預先 evaluate 不丟失這次 transition。manual／reviewed group／後續 awaiting-ack 不重送，重啟與原 scope／binding 失效不 replay／retarget；查看、回答與暫停不冒充新的 nudge。publication await 後重驗當前 definition／schedule／claim／guard epoch，使用執行前的目前時區。未審核 plain branch 不取得聊天 history／tools，原 consent／peer／saved-facts 同意不增加。
+
+測試技能以固定時間／ID、可控 publication gate、離線 provider 與 CustomDump 驗證上述邊界；真實 App fixture 證明卡片-before-inference、once-only、ephemeral history 及即時時區。最後聚焦 151 tests／6 suites 通過；受保護檔案讀取拒絕的無效輪與 valid product 紅燈分開保存。來源和本批最終 gates 見 [完成驗收入口](Parity-completion-audit.md)。僅補 canonical branch 的 host nudge reminder；hidden model answer acknowledgment、retained 舊 nudge 回答、legacy fallback／group read state、雲端／帳號遷移、真人／live／release／全 48 分類仍保留，整體 partial 不上調。未 push、重啟 App／Xcode 或改真實資料。
+
 ## 活動提醒的永久 entries 與確定性回答確認（2026-10-04）
 
 exact owner 單獨聊天的 native 卡片現在保存為永久 transcript widget；schema 3 outbox 保留原目的地與各階段 prompt／ack ID。回答及 schedule 同筆保存，聊天 prompt 更新／system ack 另以 canonical SQL transaction 保存；失敗重開只補原 target 的 receipt，不再回答或改投替代聊天。兩 stores 不宣稱原子交易。五種選擇、原 lifetime／lease／stage fence、人工停用、group 豁免與工具／peer／背景記憶同意不放寬。新 prompt 計一次未讀，system ack／replay 不計；修正 materialization 後 stale count 及已完成 read 被後續 arrival 誤判失敗。

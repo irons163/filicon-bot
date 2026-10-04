@@ -104,6 +104,19 @@ guard ID. Schemas 1/2 migrate with an empty outbox; invalid schema-3 entries or
 colliding IDs fail without rewriting the source. Reopening reuses those IDs;
 merely viewing the card neither answers nor resumes it.
 
+The first canonical-chat nudge also carries a host-only, process-local transition
+into one admitted background wake. Its original owner, destination, card, counters
+and revocable source survive scheduler pre-evaluation, not process restarts or
+account/binding replacement. The native host publishes the permanent card before
+the model can claim the app asked. A failed scheduled publication leaves the due
+claim retryable; successful admission consumes the transition once. Manual and
+reviewed-group wakes and later awaiting-ack firings carry no reminder. It is not
+stored in definitions, a reminder queue or human chat history, and grants no
+history, tool or memory access. Publication and run admission remain separate
+commits with fresh post-await validation, not a cross-store atomic transaction.
+The model reminder uses the current execution-time timezone; missing canonical
+sources and legacy unbound hosts cannot falsely claim a published native card.
+
 A native answer retains its original repository binding lease through the final
 synchronous guard-store save. Account/owner cycles, hidden or ambiguous bindings,
 archive/delete and an obsolete nudge/paused stage reject old callbacks; a queued

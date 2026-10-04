@@ -1,5 +1,21 @@
 # 完成驗收入口（2026-09-27）
 
+## 背景回合的一次性活動提醒（2026-10-04）
+
+再次核對 reference `a9f633e09d49a85829b8236331b9e21f7e612634`：`automation-spend-guard-runtime.ts` 的 nudge transition 保存 widget 後回傳 `renderSpendGuardNudgeReminder`；`automation-run-path.ts` 只為非群組的 background automation trigger 將提醒附於同一 wake。manual、group、awaiting-ack 與 pause 不重送，也不是額外的模型回合。
+
+native 現以不可 Codable／無 public initializer 的 host nudge value 捕捉原 agent、card、canonical account／conversation、view time、unread／retained fires 和可撤銷來源。process-local pending transition 跨越 scheduler 的預先 evaluate，僅在一次成功 background admission 消耗；不保存 reminder queue、不在重開／後續 awaiting-ack／查看或回答後補發。host 必須先依原綁定 lease 將永久卡片保存到原聊天，才能讓模型說「App 已詢問」；沒有 canonical source 或 publication host 時不假稱已保存。排程 publication 失敗保留原 nudge 與尚未 claim 的到期任務可重試；不宣稱事件 ingress 可重送已去重的 event。
+
+publication 的 await 後重新檢查 owner scope、當前 card／stage、definition revision／enabled、schedule snapshot、claim／busy 與 dispatch epoch，不能用舊候選覆蓋中途的新狀態。SQL publication 使用獨立的 tracked mutation lifetime，不在 repository publication lock 中取得來源 observation lock。直接對話的原 consent、工具／peer／saved-facts 權限不增加；未審核的 text-only branch 不取得 canonical history 或 tools。提醒僅進入既有 ephemeral wake，不變更任務正文／持久聊天，不偽造 user answer；期限在真正執行前讀目前時區，已審核 group 仍豁免。
+
+有效紅燈分開保存：`spend-guard-reminder-red-valid.log` 在真實 App background fixture 重現缺少 hidden reminder 及 inference 前沒有永久卡片（1 test／3 issues）；`focused-final.log` 的 event fixture 重現 host value 被 native manual／group／peer request 重用（3 issues），request renderer 現也拒絕這些身分；`spend-guard-reminder-time-zone-red.log` 重現 scheduler 沿用啟動時時區（1 test／2 cases／1 issue）。早期測試 autoclosure／Equatable 編譯失敗另保留，不當作產品紅燈。
+
+`spend-guard-reminder-focused-final-v3.log` 的核心 37 tests 通過，但 App 的受保護 `agents.json` 讀取遭 Cocoa 257／POSIX 1 拒絕，該輪不能算通過。其後 console unlocked 且 isolated protection probe 通過，沒有降低檔案保護。最後 source 聚焦 `spend-guard-reminder-focused-final-v4.log` exit 0：151 tests／6 suites（核心 63／2，App／direct／group／router 88／4）；含排程預先 evaluate、事件與去重、only-once、manual／group 排除、publication retry、answer／view／pause／scope／destination／closed source／queued edit／competing manual fences，以及真實 App 卡片-before-inference、未審核 plain history／tool 邊界和即時時區。
+
+最後 source 完整串行 `spend-guard-reminder-full-final.log` exit 0：135 XCTest＋1,830 Swift Testing（220 suites；核心 956／107，App 640／83）。兩項 opt-in live Codex 測試略過，不當作真實模型或外部服務驗收。`spend-guard-reminder-native-final.log` BUILD SUCCEEDED；`spend-guard-reminder-package-final.log` 四個執行檔、deep strict 簽章及 app／XPC entitlements 通過。隔離產物 `.build/validation/SpendGuardReminderPackage/Filicon.app` 為 Debug／ad-hoc 離線 gate，不是 release／公證；未執行列印的 launch smoke。七語各 1,795 keys／0 missing，`git diff --check` 通過；沒有新增 UI layout 或文字，不新增真人／VoiceOver 驗收。日誌及產物僅保留在忽略的 `.build/validation/`。
+
+這只取代較早「host nudge reminder 未接線」的 canonical direct-chat 分支，不是 hidden model answer acknowledgment turn，也未關閉 reference retained nudge entry 的多階段回答差異。無 canonical chat 的 legacy fallback、group read state、完整 core 帳號遷移、雲端 session、真人／VoiceOver、live／release 與全 48 分類驗收仍保留；整體 partial 不上調。未 push、啟動或重啟使用者 App／Xcode、改真實帳號／群組／聊天資料。
+
 ## 活動提醒的永久聊天紀錄與回答確認（2026-10-04）
 
 reference `a9f633e09d49a85829b8236331b9e21f7e612634` 的 `automation-spend-guard-runtime.ts` 保存實際 `send-message` widget entries，nudge／paused 使用不同 entry ID；`handleWidgetAnswer` 核對 entry 與選項，`widget-responses.ts` 將回傳的 ack 作為 `modelPrompt` 呼叫 `sendPrompt`，設定 `appendUserMessage: false`／`awaitTurn: false`。本批補永久聊天 widget 與確定性的 native system 回答確認，不把 UI 投影或模型口頭宣稱當成已保存訊息，也不宣稱已接上原版 hidden model acknowledgment turn／host reminder。

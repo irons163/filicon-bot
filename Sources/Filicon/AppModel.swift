@@ -7491,10 +7491,6 @@ final class AppModel: ObservableObject {
     }
 
     private func invalidateRoutineGroupExecutions(automationID: UUID) -> Set<UUID> {
-        if let owner = automationSpendGuardContextOwners.removeValue(forKey: automationID)
-            ?? automations.first(where: { $0.id == automationID })?.agentID {
-            automationSpendGuardContextLifetimes.removeValue(forKey: owner)?.cancel()
-        }
         invalidateBackgroundDirectExecutions(automationID: automationID)
         let affected = routineGroupExecutions.values.filter { $0.automationID == automationID }
         for execution in affected { execution.scope.invalidate() }
@@ -7502,6 +7498,10 @@ final class AppModel: ObservableObject {
     }
 
     private func invalidateBackgroundDirectExecutions(automationID: UUID) {
+        if let owner = automationSpendGuardContextOwners.removeValue(forKey: automationID)
+            ?? automations.first(where: { $0.id == automationID })?.agentID {
+            automationSpendGuardContextLifetimes.removeValue(forKey: owner)?.cancel()
+        }
         let ids = backgroundDirectExecutions.filter {
             if case .routine(let request, _) = $0.value.source { request.automation.id == automationID } else { false }
         }.map(\.key)
@@ -7716,7 +7716,14 @@ final class AppModel: ObservableObject {
             }, guardContext: { [weak self] automation in
                 guard let self else { throw CancellationError() }
                 return try await self.automationSpendGuardContext(for: automation)
-            })
+            }, prepareNudge: { [weak self] nudge in
+                guard let self else { throw CancellationError() }
+                return try await self.prepareAutomationSpendGuardNudge(nudge)
+            }, timeZone: { [weak self] in await self?.automationSpendGuardTimeZone() ?? .current })
+    }
+
+    private func automationSpendGuardTimeZone() -> TimeZone {
+        settings.timeZoneIdentifier.flatMap(TimeZone.init(identifier:)) ?? .current
     }
 
     /// Classification is derived from canonical, human-reviewed consent, not
@@ -7746,11 +7753,13 @@ final class AppModel: ObservableObject {
             if membersActive { reviewedGroupID = saved.id }
         }
         var activitySource: AutomationSpendGuardActivitySource?
+        var destination: AutomationSpendGuardDestination?
         if reviewedGroupID == nil {
             if let observation = try await store.observeUniqueUnreadState(accountID: account, agentID: automation.agentID) {
                 guard let profile = await agentService?.profile(id: automation.agentID), profile.archivedAt == nil else {
                     observation.close(); throw CancellationError()
                 }
+                destination = .init(accountID: observation.binding.accountID, conversationID: observation.conversationID)
                 activitySource = { operation in
                     try observation.withReadState { state in
                         try operation(.init(lastViewedAt: state.lastViewedAt, unreadCount: state.unreadCount))
@@ -7761,7 +7770,40 @@ final class AppModel: ObservableObject {
         try lease.check()
         guard generation == autoReviewAccountGeneration, account == (settings.accountScope ?? "local"),
               !agentMessagingAccountTransition, lifetime.isCurrent else { throw CancellationError() }
-        return .init(reviewedGroupBindingID: reviewedGroupID, lifetime: lifetime, activitySource: activitySource)
+        return .init(reviewedGroupBindingID: reviewedGroupID, lifetime: lifetime, activitySource: activitySource, destination: destination)
+    }
+
+    /// Publish before inference can claim the app has already asked. The nudge
+    /// retains its original canonical destination and context lifetime; a new
+    /// account, consent, hidden/rebound chat or later guard stage cannot retarget
+    /// it. The SQL mutation uses a separate tracked fence: never acquire a guard
+    /// context's activity-observation lock inside repository publication locks.
+    private func prepareAutomationSpendGuardNudge(_ nudge: AutomationSpendGuardNudge) async throws -> Bool {
+        try nudge.checkCurrent()
+        guard !agentMessagingAccountTransition, let automationService,
+              nudge.destination.accountID == (settings.accountScope ?? "local") else { throw CancellationError() }
+        let generation = autoReviewAccountGeneration, accountLease = try workflowExecutionScope.capture()
+        let lifetime = AutomationSpendGuardLifetime(), mutationID = UUID()
+        automationSpendGuardLifetimes[mutationID] = (nudge.agentID, lifetime)
+        defer { lifetime.cancel(); automationSpendGuardLifetimes.removeValue(forKey: mutationID) }
+        guard let canonical = try await store.uniqueBoundConversation(accountID: nudge.destination.accountID, agentID: nudge.agentID),
+              canonical.id == nudge.destination.conversationID else { throw CancellationError() }
+        try nudge.checkCurrent(); try accountLease.check()
+        let lease = try await store.leaseUniqueBinding(accountID: nudge.destination.accountID,
+            agentID: nudge.agentID, conversationID: nudge.destination.conversationID)
+        defer { lease.close() }
+        try nudge.checkCurrent(); try accountLease.check()
+        guard generation == autoReviewAccountGeneration, !agentMessagingAccountTransition,
+              nudge.destination.accountID == (settings.accountScope ?? "local") else { throw CancellationError() }
+        let entry = try await automationService.issueSpendGuardTranscript(agentID: nudge.agentID, cardID: nudge.cardID,
+            accountID: nudge.destination.accountID, conversationID: nudge.destination.conversationID,
+            isPaused: false, at: nudge.nudgedAt, lifetime: lifetime,
+            commit: { operation in try lease.withValidBinding(operation) })
+        try nudge.checkCurrent(); try accountLease.check()
+        try await materializeSpendGuardTranscript(entry, lease: lease, lifetime: lifetime, generation: generation)
+        try nudge.checkCurrent(); try accountLease.check()
+        guard acceptsSpendGuardTranscript(entry, lease: lease, lifetime: lifetime, generation: generation) else { throw CancellationError() }
+        return true
     }
 
     private func validateBackgroundDirectExecution(_ execution: BackgroundDirectExecution) async throws {
@@ -7777,6 +7819,11 @@ final class AppModel: ObservableObject {
         }
         switch execution.source {
         case .routine(let request, let binding):
+            try request.activityNudge?.checkCurrent()
+            guard request.activityNudge.map({ $0.destination.accountID == execution.accountID
+                && $0.destination.conversationID == execution.conversationID && $0.agentID == execution.agentID }) ?? true else {
+                throw AutomationDirectSessionError.reviewRequired
+            }
             guard let consentStore = automationDirectBindingStore,
               await consentStore.binding(automationID: binding.automationID) == binding,
               let definition = await automationService?.list().first(where: { $0.id == binding.automationID }),
@@ -7812,6 +7859,7 @@ final class AppModel: ObservableObject {
     }
 
     private func executeRoutineDirectSessionIfBound(_ request: AutomationRunRequest) async throws -> AutomationExecutionResult? {
+        try request.activityNudge?.checkCurrent()
         guard !agentMessagingAccountTransition else { throw CancellationError() }
         let generation = autoReviewAccountGeneration, accountLease = try workflowExecutionScope.capture()
         guard let consentStore = automationDirectBindingStore else { throw AutomationDirectSessionError.unavailable }
@@ -7859,7 +7907,9 @@ final class AppModel: ObservableObject {
             createdAt: request.run.startedAt, deliveryStatus: .streaming, transcriptCards: [card]))
         loadedMessageIDs[id, default: []].insert(request.run.id)
         let task = startTurn(conversationID: id, assistantID: request.run.id,
-            requestMessages: history + [.init(id: UUID(), role: .user, text: request.prompt, createdAt: request.run.startedAt)],
+            requestMessages: history + [.init(id: UUID(), role: .user,
+                text: request.promptWithActivityReminder(timeZone: automationSpendGuardTimeZone()),
+                createdAt: request.run.startedAt)],
             modelID: projected.modelID, providerID: projected.providerID, reasoningEffort: projected.reasoningEffort, routine: execution)
         await withTaskCancellationHandler { await task.value } onCancel: { task.cancel() }
         try accountLease.check()
@@ -11653,27 +11703,35 @@ private struct AppAutomationExecutor: AutomationRunExecutor {
     var lane: AgentExecutionLane = .background
     var groupSession: @Sendable (AutomationRunRequest) async throws -> AutomationExecutionResult? = { _ in nil }
     var guardContext: @Sendable (Automation) async throws -> AutomationSpendGuardContext = { _ in .init() }
+    var prepareNudge: @Sendable (AutomationSpendGuardNudge) async throws -> Bool = { _ in false }
+    var timeZone: @Sendable () async -> TimeZone = { .current }
     func spendGuardContext(for automation: Automation) async throws -> AutomationSpendGuardContext { try await guardContext(automation) }
+    func prepareSpendGuardNudge(_ nudge: AutomationSpendGuardNudge) async throws -> Bool { try await prepareNudge(nudge) }
     func execute(_ request: AutomationRunRequest) async throws -> AutomationExecutionResult {
+        try request.activityNudge?.checkCurrent()
         if let result = try await groupSession(request) { return result }
         guard request.reviewedGroupBindingID == nil else { throw AutomationGroupSessionError.reviewRequired }
-        return try await executeTextOnly(automation: request.automation, prompt: request.prompt, conversationID: request.run.id)
+        let prompt = request.activityNudge == nil ? request.prompt : request.promptWithActivityReminder(timeZone: await timeZone())
+        return try await executeTextOnly(automation: request.automation, prompt: prompt,
+            conversationID: request.run.id, nudge: request.activityNudge)
     }
     func execute(automation: Automation, prompt: String, events: [AutomationEvent]) async throws -> AutomationExecutionResult {
         try await executeTextOnly(automation: automation, prompt: prompt, conversationID: UUID())
     }
-    private func executeTextOnly(automation: Automation, prompt: String, conversationID: UUID) async throws -> AutomationExecutionResult {
+    private func executeTextOnly(automation: Automation, prompt: String, conversationID: UUID, nudge: AutomationSpendGuardNudge? = nil) async throws -> AutomationExecutionResult {
         try await scheduler.withExclusiveAccess(agentID: automation.agentID, lane: lane) {
-            try await executeExclusive(automation: automation, prompt: prompt, conversationID: conversationID)
+            try await executeExclusive(automation: automation, prompt: prompt, conversationID: conversationID, nudge: nudge)
         }
     }
-    private func executeExclusive(automation: Automation, prompt: String, conversationID: UUID) async throws -> AutomationExecutionResult {
+    private func executeExclusive(automation: Automation, prompt: String, conversationID: UUID, nudge: AutomationSpendGuardNudge?) async throws -> AutomationExecutionResult {
         try Task.checkCancellation()
+        try nudge?.checkCurrent()
         guard let profile = await agents.profile(id: automation.agentID), profile.archivedAt == nil,
               let provider = await registry.provider(id: profile.providerID) else {
             throw ProviderError.transport("Automation agent or provider is unavailable.")
         }
         try Task.checkCancellation()
+        try nudge?.checkCurrent()
         let system = ChatMessage(role: .system, text: profile.instructions)
         let request = InferenceRequest(conversationID: conversationID, modelID: profile.modelID, messages: [system, .init(role: .user, text: prompt)])
         let result = try await TextOnlyInference.collect(provider.stream(request),

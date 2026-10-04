@@ -81,6 +81,10 @@ public actor AutomationService {
     // dispatches. No epoch needs to survive a process restart: its batches do not.
     private var guardDispatchEpochs: [UUID: UInt64] = [:]
     private var guardContexts: [UUID: (automation: Automation, context: AutomationSpendGuardContext)] = [:]
+    // Scheduler reconciliation can issue a nudge before a due firing. Retain
+    // just that transition until one real background admission, not on disk or
+    // across account/binding lifetimes, answers, views or process restarts.
+    private var pendingActivityNudges: [UUID: AutomationSpendGuardNudge] = [:]
 
     public init(storeURL: URL) throws {
         self.storeURL = storeURL
@@ -537,6 +541,7 @@ public actor AutomationService {
                 // pause ownership so that the user can still choose an outcome.
                 try Self.save(candidate, to: storeURL)
                 state = candidate
+                pendingActivityNudges.removeValue(forKey: agentID)
             }
         }
     }
@@ -553,7 +558,7 @@ public actor AutomationService {
         if let context = spendGuardContext(agentID: agentID) {
             var result: SpendGuardDecision?
             try context.withActivity { activity in
-                result = try evaluateSpendGuard(agentID: agentID, at: now, excluding: exempt, activity: activity)
+                result = try evaluateSpendGuard(agentID: agentID, at: now, excluding: exempt, activity: activity, context: context)
             }
             guard let result else { throw CancellationError() }
             return result
@@ -561,7 +566,8 @@ public actor AutomationService {
         return try evaluateSpendGuard(agentID: agentID, at: now, excluding: exempt)
     }
 
-    private func evaluateSpendGuard(agentID: UUID, at now: Date, excluding exempt: Set<UUID>, activity: AutomationSpendGuardActivity? = nil) throws -> SpendGuardDecision {
+    private func evaluateSpendGuard(agentID: UUID, at now: Date, excluding exempt: Set<UUID>, activity: AutomationSpendGuardActivity? = nil,
+                                    context: AutomationSpendGuardContext? = nil) throws -> SpendGuardDecision {
         guard state.automations.contains(where: { $0.agentID == agentID && !exempt.contains($0.id) }) else { return .belowThresholds }
         let decision = AutomationSpendGuard.evaluate(spendGuardState(agentID: agentID, excluding: exempt, activity: activity), now: now)
         guard decision == .nudge || decision == .pause else { return decision }
@@ -578,6 +584,11 @@ public actor AutomationService {
         candidate.spendGuards[agentID] = spend
         try Self.save(candidate, to: storeURL)
         state = candidate
+        if decision == .nudge, let context, context.reviewedGroupBindingID == nil,
+           activity != nil, let destination = context.destination, let cardID = spend.cardID {
+            pendingActivityNudges[agentID] = .init(agentID: agentID, cardID: cardID, destination: destination,
+                state: spend, context: context, at: now)
+        } else { pendingActivityNudges.removeValue(forKey: agentID) }
         if admissionChanged { advanceGuardDispatchEpoch(agentID: agentID) }
         return decision
     }
@@ -699,6 +710,7 @@ public actor AutomationService {
         // failure cannot partially resume one task or dismiss its card.
         try Self.save(candidate, to: storeURL)
         state = candidate
+        pendingActivityNudges.removeValue(forKey: agentID)
         if admissionChanged { advanceGuardDispatchEpoch(agentID: agentID) }
     }
 
@@ -737,7 +749,7 @@ public actor AutomationService {
             // expired nudge must not permit one more background inference.
             try context.withActivity { activity in
                 if context.reviewedGroupBindingID == nil {
-                    _ = try evaluateSpendGuard(agentID: automation.agentID, at: now, excluding: exempt, activity: activity)
+                    _ = try evaluateSpendGuard(agentID: automation.agentID, at: now, excluding: exempt, activity: activity, context: context)
                 }
             }
             guard context.reviewedGroupBindingID != nil || guardEpoch == (guardDispatchEpochs[automation.agentID] ?? 0),
@@ -752,6 +764,23 @@ public actor AutomationService {
         }
         guard !state.claims.contains(claim) else { throw AutomationServiceError.duplicateClaim }
         guard !activeAgents.contains(automation.agentID) else { throw AutomationServiceError.agentBusy(automation.agentID) }
+        var activityNudge: AutomationSpendGuardNudge?
+        if origin != .manual, context.reviewedGroupBindingID == nil, let runner = executor as? any AutomationRunExecutor,
+           let pending = try currentActivityNudge(agentID: automation.agentID, context: context, now: now, excluding: exempt) {
+            let published = try await runner.prepareSpendGuardNudge(pending)
+            // Publication may suspend. Recheck the source and durable admission
+            // against fresh state before constructing a candidate or consuming
+            // the nudge. Never admit the old due snapshot after an answer/edit.
+            guard try currentActivityNudge(agentID: automation.agentID, context: context, now: now, excluding: groupExemptAutomationIDs())?.cardID == pending.cardID,
+                  guardEpoch == (guardDispatchEpochs[automation.agentID] ?? 0),
+                  let current = state.automations.first(where: { $0.id == automation.id }),
+                  current.agentID == automation.agentID, current.enabled, current.revision == automation.revision,
+                  origin != .schedule || (current.nextRunAt == automation.nextRunAt && current.nextRunAt.map { $0 <= now } == true),
+                  !state.claims.contains(claim), !activeAgents.contains(automation.agentID) else {
+                throw AutomationServiceError.duplicateClaim
+            }
+            if published { activityNudge = pending }
+        }
         var candidate = state
         candidate.claims.insert(claim)
         var run = AutomationRun(automationID: automation.id, trigger: origin, startedAt: now, coalescedEventIDs: events.map(\.externalEventID))
@@ -766,6 +795,9 @@ public actor AutomationService {
             try Self.save(candidate, to: storeURL)
             state = candidate
             activeAgents.insert(automation.agentID)
+            if origin != .manual, context.reviewedGroupBindingID == nil {
+                pendingActivityNudges.removeValue(forKey: automation.agentID)
+            }
         }
         let prompt = buildPrompt(automation: automation, events: events)
         do {
@@ -773,7 +805,7 @@ public actor AutomationService {
             let result: AutomationExecutionResult
             if let runner = executor as? any AutomationRunExecutor {
                 result = try await runner.execute(.init(automation: automation, run: run, prompt: prompt, events: events,
-                                                       reviewedGroupBindingID: context.reviewedGroupBindingID))
+                                                       reviewedGroupBindingID: context.reviewedGroupBindingID, activityNudge: activityNudge))
             } else {
                 result = try await executor.execute(automation: automation, prompt: prompt, events: events)
             }
@@ -791,6 +823,19 @@ public actor AutomationService {
         activeAgents.remove(automation.agentID)
         try persist()
         return run
+    }
+
+    private func currentActivityNudge(agentID: UUID, context: AutomationSpendGuardContext, now: Date,
+                                      excluding exempt: Set<UUID>) throws -> AutomationSpendGuardNudge? {
+        guard let pending = pendingActivityNudges[agentID], pending.context.lifetime === context.lifetime,
+              pending.destination == context.destination else { return nil }
+        var result: AutomationSpendGuardNudge?
+        try context.withActivity { activity in
+            let spend = spendGuardState(agentID: agentID, excluding: exempt, activity: activity)
+            if spend.cardID == pending.cardID, spend.nudgedAt == pending.nudgedAt,
+               AutomationSpendGuard.evaluate(spend, now: now) == .awaitingAcknowledgement { result = pending }
+        }
+        return result
     }
 
     private func validate(trigger: AutomationTrigger) throws {

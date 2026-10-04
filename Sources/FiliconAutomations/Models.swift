@@ -148,17 +148,32 @@ public struct AutomationRunRequest: Sendable {
     public let prompt: String
     public let events: [AutomationEvent]
     public let reviewedGroupBindingID: UUID?
+    public let activityNudge: AutomationSpendGuardNudge?
 
-    public init(automation: Automation, run: AutomationRun, prompt: String, events: [AutomationEvent], reviewedGroupBindingID: UUID? = nil) {
+    public init(automation: Automation, run: AutomationRun, prompt: String, events: [AutomationEvent], reviewedGroupBindingID: UUID? = nil,
+                activityNudge: AutomationSpendGuardNudge? = nil) {
         self.automation = automation; self.run = run; self.prompt = prompt; self.events = events
-        self.reviewedGroupBindingID = reviewedGroupBindingID
+        self.reviewedGroupBindingID = reviewedGroupBindingID; self.activityNudge = activityNudge
+    }
+
+    public func promptWithActivityReminder(timeZone: TimeZone) -> String {
+        guard let activityNudge, run.trigger != .manual, reviewedGroupBindingID == nil,
+              activityNudge.agentID == automation.agentID else { return prompt }
+        return prompt + "\n\n" + activityNudge.reminder(timeZone: timeZone)
     }
 }
 
 /// Opt-in refinement, preserving existing text-only executors. Session routing
 /// is a host decision, not an authority field on an imported routine.
 public protocol AutomationRunExecutor: AutomationExecutor {
+    /// Return true only after the check is durably published in its original
+    /// canonical chat. A missing host cannot make the model claim it asked.
+    func prepareSpendGuardNudge(_ nudge: AutomationSpendGuardNudge) async throws -> Bool
     func execute(_ request: AutomationRunRequest) async throws -> AutomationExecutionResult
+}
+
+extension AutomationRunExecutor {
+    public func prepareSpendGuardNudge(_ nudge: AutomationSpendGuardNudge) async throws -> Bool { false }
 }
 
 public enum AutomationServiceError: LocalizedError, Equatable, Sendable {
