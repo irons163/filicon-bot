@@ -1806,3 +1806,6 @@
 "Filicon kept this agent's routines running and disabled activity checks for this agent." = "Filicon 已讓這位代理人的排程繼續執行，並關閉這位代理人的活動提醒。";
 "Filicon resumed this agent's guarded routines and postponed activity checks for 30 days." = "Filicon 已恢復這位代理人因活動檢查而暫停的排程，並將活動提醒延後 30 天。";
 "Filicon left this agent's routines paused." = "Filicon 已讓這位代理人的排程保持暫停。";
+"Task status" = "待辦狀態";
+"Not completed" = "未完成";
+"Status from the message; this checkbox cannot be changed." = "訊息中的狀態；無法變更這個勾選框。";

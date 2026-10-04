@@ -1,5 +1,23 @@
 # 完成驗收入口（2026-09-27）
 
+## 聊天待辦勾選狀態與表格行內格式（2026-10-05）
+
+重新核對 reference `a9f633e09d49a85829b8236331b9e21f7e612634` 的 `frontend/src/recovered/features/conversation/workspace/transcript.tsx`：`assistantTextBlocks` 辨認 list item 開頭的 `[ ]`／`[x]`／`[X]`；`AssistantTextBlock` 呈現 `aria-checked`、`aria-disabled` 的唯讀狀態。表格 header／cell 同樣使用 `renderAssistantInlineText`，不是直接顯示 Markdown 字元；真正 assistant transcript 呼叫此元件。native 原本由 Foundation 保留 task marker 原文，表格亦是 `Text(value)`。
+
+native 現以 Foundation block intent 及原文 source position 辨認真正清單首段的 literal task marker，狀態與文字 attributes 分開。保留 ordered ordinal、nested／quote prefix、續段、hard break、Unicode 與 inline formatting；跳脫、程式碼、強調、連結 label、一般段落或續段中的 `[x]` 不變成 task。呈現使用 constant binding、disabled 原生 checkbox，沒有任務 action／保存權限，不改訊息原文。狀態名稱／完成值與唯讀說明補齊七語。
+
+表格只做 inline Markdown，支援粗體、斜體、刪除線、行內程式碼及 HTTP(S) 連結，保留原 Grid／橫向捲動。非 HTTP、custom／file／mail／relative scheme 與帶 credentials 的 URL 只保留文字；點擊另外重驗現有 `TranscriptLinkPolicy` 才呼叫 opener。table 不繼承 host 的 `sand-msg` navigation，也不新增 metadata、遠端圖片、HTML／JavaScript 或其他資源載入。完整 inline math 與其他 reference runtime 能力仍不是本批已完成範圍。
+
+有效紅燈 `markdown-task-table-red.log` exit 1：兩個方法／三個 cases 直接重現 task 原文沒有狀態呈現（3 issues）。`focused-v1` 是測試把動態 String 傳給只收 literal 的 `l10n` 的編譯問題，不當作產品紅燈；離屏 AX probes 發現 `NSHostingView.accessibilityChildren()` 為空、native button role 為 `AXUnknown`，另一次 probe 編譯失敗亦保留。最後改檢查真正原生 disabled controls 的三個 off／on／on 值、嘗試 click 不改值；localized status 另以七語投影比對。沒有把這項離屏 native control 檢查稱為真人 VoiceOver 驗收。
+
+`markdown-task-table-focused-final.log` exit 0：95 tests／10 suites（rich content 37／5、App 58／5），包括既有 prose、reference navigation、群組 reply、math／Mermaid fallback 與安全 metadata 邊界。新增九個測試方法，真正 `TranscriptMessageView` 與 `GroupMessageBubble` 產生七語 × light／dark × direct／group 共 28 張隔離圖片，三個狀態及 native read-only controls 每張檢查；英語四張另以 OCR 確認格式後的文字及未漏出 `[x]`、`**`、`~~`／backtick。人工抽查 14 張，覆蓋全部七語明暗與兩條 route；內容未因 UI 語言被翻譯或改寫。
+
+最後 source 完整 `swift test --no-parallel` 的 `markdown-task-table-full-final.log` exit 0：135 XCTest＋1,889 Swift Testing／222 suites（App 673／84）。兩項 opt-in live Codex 測試略過，不當作真實模型或外部帳號驗收；既有 CoreData NSXPCConnection 診斷仍出現，相關 tests 通過，不宣稱診斷已修好。`markdown-task-table-localization-final.log` 七語各 1,798 keys／0 missing；`git diff --check` 通過。`markdown-task-table-native-final.log` BUILD SUCCEEDED；`markdown-task-table-package-final.log` exit 0：四個執行檔、deep strict 簽章及 app／XPC entitlements 通過。隔離產物 `.build/validation/MarkdownTaskTablePackage/Filicon.app` 是 Debug／ad-hoc gate，不是 release／公證；未執行列印的 launch smoke。完整回歸包含本批 actual-route renders，不替代真人 VoiceOver／focus 或最低 macOS runtime 驗收。
+
+技能使用現代 SwiftUI 的唯讀 constant binding／分離 presentation 與 Swift 測試的固定商業日期／ID、隔離 AppModel／store、CustomDump 狀態及注入 link callback；沒有新 dependency。未 push、啟動或重啟使用者 App／Xcode、改真實帳號／群組／聊天。日誌、PNG 與封裝只存於忽略的 `.build/validation/`。
+
+同時修正歷史 `UI-04 complete` 標記為 partial，沒有縮小全部 48 項的驗收範圍。reference `math.tsx` 的 shipped KaTeX 與 `mermaid.tsx` 的 shipped strict runtime／full-screen viewer／zoom／drag／fit 是可達功能；native 尚為有界 MathML 及三種 diagram parser，且沒有該圖表 viewer。這些已確認差異、表格 inline math、真人 VoiceOver／焦點及精確排版均保留；帳號 namespace／舊資料歸屬選擇、外部服務與 release 等其餘差異不由本批關閉。
+
 ## 單獨聊天無變更查看不執行 read-state UPSERT（2026-10-05）
 
 reference `a9f633e09d49a85829b8236331b9e21f7e612634` 的 `agent-db.ts:207` 在保留 manual-unread、或非 manual 的 view time 不前進時直接回傳，不寫 unread KV。native domain 已正確回傳無變更，但 direct-chat SQLite 層忽略 Bool，仍寫入原 row。本批只在 `markViewed` 真正變更時執行 UPSERT；finite date、原 commit／binding lease、canonical owner／read row 檢查仍先執行，observation publication transaction 不移除。沒有無 I/O 或跨 process CAS 保證，沒有新增權限。
@@ -298,7 +316,7 @@ reference `a9f633e09d49a85829b8236331b9e21f7e612634` 的來源界線：
 
 ## Matrix 不是完成證明
 
-`PARITY.md` 有 48 個 ID：43 個歷史 complete、4 個 partial（AGENT-01／02／04、AUTO-03）、1 個 NA（UPD-04）。complete 必須逐項連到當前可達流程、對應測試及必要 runtime 驗收；「final gates passed」本身不能證明全功能對等。近期完整 Swift 測試／原生 build／package verifier 是回歸與封裝證據，不替代外部帳號、權限 UI 或 release 驗收。
+`PARITY.md` 有 48 個 ID；2026-10-05 因確認 `UI-04` 尚缺 reference 的完整 math／diagram viewer，將該歷史 complete 修正為 partial。矩陣現為 42 個歷史 complete、5 個 partial（UI-04、AGENT-01／02／04、AUTO-03）、1 個 NA（UPD-04）。complete 必須逐項連到當前可達流程、對應測試及必要 runtime 驗收；「final gates passed」本身不能證明全功能對等。近期完整 Swift 測試／原生 build／package verifier 是回歸與封裝證據，不替代外部帳號、權限 UI 或 release 驗收；更早日期段落的 43／4／1 是當時紀錄。
 
 以下保留全部驗收範圍：UI-01…04、CONV-01…04、ATT-01…04、PROV-01…04、MCP-01…04、AGENT-01…04、AUTO-01…04、COMP-01…04、ACCT-01…04、NOTIF-01…04、PERS-01…04、UPD-01…04。尚未逐項重驗者標記為未重驗，不推論缺失，也不視為已完成。
 

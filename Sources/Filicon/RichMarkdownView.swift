@@ -147,31 +147,79 @@ struct MermaidNativeLayout: Sendable, Equatable {
 /// reference-style links, inline formatting and hard breaks keep their meaning.
 enum RichMarkdownProseLayout {
     static func make(_ source: String) -> AttributedString? {
-        guard let parsed = try? AttributedString(markdown: source, options: .init(interpretedSyntax: .full)) else { return nil }
+        paragraphs(source).map(join)
+    }
+
+    struct Paragraph: Sendable, Equatable {
+        let separator: String
+        let prefix: String
+        let isTaskChecked: Bool?
+        var content: AttributedString
+    }
+
+    static func join(_ paragraphs: [Paragraph]) -> AttributedString {
         var result = AttributedString()
+        for paragraph in paragraphs {
+            result.append(AttributedString(paragraph.separator + paragraph.prefix))
+            if let checked = paragraph.isTaskChecked {
+                result.append(AttributedString(checked ? "☑ " : "☐ "))
+            }
+            result.append(paragraph.content)
+        }
+        return result
+    }
+
+    static func paragraphs(_ source: String) -> [Paragraph]? {
+        guard let parsed = try? AttributedString(markdown: source,
+            options: .init(interpretedSyntax: .full, appliesSourcePositionAttributes: true)) else { return nil }
+        var result: [Paragraph] = []
         var previous: Context?
         var seenItems: Set<Int> = []
         for (intent, range) in parsed.runs[\.presentationIntent] {
             let context = Context(components: intent?.components ?? [])
+            var separator = ""
             if let previous {
                 let adjacentItems = context.itemID != previous.itemID && !context.listIDs.isDisjoint(with: previous.listIDs)
-                result.append(AttributedString(adjacentItems ? "\n" : "\n\n"))
+                separator = adjacentItems ? "\n" : "\n\n"
             }
             var prefix = String(repeating: "› ", count: context.quoteDepth)
+            var firstItemParagraph = false
             if let itemID = context.itemID {
+                firstItemParagraph = seenItems.insert(itemID).inserted
                 prefix += String(repeating: "  ", count: max(context.listIDs.count - 1, 0))
-                prefix += seenItems.insert(itemID).inserted ? context.marker : String(repeating: " ", count: context.marker.count)
+                prefix += firstItemParagraph ? context.marker : String(repeating: " ", count: context.marker.count)
             }
-            // Synthetic separators must not inherit an adjacent link or emphasis.
-            result.append(AttributedString(prefix))
             var piece = AttributedString(parsed[range])
+            let task = firstItemParagraph ? taskMarker(in: piece, source: source) : nil
+            if task != nil {
+                let end = piece.characters.index(piece.startIndex, offsetBy: 3)
+                piece.removeSubrange(piece.startIndex..<end)
+                while piece.characters.first == " " || piece.characters.first == "\t" {
+                    piece.removeSubrange(piece.startIndex..<piece.characters.index(after: piece.startIndex))
+                }
+            }
             if let level = context.headerLevel {
                 piece.font = level == 1 ? .title2.bold() : level == 2 ? .title3.bold() : .headline
             }
-            result.append(piece)
+            // Keep status and synthetic markers separate from the author's attributes.
+            result.append(.init(separator: separator, prefix: prefix, isTaskChecked: task, content: piece))
             previous = context
         }
         return result
+    }
+
+    private static func taskMarker(in piece: AttributedString, source: String) -> Bool? {
+        guard let first = piece.runs.first, first.link == nil, first.inlinePresentationIntent == nil,
+              let position = first.markdownSourcePosition, let range = Range(position, in: source) else { return nil }
+        // Parsed text alone cannot distinguish a task from an escaped/code/emphasized
+        // '[x]'. Require the literal, unformatted source marker of the first paragraph.
+        let raw = source[range]
+        let marker = String(raw.prefix(3))
+        guard ["[ ]", "[x]", "[X]"].contains(marker), raw.count > 3,
+              raw.dropFirst(3).first == " " || raw.dropFirst(3).first == "\t",
+              String(piece.characters.prefix(3)) == marker,
+              piece.characters.dropFirst(3).contains(where: { !$0.isWhitespace }) else { return nil }
+        return marker != "[ ]"
     }
 
     private struct Context {
@@ -204,6 +252,23 @@ enum RichMarkdownProseLayout {
             for component in components { if case .header(let level) = component.kind { return level } }
             return nil
         }
+    }
+}
+
+/// Table cells are inline Markdown, never a second block parser or a resource loader.
+/// No transcript navigation capability is inherited by a table cell.
+enum RichMarkdownTableCellLayout {
+    static func make(_ source: String) -> AttributedString {
+        guard var value = try? AttributedString(markdown: source,
+            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)) else { return AttributedString(source) }
+        let blocked = value.runs.compactMap { run -> Range<AttributedString.Index>? in
+            guard let url = run.link else { return nil }
+            guard ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
+                  case .allowed = TranscriptLinkPolicy.decision(for: url) else { return run.range }
+            return nil
+        }
+        for range in blocked { value[range].link = nil }
+        return value
     }
 }
 
@@ -280,15 +345,20 @@ struct RichMarkdownView: View {
         switch block {
         case .prose(let prose):
             Group {
-                if let attributed = attributedProse(prose) { Text(attributed) }
+                if let paragraphs = attributedProseParagraphs(prose) {
+                    if paragraphs.contains(where: { $0.isTaskChecked != nil }) {
+                        RichMarkdownTaskListView(paragraphs: paragraphs)
+                    } else {
+                        Text(RichMarkdownProseLayout.join(paragraphs)).accessibilityLabel(prose)
+                    }
+                }
                 else { Text(prose) }
             }
             .environment(\.openURL, OpenURLAction { open($0) ? .handled : .discarded })
-            .accessibilityLabel(prose)
         case .code(let language, let source, let terminated):
             RichCodeBlock(language: language, source: source, isTerminated: terminated)
         case .table(let table):
-            RichMarkdownTableView(table: table)
+            RichMarkdownTableView(table: table, openLink: open)
         case .math(let source, let mode, let presentation):
             OfflineMathView(source: source, mode: mode, presentation: presentation)
         case .mermaid(let source, let presentation):
@@ -297,7 +367,19 @@ struct RichMarkdownView: View {
     }
 
     func attributedProse(_ prose: String) -> AttributedString? {
-        guard var attributed = RichMarkdownProseLayout.make(prose) else { return nil }
+        attributedProseParagraphs(prose).map(RichMarkdownProseLayout.join)
+    }
+
+    private func attributedProseParagraphs(_ prose: String) -> [RichMarkdownProseLayout.Paragraph]? {
+        guard var paragraphs = RichMarkdownProseLayout.paragraphs(prose) else { return nil }
+        for index in paragraphs.indices {
+            paragraphs[index].content = attributedReferences(paragraphs[index].content)
+        }
+        return paragraphs
+    }
+
+    private func attributedReferences(_ value: AttributedString) -> AttributedString {
+        var attributed = value
         // Only host-resolved message links get the inline reference treatment.
         // An unavailable address keeps its author's label, never a tappable chip.
         let references = attributed.runs.compactMap { run -> (Range<AttributedString.Index>, Bool)? in
@@ -369,26 +451,77 @@ private struct RichCodeBlock: View {
     }
 }
 
-private struct RichMarkdownTableView: View {
+struct RichMarkdownTaskStatus: View {
+    let isChecked: Bool
+    var statusLabel: String { isChecked ? l10n("Completed") : l10n("Not completed") }
+
+    var body: some View {
+        Toggle(l10n("Task status"), isOn: .constant(isChecked))
+            .toggleStyle(.checkbox).labelsHidden().disabled(true)
+            .fixedSize()
+            .accessibilityValue(statusLabel)
+            .help(l10n("Status from the message; this checkbox cannot be changed."))
+    }
+}
+
+private struct RichMarkdownTaskListView: View {
+    let paragraphs: [RichMarkdownProseLayout.Paragraph]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(paragraphs.enumerated()), id: \.offset) { _, paragraph in
+                Group {
+                    if let checked = paragraph.isTaskChecked {
+                        HStack(alignment: .firstTextBaseline, spacing: 4) {
+                            Text(verbatim: paragraph.prefix).accessibilityHidden(true)
+                            RichMarkdownTaskStatus(isChecked: checked)
+                            Text(paragraph.content).fixedSize(horizontal: false, vertical: true)
+                        }
+                        .accessibilityElement(children: .contain)
+                    } else {
+                        Text(AttributedString(paragraph.prefix) + paragraph.content)
+                    }
+                }
+                .padding(.top, paragraph.separator == "\n" ? 4 : paragraph.separator == "\n\n" ? 12 : 0)
+            }
+        }
+    }
+}
+
+struct RichMarkdownTableView: View {
     @Environment(\.locale) private var uiLocale
     let table: MarkdownTable
+    let openLink: @MainActor (URL) -> Bool
     var body: some View {
         let _ = uiLocale.identifier
         ScrollView(.horizontal) {
             Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 7) {
                 GridRow {
-                    ForEach(Array(table.headers.enumerated()), id: \.offset) { _, value in Text(value).font(.callout.bold()) }
+                    ForEach(Array(table.headers.enumerated()), id: \.offset) { _, value in
+                        Text(RichMarkdownTableCellLayout.make(value)).font(.callout.bold())
+                    }
                 }
                 Divider().gridCellUnsizedAxes(.horizontal)
                 ForEach(Array(table.rows.enumerated()), id: \.offset) { _, row in
-                    GridRow { ForEach(Array(row.enumerated()), id: \.offset) { _, value in Text(value).font(.callout) } }
+                    GridRow {
+                        ForEach(Array(row.enumerated()), id: \.offset) { _, value in
+                            Text(RichMarkdownTableCellLayout.make(value)).font(.callout)
+                        }
+                    }
                 }
             }
             .padding(9)
         }
         .background(.quaternary, in: RoundedRectangle(cornerRadius: 7))
+        .environment(\.openURL, OpenURLAction { open($0) ? .handled : .discarded })
         .accessibilityElement(children: .contain)
         .accessibilityLabel(l10n("Table with \(table.headers.count) columns and \(table.rows.count) rows"))
+    }
+
+    func open(_ url: URL) -> Bool {
+        guard ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
+              case .allowed(let safeURL) = TranscriptLinkPolicy.decision(for: url) else { return false }
+        return openLink(safeURL)
     }
 }
 

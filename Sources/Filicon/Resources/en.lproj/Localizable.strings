@@ -1806,3 +1806,6 @@
 "Filicon kept this agent's routines running and disabled activity checks for this agent." = "Filicon kept this agent's routines running and disabled activity checks for this agent.";
 "Filicon resumed this agent's guarded routines and postponed activity checks for 30 days." = "Filicon resumed this agent's guarded routines and postponed activity checks for 30 days.";
 "Filicon left this agent's routines paused." = "Filicon left this agent's routines paused.";
+"Task status" = "Task status";
+"Not completed" = "Not completed";
+"Status from the message; this checkbox cannot be changed." = "Status from the message; this checkbox cannot be changed.";

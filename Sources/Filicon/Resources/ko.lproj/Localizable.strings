@@ -1806,3 +1806,6 @@
 "Filicon kept this agent's routines running and disabled activity checks for this agent." = "Filicon이 이 에이전트의 루틴을 계속 실행하고 활동 확인을 비활성화했습니다.";
 "Filicon resumed this agent's guarded routines and postponed activity checks for 30 days." = "Filicon이 활동 확인으로 중지된 루틴을 재개하고 활동 확인을 30일 연기했습니다.";
 "Filicon left this agent's routines paused." = "Filicon이 이 에이전트의 루틴을 중지된 상태로 유지했습니다.";
+"Task status" = "작업 상태";
+"Not completed" = "미완료";
+"Status from the message; this checkbox cannot be changed." = "메시지에 표시된 상태입니다. 이 체크박스는 변경할 수 없습니다.";

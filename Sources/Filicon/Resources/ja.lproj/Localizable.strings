@@ -1806,3 +1806,6 @@
 "Filicon kept this agent's routines running and disabled activity checks for this agent." = "Filicon はこのエージェントの定期処理を継続し、活動確認を無効にしました。";
 "Filicon resumed this agent's guarded routines and postponed activity checks for 30 days." = "Filicon は活動確認で停止した定期処理を再開し、活動確認を 30 日間延期しました。";
 "Filicon left this agent's routines paused." = "Filicon はこのエージェントの定期処理を停止したままにしました。";
+"Task status" = "タスクの状態";
+"Not completed" = "未完了";
+"Status from the message; this checkbox cannot be changed." = "メッセージ内の状態です。このチェックボックスは変更できません。";
