@@ -71,6 +71,14 @@ rejected/missing state and conservatively leaves that chat needing attention.
 Valid read markers and deleted-message receipts survive salvage; irrecoverable
 receipt IDs cannot be reconstructed from absent message rows.
 
+Automatic views that preserve manual unread or do not advance the view time
+return the canonical state without an unchanged read-state UPSERT, matching the
+reference's `markViewed` early return. Finite dates, the original caller commit
+guard, exact binding and a valid durable row are still required before that
+return. The observation transaction/read-publication fence remains in place;
+this is not a no-I/O or cross-process CAS claim. Changed views and explicit
+read/unread choices retain their durable write and rollback contract.
+
 Native direct-chat viewing now records read state only for the current focused,
 visible presentation. Manual unread survives focus/arrival callbacks until an
 explicit Mark as read action or a human sidebar activation. The sidebar projects

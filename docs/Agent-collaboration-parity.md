@@ -1,5 +1,11 @@
 # 協作能力核對紀錄（更新至 2026-10-05）
 
+## 單獨聊天的無變更 automatic view（2026-10-05）
+
+再次核對 reference `agent-db.ts` 的 `markViewed`，native SQLite 現在也於保留 manual-unread 或相同／較舊 view time 時不做無變更 UPSERT。原 finite timestamp、caller commit／binding lease、canonical owner／read row 及 observation publication transaction 仍先檢查；撤銷、帳號重綁後還原、錯 owner、缺失／損壞 row 均不復活為成功。changed view 和 explicit read／unread 仍按原契約保存並在 SQL 故障時回滾。
+
+測試技能採既有固定商業時間／ID、隔離 SQLite trigger 與完整 state／content／observation 比對；已綁定／未綁定 × 三種 no-op 先以真正 SQL 寫入故障紅燈重現，另有十種 authority／invalid-state 拒絕。最後來源及 gates 見 [完成驗收入口](Parity-completion-audit.md)。沒有新增 UI 或權限，不宣稱無 I/O、cross-process CAS、完整帳號 namespace 或外部／release 完成；未 push、重啟 App／Xcode 或改真實資料。
+
 ## hidden confirmation 的 Stop／審核保存時序（2026-10-05）
 
 審核請求在 broker 解決後雖不再出現在 pending UI，host 仍保留原 acknowledgment run 的 exact review IDs。Stop 只退休同 owner 尚未完成的卡片，保留 completed／無關內容；真正 SQL failure 已先重現 canonical running 與 UI approved 不一致，再補原 execution capture、最後保存 scope fence、取消卡片的窄投影及正常回合的 review settlement。沒有自動核准 local write 或延長取消權限。測試技能使用隔離 SQL trigger、原 provider、固定商業時間及 CustomDump；正常核准／拒絕與三種 Stop 邊界一併測，完整紅綠與驗收邊界見 [完成驗收入口](Parity-completion-audit.md)。

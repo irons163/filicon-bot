@@ -84,7 +84,10 @@ extension ConversationRepository {
                 guard current.exists, current.binding == expectedBinding else { throw CancellationError() }
                 var state = try requireUnreadState(conversationID)
                 switch action {
-                case .viewed(let preserve): state.markViewed(at: at, preserveManualUnread: preserve)
+                case .viewed(let preserve):
+                    // The owner, caller fence and canonical row have already
+                    // been checked. A no-op view must not attempt an UPSERT.
+                    guard state.markViewed(at: at, preserveManualUnread: preserve) else { return state }
                 case .read: state.markRead(at: at)
                 case .unread:
                     let message = try database.prepare("SELECT MAX(created_at) FROM messages WHERE conversation_id=?", operation: "resolve unread divider")

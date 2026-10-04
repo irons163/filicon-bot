@@ -1,5 +1,7 @@
 # Filicon / Grok Bot 0.18 功能 parity matrix（current implementation）
 
+2026-10-05 direct-chat no-op view 增量：對齊 reference `markViewed`，保留 manual-unread 或 view time 不前進時不做無變更 read-state UPSERT；finite date、原 caller／binding fence、canonical owner／valid row 及 observation transaction 保留，explicit read／unread 和真正 changed view 仍保存／回滾。六種已綁定／未綁定 SQL 故障紅燈、十種原 authority／invalid-state 邊界及最後 gates 見 [完成驗收入口](Parity-completion-audit.md)。沒有新增 UI／權限、不宣稱無 I/O 或跨 process CAS，其他 namespace／外部／release／全 48 分類邊界不變；未 push、重啟使用者 App／Xcode 或改真實資料。
+
 2026-10-05 hidden confirmation 的 Stop 增量：審核 ID 在原 run admission 時保留，不因 broker 解決便遺失尚未保存完成的卡；點擊同步捕捉 original execution，晚到 action 不重獲無 fence 的保存權限。正常回合等待已點擊的 review 保存完成後才寫 final snapshot；取消立即撤銷／解除等待，只退休原 owner unfinished rows 及窄投影取消卡，已完成／無關內容與 local permission gate 保留。有效 SQL 故障紅燈、65 項最後聚焦、完整 source gates 與未完成外部邊界見 [完成驗收入口](Parity-completion-audit.md)。
 
 2026-10-04 群組 unread UI 增量：真正群組側欄顯示 canonical count 至 `99+`、七語右鍵 read／unread；人類點選明確讀原群組，focus／arrival 保留 manual-unread。排隊前同步派生原 store／membership／account lease，refresh 不 retarget／撤銷人類選擇；away-and-back、過期 visible history 與保存失敗均保守拒絕。真正 App member-publication callback 刷新 projection，read 不回答 question／改排程／授權。來源、有效 UI 紅燈、七語明暗實際 sidebar 與最後 gates 見 [完成驗收入口](Parity-completion-audit.md)。這取代下段 storage-only 的 UI 未接線記述；真人 focus／VoiceOver、完整群組帳號隔離、cross-instance／process CAS、legacy fallback、雲端及其他外部／release／全 48 分類仍保留，整體 partial 不上調；未 push、重啟使用者 App／Xcode 或改真實資料。

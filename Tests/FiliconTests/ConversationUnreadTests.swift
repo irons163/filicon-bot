@@ -215,6 +215,132 @@ struct ConversationUnreadTests {
         expectNoDifference(content.first { $0.id == value.id }?.messages.map(\.id), [id(20)])
     }
 
+    @Test(arguments: ["manual", "same", "older"], [true, false])
+    func unchangedAutomaticViewsDoNotWriteReadState(reason: String, isBound: Bool) async throws {
+        let root = try directory(); defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appending(path: "conversations.sqlite3"), repo = try ConversationRepository(databaseURL: url)
+        var value = chat(); value.messages = [message()]
+        if !isBound { value.agentBinding = nil }
+        var peer = chat(11); peer.agentBinding = .init(accountID: "peer", agentID: id(2)); peer.messages = [message(22)]
+        try await repo.save([value, peer], activityAt: now)
+        let owner = value.agentBinding, viewedAt = now.addingTimeInterval(5)
+        _ = try await repo.updateReadState(conversationID: value.id,
+            action: reason == "manual" ? .unread : .read, at: viewedAt, expectedBinding: owner)
+        let before = try #require(try await repo.unreadState(conversationID: value.id))
+        let content = try await repo.load()
+        var ownObservation: ConversationUnreadObservation?
+        if isBound {
+            let observation = try #require(try await repo.observeUniqueUnreadState(accountID: binding.accountID, agentID: binding.agentID))
+            ownObservation = observation
+        }
+        let peerObservation = try #require(try await repo.observeUniqueUnreadState(accountID: "peer", agentID: id(2)))
+        let peerBefore = try peerObservation.withReadState { $0 }
+        try sql("CREATE TRIGGER reject_noop_read_write BEFORE UPDATE ON conversation_read_state BEGIN SELECT RAISE(ABORT, 'isolated read write failure'); END", at: url)
+        let at = reason == "manual" ? now.addingTimeInterval(10)
+            : (reason == "same" ? viewedAt : viewedAt.addingTimeInterval(-1))
+        let unchanged = try await repo.updateReadState(conversationID: value.id,
+            action: .viewed(preserveManualUnread: true), at: at, expectedBinding: owner)
+        expectNoDifference(unchanged, before)
+
+        // A changed view and explicit human choices still use the durable write
+        // path; ignoring all persistence errors would incorrectly pass the no-op.
+        for action in [ConversationReadAction.viewed(preserveManualUnread: false), .read, .unread] {
+            await #expect(throws: PersistenceError.self) {
+                try await repo.updateReadState(conversationID: value.id, action: action,
+                    at: now.addingTimeInterval(20), expectedBinding: owner)
+            }
+        }
+        let durable = try await repo.unreadState(conversationID: value.id), afterContent = try await repo.load()
+        expectNoDifference(durable, before); expectNoDifference(afterContent, content)
+        if let ownObservation { expectNoDifference(try ownObservation.withReadState { $0 }, before) }
+        expectNoDifference(try peerObservation.withReadState { $0 }, peerBefore)
+        try sql("DROP TRIGGER reject_noop_read_write", at: url)
+        let retried = try await repo.updateReadState(conversationID: value.id,
+            action: .viewed(preserveManualUnread: false), at: now.addingTimeInterval(20), expectedBinding: owner)
+        expectNoDifference(retried, .init(lastActivityAt: now, lastViewedAt: now.addingTimeInterval(20)))
+        if let ownObservation { expectNoDifference(try ownObservation.withReadState { $0 }, retried) }
+        expectNoDifference(try peerObservation.withReadState { $0 }, peerBefore)
+        let reopened = try ConversationRepository(databaseURL: url)
+        let reopenedState = try await reopened.unreadState(conversationID: value.id)
+        let reopenedContent = try await reopened.load()
+        expectNoDifference(reopenedState, retried); expectNoDifference(reopenedContent, content)
+    }
+
+    enum AutomaticViewRejection: Sendable, CaseIterable {
+        case closedLease, rebindCycle, wrongBinding, rejectedHost, missing, invalid, deleted
+        case notANumber, positiveInfinity, negativeInfinity
+    }
+
+    @Test(arguments: AutomaticViewRejection.allCases)
+    func unchangedViewsStillRequireOriginalAuthorityAndValidCanonicalState(reason: AutomaticViewRejection) async throws {
+        let root = try directory(); defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appending(path: "conversations.sqlite3"), repo = try ConversationRepository(databaseURL: url)
+        var value = chat(); value.messages = [message()]
+        var peer = chat(11); peer.agentBinding = .init(accountID: "peer", agentID: id(2)); peer.messages = [message(22)]
+        try await repo.save([value, peer], activityAt: now)
+        let manual = try await repo.updateReadState(conversationID: value.id,
+            action: .unread, at: now.addingTimeInterval(5), expectedBinding: binding)
+        let observation = try #require(try await repo.observeUniqueUnreadState(accountID: binding.accountID, agentID: binding.agentID))
+        let peerObservation = try #require(try await repo.observeUniqueUnreadState(accountID: "peer", agentID: id(2)))
+        let peerBefore = try peerObservation.withReadState { $0 }
+        let lease = try await repo.leaseUniqueBinding(accountID: binding.accountID, agentID: binding.agentID, conversationID: value.id)
+        defer { lease.close() }
+        var expectedBinding: DirectConversationAgentBinding? = binding
+        var at = now.addingTimeInterval(10)
+        switch reason {
+        case .closedLease: lease.close()
+        case .rebindCycle:
+            value.agentBinding = .init(accountID: "other", agentID: id(2))
+            try await repo.save([value, peer], activityAt: now.addingTimeInterval(1))
+            value.agentBinding = binding
+            try await repo.save([value, peer], activityAt: now.addingTimeInterval(2))
+            at = Date(timeIntervalSince1970: 0)
+        case .wrongBinding: expectedBinding = nil
+        case .missing: try sql("DELETE FROM conversation_read_state WHERE conversation_id='\(value.id.uuidString)'", at: url)
+        case .invalid:
+            try sql("PRAGMA ignore_check_constraints=1; UPDATE conversation_read_state SET unread_count=-1 WHERE conversation_id='\(value.id.uuidString)'; PRAGMA ignore_check_constraints=0", at: url)
+        case .deleted: try await repo.delete(id: value.id)
+        case .notANumber: at = Date(timeIntervalSince1970: .nan)
+        case .positiveInfinity: at = Date(timeIntervalSince1970: .infinity)
+        case .negativeInfinity: at = Date(timeIntervalSince1970: -.infinity)
+        case .rejectedHost: break
+        }
+        let contentBefore = try await repo.load()
+        let damaged = reason == .missing || reason == .invalid
+        let stateBefore = damaged ? nil : try await repo.unreadState(conversationID: value.id)
+        let commit: ConversationCommitGuard = { operation in
+            guard reason != .rejectedHost else { throw CancellationError() }
+            try lease.withValidBinding(operation)
+        }
+        switch reason {
+        case .missing, .invalid, .notANumber, .positiveInfinity, .negativeInfinity:
+            await #expect(throws: PersistenceError.self) {
+                try await repo.updateReadState(conversationID: value.id, action: .viewed(preserveManualUnread: true),
+                    at: at, expectedBinding: expectedBinding, commit: commit)
+            }
+        default:
+            await #expect(throws: CancellationError.self) {
+                try await repo.updateReadState(conversationID: value.id, action: .viewed(preserveManualUnread: true),
+                    at: at, expectedBinding: expectedBinding, commit: commit)
+            }
+        }
+        let contentAfter = try await repo.load()
+        expectNoDifference(contentAfter, contentBefore)
+        if damaged {
+            await #expect(throws: PersistenceError.self) { try await repo.unreadState(conversationID: value.id) }
+        } else {
+            let stateAfter = try await repo.unreadState(conversationID: value.id)
+            expectNoDifference(stateAfter, stateBefore)
+        }
+        if reason == .rebindCycle || reason == .deleted {
+            expectNoDifference(observation.isActive, false)
+            #expect(throws: CancellationError.self) { try observation.withReadState { $0 } }
+        } else {
+            expectNoDifference(try observation.withReadState { $0 }, manual)
+        }
+        expectNoDifference(try peerObservation.withReadState { $0 }, peerBefore)
+    }
+
     @Test func canonicalObservationRejectsMissingStateInsteadOfInventingAnEmptyChat() async throws {
         let root = try directory(); defer { try? FileManager.default.removeItem(at: root) }
         let url = root.appending(path: "conversations.sqlite3"), repo = try ConversationRepository(databaseURL: url)

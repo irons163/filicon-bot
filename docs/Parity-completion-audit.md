@@ -1,5 +1,15 @@
 # 完成驗收入口（2026-09-27）
 
+## 單獨聊天無變更查看不執行 read-state UPSERT（2026-10-05）
+
+reference `a9f633e09d49a85829b8236331b9e21f7e612634` 的 `agent-db.ts:207` 在保留 manual-unread、或非 manual 的 view time 不前進時直接回傳，不寫 unread KV。native domain 已正確回傳無變更，但 direct-chat SQLite 層忽略 Bool，仍寫入原 row。本批只在 `markViewed` 真正變更時執行 UPSERT；finite date、原 commit／binding lease、canonical owner／read row 檢查仍先執行，observation publication transaction 不移除。沒有無 I/O 或跨 process CAS 保證，沒有新增權限。
+
+有效紅燈 `direct-unread-view-noop-red.log` exit 1：隔離 trigger 只拒絕 read-state UPDATE，三種 no-op × 已綁定／未綁定共六種真正 UPDATE 錯誤（1 test／6 cases／6 issues），console unlocked。最後 source `direct-unread-view-noop-focused.log` exit 0：93 tests／5 suites（核心 53／3，App 40／2），新增兩個方法。覆蓋原 manual flag／同時間／較舊時間不變、owner 與另一 owner 的 live observation／content 保留、changed view／explicit read／unread 的 SQL 失敗與重試／重開，以及 close／rebind-away-and-back／wrong binding／rejected host／missing／invalid／deleted／三種非有限日期拒絕；群組 UI 及 hidden confirmation Stop 回歸亦通過。Swift 測試技能以既有固定商業時間／ID、隔離 SQLite 和 CustomDump 保存完整 state 比對，沒有新 dependency 或略過測試。
+
+最後 source 完整 `swift test --no-parallel` 的 `direct-unread-view-noop-full-final.log` exit 0：135 XCTest＋1,880 Swift Testing（222 suites；核心 982／108、App 664／84）。兩項 opt-in live Codex 測試略過，不當成真實模型或外部帳號驗收；既有 CoreData NSXPCConnection 診斷仍出現，相關 tests 通過，不宣稱診斷已修好。`direct-unread-view-noop-localization-final.log` 七語各 1,795 keys／0 missing，`git diff --check` 通過。`direct-unread-view-noop-native-final.log` BUILD SUCCEEDED；`direct-unread-view-noop-package-final.log` exit 0：四個執行檔、deep strict 簽章及 app／XPC entitlements 通過。隔離產物 `.build/validation/DirectUnreadViewNoopPackage/Filicon.app` 是 Debug／ad-hoc gate，不是 release／公證；未執行列印的 launch smoke。
+
+沒有新增 UI layout／文字，完整套件既有 render 斷言通過，不新增真人 UI／VoiceOver 證據。legacy fallback、完整 core 帳號 namespace／遷移、雲端 session、live／release 與全 48 分類仍保留，整體 partial 不上調。未 push、啟動或重啟使用者 App／Xcode、改真實帳號／群組／聊天資料；日誌和封裝只存於忽略的 `.build/validation/`。
+
 ## hidden activity confirmation 的原審核卡取消時序（2026-10-05）
 
 解鎖後 `group-unread-ui-full-final-v2.log` 完整跑完但 exit 1：核心 980 tests／108 suites 通過，App 663／84 有一項既有 Stop/local assertion 失敗，durable review card 仍為 running 而不是 approved；console unlocked，不能歸因於鎖定或算整輪通過。追查發現 broker 核准與卡片最後 SQL 保存是不同非同步邊界，待審 UI 已移除時 native Stop 只收集 pending review IDs，會漏掉尚未保存完成的原卡。
