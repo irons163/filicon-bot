@@ -1800,3 +1800,9 @@
 "Mark as read" = "既読にする";
 "Mark as unread" = "未読にする";
 "Unread messages: {0}" = "未読メッセージ：{0}";
+"The routine choice was applied, but its chat confirmation could not be saved: {0}" = "定期処理の選択は適用されましたが、チャットの確認メッセージを保存できませんでした：{0}";
+"Filicon kept this agent's routines running and postponed activity checks for 30 days." = "Filicon はこのエージェントの定期処理を継続し、活動確認を 30 日間延期しました。";
+"Filicon paused this agent's individual routines." = "Filicon はこのエージェントの個別の定期処理を一時停止しました。";
+"Filicon kept this agent's routines running and disabled activity checks for this agent." = "Filicon はこのエージェントの定期処理を継続し、活動確認を無効にしました。";
+"Filicon resumed this agent's guarded routines and postponed activity checks for 30 days." = "Filicon は活動確認で停止した定期処理を再開し、活動確認を 30 日間延期しました。";
+"Filicon left this agent's routines paused." = "Filicon はこのエージェントの定期処理を停止したままにしました。";

@@ -613,7 +613,7 @@ struct AutomationSpendGuardParityTests {
         #expect(states[owner]?.cardID != nil && states[peer]?.cardID != nil && states[owner]?.cardID != states[peer]?.cardID)
         expectNoDifference(states[owner]?.snoozedUntil, legacy.snoozedUntil); expectNoDifference(states[owner]?.optedOut, true)
         let json = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any])
-        expectNoDifference(json["schemaVersion"] as? Int, 2); #expect(json["spendGuard"] == nil)
+        expectNoDifference(json["schemaVersion"] as? Int, 3); #expect(json["spendGuard"] == nil)
         let restored = try AutomationService(storeURL: file), durableStates = await restored.spendGuardStates()
         expectNoDifference(durableStates, states)
         try await restored.answerSpendGuard(.resume, agentID: owner, cardID: states[owner]?.cardID, at: pauseAt)
@@ -621,7 +621,171 @@ struct AutomationSpendGuardParityTests {
         expectNoDifference(peerAfter, [other])
     }
 
-    @Test(arguments: [2, 99])
+    @Test func transcriptIssuanceIsIdempotentAndCannotRetargetTheOriginalDestination() async throws {
+        let (root, service, enabled, _) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try await nudge(service, routine: enabled)
+        let guardID = try #require(await service.spendGuardState(agentID: owner).cardID)
+        let chatID = UUID(uuidString: "00000000-0000-0000-0000-000000001001")!
+        let entryID = UUID(uuidString: "00000000-0000-0000-0000-000000001002")!
+        let acknowledgmentID = UUID(uuidString: "00000000-0000-0000-0000-000000001003")!
+        let definitions = await service.list(), spends = await service.spendGuardStates()
+        let entry = try await service.issueSpendGuardTranscript(agentID: owner, cardID: guardID, accountID: "local",
+            conversationID: chatID, isPaused: false, at: nudgeAt, entryID: entryID, acknowledgmentID: acknowledgmentID)
+        let duplicate = try await service.issueSpendGuardTranscript(agentID: owner, cardID: guardID, accountID: "local",
+            conversationID: chatID, isPaused: false, at: nudgeAt.addingTimeInterval(60))
+        expectNoDifference(duplicate, entry)
+        expectNoDifference(entry.id, entryID); expectNoDifference(entry.acknowledgmentID, acknowledgmentID)
+        for (account, chat) in [("foreign", chatID), ("local", peer)] {
+            await #expect(throws: SpendGuardError.staleCard) {
+                try await service.issueSpendGuardTranscript(agentID: owner, cardID: guardID, accountID: account,
+                    conversationID: chat, isPaused: false, at: nudgeAt)
+            }
+        }
+        let entries = await service.spendGuardTranscriptEntries(accountID: "local")
+        let foreign = await service.spendGuardTranscriptEntries(accountID: "foreign")
+        let after = await service.list(), afterSpends = await service.spendGuardStates()
+        expectNoDifference(entries, [entry]); expectNoDifference(foreign, [])
+        expectNoDifference(after, definitions); expectNoDifference(afterSpends, spends)
+        let reopened = try AutomationService(storeURL: root.appending(path: "automations.json"))
+        let retained = await reopened.spendGuardTranscriptEntries(accountID: "local")
+        expectNoDifference(retained, [entry])
+    }
+
+    @Test(arguments: [SpendGuardAnswer.keep, .pause, .neverAsk, .resume, .stayPaused])
+    func aHumanAnswerAndItsReceiptAreOneDurableAutomationWrite(answer: SpendGuardAnswer) async throws {
+        let (root, service, enabled, _) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let paused = [.resume, .stayPaused].contains(answer)
+        if paused { try await service.answerSpendGuard(.pause, agentID: owner, at: now) }
+        else { try await nudge(service, routine: enabled) }
+        let guardID = try #require(await service.spendGuardState(agentID: owner).cardID)
+        let entry = try await service.issueSpendGuardTranscript(agentID: owner, cardID: guardID, accountID: "local",
+            conversationID: peer, isPaused: paused, at: nudgeAt,
+            entryID: UUID(uuidString: "00000000-0000-0000-0000-000000001004")!,
+            acknowledgmentID: UUID(uuidString: "00000000-0000-0000-0000-000000001005")!)
+        let answerAt = nudgeAt.addingTimeInterval(60)
+        try await service.answerSpendGuard(answer, agentID: owner, cardID: guardID, at: answerAt,
+            expectedPaused: paused, transcriptEntryID: entry.id)
+        let reopened = try AutomationService(storeURL: root.appending(path: "automations.json"))
+        let receipt = try #require(await reopened.spendGuardTranscriptEntries(accountID: "local").first)
+        expectNoDifference(receipt.id, entry.id); expectNoDifference(receipt.acknowledgmentID, entry.acknowledgmentID)
+        expectNoDifference(receipt.answer, answer); expectNoDifference(receipt.answeredAt, answerAt)
+        let definitions = await reopened.list(), spends = await reopened.spendGuardStates()
+        await #expect(throws: SpendGuardError.staleCard) {
+            try await reopened.answerSpendGuard(answer, agentID: owner, cardID: guardID, at: answerAt.addingTimeInterval(1),
+                expectedPaused: paused, transcriptEntryID: entry.id)
+        }
+        let after = await reopened.list(), afterSpends = await reopened.spendGuardStates()
+        expectNoDifference(after, definitions); expectNoDifference(afterSpends, spends)
+    }
+
+    @Test func aFailedGuardWriteCannotRecordAnAppliedAnswerOrPartiallyResume() async throws {
+        let (root, service, _, _) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try await service.answerSpendGuard(.pause, agentID: owner, at: now)
+        let guardID = try #require(await service.spendGuardState(agentID: owner).cardID)
+        let entry = try await service.issueSpendGuardTranscript(agentID: owner, cardID: guardID, accountID: "local",
+            conversationID: peer, isPaused: true, at: now)
+        let before = await service.list(), spends = await service.spendGuardStates()
+        let file = root.appending(path: "automations.json"), backup = root.appending(path: "guard-receipt-backup.json")
+        try FileManager.default.moveItem(at: file, to: backup)
+        try FileManager.default.createDirectory(at: file, withIntermediateDirectories: false)
+        await #expect(throws: (any Error).self) {
+            try await service.answerSpendGuard(.resume, agentID: owner, cardID: guardID, at: now.addingTimeInterval(60),
+                expectedPaused: true, transcriptEntryID: entry.id)
+        }
+        let failedEntries = await service.spendGuardTranscriptEntries(accountID: "local")
+        let after = await service.list(), afterSpends = await service.spendGuardStates()
+        expectNoDifference(failedEntries, [entry]); expectNoDifference(after, before); expectNoDifference(afterSpends, spends)
+        try FileManager.default.removeItem(at: file); try FileManager.default.moveItem(at: backup, to: file)
+        try await service.answerSpendGuard(.resume, agentID: owner, cardID: guardID, at: now.addingTimeInterval(61),
+            expectedPaused: true, transcriptEntryID: entry.id)
+        let receipt = try #require(await service.spendGuardTranscriptEntries(accountID: "local").first)
+        expectNoDifference(receipt.answer, .resume)
+    }
+
+    @Test func aCancelledHostCannotIssueATranscriptEntryOrChangeItsDestination() async throws {
+        let (root, service, _, _) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try await service.answerSpendGuard(.pause, agentID: owner, at: now)
+        let guardID = try #require(await service.spendGuardState(agentID: owner).cardID)
+        let bytes = try Data(contentsOf: root.appending(path: "automations.json"))
+        let lifetime = AutomationSpendGuardLifetime(); lifetime.cancel()
+        await #expect(throws: CancellationError.self) {
+            try await service.issueSpendGuardTranscript(agentID: owner, cardID: guardID, accountID: "local",
+                conversationID: peer, isPaused: true, at: now, lifetime: lifetime)
+        }
+        await #expect(throws: CancellationError.self) {
+            try await service.issueSpendGuardTranscript(agentID: owner, cardID: guardID, accountID: "local",
+                conversationID: peer, isPaused: true, at: now, commit: { _ in throw CancellationError() })
+        }
+        let entries = await service.spendGuardTranscriptEntries(accountID: "local")
+        expectNoDifference(entries, []); expectNoDifference(try Data(contentsOf: root.appending(path: "automations.json")), bytes)
+    }
+
+    @Test func nudgeAndAutomaticPauseKeepDistinctTranscriptEntriesWithoutRevivingTheOldPhase() async throws {
+        let (root, service, routine, _) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try await nudge(service, routine: routine)
+        let guardID = try #require(await service.spendGuardState(agentID: owner).cardID)
+        let conversationID = UUID(uuidString: "00000000-0000-0000-0000-000000001204")!
+        let initial = try await service.issueSpendGuardTranscript(agentID: owner, cardID: guardID,
+            accountID: "local", conversationID: conversationID, isPaused: false, at: nudgeAt,
+            entryID: UUID(uuidString: "00000000-0000-0000-0000-000000001205")!,
+            acknowledgmentID: UUID(uuidString: "00000000-0000-0000-0000-000000001206")!)
+        let decision = try await service.evaluateSpendGuard(agentID: owner, at: pauseAt)
+        expectNoDifference(decision, .pause)
+        let paused = try await service.issueSpendGuardTranscript(agentID: owner, cardID: guardID,
+            accountID: "local", conversationID: conversationID, isPaused: true, at: pauseAt,
+            entryID: UUID(uuidString: "00000000-0000-0000-0000-000000001207")!,
+            acknowledgmentID: UUID(uuidString: "00000000-0000-0000-0000-000000001208")!)
+        #expect(initial.id != paused.id && initial.acknowledgmentID != paused.acknowledgmentID)
+        await #expect(throws: SpendGuardError.staleCard) {
+            try await service.answerSpendGuard(.keep, agentID: owner, cardID: guardID,
+                at: pauseAt.addingTimeInterval(1), expectedPaused: false, transcriptEntryID: initial.id)
+        }
+        try await service.answerSpendGuard(.resume, agentID: owner, cardID: guardID,
+            at: pauseAt.addingTimeInterval(2), expectedPaused: true, transcriptEntryID: paused.id)
+        let reopened = try AutomationService(storeURL: root.appending(path: "automations.json"))
+        let entries = await reopened.spendGuardTranscriptEntries(accountID: "local")
+        expectNoDifference(entries.first { $0.id == initial.id }, initial)
+        expectNoDifference(entries.first { $0.id == paused.id }?.answer, .resume)
+        expectNoDifference(entries.map(\.conversationID), [conversationID, conversationID])
+        expectNoDifference(entries.count, 2)
+    }
+
+    @Test(arguments: ["missing-outbox", "duplicate-id", "duplicate-stage", "wrong-answer", "missing-answer-time"])
+    func malformedTranscriptOutboxesAreRejectedWithoutRewriting(change: String) async throws {
+        let (root, service, _, _) = try await fixture(); defer { try? FileManager.default.removeItem(at: root) }
+        try await service.answerSpendGuard(.pause, agentID: owner, at: now)
+        let guardID = try #require(await service.spendGuardState(agentID: owner).cardID)
+        _ = try await service.issueSpendGuardTranscript(agentID: owner, cardID: guardID, accountID: "local",
+            conversationID: owner, isPaused: true, at: now,
+            entryID: UUID(uuidString: "00000000-0000-0000-0000-000000001201")!,
+            acknowledgmentID: UUID(uuidString: "00000000-0000-0000-0000-000000001202")!)
+        let file = root.appending(path: "automations.json")
+        var payload = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any])
+        var entries = try #require(payload["spendGuardTranscriptEntries"] as? [[String: Any]])
+        switch change {
+        case "missing-outbox": payload.removeValue(forKey: "spendGuardTranscriptEntries")
+        case "duplicate-id": entries[0]["acknowledgmentID"] = entries[0]["id"]
+        case "duplicate-stage":
+            var duplicate = entries[0]
+            duplicate["id"] = "00000000-0000-0000-0000-000000001203"
+            duplicate["acknowledgmentID"] = "00000000-0000-0000-0000-000000001204"
+            entries.append(duplicate)
+        case "wrong-answer": entries[0]["answer"] = "keep"; entries[0]["answeredAt"] = now.timeIntervalSince1970 * 1_000
+        default: entries[0]["answer"] = "resume"
+        }
+        if change != "missing-outbox" { payload["spendGuardTranscriptEntries"] = entries }
+        let bytes = try JSONSerialization.data(withJSONObject: payload, options: .sortedKeys)
+        try bytes.write(to: file)
+        #expect(throws: (any Error).self) { try AutomationService(storeURL: file) }
+        expectNoDifference(try Data(contentsOf: file), bytes)
+    }
+
+    @Test(arguments: [2, 3, 99])
     func unsupportedOrIncompleteSchemasAreRejectedWithoutRewriting(version: Int) async throws {
         let (root, _, enabled, _) = try await fixture(); defer { try? FileManager.default.removeItem(at: root) }
         let file = root.appending(path: "automations.json")

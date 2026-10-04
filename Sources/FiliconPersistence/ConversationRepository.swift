@@ -170,6 +170,54 @@ public actor ConversationRepository {
         try save(load().filter { $0.id != id })
     }
 
+    /// Append/update only the host's immutable activity entry IDs against the
+    /// canonical history, without replacing a caller's paged or stale snapshot.
+    /// The automation store is the outbox; this transaction never changes a
+    /// schedule. Replays preserve message IDs, timestamps, reactions and unread.
+    public func publishAutomationActivity(_ publication: AutomationActivityTranscriptPublication,
+                                          expectedHiddenAt: Date?, activityAt: Date,
+                                          commit: ConversationCommitGuard = { try $0() }) throws -> Conversation {
+        let card = publication.card
+        guard !card.isAcknowledgment, card.entryID != publication.acknowledgmentID,
+              publication.createdAt.timeIntervalSince1970.isFinite,
+              (card.answer == nil) == (publication.answeredAt == nil),
+              publication.answeredAt?.timeIntervalSince1970.isFinite ?? true,
+              card.answer.map({ (card.isPaused ? [.resume, .stayPaused] : [.keep, .pause, .neverAsk]).contains($0) }) ?? true,
+              let owner = try uniqueBoundConversation(accountID: card.binding.accountID, agentID: card.binding.agentID),
+              owner.id == card.conversationID, owner.hiddenAt == expectedHiddenAt else { throw CancellationError() }
+        var values = try load()
+        guard let index = values.firstIndex(where: { $0.id == card.conversationID }) else { throw CancellationError() }
+        let before = values[index]
+        for message in publication.messages {
+            // A UUID collision in another chat is not permission to move it.
+            guard !values.contains(where: { $0.id != card.conversationID && $0.messages.contains(where: { $0.id == message.id }) }) else {
+                throw CancellationError()
+            }
+            if let row = values[index].messages.firstIndex(where: { $0.id == message.id }) {
+                let existing = values[index].messages[row]
+                let unanswered = publication.promptMessage(answer: nil)
+                guard existing.role == message.role, existing.text == message.text, existing.createdAt == message.createdAt,
+                      existing.deliveryStatus == .succeeded, existing.deliveryError == nil,
+                      existing.reasoningText.isEmpty, existing.toolActivities.isEmpty, existing.attachments.isEmpty,
+                      existing.agentMessageSource == nil, existing.remoteAttachment == nil, existing.remoteImages == nil,
+                      existing.imageGalleryLayout == nil, existing.replyToMessageID == nil,
+                      existing.transcriptCards == message.transcriptCards
+                        || (message.id == card.entryID && existing.transcriptCards == unanswered.transcriptCards) else {
+                    throw CancellationError()
+                }
+                values[index].messages[row].transcriptCards = message.transcriptCards
+            } else { values[index].messages.append(message) }
+        }
+        values[index].updatedAt = max(before.updatedAt, publication.createdAt, publication.answeredAt ?? publication.createdAt)
+        DirectMessageAddressing.assignMissing(in: &values[index])
+        // Only transcript fields change above; every durable owner/visibility
+        // remains identical. Do not re-enter the caller's binding lease while
+        // holding it through this synchronous SQL transaction.
+        if values[index] != before { try commit { try persist(values, activityAt: activityAt, historicalImport: false) } }
+        else { try commit {} }
+        return values[index]
+    }
+
     public func save(_ values: [Conversation], activityAt: Date = Date(), historicalImport: Bool = false) throws {
         guard activityAt.timeIntervalSince1970.isFinite else {
             throw PersistenceError.invalidData(table: "conversation_read_state", row: "save", field: "timestamp")
@@ -186,6 +234,15 @@ public actor ConversationRepository {
             let matches = values.filter { $0.agentBinding == observation.binding }
             if matches.count != 1 || matches.first?.id != observation.conversationID
                 || matches.first?.hiddenAt != observation.legacyHiddenAt { observation.close() }
+        }
+        try persist(values, activityAt: activityAt, historicalImport: historicalImport)
+    }
+
+    /// Storage-only commit for a canonical mutation that cannot change binding
+    /// or visibility. General saves must revoke ownership leases before entry.
+    private func persist(_ values: [Conversation], activityAt: Date, historicalImport: Bool) throws {
+        guard activityAt.timeIntervalSince1970.isFinite else {
+            throw PersistenceError.invalidData(table: "conversation_read_state", row: "save", field: "timestamp")
         }
         try withUnreadObservationTransaction("save conversations") {
             let keep = Set(values.map { $0.id.uuidString })

@@ -27,6 +27,49 @@ public enum SpendGuardDecision: String, Codable, Hashable, Sendable {
 }
 public enum SpendGuardAnswer: String, Codable, Hashable, Sendable { case keep, pause, neverAsk, resume, stayPaused }
 
+/// A durable host outbox record, not a widget response or execution permission.
+/// The immutable destination and IDs let chat publication retry after a failed
+/// database save without applying the scheduling choice a second time.
+public struct AutomationSpendGuardTranscriptEntry: Codable, Hashable, Sendable, Identifiable {
+    public let id: UUID
+    public let acknowledgmentID: UUID
+    public let cardID: UUID
+    public let agentID: UUID
+    public let accountID: String
+    public let conversationID: UUID
+    public let isPaused: Bool
+    public let createdAt: Date
+    public private(set) var answer: SpendGuardAnswer?
+    public private(set) var answeredAt: Date?
+
+    init(id: UUID, acknowledgmentID: UUID, cardID: UUID, agentID: UUID, accountID: String,
+         conversationID: UUID, isPaused: Bool, createdAt: Date) {
+        self.id = id; self.acknowledgmentID = acknowledgmentID; self.cardID = cardID
+        self.agentID = agentID; self.accountID = accountID; self.conversationID = conversationID
+        self.isPaused = isPaused; self.createdAt = Self.stableDate(createdAt)
+    }
+
+    var isValid: Bool {
+        !accountID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && id != acknowledgmentID && createdAt.timeIntervalSince1970.isFinite
+            && (answer == nil) == (answeredAt == nil)
+            && (answeredAt?.timeIntervalSince1970.isFinite ?? true)
+            && (answer.map { Self.choices(paused: isPaused).contains($0) } ?? true)
+    }
+
+    static func choices(paused: Bool) -> Set<SpendGuardAnswer> {
+        paused ? [.resume, .stayPaused] : [.keep, .pause, .neverAsk]
+    }
+
+    mutating func record(_ value: SpendGuardAnswer, at date: Date) {
+        answer = value; answeredAt = Self.stableDate(date)
+    }
+
+    private static func stableDate(_ date: Date) -> Date {
+        Date(timeIntervalSince1970: (date.timeIntervalSince1970 * 1_000).rounded() / 1_000)
+    }
+}
+
 /// Native host ownership fence held through the synchronous guard-store write.
 /// This is not Codable or a model tool argument. It must not suspend or call
 /// back into the automation service or the repository that issued its lease.

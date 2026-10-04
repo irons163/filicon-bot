@@ -4,6 +4,11 @@ import FiliconDomain
 import FiliconAgents
 
 extension TranscriptCard {
+    var automationActivity: AutomationActivityTranscriptCard? {
+        guard case .widget(let value) = payload,
+              ["automationActivity", "automationActivityAcknowledgment"].contains(value.widgetKind) else { return nil }
+        return value.automationActivity
+    }
     var directSecretRequest: DirectSecretRequest? {
         guard case .secretRequest(let value) = payload else { return nil }
         return value.directRequest
@@ -12,6 +17,7 @@ extension TranscriptCard {
     // The generic renderer has no live submission authority. A saved pending
     // request must not expose a credential field or an indefinite spinner.
     var rendererLifecycle: TranscriptCardLifecycle {
+        if let activity = automationActivity { return activity.answer == nil ? .retired : .succeeded }
         guard let request = directSecretRequest else { return lifecycle }
         switch request.state {
         case .pending, .retired: return .retired
@@ -21,7 +27,7 @@ extension TranscriptCard {
     }
 
     var rendererActions: [TranscriptCardAction] {
-        guard directSecretRequest == nil else { return [] }
+        guard directSecretRequest == nil, automationActivity == nil else { return [] }
         return actions.filter { $0.intent.isRendererSafe }
     }
 
@@ -34,6 +40,18 @@ extension TranscriptCard {
         guard case .cloudAgent(let value) = payload,
               let id = value.externalReferenceID else { return nil }
         return try? CursorAgentReference(bcID: id)
+    }
+}
+
+extension ChatMessage {
+    /// Replace only the closed host summary with its localized card body. An
+    /// imported metadata field cannot hide unrelated text or a human request.
+    var isAutomationActivityCardBody: Bool {
+        guard role == .assistant || role == .system else { return false }
+        return transcriptCards.contains { card in
+            guard let activity = card.automationActivity else { return false }
+            return text == activity.bodyKey || text == "Automation activity check\n" + activity.bodyKey
+        }
     }
 }
 
@@ -65,6 +83,12 @@ enum TranscriptCardPresenter {
         let status = humanized(card.lifecycle.rawValue)
         switch card.payload {
         case .widget(let value):
+            if let activity = card.automationActivity {
+                return .init(kind: .widget, title: l10n("Automation activity check"),
+                    subtitle: activity.answer.map { FiliconLocalization.string($0.labelKey) } ?? l10n("This automation activity check is no longer current."),
+                    symbolName: activity.isAcknowledgment ? "checkmark.circle" : "clock.badge.exclamationmark",
+                    detail: FiliconLocalization.string(activity.bodyKey), fields: [], longTextTitle: nil, longText: nil)
+            }
             return .init(kind: .widget, title: value.title, subtitle: l10n("Widget · \(status)"), symbolName: "rectangle.grid.2x2", detail: value.body, fields: value.facts.sorted { $0.key < $1.key }.map { (humanized($0.key), $0.value) }, longTextTitle: nil, longText: nil)
         case .draft(let value):
             let channel = humanized(value.channel)
@@ -161,7 +185,9 @@ struct TranscriptCardRow: View {
                 Image(systemName: presentation.symbolName).frame(width: 20)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(presentation.title).font(.callout.bold())
+                        .fixedSize(horizontal: false, vertical: true)
                     Text(presentation.subtitle).font(.caption2).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 0)
                 lifecycleAccessory

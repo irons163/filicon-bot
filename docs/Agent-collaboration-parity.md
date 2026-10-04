@@ -1,4 +1,14 @@
-# 協作能力核對紀錄（更新至 2026-10-03）
+# 協作能力核對紀錄（更新至 2026-10-04）
+
+## 活動提醒的永久 entries 與確定性回答確認（2026-10-04）
+
+exact owner 單獨聊天的 native 卡片現在保存為永久 transcript widget；schema 3 outbox 保留原目的地與各階段 prompt／ack ID。回答及 schedule 同筆保存，聊天 prompt 更新／system ack 另以 canonical SQL transaction 保存；失敗重開只補原 target 的 receipt，不再回答或改投替代聊天。兩 stores 不宣稱原子交易。五種選擇、原 lifetime／lease／stage fence、人工停用、group 豁免與工具／peer／背景記憶同意不放寬。新 prompt 計一次未讀，system ack／replay 不計；修正 materialization 後 stale count 及已完成 read 被後續 arrival 誤判失敗。
+
+七語歷史／回答卡共用 renderer，不可從匯入 metadata 取得 generic actions 或隱藏人類文字；只有 scoped host ledger 的非人類 IDs 排除於 inference。SwiftUI 技能使長 title／subtitle 自然換行，實際日文 OCR 的 12 issues 紅燈已轉綠；測試技能以固定商業時間／ID、隔離 stores、受控依賴與 SQL fault injection 驗證 rollback／重開／不重套用。另修正 original lease 重入的實際死鎖及次毫秒日期 round trip，不放寬 ownership fence。
+
+最後 144 tests／6 suites 聚焦、98 個七語明暗歷史卡 render、日文完整標題 OCR、原生建置與四執行檔封裝簽章通過，七語各 1,795 keys／0 missing。direct／group 原生 paused 卡片拒絕錯階段選項，真正 Resume 保留原有審核、排程及真實 runner 斷言；核心服務層的三種 continuing 相容回答仍保留。最後完整串行 `spend-guard-transcript-full-final-v2.log` exit 0：135 XCTest＋1,823 Swift Testing（220 suites，兩項 opt-in live 測試略過）；較早鎖定造成的受保護檔案失敗和 fixture 契約失敗各自保留。來源、日誌、render／live 界線與 gate 見 [完成驗收入口](Parity-completion-audit.md)。
+
+永久 entries／native 回答確認取代下方較早未補的描述，但 reference 可回答 retained nudge entry、native 只接受當前 stage 的差異仍保留；原版 hidden model acknowledgment turn／host reminder、group read state、雲端 session、完整 core 帳號遷移、真人 UI／VoiceOver、live／release 與全 48 分類亦未關閉，整體 partial 不上調。只有同 repository lease，沒有跨 process／跨 store 原子交易保證；未 push、啟動或重啟使用者 App／Xcode、改真實資料。
 
 ## 活動提醒接入 exact owner 單獨聊天（2026-10-03）
 

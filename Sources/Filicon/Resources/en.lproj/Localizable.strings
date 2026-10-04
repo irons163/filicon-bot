@@ -1800,3 +1800,9 @@
 "Mark as read" = "Mark as read";
 "Mark as unread" = "Mark as unread";
 "Unread messages: {0}" = "Unread messages: {0}";
+"The routine choice was applied, but its chat confirmation could not be saved: {0}" = "The routine choice was applied, but its chat confirmation could not be saved: {0}";
+"Filicon kept this agent's routines running and postponed activity checks for 30 days." = "Filicon kept this agent's routines running and postponed activity checks for 30 days.";
+"Filicon paused this agent's individual routines." = "Filicon paused this agent's individual routines.";
+"Filicon kept this agent's routines running and disabled activity checks for this agent." = "Filicon kept this agent's routines running and disabled activity checks for this agent.";
+"Filicon resumed this agent's guarded routines and postponed activity checks for 30 days." = "Filicon resumed this agent's guarded routines and postponed activity checks for 30 days.";
+"Filicon left this agent's routines paused." = "Filicon left this agent's routines paused.";

@@ -97,19 +97,45 @@ it does not answer a card, resume routines or alter execution consent. Unbound
 legacy/text-only hosts explicitly retain their fallback.
 
 Native activity checks now also appear in the owner's unique visible bound direct
-chat. This is a live projection of the same persisted automation card ID used in
-the workspace, not a new transcript row or a model-generated widget. Reopening
-resolves that saved card again; merely viewing it neither answers nor resumes it.
-A native presentation retains its original repository binding lease through the
-final synchronous guard-store save. Account/owner cycles, hidden or ambiguous
-bindings, archive/delete and an obsolete nudge/paused stage reject old callbacks;
-a queued human answer never retargets the currently selected chat. Failed saves
-retain the unanswered card and allow a retry without partial schedule changes.
-No conversation, tool grant, peer grant or background-memory consent is created
-by this projection or by its answer.
+chat as permanent transcript widget entries. Automation schema 3 retains an
+immutable outbox destination, prompt ID and acknowledgment ID for each guard
+stage. Nudge and paused stages have distinct entries even when they share a
+guard ID. Schemas 1/2 migrate with an empty outbox; invalid schema-3 entries or
+colliding IDs fail without rewriting the source. Reopening reuses those IDs;
+merely viewing the card neither answers nor resumes it.
 
-Durable transcript widget entries, answer acknowledgements and host reminders
-are still separate work, as are group-chat read state and live UI/release validation.
+A native answer retains its original repository binding lease through the final
+synchronous guard-store save. Account/owner cycles, hidden or ambiguous bindings,
+archive/delete and an obsolete nudge/paused stage reject old callbacks; a queued
+human answer never retargets the currently selected chat. The choice and outbox
+answer commit together with the schedule changes. The prompt update and system
+acknowledgment then commit together in a separate SQLite transaction against
+the complete canonical history, preserving ordinary messages, reactions and
+addresses. A failed acknowledgment can replay only to the original account and
+conversation, under a current binding lease, without applying the choice again.
+This is an outbox retry, not a cross-store atomic transaction. A failed guard
+write leaves the unanswered card and schedules unchanged.
+
+This canonical transcript-only mutation uses a storage-only commit while the
+original lease is held: re-entering general-save lease cleanup would deadlock.
+Outbox/publication dates use millisecond precision before exact persisted-row
+comparison, so JSON/SQLite floating-point round trips do not reject valid entries.
+Each new completed assistant prompt counts as one unread arrival; its system
+acknowledgment, updates and idempotent replays do not. The host refreshes activity
+counts after materialization. A completed read receipt finishes before that later
+arrival; new arrivals still revoke queued, uncommitted read callbacks.
+
+Historical and imported activity cards are display-only without buttons or an
+indefinite spinner. Closed card summaries and answer confirmations render and
+participate in in-chat search in all seven languages; canonical global FTS stores
+the English host summary, not every translated variant. Human or unrelated
+message bodies are not hidden by imported metadata. Model history excludes only
+non-human message IDs in this host's account/conversation-scoped outbox, not
+arbitrary imported card hints. Neither publication nor an answer creates a
+conversation, tool grant, peer grant or background-memory consent.
+
+The reference's hidden model acknowledgment turn and host reminders are still
+separate work, as are group-chat read state and live UI/release validation.
 An observation or binding lease fences only mutations through its own repository,
 not independent repository instances/processes. Chat and automation timestamps
 reside in separate stores, not one cross-store transaction.

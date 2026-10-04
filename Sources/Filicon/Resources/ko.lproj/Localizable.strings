@@ -1800,3 +1800,9 @@
 "Mark as read" = "읽음으로 표시";
 "Mark as unread" = "읽지 않음으로 표시";
 "Unread messages: {0}" = "읽지 않은 메시지: {0}";
+"The routine choice was applied, but its chat confirmation could not be saved: {0}" = "루틴 선택은 적용되었지만 채팅 확인 메시지를 저장하지 못했습니다: {0}";
+"Filicon kept this agent's routines running and postponed activity checks for 30 days." = "Filicon이 이 에이전트의 루틴을 계속 실행하고 활동 확인을 30일 연기했습니다.";
+"Filicon paused this agent's individual routines." = "Filicon이 이 에이전트의 개별 루틴을 일시 중지했습니다.";
+"Filicon kept this agent's routines running and disabled activity checks for this agent." = "Filicon이 이 에이전트의 루틴을 계속 실행하고 활동 확인을 비활성화했습니다.";
+"Filicon resumed this agent's guarded routines and postponed activity checks for 30 days." = "Filicon이 활동 확인으로 중지된 루틴을 재개하고 활동 확인을 30일 연기했습니다.";
+"Filicon left this agent's routines paused." = "Filicon이 이 에이전트의 루틴을 중지된 상태로 유지했습니다.";

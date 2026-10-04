@@ -1,5 +1,27 @@
 # 完成驗收入口（2026-09-27）
 
+## 活動提醒的永久聊天紀錄與回答確認（2026-10-04）
+
+reference `a9f633e09d49a85829b8236331b9e21f7e612634` 的 `automation-spend-guard-runtime.ts` 保存實際 `send-message` widget entries，nudge／paused 使用不同 entry ID；`handleWidgetAnswer` 核對 entry 與選項，`widget-responses.ts` 將回傳的 ack 作為 `modelPrompt` 呼叫 `sendPrompt`，設定 `appendUserMessage: false`／`awaitTurn: false`。本批補永久聊天 widget 與確定性的 native system 回答確認，不把 UI 投影或模型口頭宣稱當成已保存訊息，也不宣稱已接上原版 hidden model acknowledgment turn／host reminder。
+
+automation schema 3 的 immutable outbox 保存原 account／agent／conversation、guard stage、prompt／ack ID 及回答日期；1／2 遷移為空 outbox，損壞／重複 entry 或錯階段回答拒絕且不重寫來源。nudge 與 paused 可共用 guard ID，但各有永久 entry／ack ID，舊階段不得回答。選擇與排程變更在 automation store 同筆保存；原始 generation／lifetime／binding lease 仍保留到最終同步提交。聊天另以完整 canonical history 保存 prompt 更新＋system ack，保留既有歷史、反應與短地址；ack 保存故障重開可按原目的地補寫，不再次套用排程選擇、不改投替代聊天／帳號。兩個 stores 並非原子交易，derived transcript reconciliation 也不是同筆 SQL。
+
+新 host prompt 計一次 canonical arrival；更新、system ack 與 replay 不增加未讀。materialization 後更新 guard count，避免舊零值在另一 owner 的下一次 reload 才跳成一；已完成的 read receipt 在後續 prompt arrival 前結束，不因新卡片誤回報失敗，尚未提交的舊 read 仍撤銷。歷史／匯入卡沒有回答權限、generic retry／dismiss 或無限 spinner；模型輸入只排除 scoped host outbox 的非人類 ID，匯入 metadata 不可隱藏人類訊息。native summary／confirmation 與 in-chat search 使用七語 closed keys；global FTS 保存 canonical 英文摘要，不宣稱索引全部翻譯。
+
+有效故障證據分開保留：owned test process 的 sample 證明持有 binding lease 時重新進入 public `save` 的 lease cleanup 死鎖，改用不能變動 owner／visibility 的 private storage commit，未改成遞迴鎖或放寬 fence。`spend-guard-transcript-fractional-red.log` 重現 4 種次毫秒日期中的 3 個 valid receipt 被拒，改以 millisecond 正規化後通過；`focused-v9` 重現上述 unread 投影／已完成 read 的 6 issues。`spend-guard-transcript-japanese-title-red.log` 實際 OCR 重現日文標題截斷（1 test／12 issues），共用 renderer 的 title／subtitle 現可換行。先前因受保護檔案拒絕、fixture readiness／零 intrinsic height 或測試 API 編譯錯誤造成的失敗另保留，不冒充產品語意紅燈。
+
+解鎖後 `spend-guard-transcript-full-unlocked.log` 完整跑完但 exit 1：舊 direct-session fixture 把服務層的 Keep／Never ask 相容回答當成已 paused 原生卡片的選項，兩個 `nextRunAt` 斷言失敗；實際共用 UI 的 paused stage 只有 Resume／Stay paused。`spend-guard-transcript-full-final.log` 另重現 group-session fixture 的同一錯誤假設（2 issues）。兩條 fixture 現先證明錯階段回呼不改定義、審核或原始 outbox bytes，再以畫面真正提供的 Resume 驗證原審核與 shared runner 可繼續；原有 revision／nextRunAt／durable binding／實際 run ID 斷言保留。核心服務層原有三種 continuing 回答的相容測試保留且通過，不因本機 UI 契約移除。另以 `spend-guard-transcript-workspace-stage-red.log`（1 test／2 cases／6 issues）重現未綁定、無 outbox 的 native workspace 回呼仍接受錯階段回答；App 的共用入口現在先檢查當階段選項，與有 ledger 的聊天路徑一致，不放寬保存契約。修正後的最終完整回歸見下方，不用中間綠燈取代最後 source。
+
+最後 source 聚焦 `spend-guard-transcript-focused-final-with-group.log` exit 0：144 tests／6 suites（核心 58／2，App／router／direct 與 group routine 86／4），包含五種回答、nudge→pause 雙 entry、原始身分失效、ack SQL rollback／重試／重開、不再次 reschedule、完整 history／FTS／reaction／unread 及日期 round trip。native 回呼有／無 outbox 均拒絕錯階段選項，真正 Resume 保留原審核並使用 shared runner；核心服務層的三種 continuing 相容回答仍保留。98 個 312-point 歷史卡 render 覆蓋 7 種卡片 × 七語 × 明暗，另有 28 個 live native、28 個 workspace、14 個未讀 badge 及實際永久 entry 的完整 `ChatDetailView` OCR／PNG；日文 14 個 variants 要求完整標題 OCR。人工檢視各語代表圖與修正後日文長標題，並非逐張人工檢視 98 張或 live／VoiceOver 驗收。七語各 1,795 keys／0 missing，`git diff --check` 通過。
+
+最後 source 的 `spend-guard-transcript-native-final.log` BUILD SUCCEEDED；`spend-guard-transcript-package-final.log` 四個執行檔、deep strict 簽章及 app／XPC entitlements 通過。隔離產物 `.build/validation/SpendGuardTranscriptPackage/Filicon.app` 為 Debug／離線 gate，不是 release／公證；未執行列印的 launch smoke。日誌、PNG 及產物只留在忽略的 `.build/validation/`。
+
+較早完整串行 `spend-guard-transcript-full.log` 途中 macOS 再次 `IOConsoleLocked=Yes`；核心 951 tests／107 suites 先通過，其後受保護 fixture 的 Cocoa 257／POSIX 1 及衍生失敗使該輪不能算完整通過。只停止有 log FD 證明的 owned swift-test／testing-helper（exit 143），保留日誌、未降低檔案保護。
+
+最後 source 完整串行 `spend-guard-transcript-full-final-v2.log` exit 0：135 XCTest＋1,823 Swift Testing（220 suites；核心 951／107，App 638／83）。兩項 opt-in live Codex 測試略過，不當作真實模型／外部服務驗收；不拿前批 1,805 tests 或中間 fixture 失敗充作本批結果。最終 native／封裝使用上方 `-final` 日誌；之後只修正 group 測試契約及驗收紀錄，沒有再修改 production source。
+
+本節局部取代下方歷史「只有 live projection、沒有永久 entries／回答確認」。reference 在 pause 後保留 nudge 與 paused 的 host entry IDs，仍可按各 widget 原選項回答；native 目前只接受當前 stage，舊 nudge 仍是唯讀紀錄，不能以本批雙 entry 保存宣稱完整多 entry 回答 parity。原版 hidden model acknowledgment／host reminder、group read state、legacy unbound fallback／完整 core 帳號遷移、雲端 session、真人 UI／VoiceOver、live／release 與全 48 分類仍各自保留，整體 partial 不上調。lease 僅 fence 同 repository，不宣稱 cross-process snapshot CAS 或跨 store 原子交易；未 push、啟動或重啟使用者 App／Xcode、改真實帳號／群組／聊天資料。
+
 ## 聊天內的原生活動提醒卡片（2026-10-03）
 
 reference `a9f633e09d49a85829b8236331b9e21f7e612634` 的 `automation-spend-guard-runtime.ts` 以 `issueGuardCard` 在 active／background session 保存 host-issued `send-message` widget，`handleWidgetAnswer` 驗證 entry ID 與 widget 選項並回傳 acknowledgment；這不是模型說已產生按鈕。Filicon 本批先補實際 bound direct chat 的 native 操作入口，重用工作區的已保存 card ID、五種回答及既有核准／pause／resume 保存邏輯，不另建一套回答權限。

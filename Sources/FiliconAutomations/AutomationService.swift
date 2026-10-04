@@ -1,22 +1,23 @@
 import Foundation
 
 private struct AutomationPersistentState: Codable, Sendable {
-    var schemaVersion = 2
+    var schemaVersion = 3
     var automations: [Automation] = []
     var runs: [AutomationRun] = []
     var wakes: [AutomationWake] = []
     var claims: Set<String> = []
     var eventClaims: Set<String> = []
     var spendGuards: [UUID: AutomationSpendGuardState] = [:]
+    var spendGuardTranscriptEntries: [AutomationSpendGuardTranscriptEntry] = []
 
     private enum CodingKeys: String, CodingKey {
-        case schemaVersion, automations, runs, wakes, claims, eventClaims, spendGuards, spendGuard
+        case schemaVersion, automations, runs, wakes, claims, eventClaims, spendGuards, spendGuard, spendGuardTranscriptEntries
     }
     init() {}
     init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         let version = try values.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
-        guard version == 1 || version == 2 else {
+        guard [1, 2, 3].contains(version) else {
             throw DecodingError.dataCorruptedError(forKey: .schemaVersion, in: values, debugDescription: "Unsupported automation schema")
         }
         automations = try values.decode([Automation].self, forKey: .automations)
@@ -24,7 +25,7 @@ private struct AutomationPersistentState: Codable, Sendable {
         wakes = try values.decode([AutomationWake].self, forKey: .wakes)
         claims = try values.decode(Set<String>.self, forKey: .claims)
         eventClaims = try values.decode(Set<String>.self, forKey: .eventClaims)
-        if version == 2 {
+        if version >= 2 {
             spendGuards = try values.decode([UUID: AutomationSpendGuardState].self, forKey: .spendGuards)
         } else {
             let legacy = try values.decode(AutomationSpendGuardState.self, forKey: .spendGuard)
@@ -40,6 +41,16 @@ private struct AutomationPersistentState: Codable, Sendable {
                 spendGuards[agentID] = migrated
             }
         }
+        if version == 3 {
+            spendGuardTranscriptEntries = try values.decode([AutomationSpendGuardTranscriptEntry].self, forKey: .spendGuardTranscriptEntries)
+            let ids = spendGuardTranscriptEntries.flatMap { [$0.id, $0.acknowledgmentID] }
+            let phases = spendGuardTranscriptEntries.map { "\($0.agentID)/\($0.cardID)/\($0.isPaused)" }
+            guard spendGuardTranscriptEntries.allSatisfy(\.isValid), Set(ids).count == ids.count,
+                  Set(phases).count == phases.count else {
+                throw DecodingError.dataCorruptedError(forKey: .spendGuardTranscriptEntries, in: values,
+                    debugDescription: "Invalid automation activity transcript outbox")
+            }
+        }
     }
     func encode(to encoder: any Encoder) throws {
         var values = encoder.container(keyedBy: CodingKeys.self)
@@ -50,6 +61,7 @@ private struct AutomationPersistentState: Codable, Sendable {
         try values.encode(claims, forKey: .claims)
         try values.encode(eventClaims, forKey: .eventClaims)
         try values.encode(spendGuards, forKey: .spendGuards)
+        try values.encode(spendGuardTranscriptEntries, forKey: .spendGuardTranscriptEntries)
     }
 }
 
@@ -575,13 +587,59 @@ public actor AutomationService {
     /// not agent tools, which remain subject to validateStateChange protection.
     public func answerSpendGuard(_ answer: SpendGuardAnswer, agentID: UUID, cardID: UUID? = nil,
                                  at now: Date = Date(), lifetime: AutomationSpendGuardLifetime = .init(),
-                                 expectedPaused: Bool? = nil, commit: AutomationSpendGuardCommitGuard = { try $0() }) throws {
+                                 expectedPaused: Bool? = nil, transcriptEntryID: UUID? = nil,
+                                 commit: AutomationSpendGuardCommitGuard = { try $0() }) throws {
         try lifetime.commit {
-            try commit { try applySpendGuardAnswer(answer, agentID: agentID, cardID: cardID, expectedPaused: expectedPaused, at: now) }
+            try commit { try applySpendGuardAnswer(answer, agentID: agentID, cardID: cardID,
+                expectedPaused: expectedPaused, transcriptEntryID: transcriptEntryID, at: now) }
         }
     }
 
-    private func applySpendGuardAnswer(_ answer: SpendGuardAnswer, agentID: UUID, cardID: UUID?, expectedPaused: Bool?, at now: Date) throws {
+    /// The host must resolve and lease a canonical destination before calling.
+    /// Reopening/retrying returns the original entry; a card cannot be silently
+    /// moved to a replacement chat or account after it has been issued.
+    public func issueSpendGuardTranscript(agentID: UUID, cardID: UUID, accountID: String, conversationID: UUID,
+                                         isPaused: Bool, at date: Date, entryID: UUID = UUID(), acknowledgmentID: UUID = UUID(),
+                                         lifetime: AutomationSpendGuardLifetime = .init(),
+                                         commit: AutomationSpendGuardCommitGuard = { try $0() }) throws -> AutomationSpendGuardTranscriptEntry {
+        var result: AutomationSpendGuardTranscriptEntry?
+        try lifetime.commit {
+            try commit {
+                let spend = spendGuardState(agentID: agentID)
+                guard spend.cardID == cardID, !spend.guardPausedAutomationIDs.isEmpty == isPaused,
+                      spend.nudgedAt != nil || isPaused else { throw SpendGuardError.staleCard }
+                if let existing = state.spendGuardTranscriptEntries.first(where: {
+                    $0.agentID == agentID && $0.cardID == cardID && $0.isPaused == isPaused
+                }) {
+                    guard existing.accountID == accountID, existing.conversationID == conversationID,
+                          existing.answer == nil else { throw SpendGuardError.staleCard }
+                    result = existing
+                    return
+                }
+                let entry = AutomationSpendGuardTranscriptEntry(id: entryID, acknowledgmentID: acknowledgmentID,
+                    cardID: cardID, agentID: agentID, accountID: accountID, conversationID: conversationID,
+                    isPaused: isPaused, createdAt: date)
+                let reserved = Set(state.spendGuardTranscriptEntries.flatMap { [$0.id, $0.acknowledgmentID] })
+                guard entry.isValid, !reserved.contains(entryID), !reserved.contains(acknowledgmentID) else {
+                    throw AutomationServiceError.invalidDefinition
+                }
+                var candidate = state
+                candidate.spendGuardTranscriptEntries.append(entry)
+                try Self.save(candidate, to: storeURL)
+                state = candidate
+                result = entry
+            }
+        }
+        guard let result else { throw CancellationError() }
+        return result
+    }
+
+    public func spendGuardTranscriptEntries(accountID: String) -> [AutomationSpendGuardTranscriptEntry] {
+        state.spendGuardTranscriptEntries.filter { $0.accountID == accountID }
+    }
+
+    private func applySpendGuardAnswer(_ answer: SpendGuardAnswer, agentID: UUID, cardID: UUID?, expectedPaused: Bool?,
+                                      transcriptEntryID: UUID?, at now: Date) throws {
         guard let saved = state.spendGuards[agentID] else { throw SpendGuardError.staleCard }
         if let cardID { guard saved.cardID == cardID else { throw SpendGuardError.staleCard } }
         var spend = spendGuardState(agentID: agentID)
@@ -591,6 +649,16 @@ public actor AutomationService {
             guard !spend.guardPausedAutomationIDs.isEmpty == expectedPaused else { throw SpendGuardError.staleCard }
         }
         var candidate = state
+        if let transcriptEntryID {
+            guard let index = candidate.spendGuardTranscriptEntries.firstIndex(where: { $0.id == transcriptEntryID }),
+                  candidate.spendGuardTranscriptEntries[index].agentID == agentID,
+                  candidate.spendGuardTranscriptEntries[index].cardID == cardID,
+                  candidate.spendGuardTranscriptEntries[index].answer == nil,
+                  candidate.spendGuardTranscriptEntries[index].isPaused == !spend.guardPausedAutomationIDs.isEmpty,
+                  AutomationSpendGuardTranscriptEntry.choices(paused: candidate.spendGuardTranscriptEntries[index].isPaused).contains(answer),
+                  now.timeIntervalSince1970.isFinite else { throw SpendGuardError.staleCard }
+            candidate.spendGuardTranscriptEntries[index].record(answer, at: now)
+        }
         var admissionChanged = false
         switch answer {
         case .keep, .resume, .neverAsk:

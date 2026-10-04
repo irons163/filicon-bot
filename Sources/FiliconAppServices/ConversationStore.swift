@@ -185,6 +185,17 @@ public actor ConversationStore {
         try await transcriptService.delete(conversationID: id)
     }
 
+    public func publishAutomationActivity(_ publication: AutomationActivityTranscriptPublication,
+                                          expectedHiddenAt: Date?, activityAt: Date,
+                                          commit: ConversationCommitGuard = { try $0() }) async throws -> Conversation {
+        let repository = try resolveRepository()
+        try await importLegacyIfNeeded(into: repository)
+        let value = try await repository.publishAutomationActivity(publication, expectedHiddenAt: expectedHiddenAt,
+            activityAt: activityAt, commit: commit)
+        try await transcriptService.reconcile(value)
+        return value
+    }
+
     public func save(_ conversations: [Conversation], activityAt: Date = Date()) async throws {
         let repository = try resolveRepository()
         try await importLegacyIfNeeded(into: repository)

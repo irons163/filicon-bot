@@ -1800,3 +1800,9 @@
 "Mark as read" = "标记为已读";
 "Mark as unread" = "标记为未读";
 "Unread messages: {0}" = "未读消息：{0}";
+"The routine choice was applied, but its chat confirmation could not be saved: {0}" = "任务选择已应用，但聊天确认消息未能保存：{0}";
+"Filicon kept this agent's routines running and postponed activity checks for 30 days." = "Filicon 已让这位代理人的任务继续运行，并将活动提醒推迟 30 天。";
+"Filicon paused this agent's individual routines." = "Filicon 已暂停这位代理人的个人任务。";
+"Filicon kept this agent's routines running and disabled activity checks for this agent." = "Filicon 已让这位代理人的任务继续运行，并关闭这位代理人的活动提醒。";
+"Filicon resumed this agent's guarded routines and postponed activity checks for 30 days." = "Filicon 已恢复这位代理人因活动检查而暂停的任务，并将活动提醒推迟 30 天。";
+"Filicon left this agent's routines paused." = "Filicon 已让这位代理人的任务保持暂停。";

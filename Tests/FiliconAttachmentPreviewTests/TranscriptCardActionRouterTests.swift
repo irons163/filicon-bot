@@ -6,6 +6,26 @@ import FiliconDomain
 
 @Suite("Transcript card action authority")
 struct TranscriptCardActionRouterTests {
+    @Test func savedActivityMetadataCannotAcquireGenericActionAuthority() async throws {
+        let id = UUID(uuidString: "40000000-0000-0000-0000-000000000010")!
+        let metadata = AutomationActivityTranscriptCard(entryID: id, guardID: id,
+            binding: .init(accountID: "fixture", agentID: id), conversationID: id, isPaused: true)
+        for intent in [TranscriptCardActionIntent.retry(cardID: id), .dismiss(cardID: id)] {
+            var card = makeCard(lifecycle: .failed,
+                payload: .widget(.init(title: "Imported display data", widgetKind: "automationActivity", automationActivity: metadata)),
+                intents: [intent])
+            card.id = id
+            expectNoDifference(card.rendererLifecycle, .retired)
+            expectNoDifference(card.rendererActions, [])
+            await expectRoutingError(.mismatchedTarget) {
+                try await TranscriptCardActionRouter().begin(card: card, intent: intent)
+            }
+        }
+        let legacy = try JSONDecoder().decode(WidgetTranscriptCard.self,
+            from: Data(#"{"title":"Old widget","body":"Still readable","widgetKind":"summary","facts":{}}"#.utf8))
+        #expect(legacy.automationActivity == nil)
+    }
+
     @Test func boundSecretCannotUseLegacyCredentialAction() async throws {
         let request = try AgentSecretRequest.parse(Data(#"{"label":"Token","connector":"slack","field":"token"}"#.utf8))
         let id = UUID(uuidString: "40000000-0000-0000-0000-000000000001")!

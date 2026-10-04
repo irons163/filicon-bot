@@ -1082,9 +1082,9 @@ struct ChatDetailView: View {
                             )
                             .id(message.id)
                         }
-                        if let activityCheck {
+                        if let activityCheck, !transcript.visibleMessages(from: conversation.messages).contains(where: { $0.id == activityCheck.transcriptEntryID }) {
                             ConversationAutomationSpendGuardCard(presentation: activityCheck)
-                                .id(activityCheck.prompt.id)
+                                .id(activityCheck.transcriptEntryID)
                         }
                         }
                         .frame(maxWidth: 690)
@@ -1107,7 +1107,7 @@ struct ChatDetailView: View {
                     guard let id else { return }
                     performGlobalJump(id, proxy: proxy)
                 }
-                .onChange(of: activityCheck?.prompt.id) { _, id in
+                .onChange(of: activityCheck?.transcriptEntryID) { _, id in
                     if let id { withAnimation { proxy.scrollTo(id, anchor: .bottom) } }
                 }
             }
@@ -1543,7 +1543,7 @@ struct TranscriptMessageView: View {
                     enabled: model.canAnswerMailboxQuestion(peer.incoming, publication: peer.publication)) { answer in
                     Task { await model.answerMailboxQuestion(incomingID: peer.incoming.id, publicationID: peer.publication.id, answer: answer) }
                 }
-            } else if !message.text.isEmpty && !message.transcriptCards.contains(where: {
+            } else if !message.text.isEmpty && !message.isAutomationActivityCardBody && !message.transcriptCards.contains(where: {
                 $0.externalCursorReference?.summary == message.text || $0.directQuestion?.question.prompt == message.text
             }) {
                 if message.role == .user {
@@ -1563,7 +1563,9 @@ struct TranscriptMessageView: View {
                 ToolActivityRow(activity: activity)
             }
             ForEach(message.transcriptCards) { card in
-                if let secret = model.directSecretCard(conversationID: conversation.id, messageID: message.id, cardID: card.id) {
+                if let activity = model.conversationSpendGuardPresentation(id: conversation.id, messageID: message.id, card: card) {
+                    ConversationAutomationSpendGuardCard(presentation: activity)
+                } else if let secret = model.directSecretCard(conversationID: conversation.id, messageID: message.id, cardID: card.id) {
                     AgentSecretRequestCard(model: secret)
                         .disabled(model.isConversationWorking(conversation.id))
                 } else if let question = model.directQuestionForDisplay(conversationID: conversation.id, messageID: message.id, cardID: card.id) {

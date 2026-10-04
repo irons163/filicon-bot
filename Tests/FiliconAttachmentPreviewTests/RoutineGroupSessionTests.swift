@@ -291,7 +291,7 @@ private struct RoutineGroupProvider: InteractiveToolProvider {
     }
 
     @Test(arguments: [SpendGuardAnswer.keep, .resume, .neverAsk])
-    func continuingAfterGuardPausePreservesReviewedGroupConsent(answer: SpendGuardAnswer) async throws {
+    func pausedNativeCardRejectsNudgeOnlyChoicesBeforeReviewedGroupConsentResumes(answer: SpendGuardAnswer) async throws {
         let (root, model, automation, group, _) = try await fixture()
         defer { try? FileManager.default.removeItem(at: root) }
         try await approve(model, automation: automation, group: group)
@@ -303,7 +303,20 @@ private struct RoutineGroupProvider: InteractiveToolProvider {
         await reopened.registry.register(RoutineGroupProvider(probe: probe))
         await reopened.reloadWorkspaceData(); await reopened.reloadAutomationDetails()
         let prompt = try #require(reopened.automationSpendGuardPrompts.first { $0.agentID == automation.agentID })
-        await reopened.answerAutomationSpendGuard(answer, prompt: prompt, at: base.addingTimeInterval(120))
+        #expect(prompt.isPaused)
+        if answer != .resume {
+            // Keep / Never ask belong to the nudge card, not to a paused
+            // native callback. Reject them without changing reviewed consent
+            // or durable scheduling state, then use the displayed Resume.
+            let definitions = reopened.automations
+            let storeURL = root.appending(path: "automations.json")
+            let bytes = try Data(contentsOf: storeURL)
+            await reopened.answerAutomationSpendGuard(answer, prompt: prompt, at: base.addingTimeInterval(119))
+            expectNoDifference(reopened.automations, definitions)
+            expectNoDifference(reopened.automationGroupBindings, [binding])
+            expectNoDifference(try Data(contentsOf: storeURL), bytes)
+        }
+        await reopened.answerAutomationSpendGuard(.resume, prompt: prompt, at: base.addingTimeInterval(120))
         expectNoDifference(reopened.automationGroupBindings, [binding])
         let resumed = try #require(reopened.automations.first { $0.id == automation.id })
         expectNoDifference(resumed.revision, automation.revision)

@@ -32,6 +32,120 @@ struct ConversationUnreadTests {
         try #require(sqlite3_exec(handle, statement, nil, nil, nil) == SQLITE_OK)
     }
 
+    private func activityPublication(answer: AutomationActivityTranscriptAnswer? = nil) -> AutomationActivityTranscriptPublication {
+        .init(card: .init(entryID: id(1001), guardID: id(1002), binding: binding, conversationID: id(10),
+            isPaused: true, answer: answer), createdAt: now.addingTimeInterval(1),
+            answeredAt: answer == nil ? nil : now.addingTimeInterval(2), acknowledgmentID: id(1003))
+    }
+
+    @Test func activityEntriesPreserveCanonicalHistoryReactionsSearchAndUnreadOnReplay() async throws {
+        let root = try directory(); defer { try? FileManager.default.removeItem(at: root) }
+        let store = ConversationStore(fileURL: root.appending(path: "conversations.json"))
+        var value = chat()
+        value.messages = (0..<120).map { message(2000 + $0) }
+        DirectMessageAddressing.assignMissing(in: &value)
+        try await store.upsert(value, replacingLoadedMessageIDs: [], historyComplete: true, activityAt: now)
+        let lease = try await store.leaseUniqueBinding(accountID: binding.accountID, agentID: binding.agentID, conversationID: value.id)
+        defer { lease.close() }
+        let issued = try await store.publishAutomationActivity(activityPublication(), expectedHiddenAt: nil,
+            activityAt: now.addingTimeInterval(1), commit: { try lease.withValidBinding($0) })
+        expectNoDifference(issued.messages.count, 121)
+        expectNoDifference(Array(issued.messages.prefix(120)), value.messages)
+        let issuedUnread = try await store.unreadState(conversationID: value.id)
+        expectNoDifference(issuedUnread?.unreadCount, 121)
+        _ = try await store.updateReadState(conversationID: value.id, action: .read, at: now.addingTimeInterval(1.5), expectedBinding: binding)
+        var changed = issued
+        changed.messages[120].reactions = [.init(emoji: "👍", actorID: "human")]
+        changed.messages[0].text = "Latest canonical edit, not a paged snapshot"
+        try await store.upsert(changed, replacingLoadedMessageIDs: Set(issued.messages.map(\.id)), historyComplete: true)
+        let answered = try await store.publishAutomationActivity(activityPublication(answer: .resume), expectedHiddenAt: nil,
+            activityAt: now.addingTimeInterval(2), commit: { try lease.withValidBinding($0) })
+        expectNoDifference(answered.messages.count, 122)
+        expectNoDifference(answered.messages[0], changed.messages[0])
+        expectNoDifference(answered.messages[120].reactions, changed.messages[120].reactions)
+        expectNoDifference(answered.messages[120].shortAddress, issued.messages[120].shortAddress)
+        expectNoDifference(answered.messages.last?.role, .system)
+        let state = try await store.unreadState(conversationID: value.id)
+        expectNoDifference(state?.unreadCount, 0)
+        let page = try await store.messagePage(conversationID: value.id, limit: 100)
+        #expect(page.continuation != nil)
+        let reopened = ConversationStore(fileURL: root.appending(path: "conversations.json"))
+        let replay = try await reopened.publishAutomationActivity(activityPublication(answer: .resume), expectedHiddenAt: nil,
+            activityAt: now.addingTimeInterval(100))
+        expectNoDifference(replay, answered)
+        let replayUnread = try await reopened.unreadState(conversationID: value.id)
+        expectNoDifference(replayUnread, state)
+        let searchRepository = try ConversationRepository(databaseURL: root.appending(path: "conversations.sqlite3"))
+        let search = try await searchRepository.searchMessages("resumed")
+        expectNoDifference(search.map(\.messageID), [id(1003)])
+    }
+
+    @Test func activityReceiptFailureRollsBackThePromptUpdateAndAcknowledgmentTogether() async throws {
+        let root = try directory(); defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appending(path: "conversations.sqlite3")
+        let repo = try ConversationRepository(databaseURL: file)
+        try await repo.save([chat()], activityAt: now)
+        let issued = try await repo.publishAutomationActivity(activityPublication(), expectedHiddenAt: nil, activityAt: now.addingTimeInterval(1))
+        let unread = try await repo.unreadState(conversationID: issued.id)
+        try sql("CREATE TRIGGER reject_activity_ack BEFORE INSERT ON messages WHEN NEW.role='system' BEGIN SELECT RAISE(ABORT,'isolated acknowledgment failure'); END", at: file)
+        await #expect(throws: (any Error).self) {
+            try await repo.publishAutomationActivity(activityPublication(answer: .resume), expectedHiddenAt: nil, activityAt: now.addingTimeInterval(2))
+        }
+        let failed = try #require(try await repo.conversation(id: issued.id))
+        let failedUnread = try await repo.unreadState(conversationID: issued.id)
+        expectNoDifference(failed, issued); expectNoDifference(failedUnread, unread)
+        try sql("DROP TRIGGER reject_activity_ack", at: file)
+        let recovered = try await repo.publishAutomationActivity(activityPublication(answer: .resume), expectedHiddenAt: nil, activityAt: now.addingTimeInterval(2))
+        expectNoDifference(recovered.messages.map(\.id), [id(1001), id(1003)])
+    }
+
+    @Test(arguments: [0.000001, 0.123456789, 0.333333333, 0.9999999])
+    func activityEntriesCanBeAnsweredAfterFractionalTimestampsRoundTrip(fraction: Double) async throws {
+        let root = try directory(); defer { try? FileManager.default.removeItem(at: root) }
+        let repo = try ConversationRepository(databaseURL: root.appending(path: "conversations.sqlite3"))
+        try await repo.save([chat()], activityAt: now)
+        let metadata = activityPublication().card
+        let issuedAt = now.addingTimeInterval(fraction)
+        _ = try await repo.publishAutomationActivity(.init(card: metadata, createdAt: issuedAt, answeredAt: nil,
+            acknowledgmentID: id(1003)), expectedHiddenAt: nil, activityAt: issuedAt)
+        let answered = AutomationActivityTranscriptCard(entryID: metadata.entryID, guardID: metadata.guardID,
+            binding: binding, conversationID: metadata.conversationID, isPaused: true, answer: .resume)
+        let resumed = try await repo.publishAutomationActivity(.init(card: answered, createdAt: issuedAt,
+            answeredAt: now.addingTimeInterval(2 + fraction), acknowledgmentID: id(1003)), expectedHiddenAt: nil, activityAt: issuedAt)
+        expectNoDifference(resumed.messages.map(\.id), [id(1001), id(1003)])
+    }
+
+    @Test(arguments: ["human-collision", "foreign-collision", "wrong-answer", "closed-lease", "hidden", "duplicate", "rebound"])
+    func hostActivityPublicationCannotOverwriteOrCrossAnOwnershipBoundary(change: String) async throws {
+        let root = try directory(); defer { try? FileManager.default.removeItem(at: root) }
+        let repo = try ConversationRepository(databaseURL: root.appending(path: "conversations.sqlite3"))
+        var value = chat(); var values = [value]
+        if change == "human-collision" { value.messages = [message(1001)]; values = [value] }
+        if change == "foreign-collision" {
+            var other = chat(11); other.agentBinding = .init(accountID: "other", agentID: id(2)); other.messages = [message(1001)]
+            values.append(other)
+        }
+        try await repo.save(values, activityAt: now)
+        let lease = try await repo.leaseUniqueBinding(accountID: binding.accountID, agentID: binding.agentID, conversationID: value.id)
+        defer { lease.close() }
+        var publication = activityPublication()
+        switch change {
+        case "wrong-answer": publication = activityPublication(answer: .keep)
+        case "closed-lease": lease.close()
+        case "hidden": value.hiddenAt = now; try await repo.save([value], activityAt: now)
+        case "duplicate": try await repo.save([value, chat(11)], activityAt: now)
+        case "rebound": value.agentBinding = .init(accountID: "other", agentID: id(2)); try await repo.save([value], activityAt: now)
+        default: break
+        }
+        let before = try await repo.load(), unread = try await repo.unreadState(conversationID: value.id)
+        await #expect(throws: (any Error).self) {
+            try await repo.publishAutomationActivity(publication, expectedHiddenAt: nil, activityAt: now.addingTimeInterval(1),
+                commit: { try lease.withValidBinding($0) })
+        }
+        let after = try await repo.load(), afterUnread = try await repo.unreadState(conversationID: value.id)
+        expectNoDifference(after, before); expectNoDifference(afterUnread, unread)
+    }
+
     @Test func liveUnreadObservationTracksOnlyDurableReadAndArrivalPublications() async throws {
         let root = try directory(); defer { try? FileManager.default.removeItem(at: root) }
         let repo = try ConversationRepository(databaseURL: root.appending(path: "conversations.sqlite3"))

@@ -1800,3 +1800,9 @@
 "Mark as read" = "Marquer comme lu";
 "Mark as unread" = "Marquer comme non lu";
 "Unread messages: {0}" = "Messages non lus : {0}";
+"The routine choice was applied, but its chat confirmation could not be saved: {0}" = "Le choix concernant les routines a été appliqué, mais sa confirmation dans la conversation n’a pas pu être enregistrée : {0}";
+"Filicon kept this agent's routines running and postponed activity checks for 30 days." = "Filicon a maintenu les routines de cet agent et reporté les vérifications d’activité de 30 jours.";
+"Filicon paused this agent's individual routines." = "Filicon a suspendu les routines individuelles de cet agent.";
+"Filicon kept this agent's routines running and disabled activity checks for this agent." = "Filicon a maintenu les routines de cet agent et désactivé ses vérifications d’activité.";
+"Filicon resumed this agent's guarded routines and postponed activity checks for 30 days." = "Filicon a repris les routines suspendues par la vérification d’activité et reporté les vérifications de 30 jours.";
+"Filicon left this agent's routines paused." = "Filicon a laissé les routines de cet agent en pause.";

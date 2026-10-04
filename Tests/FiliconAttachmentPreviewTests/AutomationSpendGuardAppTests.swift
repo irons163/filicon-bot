@@ -89,12 +89,30 @@ private struct CanonicalSpendGuardStoreSeed: Encodable {
                 trigger: .cron(expression: "@every 1h", timeZoneIdentifier: "UTC"), createdAt: now), now: now)
             try await routines.answerSpendGuard(.pause, agentID: profile.id, at: now)
         }
+        // Fail at fixture readiness rather than attributing missing profiles
+        // (for example protected-file read denial) to a widget regression.
+        _ = try Data(contentsOf: root.appending(path: "agents.json"))
         // No bootstrap, scheduler, external listeners or user app launch.
         let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
         await model.registry.register(ConversationReadFixtureProvider())
         await model.reloadWorkspaceData()
+        let loadedProfiles = model.agents.map(\.id)
+        try #require(Set(loadedProfiles) == [owner.id, peer.id], "Isolated profiles must be readable before testing activity cards.")
         await model.reloadAutomationDetails()
         return (root, model, owner, peer)
+    }
+
+    @Test func theNativeProtectionProbeCanReadAnIsolatedProfileAfterItsAtomicWrite() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "filicon-protected-profile-probe-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appending(path: "agents.json")
+        let service = try AgentService(storeURL: file)
+        let profile = try await service.create(name: "Offline protection probe", instructions: "No inference", providerID: "fixture", modelID: "fixture", at: now)
+        let bytes = try Data(contentsOf: file)
+        #expect(!bytes.isEmpty)
+        let reopened = try AgentService(storeURL: file)
+        let retained = await reopened.list()
+        expectNoDifference(retained, [profile])
     }
 
     @Test func openingTheWorkspaceDoesNotAnswerOrMarkAllAgentsRead() async throws {
@@ -113,6 +131,25 @@ private struct CanonicalSpendGuardStoreSeed: Encodable {
         let reopened = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
         await reopened.reloadWorkspaceData(); await reopened.reloadAutomationDetails()
         expectNoDifference(reopened.automationSpendGuardPrompts, after)
+    }
+
+    @Test(arguments: [SpendGuardAnswer.keep, .neverAsk])
+    func workspaceCallbacksWithoutTranscriptEntriesStillRejectNudgeOnlyChoices(answer: SpendGuardAnswer) async throws {
+        let (root, model, owner, _) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let prompt = try #require(model.automationSpendGuardPrompts.first { $0.agentID == owner.id })
+        #expect(prompt.isPaused)
+        let definitions = model.automations, prompts = model.automationSpendGuardPrompts
+        let file = root.appending(path: "automations.json"), bytes = try Data(contentsOf: file)
+        struct Outbox: Decodable { let spendGuardTranscriptEntries: [AutomationSpendGuardTranscriptEntry] }
+        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .millisecondsSince1970
+        let outbox = try decoder.decode(Outbox.self, from: bytes)
+        expectNoDifference(outbox.spendGuardTranscriptEntries, [])
+        await model.answerAutomationSpendGuard(answer, prompt: prompt, at: now.addingTimeInterval(60))
+        expectNoDifference(model.automations, definitions)
+        expectNoDifference(model.automationSpendGuardPrompts, prompts)
+        expectNoDifference(try Data(contentsOf: file), bytes)
+        expectNoDifference(model.answeringAutomationSpendGuardIDs, [])
     }
 
     private func visibleChatFixture() async throws -> (URL, AppModel, AgentProfile, AgentProfile, Conversation) {
@@ -135,8 +172,10 @@ private struct CanonicalSpendGuardStoreSeed: Encodable {
         let (root, model, _, _, chat) = try await visibleChatFixture()
         defer { try? FileManager.default.removeItem(at: root) }
         await model.reloadAutomationDetails()
+        let renderedChat = try #require(model.conversations.first { $0.id == chat.id })
+        #expect(renderedChat.messages.contains { !$0.transcriptCards.isEmpty })
         try await withUIRenderTurn(language: "en") {
-            let host = NSHostingView(rootView: ChatDetailView(conversation: chat)
+            let host = NSHostingView(rootView: ChatDetailView(conversation: renderedChat)
                 .environmentObject(model).environment(\.locale, Locale(identifier: "en"))
                 .environment(\.colorScheme, .light))
             host.sizingOptions = []
@@ -159,6 +198,160 @@ private struct CanonicalSpendGuardStoreSeed: Encodable {
                 try #require(bitmap.representation(using: .png, properties: [:])).write(to: output.appending(path: "spend-guard-owner-chat.png"))
             }
         }
+    }
+
+    @Test func activityChecksAndAppliedChoicesRemainInTheCanonicalChatAfterReopening() async throws {
+        let (root, model, _, _, chat) = try await visibleChatFixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        await model.reloadAutomationDetails()
+        let store = ConversationStore(fileURL: root.appending(path: "conversations.json"))
+        #expect(model.errorMessage == nil, "Activity transcript publication error: \(model.errorMessage ?? "none")")
+        #expect(model.conversationSpendGuardPresentation(id: chat.id) != nil,
+            "The host must retain a live presentation after successful materialization.")
+        let issued = try #require(try await store.conversation(id: chat.id))
+        let entry = try #require(issued.messages.first { message in
+            message.transcriptCards.contains { card in
+                guard case .widget(let widget) = card.payload else { return false }
+                return widget.widgetKind == "automationActivity"
+            }
+        }, "A host activity check must be an actual saved transcript entry, not a temporary view.")
+        let presentation = try #require(model.conversationSpendGuardPresentation(id: chat.id))
+        await model.answerConversationSpendGuard(.resume, presentation: presentation, at: now.addingTimeInterval(60))
+        #expect(model.errorMessage == nil, "Applied receipt publication error: \(model.errorMessage ?? "none")")
+        let guardStore = try AutomationService(storeURL: root.appending(path: "automations.json"))
+        let receipts = await guardStore.spendGuardTranscriptEntries(accountID: "local")
+        expectNoDifference(receipts.first { $0.id == entry.id }?.answer, .resume)
+        let answered = try #require(try await store.conversation(id: chat.id))
+        #expect(answered.messages.contains { $0.id == entry.id })
+        #expect(answered.messages.contains { message in
+            message.role == .system && message.transcriptCards.contains { card in
+                guard case .widget(let widget) = card.payload else { return false }
+                return widget.widgetKind == "automationActivityAcknowledgment"
+            }
+        }, "The applied host choice must have a durable, non-human acknowledgment.")
+        let before = answered.messages
+        let reopened = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+        reopened.conversations = try await store.conversationPage().items
+        await reopened.reloadWorkspaceData(); await reopened.reloadAutomationDetails()
+        let retained = try #require(try await store.conversation(id: chat.id))
+        expectNoDifference(retained.messages, before)
+        expectNoDifference(reopened.conversationSpendGuardPresentation(id: chat.id) == nil, true)
+    }
+
+    private func executeFixtureSQL(_ statement: String, at root: URL) throws {
+        var handle: OpaquePointer?
+        try #require(sqlite3_open(root.appending(path: "conversations.sqlite3").path, &handle) == SQLITE_OK)
+        defer { sqlite3_close(handle) }
+        try #require(sqlite3_exec(handle, statement, nil, nil, nil) == SQLITE_OK)
+    }
+
+    @Test func aFailedChatReceiptCanRecoverWithoutApplyingTheChoiceAgain() async throws {
+        let (root, model, owner, _, chat) = try await visibleChatFixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        await model.reloadAutomationDetails()
+        let presentation = try #require(model.conversationSpendGuardPresentation(id: chat.id))
+        let store = ConversationStore(fileURL: root.appending(path: "conversations.json"))
+        let before = try #require(try await store.conversation(id: chat.id))
+        try executeFixtureSQL("CREATE TRIGGER reject_activity_ack BEFORE INSERT ON messages WHEN NEW.role='system' BEGIN SELECT RAISE(ABORT,'isolated receipt failure'); END", at: root)
+        await FiliconLocalization.$languageOverride.withValue("en") {
+            await model.answerConversationSpendGuard(.resume, presentation: presentation, at: now.addingTimeInterval(60))
+        }
+        #expect(model.errorMessage?.hasPrefix("The routine choice was applied, but its chat confirmation could not be saved:") == true)
+        let failed = try #require(try await store.conversation(id: chat.id))
+        expectNoDifference(failed, before)
+        let durable = try AutomationService(storeURL: root.appending(path: "automations.json"))
+        let entries = await durable.spendGuardTranscriptEntries(accountID: "local")
+        let receipt = try #require(entries.first { $0.id == presentation.transcriptEntryID })
+        expectNoDifference(receipt.answer, .resume)
+        let definitions = await durable.list(), spend = await durable.spendGuardState(agentID: owner.id)
+        #expect(spend.cardID == nil)
+        try executeFixtureSQL("DROP TRIGGER reject_activity_ack", at: root)
+        let reopened = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+        reopened.conversations = try await store.conversationPage().items
+        await reopened.reloadWorkspaceData(); await reopened.reloadAutomationDetails()
+        #expect(reopened.errorMessage == nil)
+        let recovered = try #require(try await store.conversation(id: chat.id))
+        #expect(recovered.messages.contains { $0.id == receipt.acknowledgmentID && $0.role == .system })
+        expectNoDifference(reopened.automations, definitions)
+        let retained = try AutomationService(storeURL: root.appending(path: "automations.json"))
+        let retainedSpend = await retained.spendGuardState(agentID: owner.id), retainedEntries = await retained.spendGuardTranscriptEntries(accountID: "local")
+        expectNoDifference(retainedSpend, spend); expectNoDifference(retainedEntries, entries)
+        await reopened.reloadAutomationDetails()
+        let replayed = try #require(try await store.conversation(id: chat.id))
+        expectNoDifference(replayed, recovered)
+    }
+
+    @Test func importedActivityMetadataCannotHideAHumanRequestOrReviveAnAction() async throws {
+        let (root, model, _, _, chat) = try await visibleChatFixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        await model.reloadAutomationDetails()
+        let current = try #require(model.conversations.first { $0.id == chat.id })
+        let presentation = try #require(model.conversationSpendGuardPresentation(id: chat.id))
+        let issued = try #require(current.messages.first { $0.id == presentation.transcriptEntryID })
+        let card = try #require(issued.transcriptCards.first)
+        let importedID = UUID(uuidString: "00000000-0000-0000-0000-000000001101")!
+        let imported = ChatMessage(id: importedID, role: .assistant, text: "Imported display-only widget", createdAt: now, transcriptCards: [card])
+        let human = ChatMessage(id: card.id, role: .user, text: "Actual human request", createdAt: now, transcriptCards: [card])
+        #expect(issued.isAutomationActivityCardBody)
+        #expect(!imported.isAutomationActivityCardBody && !human.isAutomationActivityCardBody)
+        var hostTextHuman = human
+        hostTextHuman.text = issued.text
+        #expect(!hostTextHuman.isAutomationActivityCardBody,
+            "A human's text is still visible even when it exactly quotes the host's activity summary.")
+        let visible = model.conversationSpendGuardPresentation(id: chat.id, messageID: issued.id, card: card)
+        #expect(visible != nil)
+        #expect(model.conversationSpendGuardPresentation(id: chat.id, messageID: importedID, card: card) == nil)
+        let withoutBookkeeping = await model.requestMessagesExcludingAutomationBookkeeping([issued, imported, human], in: chat.id, accountID: "local")
+        expectNoDifference(withoutBookkeeping, [imported, human])
+        let foreign = await model.requestMessagesExcludingAutomationBookkeeping([issued], in: chat.id, accountID: "other")
+        expectNoDifference(foreign, [issued])
+    }
+
+    @Test(arguments: ["rebound", "replacement", "duplicate", "account"])
+    func chatReceiptRecoveryNeverRetargetsItsOriginalOwner(change: String) async throws {
+        let (root, model, owner, peer, chat) = try await visibleChatFixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        await model.reloadAutomationDetails()
+        let presentation = try #require(model.conversationSpendGuardPresentation(id: chat.id))
+        let store = ConversationStore(fileURL: root.appending(path: "conversations.json"))
+        try executeFixtureSQL("CREATE TRIGGER reject_activity_ack BEFORE INSERT ON messages WHEN NEW.role='system' BEGIN SELECT RAISE(ABORT,'isolated receipt failure'); END", at: root)
+        await model.answerConversationSpendGuard(.resume, presentation: presentation, at: now.addingTimeInterval(60))
+        try executeFixtureSQL("DROP TRIGGER reject_activity_ack", at: root)
+        let durable = try AutomationService(storeURL: root.appending(path: "automations.json"))
+        let receipts = await durable.spendGuardTranscriptEntries(accountID: "local")
+        let receipt = try #require(receipts.first { $0.id == presentation.transcriptEntryID && $0.answer == .resume })
+        var original = try #require(try await store.conversation(id: chat.id))
+        var replacement = Conversation(id: UUID(uuidString: "00000000-0000-0000-0000-000000001102")!, title: "Replacement fixture", updatedAt: now)
+        replacement.agentBinding = .init(accountID: "local", agentID: owner.id)
+        switch change {
+        case "rebound":
+            original.agentBinding = .init(accountID: "local", agentID: peer.id)
+            try await store.upsert(original, replacingLoadedMessageIDs: Set(original.messages.map(\.id)), historyComplete: true)
+            try await store.upsert(replacement, replacingLoadedMessageIDs: [], historyComplete: true)
+        case "replacement":
+            try await store.delete(id: chat.id)
+            try await store.upsert(replacement, replacingLoadedMessageIDs: [], historyComplete: true)
+        case "duplicate":
+            try await store.upsert(replacement, replacingLoadedMessageIDs: [], historyComplete: true)
+        default: break
+        }
+        let before = try await store.load()
+        let reopened = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+        if change == "account" { reopened.settings.accountScope = "other" }
+        reopened.conversations = try await store.conversationPage().items
+        await reopened.reloadWorkspaceData(); await reopened.reloadAutomationDetails()
+        let after = try await store.load()
+        #expect(!after.flatMap(\.messages).contains { $0.id == receipt.acknowledgmentID })
+        // Other owners may receive their own live card, but this receipt must
+        // never be copied to that chat or to the replacement owner's chat.
+        for prior in before {
+            let current = try #require(after.first { $0.id == prior.id })
+            #expect(!current.messages.contains { $0.id == receipt.acknowledgmentID })
+            #expect(current.messages.filter { $0.id == receipt.id } == prior.messages.filter { $0.id == receipt.id })
+        }
+        let retained = try AutomationService(storeURL: root.appending(path: "automations.json"))
+        let retainedReceipts = await retained.spendGuardTranscriptEntries(accountID: "local")
+        expectNoDifference(retainedReceipts.first { $0.id == receipt.id }, receipt)
     }
 
     private func chatActivityFixture(paused: Bool) async throws -> (URL, AppModel, AgentProfile, AgentProfile, Conversation) {
@@ -236,7 +429,20 @@ private struct CanonicalSpendGuardStoreSeed: Encodable {
         expectNoDifference(model.automations.filter { $0.agentID == peer.id }, peers)
         expectNoDifference(model.automations.first { $0.id == disabled.id }, disabled)
         expectNoDifference(model.automationSpendGuardPrompts.first { $0.agentID == peer.id }, prompt)
-        expectNoDifference(model.settings, settings); expectNoDifference(model.conversations, messages)
+        expectNoDifference(model.settings, settings)
+        for original in messages {
+            let current = try #require(model.conversations.first { $0.id == original.id })
+            expectNoDifference(current.agentBinding, original.agentBinding)
+            let ordinaryMessages: (Conversation) -> [ChatMessage] = { value in
+                value.messages.filter { message in
+                    !message.transcriptCards.contains { card in
+                        guard case .widget(let widget) = card.payload else { return false }
+                        return widget.automationActivity != nil
+                    }
+                }
+            }
+            expectNoDifference(ordinaryMessages(current), ordinaryMessages(original))
+        }
         expectNoDifference(model.automationDirectBindings, grants); expectNoDifference(model.automationGroupBindings, groups)
         expectNoDifference(model.selection, chat.id); expectNoDifference(model.answeringAutomationSpendGuardIDs, [])
         let routine = try #require(model.automations.first { $0.id == owner.id })
@@ -292,7 +498,8 @@ private struct CanonicalSpendGuardStoreSeed: Encodable {
         case "foreign-account": model.conversations[0].agentBinding = .init(accountID: "other", agentID: owner.id)
         case "forged-lease":
             callback = .init(conversationID: chat.id, prompt: presentation.prompt,
-                bindingLease: .init(conversationID: chat.id, binding: try #require(chat.agentBinding)))
+                bindingLease: .init(conversationID: chat.id, binding: try #require(chat.agentBinding)),
+                transcriptEntryID: presentation.transcriptEntryID)
         case "durable-rebind":
             var replacement = chat; replacement.agentBinding = .init(accountID: "local", agentID: peer.id)
             let store = ConversationStore(fileURL: root.appending(path: "conversations.json"))
@@ -625,6 +832,9 @@ private struct CanonicalSpendGuardStoreSeed: Encodable {
         let read = try #require(await model.beginVisibleConversationRead(id: chat.id))
         let saved = await model.recordVisibleConversationRead(read, at: now.addingTimeInterval(60))
         expectNoDifference(saved, true)
+        #expect(!read.lifetime.isCurrent && read.bindingLease?.isActive == false)
+        #expect(model.conversationSpendGuardPresentation(id: chat.id) != nil,
+            "Publishing the permanent prompt after a successful read must not report that read as failed.")
         expectNoDifference(model.automations, definitions)
         expectNoDifference(model.automationSpendGuardPrompts.map(\.id), before.map(\.id))
         expectNoDifference(model.automationSpendGuardPrompts.first { $0.agentID == owner.id }?.state.lastViewedAt, now.addingTimeInterval(60))
@@ -1145,6 +1355,72 @@ private struct CanonicalSpendGuardStoreSeed: Encodable {
                     if let output {
                         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
                         try png.write(to: output.appending(path: "spend-guard-chat-\(language)-\(paused ? "paused" : "nudge")-\(dark ? "dark" : "light").png"))
+                    }
+                }
+            }
+        }
+    }
+
+    @Test(.serialized, arguments: ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"])
+    func savedReceiptsAndRetiredPromptsRenderWithoutActionsOrSpinners(language: String) async throws {
+        let output = ProcessInfo.processInfo.environment["FILICON_UI_REVIEW_OUTPUT"].map { URL(fileURLWithPath: $0) }
+        let entryID = UUID(uuidString: "00000000-0000-0000-0000-000000000991")!
+        let guardID = UUID(uuidString: "00000000-0000-0000-0000-000000000992")!
+        let acknowledgmentID = UUID(uuidString: "00000000-0000-0000-0000-000000000993")!
+        let conversationID = UUID(uuidString: "00000000-0000-0000-0000-000000000994")!
+        for variant in ["nudge", "paused", "keep", "pause", "neverAsk", "resume", "stayPaused"] {
+            let answer = AutomationActivityTranscriptAnswer(rawValue: variant)
+            let metadata = AutomationActivityTranscriptCard(entryID: entryID, guardID: guardID,
+                binding: .init(accountID: "local", agentID: guardID), conversationID: conversationID,
+                isPaused: ["paused", "resume", "stayPaused"].contains(variant), answer: answer)
+            let publication = AutomationActivityTranscriptPublication(card: metadata, createdAt: now,
+                answeredAt: answer == nil ? nil : now.addingTimeInterval(60), acknowledgmentID: acknowledgmentID)
+            let message = try #require(publication.messages.last)
+            let card = try #require(message.transcriptCards.first)
+            expectNoDifference(card.rendererActions, [])
+            expectNoDifference(card.rendererLifecycle, answer == nil ? .retired : .succeeded)
+            for dark in [false, true] {
+                try await withUIRenderTurn(language: language) {
+                    let presentation = TranscriptCardPresenter.presentation(for: card)
+                    let bodyKey = answer?.confirmationKey ?? metadata.bodyKey
+                    expectNoDifference(presentation.detail, FiliconLocalization.string(bodyKey, language: language))
+                    if language != "en" { #expect(presentation.detail != bodyKey) }
+                    if let answer {
+                        expectNoDifference(message.role, .system)
+                        expectNoDifference(presentation.subtitle, FiliconLocalization.string(answer.labelKey, language: language))
+                    }
+                    let host = NSHostingView(rootView: TranscriptCardRow(card: card) { _ in
+                        Issue.record("A durable receipt or retired prompt must never dispatch an action.")
+                    }.frame(width: 280, alignment: .leading).padding(16)
+                        .background(FiliconTheme.canvas).environment(\.locale, Locale(identifier: language))
+                        .environment(\.colorScheme, dark ? .dark : .light))
+                    host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+                    let size = host.fittingSize
+                    #expect(size.width == 312 && size.height > 60 && size.height <= 420)
+                    host.frame = .init(origin: .zero, size: size)
+                    let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+                    window.appearance = host.appearance; window.contentView = host
+                    defer { window.contentView = nil }
+                    host.layoutSubtreeIfNeeded(); host.displayIfNeeded()
+                    #expect(!host.subviews.contains { $0 is NSButton || $0 is NSProgressIndicator },
+                        "Readonly activity history must not create action buttons or indefinite progress indicators.")
+                    let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                    host.appearance?.performAsCurrentDrawingAppearance { host.cacheDisplay(in: host.bounds, to: bitmap) }
+                    if language == "ja" {
+                        let recognition = VNRecognizeTextRequest()
+                        recognition.recognitionLevel = .accurate
+                        recognition.recognitionLanguages = ["ja-JP"]
+                        try VNImageRequestHandler(cgImage: try #require(bitmap.cgImage)).perform([recognition])
+                        let text = recognition.results?.compactMap { $0.topCandidates(1).first?.string }
+                            .joined().filter { !$0.isWhitespace } ?? ""
+                        #expect(text.contains(presentation.title.filter { !$0.isWhitespace }),
+                            "The long Japanese title must be rendered in full: \(text)")
+                    }
+                    let png = try #require(bitmap.representation(using: .png, properties: [:]))
+                    #expect(!png.isEmpty)
+                    if let output {
+                        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+                        try png.write(to: output.appending(path: "spend-guard-history-\(language)-\(variant)-\(dark ? "dark" : "light").png"))
                     }
                 }
             }

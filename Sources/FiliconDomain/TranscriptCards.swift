@@ -76,13 +76,111 @@ public struct TranscriptCardLifecycle: RawRepresentable, Codable, Hashable, Send
 
 public struct WidgetTranscriptCard: Codable, Hashable, Sendable {
     public var question: GroupQuestion?
+    /// Display-only bookkeeping. Buttons require a separately issued native
+    /// lease and automation-store entry; decoded metadata grants no authority.
+    public var automationActivity: AutomationActivityTranscriptCard?
     public var title: String
     public var body: String
     public var widgetKind: String
     public var facts: [String: String]
-    public init(title: String, body: String = "", widgetKind: String = "summary", facts: [String: String] = [:], question: GroupQuestion? = nil) {
+    public init(title: String, body: String = "", widgetKind: String = "summary", facts: [String: String] = [:], question: GroupQuestion? = nil,
+                automationActivity: AutomationActivityTranscriptCard? = nil) {
         self.question = question
+        self.automationActivity = automationActivity
         self.title = title; self.body = body; self.widgetKind = widgetKind; self.facts = facts
+    }
+}
+
+public enum AutomationActivityTranscriptAnswer: String, Codable, Hashable, Sendable {
+    case keep, pause, neverAsk, resume, stayPaused
+
+    public var labelKey: String {
+        switch self {
+        case .keep: "Keep running"
+        case .pause: "Pause"
+        case .neverAsk: "Never ask"
+        case .resume: "Resume"
+        case .stayPaused: "Stay paused"
+        }
+    }
+
+    public var confirmationKey: String {
+        switch self {
+        case .keep: "Filicon kept this agent's routines running and postponed activity checks for 30 days."
+        case .pause: "Filicon paused this agent's individual routines."
+        case .neverAsk: "Filicon kept this agent's routines running and disabled activity checks for this agent."
+        case .resume: "Filicon resumed this agent's guarded routines and postponed activity checks for 30 days."
+        case .stayPaused: "Filicon left this agent's routines paused."
+        }
+    }
+}
+
+public struct AutomationActivityTranscriptCard: Codable, Hashable, Sendable {
+    public let entryID: UUID
+    public let guardID: UUID
+    public let binding: DirectConversationAgentBinding
+    public let conversationID: UUID
+    public let isPaused: Bool
+    public let isAcknowledgment: Bool
+    public let answer: AutomationActivityTranscriptAnswer?
+    public init(entryID: UUID, guardID: UUID, binding: DirectConversationAgentBinding, conversationID: UUID,
+                isPaused: Bool, isAcknowledgment: Bool = false, answer: AutomationActivityTranscriptAnswer? = nil) {
+        self.entryID = entryID; self.guardID = guardID; self.binding = binding; self.conversationID = conversationID
+        self.isPaused = isPaused; self.isAcknowledgment = isAcknowledgment; self.answer = answer
+    }
+    public var bodyKey: String {
+        if isAcknowledgment, let answer { return answer.confirmationKey }
+        return isPaused ? "Automations were paused after prolonged unviewed activity."
+            : "Automations have continued while you were away. Keep them running or pause them."
+    }
+}
+
+/// Host publication data, never decoded as a widget action. Both the prompt
+/// update and its acknowledgment are materialized in one chat transaction.
+public struct AutomationActivityTranscriptPublication: Sendable {
+    public let card: AutomationActivityTranscriptCard
+    public let createdAt: Date
+    public let answeredAt: Date?
+    public let acknowledgmentID: UUID
+    public init(card: AutomationActivityTranscriptCard, createdAt: Date, answeredAt: Date?, acknowledgmentID: UUID) {
+        // The outbox uses epoch milliseconds while SQLite stores epoch seconds.
+        // Normalize both paths before exact host-row comparison: submillisecond
+        // floating-point round trips must not make a genuine receipt stale.
+        self.card = card
+        self.createdAt = Self.stableDate(createdAt)
+        self.answeredAt = answeredAt.map(Self.stableDate)
+        self.acknowledgmentID = acknowledgmentID
+    }
+
+    private static func stableDate(_ date: Date) -> Date {
+        Date(timeIntervalSince1970: (date.timeIntervalSince1970 * 1_000).rounded() / 1_000)
+    }
+
+    public var messages: [ChatMessage] {
+        var values = [promptMessage(answer: card.answer)]
+        if let answer = card.answer, let answeredAt {
+            let acknowledgment = AutomationActivityTranscriptCard(entryID: card.entryID, guardID: card.guardID,
+                binding: card.binding, conversationID: card.conversationID, isPaused: card.isPaused,
+                isAcknowledgment: true, answer: answer)
+            values.append(ChatMessage(id: acknowledgmentID, role: .system, text: acknowledgment.bodyKey, createdAt: answeredAt,
+                transcriptCards: [.init(id: acknowledgmentID, lifecycle: .succeeded, createdAt: answeredAt, updatedAt: answeredAt,
+                    payload: .widget(.init(title: "Automation activity check", body: acknowledgment.bodyKey,
+                        widgetKind: "automationActivityAcknowledgment", automationActivity: acknowledgment)))]))
+        }
+        return values
+    }
+
+    /// Also used to prove that an existing row is exactly the host's unanswered
+    /// version before updating it. Never overwrite a colliding user/model row.
+    public func promptMessage(answer: AutomationActivityTranscriptAnswer?) -> ChatMessage {
+        let prompt = AutomationActivityTranscriptCard(entryID: card.entryID, guardID: card.guardID,
+            binding: card.binding, conversationID: card.conversationID, isPaused: card.isPaused, answer: answer)
+        return ChatMessage(id: card.entryID, role: .assistant,
+            text: "Automation activity check\n" + prompt.bodyKey, createdAt: createdAt,
+            transcriptCards: [.init(id: card.entryID, lifecycle: answer == nil ? .waiting : .succeeded, createdAt: createdAt,
+                updatedAt: answer == nil ? createdAt : (answeredAt ?? createdAt),
+                payload: .widget(.init(title: "Automation activity check", body: prompt.bodyKey,
+                    widgetKind: "automationActivity", automationActivity: prompt)))])
     }
 }
 

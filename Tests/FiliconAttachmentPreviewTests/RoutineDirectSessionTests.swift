@@ -247,7 +247,7 @@ private struct RoutineDirectProvider: InteractiveToolProvider {
         expectNoDifference(sharedCount, 1)
     }
     @Test(arguments: [SpendGuardAnswer.keep, .resume, .neverAsk])
-    func continuingAfterGuardPausePreservesReviewedDirectConsent(answer: SpendGuardAnswer) async throws {
+    func pausedNativeCardRejectsNudgeOnlyChoicesBeforeReviewedConsentResumes(answer: SpendGuardAnswer) async throws {
         let (root, model, automation, id, _) = try await fixture()
         defer { try? FileManager.default.removeItem(at: root) }
         try await approve(model, automation: automation, id: id)
@@ -262,7 +262,21 @@ private struct RoutineDirectProvider: InteractiveToolProvider {
         reopened.conversations = try await ConversationStore(fileURL: root.appending(path: "conversations.json")).load()
         await reopened.reloadAutomationDetails()
         let prompt = try #require(reopened.automationSpendGuardPrompts.first { $0.agentID == automation.agentID })
-        await reopened.answerAutomationSpendGuard(answer, prompt: prompt, at: base.addingTimeInterval(120))
+        #expect(prompt.isPaused)
+        if answer != .resume {
+            // A paused native card shows only Resume / Stay paused. Keep and
+            // Never ask belong to the nudge stage, not to this callback. Prove
+            // rejection does not alter schedules, consent or the outbox bytes,
+            // then exercise the actual displayed Resume option below.
+            let definitions = reopened.automations
+            let storeURL = root.appending(path: "automations.json")
+            let bytes = try Data(contentsOf: storeURL)
+            await reopened.answerAutomationSpendGuard(answer, prompt: prompt, at: base.addingTimeInterval(119))
+            expectNoDifference(reopened.automations, definitions)
+            expectNoDifference(reopened.automationDirectBindings, [binding])
+            expectNoDifference(try Data(contentsOf: storeURL), bytes)
+        }
+        await reopened.answerAutomationSpendGuard(.resume, prompt: prompt, at: base.addingTimeInterval(120))
         expectNoDifference(reopened.automationDirectBindings, [binding])
         let resumed = try #require(reopened.automations.first { $0.id == automation.id })
         expectNoDifference(resumed.revision, automation.revision)
