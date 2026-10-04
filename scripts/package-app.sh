@@ -99,6 +99,9 @@ for executable in Filicon FiliconLocalToolHelper FiliconLocalToolXPCService Fili
   [[ -x "$bin_dir/$executable" ]] \
     || die "$executable was not produced at $bin_dir/$executable"
 done
+math_resource_bundle="$bin_dir/Filicon_FiliconRichContent.bundle"
+[[ -d "$math_resource_bundle" && ! -L "$math_resource_bundle" ]] \
+  || die "missing offline math resources: $math_resource_bundle"
 
 # All path guards above are deliberately before this recursive removal.
 /bin/rm -rf -- "$bundle_dir"
@@ -111,6 +114,7 @@ for localization_dir in "$project_dir"/Sources/Filicon/Resources/*.lproj; do
   cp -R "$localization_dir" "$contents_dir/Resources/"
 done
 cp -R "$project_dir/Sources/Filicon/Resources/PetAvatars" "$contents_dir/Resources/"
+cp -R "$math_resource_bundle" "$contents_dir/Resources/"
 
 # Production release jobs inject the real feed and public verification key.
 # They are intentionally absent from source control and never replaced with

@@ -36,6 +36,21 @@ func withUIRenderTurn(language: String? = nil, _ render: () throws -> Void) asyn
     }
 }
 
+/// WebKit fixtures must await asynchronous page/layout work. Share the same
+/// queue as synchronous drawings so they cannot accumulate hidden web views.
+@MainActor
+func withUIAsyncRenderTurn(language: String? = nil, _ render: () async throws -> Void) async throws {
+    try Task.checkCancellation()
+    await UIRenderQueue.shared.acquire()
+    defer { UIRenderQueue.shared.release() }
+    try Task.checkCancellation()
+    if let language {
+        try await FiliconLocalization.$languageOverride.withValue(language) { try await render() }
+    } else {
+        try await render()
+    }
+}
+
 /// AppKit drawing is already main-thread-only. Admit just one fixture per queue
 /// turn instead of waking every rendering test into a burst of MainActor jobs.
 /// Test bodies and all non-rendering integration work remain concurrent.

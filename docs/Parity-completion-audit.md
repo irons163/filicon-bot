@@ -1,5 +1,23 @@
 # 完成驗收入口（2026-09-27）
 
+## 離線 KaTeX 公式排版
+
+2026-10-05 核對 reference `a9f633e09d49a85829b8236331b9e21f7e612634` 的 `math.tsx` 與 root lockfile：它使用 KaTeX `renderToString`、inline／display mode、tolerant parse-error retry 和 escaped fallback，公開依賴固定為 0.16.45。recovered `katex-DHMw6HUq.js` opaque asset 在此 checkout 不存在；本批從相同版本公開套件匯入，不宣稱原 shipped bytes 等價或所有外掛 extension 已對齊。原生先前只有手寫 TeX 小子集，四種矩陣／aligned／math alphabets／annotated root fixture 的有效 baseline 紅燈見 `katex-engine-red-permitted.log` exit 1。
+
+`FiliconRichContent` 現包含 pinned engine／CSS／20 WOFF2 fonts／MIT notice。匯入前驗證 archive SHA-512；manifest 及每個檔案 bytes／SHA-256 在 runtime 與 package verifier 再核對。只使用白名單檔案、拒絕 symlink，沒有 install 或執行 package scripts。JavaScriptCore 只評估經驗證引擎，TeX 是普通函式參數；serialized VM 與每次新的 macros 字典隔離並行訊息／global definitions／錯誤重試。`trust` 回報曾要求權限時，整條公式保留原文，不產生 links、外部 images 或 HTML attributes。
+
+真正 direct／group 的 `OfflineMathWebView` 使用 static KaTeX HTML＋MathML、nonpersistent WebKit、禁止 page JavaScript 的設定與 CSP；只有 verified fonts 的 data URL，沒有網路或新模型工具權限。native isolated-world measurement 等待字型完成，按實際高度調整；六行公式不再被舊 96-point frame 截掉。1,024-point viewport 以上維持捲動；source revision／dismantle fences 拒絕舊回報並清理 references。missing whole bundle 不觸發 generated `Bundle.module` trap；缺失、改動或不可用引擎回退原文。
+
+輸入 16,384 UTF-8 bytes、128 brace depth、1,000 macro expansions、20 em size、1 MiB output，以及 128／8 MiB 成功或失敗 cache bounds 保留。這些是 deliberate resource limits，並非 unbounded 原版或硬 wall-clock timeout；未使用 private JSC timeout API。來源及安全設計詳見 [Offline-math.md](Offline-math.md) 與其中 primary KaTeX documentation。
+
+`katex-render-v3.log` 曾驗證早期 source。最後 `katex-focused-final.log` 是新增測試 closure 的編譯錯誤，`katex-focused-final-v2.log` 的兩項 issue 是 CustomDump 對 unchanged cache 使用差異斷言，不是產品語意紅燈；全部保留。最後 source `katex-focused-final-v3.log` exit 0：62 tests／7 suites（core 19／3、App 43／4）。包括 real JSC engine、15 種 missing／modified／symlink resource cases、整個 bundle 缺失、並行 macros／cache eviction、static page-script rejection、兩條 actual transcript route、多行 auto-height／超高捲動、舊 measurement／dismantle 與同步／非同步 render queue 回歸。
+
+七語 × 明暗 14 張公式 PNG，另有兩張 actual-route WebKit crop，存於 `KaTeXReview/`；人工檢視覆蓋全部七語明暗和兩條 route。數學內容保持原文，不因 UI 語言翻譯。這些是未顯示 NSHostingView／WebKit 的 fixture 與實際 route bounds 檢查，不是 full transcript screenshot、真人 keyboard／focus 或 VoiceOver 驗收。`katex-resources-final.log` 為已提供 pinned local archive 的 6 個 Ruby tests／127 assertions／0 skips，所有 bytes-preserving 再匯入、missing／tamper／symlink／preflight 拒絕通過；另有既有 resource-signing 7 tests／84 assertions 通過。
+
+最後 source `katex-full-final.log` 的完整 `swift test --no-parallel` exit 0：135 XCTest＋1,919 Swift Testing／227 suites（核心 982／108、App 697／88）。總數由所有 target 的最終 summary 加總；兩項 opt-in live Codex tests 略過，不作外部服務證據。既有 CoreData NSXPC 診斷仍出現，相關 tests 通過，不宣稱已修好。七語各 1,805 keys／0 missing 與 `git diff --check` 通過。`katex-native-final.log` BUILD SUCCEEDED，`katex-native-package-final.log` 與 `katex-package-final.log` 都通過引擎／字型完整性、四個 executables、app／XPC entitlements 和 deep strict 簽章；standalone 隔離產物是 `.build/validation/KaTeXPackage/Filicon.app`，不是 release／公證。未執行列印的 launch smoke。
+
+本批以 SwiftUI、SPM／Xcode 與測試技能分離靜態 renderer、使用完整 value diff 與固定商業 IDs／日期，文件技能保留來源／驗證／剩餘差異。未 push、啟動或重啟使用者 App／Xcode、改真實帳號／群組／聊天；日誌、圖片和封裝只在忽略的 `.build/validation/`。本節取代歷史「只有手寫 math 小子集」，不關閉 prose baseline／table inline math、完整 strict Mermaid／精確幾何、真人／最低 macOS／external／release 或其餘分類；`UI-04` 及整體仍 partial，48 項範圍不縮減。
+
 ## 有界 Mermaid 圖表的原生放大檢視（2026-10-05）
 
 重新核對 reference `a9f633e09d49a85829b8236331b9e21f7e612634` 的 `frontend/src/recovered/features/conversation/workspace/mermaid.tsx`：真正 figure／expand button 可用 click、Return／Space 開啟 portal viewer，支援 0.1…8 倍縮放、pointer-anchored wheel、4-point drag threshold、fit／double-click、鍵盤 +／−／F／0／Escape 及關閉清理。native 原本只有三種有界 diagram 呈現，沒有這個入口。

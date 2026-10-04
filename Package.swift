@@ -52,7 +52,7 @@ let package = Package(
         .target(name: "FiliconSharedRooms"),
         .target(name: "FiliconAccount", linkerSettings: [.linkedFramework("Security")]),
         .target(name: "FiliconAutoReview", dependencies: ["FiliconDomain"]),
-        .target(name: "FiliconRichContent"),
+        .target(name: "FiliconRichContent", resources: [.copy("Resources/KaTeX")], linkerSettings: [.linkedFramework("JavaScriptCore")]),
         .target(
             name: "FiliconSecurityKey",
             dependencies: ["FiliconComputer"],

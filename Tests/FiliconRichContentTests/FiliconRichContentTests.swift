@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import JavaScriptCore
 @testable import FiliconRichContent
 
 @Suite("Markdown content")
@@ -45,12 +46,45 @@ struct MarkdownContentTests {
 
 @Suite("Offline math")
 struct OfflineMathTests {
+    @Test func pinnedEngineEvaluatesInJavaScriptCoreWithoutABrowser() throws {
+        let root = try #require(Bundle.module.url(forResource: "KaTeX", withExtension: nil))
+        let script = try String(contentsOf: root.appendingPathComponent("katex.min.js"), encoding: .utf8)
+        let context = try #require(JSContext())
+        context.evaluateScript(script)
+        #expect(context.exception == nil, "\(context.exception?.toString() ?? "none")")
+        #expect(context.objectForKeyedSubscript("katex")?.objectForKeyedSubscript("version")?.toString() == "0.16.45")
+        let output = context.evaluateScript("katex.renderToString('x', {output:'htmlAndMathml'})")?.toString()
+        #expect(context.exception == nil, "\(context.exception?.toString() ?? "none")")
+        #expect(output?.contains("katex-html") == true)
+    }
+    @Test func offlineFontsAndVerifiedStylesheetAreAvailable() {
+        #expect(OfflineMathPresenter.stylesheet != nil)
+        #expect(OfflineMathPresenter.stylesheet?.contains("data:font/woff2;base64,") == true)
+        #expect(OfflineMathPresenter.stylesheet?.contains("url(fonts/") == false)
+    }
+    @Test func completeEngineHandlesMatricesAlignedEquationsAndMathAlphabets() {
+        let sources = [
+            #"\begin{pmatrix}a&b\\c&d\end{pmatrix}"#,
+            #"\begin{aligned}f(x)&=\binom{n}{k}\\g(x)&=\operatorname{rank}(A)\end{aligned}"#,
+            #"\underbrace{\mathbb{R}\times\mathcal{F}}_{\text{domain}}"#,
+            #"\sqrt[3]{x}+\overset{!}{=}\left\lVert A\right\rVert"#,
+        ]
+        for source in sources {
+            if case .fallback = OfflineMathPresenter().presentation(for: source, mode: .display) {
+                Issue.record("The complete offline engine must typeset: \(source)")
+            }
+        }
+    }
+
     @Test func supportedLatexBecomesSelfContainedMathML() {
         let result = OfflineMathPresenter().presentation(for: #"\frac{a_1}{\sqrt{2}}"#, mode: .display)
-        guard case .mathML(let value) = result else { Issue.record("expected MathML"); return }
-        #expect(value.hasPrefix("<math xmlns=\"http://www.w3.org/1998/Math/MathML\" display=\"block\">"))
+        guard case .rendered(let markup) = result else { Issue.record("expected KaTeX"); return }
+        let value = markup.html
+        #expect(value.contains("<math xmlns=\"http://www.w3.org/1998/Math/MathML\" display=\"block\">"))
         #expect(value.contains("<mfrac>"))
         #expect(!value.lowercased().contains("script"))
+        #expect(value.contains("katex-html"))
+        #expect(!markup.hadParseError)
     }
 
     @Test func unsupportedUnsafeOrOversizedLatexFallsBackExactly() {

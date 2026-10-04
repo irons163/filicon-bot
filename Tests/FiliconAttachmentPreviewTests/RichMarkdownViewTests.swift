@@ -456,7 +456,7 @@ struct RichMarkdownViewTests {
         #expect(projection.blocks.contains { if case .prose = $0 { true } else { false } })
         #expect(projection.blocks.contains { if case .code(language: "swift", source: "let value = 1", isTerminated: true) = $0 { true } else { false } })
         #expect(projection.blocks.contains { if case .table(let value) = $0 { value.headers == ["A", "B"] } else { false } })
-        #expect(projection.blocks.contains { if case .math(source: "x_1", mode: .inline, presentation: .mathML) = $0 { true } else { false } })
+        #expect(projection.blocks.contains { if case .math(source: "x_1", mode: .inline, presentation: .rendered) = $0 { true } else { false } })
         #expect(projection.blocks.contains { if case .mermaid(_, .diagram(let value)) = $0 { value.kind == .flowchart } else { false } })
     }
 
@@ -489,11 +489,14 @@ struct RichMarkdownViewTests {
     }
 
     @Test func offlineMathDocumentIsSelfContainedAndLockedDown() {
-        let mathML = #"<math xmlns="http://www.w3.org/1998/Math/MathML"><mi>x</mi></math>"#
-        let document = OfflineMathWebPolicy.document(mathML: mathML, display: true)
-        #expect(document.contains(mathML))
+        guard case .rendered(let markup) = OfflineMathPresenter().presentation(for: "x", mode: .display)
+        else { Issue.record("missing offline engine"); return }
+        let document = OfflineMathWebPolicy.document(markup: markup, display: true)
+        #expect(document.contains(markup.html))
         #expect(document.contains("default-src 'none'"))
         #expect(document.contains("script-src 'none'"))
+        #expect(document.contains("font-src data:"))
+        #expect(document.contains("data:font/woff2;base64,"))
         #expect(!document.localizedCaseInsensitiveContains("<script"))
         #expect(!document.localizedCaseInsensitiveContains(" src="))
     }

@@ -527,15 +527,19 @@ struct RichMarkdownTableView: View {
 
 private struct OfflineMathView: View {
     @Environment(\.locale) private var uiLocale
+    @Environment(\.colorScheme) private var colorScheme
     let source: String
     let mode: MathMode
     let presentation: MathPresentation
+    @State private var measuredHeight: Double = 32
+
     var body: some View {
         let _ = uiLocale.identifier
         switch presentation {
-        case .mathML(let mathML):
-            OfflineMathMLView(mathML: mathML, display: mode == .display)
-                .frame(maxWidth: mode == .display ? .infinity : 640, minHeight: mode == .display ? 64 : 34, maxHeight: mode == .display ? 96 : 48)
+        case .rendered(let markup):
+            OfflineMathWebView(markup: markup, display: mode == .display, dark: colorScheme == .dark, measured: updateHeight)
+                .frame(maxWidth: mode == .display ? .infinity : 640)
+                .frame(height: measuredHeight)
                 .accessibilityLabel(l10n("Math: \(source)"))
         case .fallback(let original):
             HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -546,64 +550,129 @@ private struct OfflineMathView: View {
             .accessibilityLabel(l10n("Math fallback: \(original)"))
         }
     }
+
+    private func updateHeight(_ height: Double) {
+        if abs(measuredHeight - height) > 0.5 { measuredHeight = height }
+    }
 }
 
 enum OfflineMathWebPolicy {
-    static let contentSecurityPolicy = "default-src 'none'; connect-src 'none'; img-src 'none'; media-src 'none'; font-src 'none'; frame-src 'none'; object-src 'none'; script-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'"
+    static let contentSecurityPolicy = "default-src 'none'; connect-src 'none'; img-src 'none'; media-src 'none'; font-src data:; frame-src 'none'; object-src 'none'; script-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'"
 
-    static func document(mathML: String, display: Bool) -> String {
+    static func document(markup: KaTeXMarkup, display: Bool, dark: Bool = false) -> String {
         let alignment = display ? "center" : "left"
         return """
         <!doctype html><html><head><meta charset="utf-8">
         <meta http-equiv="Content-Security-Policy" content="\(contentSecurityPolicy)">
-        <style>html,body{margin:0;padding:0;background:transparent;color:CanvasText;overflow:hidden}body{display:flex;align-items:center;justify-content:\(alignment);min-height:100vh}math{font-size:\(display ? "1.2rem" : "1rem")}</style>
-        </head><body>\(mathML)</body></html>
+        <meta name="color-scheme" content="\(dark ? "dark" : "light")">
+        <style>\(OfflineMathPresenter.stylesheet ?? "")
+        html,body{margin:0;padding:0;background:transparent;color:CanvasText;font-size:16px}
+        body{padding:4px;overflow:auto;text-align:\(alignment)}
+        #math-content{display:inline-block;text-align:left}
+        .katex-display{margin:0}
+        </style></head><body><div id="math-content">\(markup.html)</div></body></html>
         """
+    }
+
+    static func height(_ raw: Double) -> Double? {
+        guard raw.isFinite, raw > 0 else { return nil }
+        // Taller equations remain scrollable, not clipped or giant chat allocations.
+        return min(max(ceil(raw) + 8, 24), 1_024)
     }
 
     static func allowsNavigation(to url: URL?) -> Bool {
         guard let url else { return true } // The initial in-memory HTML load has no external URL.
         return url.scheme?.lowercased() == "about" && url.absoluteString.lowercased() == "about:blank"
     }
+
+    /// Native-owned layout query in an isolated content world. No page scripts run.
+    static let measurementJavaScript = """
+    await document.fonts.ready;
+    return document.getElementById('math-content').getBoundingClientRect().height;
+    """
 }
 
-private struct OfflineMathMLView: NSViewRepresentable {
-    let mathML: String
+struct OfflineMathWebView: NSViewRepresentable {
+    let markup: KaTeXMarkup
     let display: Bool
+    let dark: Bool
+    let measured: @MainActor (Double) -> Void
 
-    func makeCoordinator() -> Coordinator { Coordinator() }
+    func makeCoordinator() -> Coordinator { Coordinator(measured: measured) }
 
-    func makeNSView(context: Context) -> WKWebView {
+    func makeNSView(context: Context) -> OfflineMathWebKitView {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .nonPersistent()
         configuration.defaultWebpagePreferences.allowsContentJavaScript = false
         configuration.mediaTypesRequiringUserActionForPlayback = .all
-        let webView = WKWebView(frame: .zero, configuration: configuration)
+        let webView = OfflineMathWebKitView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
         webView.underPageBackgroundColor = .clear
         webView.allowsMagnification = false
         webView.allowsLinkPreview = false
         webView.isInspectable = false
-        webView.enclosingScrollView?.hasHorizontalScroller = false
-        webView.enclosingScrollView?.hasVerticalScroller = false
-        load(webView)
+        webView.setAccessibilityIdentifier("offline-math")
+        webView.resized = { [weak coordinator = context.coordinator, weak webView] in
+            guard let webView else { return }
+            coordinator?.measure(webView)
+        }
+        load(webView, coordinator: context.coordinator)
         return webView
     }
 
-    func updateNSView(_ webView: WKWebView, context: Context) {
-        let document = OfflineMathWebPolicy.document(mathML: mathML, display: display)
+    func updateNSView(_ webView: OfflineMathWebKitView, context: Context) {
+        context.coordinator.measured = measured
+        let document = OfflineMathWebPolicy.document(markup: markup, display: display, dark: dark)
         guard context.coordinator.loadedDocument != document else { return }
-        load(webView)
+        load(webView, coordinator: context.coordinator)
     }
 
-    private func load(_ webView: WKWebView) {
-        let document = OfflineMathWebPolicy.document(mathML: mathML, display: display)
-        (webView.navigationDelegate as? Coordinator)?.loadedDocument = document
-        webView.loadHTMLString(document, baseURL: nil)
+    private func load(_ webView: WKWebView, coordinator: Coordinator) {
+        let document = OfflineMathWebPolicy.document(markup: markup, display: display, dark: dark)
+        coordinator.revision += 1
+        coordinator.loadedDocument = document
+        coordinator.finished = false
+        coordinator.navigation = webView.loadHTMLString(document, baseURL: nil)
     }
 
-    final class Coordinator: NSObject, WKNavigationDelegate {
+    static func dismantleNSView(_ webView: OfflineMathWebKitView, coordinator: Coordinator) {
+        coordinator.revision += 1
+        coordinator.finished = false
+        coordinator.navigation = nil
+        coordinator.loadedDocument = nil
+        webView.resized = nil
+        webView.navigationDelegate = nil
+        webView.stopLoading()
+    }
+
+    @MainActor final class Coordinator: NSObject, WKNavigationDelegate {
         var loadedDocument: String?
+        var navigation: WKNavigation?
+        var revision: UInt64 = 0
+        var finished = false
+        var measured: @MainActor (Double) -> Void
+
+        init(measured: @escaping @MainActor (Double) -> Void) { self.measured = measured }
+
+        func measure(_ webView: WKWebView) {
+            guard finished, webView.bounds.width > 0 else { return }
+            let expectedRevision = revision
+            webView.callAsyncJavaScript(OfflineMathWebPolicy.measurementJavaScript, arguments: [:], in: nil, in: .defaultClient) { [weak self] result in
+                guard case .success(let value) = result, let raw = value as? Double else { return }
+                self?.measurementCompleted(raw, revision: expectedRevision)
+            }
+        }
+
+        func measurementCompleted(_ raw: Double, revision expectedRevision: UInt64) {
+            guard finished, revision == expectedRevision, let height = OfflineMathWebPolicy.height(raw) else { return }
+            measured(height)
+        }
+
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            guard navigation === self.navigation else { return }
+            finished = true
+            measure(webView)
+        }
 
         func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void) {
             decisionHandler(OfflineMathWebPolicy.allowsNavigation(to: navigationAction.request.url) && navigationAction.shouldPerformDownload == false ? .allow : .cancel)
@@ -615,6 +684,18 @@ private struct OfflineMathMLView: NSViewRepresentable {
 
         func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) { download.cancel() }
         func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) { download.cancel() }
+    }
+}
+
+@MainActor final class OfflineMathWebKitView: WKWebView {
+    var resized: (@MainActor () -> Void)?
+    private var lastWidth: CGFloat = 0
+
+    override func layout() {
+        super.layout()
+        guard bounds.width > 0, abs(bounds.width - lastWidth) > 0.5 else { return }
+        lastWidth = bounds.width
+        resized?()
     }
 }
 
