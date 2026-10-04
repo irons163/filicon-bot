@@ -1,5 +1,11 @@
 # 協作能力核對紀錄（更新至 2026-10-04）
 
+## 活動選擇的原聊天 hidden confirmation（2026-10-04）
+
+host 回答及 native receipt 保存後，以原 account／agent／chat 的 shared runner 做一次不新增 user row 的短確認；忙碌或 pending question／secret 時依 click FIFO 排隊，model sync／peer recovery 結束也會繼續排隊工作。五選項不重跑原任務、不補排程、不增加工具／peer／背景記憶同意；不讀另一聊天、注入附件／saved facts 或收集 memory。原 lease／account generation／provider identity 到最後 SQL 保存都保留；ownership-away-and-back、Stop、模型／存檔失敗及無工具 provider 不降級或 replay，已套用選擇不回滾。
+
+取消只退休原 owner 的 native run／review 未完成紀錄，不以失效的模型 lease 覆蓋聊天 snapshot；遲到回覆仍拒絕，已完成／無關內容保留。queue 為 process-local，上限 64 pending＋active，重開不重送。測試技能使用固定商業時間、隔離 provider／stores、可控 gate、SQL fault injection 與 CustomDump 區分 native 保存及模型效果；172 tests／7 suites 聚焦通過，來源、紅燈類別及最後 gates 見 [完成驗收入口](Parity-completion-audit.md)。本項取代下方歷史 hidden acknowledgment 缺口，不關閉 group read state／legacy fallback／帳號遷移／雲端及真人／live／release／全 48 分類；整體 partial 不上調。未 push、重啟 App／Xcode 或改真實資料。
+
 ## Retained nudge 保留原選項（2026-10-04）
 
 automatic pause 後，同一檢查的未回答原 nudge 與新 paused entry 均以各自的 host outbox ID／原選項接受回答；回答舊 nudge 可恢復 guard 自己暫停的單人任務，不恢復人工停用、不新增 group／direct／tool／memory 核准或補跑錯過的任務。cycle 結束退休其他 entries；Pause 不結束檢查。workspace／沒有 exact host entry 的入口仍要求當前 stage，模型 widget 沒有 authority。

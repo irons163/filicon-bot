@@ -152,6 +152,7 @@ public actor ConversationRepository {
     }
 
     public func upsert(_ conversation: Conversation, expectedBinding: DirectConversationAgentBinding? = nil,
+                       bindingLease: ConversationBindingLease? = nil,
                        activityAt: Date = Date(),
                        commit: ConversationCommitGuard = { try $0() }) throws {
         var values = try load()
@@ -163,11 +164,56 @@ public actor ConversationRepository {
         }
         if let index = values.firstIndex(where: { $0.id == conversation.id }) { values[index] = conversation }
         else { values.append(conversation) }
-        try commit { try save(values, activityAt: activityAt) }
+        if let bindingLease {
+            guard activityAt.timeIntervalSince1970.isFinite,
+                  expectedBinding == bindingLease.binding, conversation.id == bindingLease.conversationID,
+                  conversation.agentBinding == bindingLease.binding, conversation.hiddenAt == bindingLease.legacyHiddenAt,
+                  let owner = try uniqueBoundConversation(accountID: bindingLease.binding.accountID, agentID: bindingLease.binding.agentID),
+                  owner.id == conversation.id, owner.hiddenAt == bindingLease.legacyHiddenAt else { throw CancellationError() }
+            // No owner/visibility changes are allowed on this path. Storage-only
+            // persistence avoids re-entering general-save lease cleanup while
+            // the exact lease is held through the final SQL commit.
+            try commit { try bindingLease.withValidBinding { try persist(values, activityAt: activityAt, historicalImport: false) } }
+        } else { try commit { try save(values, activityAt: activityAt) } }
     }
 
     public func delete(id: UUID) throws {
         try save(load().filter { $0.id != id })
+    }
+
+    /// Native cancellation cleanup, not a publication grant. The host supplies
+    /// its admitted run/approval IDs; this can only retire their unfinished rows
+    /// in the original durable owner. It never writes a caller's chat snapshot,
+    /// adds content, revives a lease, or redirects to another bound chat.
+    public func retireActivityAcknowledgment(conversationID: UUID, runID: UUID,
+                                             expectedBinding: DirectConversationAgentBinding,
+                                             reviewIDs: Set<String>) throws -> Conversation? {
+        var values = try load()
+        guard let ci = values.firstIndex(where: { $0.id == conversationID }),
+              values[ci].agentBinding == expectedBinding else { return nil }
+        let before = values[ci]
+        for mi in values[ci].messages.indices where values[ci].messages[mi].role == .assistant {
+            if values[ci].messages[mi].id == runID,
+               [.queued, .streaming].contains(values[ci].messages[mi].deliveryStatus) {
+                values[ci].messages[mi].deliveryStatus = .cancelled
+                values[ci].messages[mi].deliveryError = nil
+                for ti in values[ci].messages[mi].toolActivities.indices
+                where values[ci].messages[mi].toolActivities[ti].status == .running {
+                    values[ci].messages[mi].toolActivities[ti].status = .failed
+                    if values[ci].messages[mi].toolActivities[ti].result == nil {
+                        values[ci].messages[mi].toolActivities[ti].result = "Cancelled"
+                    }
+                }
+            }
+            for ti in values[ci].messages[mi].transcriptCards.indices {
+                let card = values[ci].messages[mi].transcriptCards[ti]
+                guard case .autoReview(let review) = card.payload, reviewIDs.contains(review.reviewID),
+                      [.waiting, .running].contains(card.lifecycle) else { continue }
+                values[ci].messages[mi].transcriptCards[ti].lifecycle = .cancelled
+            }
+        }
+        if values[ci] != before { try persist(values, activityAt: Date(), historicalImport: false) }
+        return values[ci]
     }
 
     /// Append/update only the host's immutable activity entry IDs against the

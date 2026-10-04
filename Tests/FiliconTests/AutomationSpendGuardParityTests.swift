@@ -158,6 +158,23 @@ struct AutomationSpendGuardParityTests {
     private var nudgeAt: Date { now.addingTimeInterval(AutomationSpendGuard.idleInterval + 1) }
     private var pauseAt: Date { nudgeAt.addingTimeInterval(AutomationSpendGuard.pauseDelay) }
 
+    @Test(arguments: [SpendGuardAnswer.keep, .pause, .neverAsk, .resume, .stayPaused])
+    func answerRemindersDescribeTheAppliedChoiceWithoutClaimingNewPermissions(answer: SpendGuardAnswer) {
+        let text = answer.modelAcknowledgmentReminder
+        #expect(text.hasPrefix("<system_reminder>") && text.hasSuffix("</system_reminder>"))
+        #expect(text.contains("ALREADY applied") && text.contains("one short line"))
+        #expect(text.contains("Do NOT edit") && text.contains("Do NOT ask again"))
+        #expect(text.contains("Human-reviewed group routines and manually disabled routines were not changed"))
+        #expect(text.contains("no additional tool, peer, image, memory or execution permission"))
+        switch answer {
+        case .keep: #expect(text.contains("for a month"))
+        case .pause: #expect(text.contains("pause this agent's individual routines"))
+        case .neverAsk: #expect(text.contains("never be asked about this again"))
+        case .resume: #expect(text.contains("guard-paused individual routines back up"))
+        case .stayPaused: #expect(text.contains("leave this agent's individual routines paused"))
+        }
+    }
+
     private func fixture() async throws -> (URL, AutomationService, Automation, Automation) {
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-spend-guard-\(UUID())")
         let service = try AutomationService(storeURL: root.appending(path: "automations.json"))

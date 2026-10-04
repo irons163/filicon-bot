@@ -135,7 +135,8 @@ acknowledgment then commit together in a separate SQLite transaction against
 the complete canonical history, preserving ordinary messages, reactions and
 addresses. A failed acknowledgment can replay only to the original account and
 conversation, under a current binding lease, without applying the choice again.
-This is an outbox retry, not a cross-store atomic transaction. A failed guard
+This is an outbox retry of the native system receipt, not a model replay or
+cross-store atomic transaction. A failed guard
 write leaves the unanswered card and schedules unchanged.
 
 This canonical transcript-only mutation uses a storage-only commit while the
@@ -156,8 +157,30 @@ non-human message IDs in this host's account/conversation-scoped outbox, not
 arbitrary imported card hints. Neither publication nor an answer creates a
 conversation, tool grant, peer grant or background-memory consent.
 
-The reference's hidden model acknowledgment turn and host reminders are still
-separate work, as are group-chat read state and live UI/release validation.
+After the actual choice and native receipt are durable, a bootstrapped host can
+queue one hidden model acknowledgment in that same canonical direct chat. Its
+ephemeral reminder is not a saved human row, a routine task, or a new permission.
+The shared runner keeps the original account, agent, provider/model/reasoning and
+repository binding lease through message and approval-card SQL commits. It does
+not inject attachments, saved facts or workflow references, or collect memory
+suggestions/episodes/synthesis. Existing operation and local permission gates
+still apply. An unavailable tool runner does not downgrade to plain text.
+
+The bounded process-local queue (64 pending plus active) follows click order,
+waits for busy chats and pending human question/secret answers, and drains after
+model synchronization or peer recovery. Stop or ownership/account cycles revoke
+the queued/active context; restart, duplicate callbacks, receipt recovery and
+model failure never replay it or roll back the already applied choice. Exceeding
+the queue bound skips only the model confirmation, retaining the native receipt.
+Finalization cannot substitute an account-only lease for the original fence.
+Native cancellation cleanup can only retire that host's admitted unfinished
+run/approval IDs against their original durable owner. It cannot add text, write
+a stale chat snapshot, revive model authority, alter unrelated/completed rows or
+retarget a changed owner. SQL failure leaves the canonical rows unchanged.
+
+The canonical direct branch now includes the reference's hidden acknowledgment
+and once-only background host reminder. Legacy unbound fallback, group-chat read
+state and live UI/release validation remain separate work.
 An observation or binding lease fences only mutations through its own repository,
 not independent repository instances/processes. Chat and automation timestamps
 reside in separate stores, not one cross-store transaction.

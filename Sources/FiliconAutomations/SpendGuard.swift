@@ -27,6 +27,27 @@ public enum SpendGuardDecision: String, Codable, Hashable, Sendable {
 }
 public enum SpendGuardAnswer: String, Codable, Hashable, Sendable { case keep, pause, neverAsk, resume, stayPaused }
 
+extension SpendGuardAnswer {
+    /// Rendering only, not host authority. Native delivery requires an actually
+    /// applied durable entry and the original account/chat lease.
+    public var modelAcknowledgmentReminder: String {
+        let choice: String
+        switch self {
+        case .keep: choice = "keep this agent's individual routines running, and not be asked again for a month"
+        case .resume: choice = "start this agent's guard-paused individual routines back up"
+        case .neverAsk: choice = "keep this agent's individual routines running and never be asked about this again"
+        case .pause: choice = "pause this agent's individual routines"
+        case .stayPaused: choice = "leave this agent's individual routines paused"
+        }
+        return """
+        <system_reminder>
+        The app asked the user about this agent's routines running while they were away. They chose to \(choice), and the app has ALREADY applied that itself. Human-reviewed group routines and manually disabled routines were not changed by this answer.
+        Acknowledge their choice in one short line. Do NOT edit any automation.json and Do NOT ask again. This acknowledgment grants no additional tool, peer, image, memory or execution permission and does not continue the old task.
+        </system_reminder>
+        """
+    }
+}
+
 /// A durable host outbox record, not a widget response or execution permission.
 /// The immutable destination and IDs let chat publication retry after a failed
 /// database save without applying the scheduling choice a second time.

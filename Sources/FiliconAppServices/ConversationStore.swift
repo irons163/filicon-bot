@@ -158,13 +158,14 @@ public actor ConversationStore {
         replacingLoadedMessageIDs: Set<UUID>,
         historyComplete: Bool,
         expectedBinding: DirectConversationAgentBinding? = nil,
+        bindingLease: ConversationBindingLease? = nil,
         activityAt: Date = Date(),
         commit: ConversationCommitGuard = { try $0() }
     ) async throws {
         let repository = try resolveRepository()
         try await importLegacyIfNeeded(into: repository)
         guard !historyComplete, let canonical = try await repository.conversation(id: conversation.id) else {
-            try await repository.upsert(conversation, expectedBinding: expectedBinding, activityAt: activityAt, commit: commit)
+            try await repository.upsert(conversation, expectedBinding: expectedBinding, bindingLease: bindingLease, activityAt: activityAt, commit: commit)
             try await transcriptService.reconcile(conversation)
             return
         }
@@ -174,7 +175,7 @@ public actor ConversationStore {
         merged.messageAddressReservations.merge(canonical.messageAddressReservations) { _, saved in saved }
         let unseen = canonical.messages.filter { !replacingLoadedMessageIDs.contains($0.id) }
         merged.messages = Self.mergeChronologically(older: unseen, newer: conversation.messages)
-        try await repository.upsert(merged, expectedBinding: expectedBinding, activityAt: activityAt, commit: commit)
+        try await repository.upsert(merged, expectedBinding: expectedBinding, bindingLease: bindingLease, activityAt: activityAt, commit: commit)
         try await transcriptService.reconcile(merged)
     }
 
@@ -183,6 +184,17 @@ public actor ConversationStore {
         try await importLegacyIfNeeded(into: repository)
         try await repository.delete(id: id)
         try await transcriptService.delete(conversationID: id)
+    }
+
+    public func retireActivityAcknowledgment(conversationID: UUID, runID: UUID,
+                                             expectedBinding: DirectConversationAgentBinding,
+                                             reviewIDs: Set<String>) async throws {
+        let repository = try resolveRepository()
+        try await importLegacyIfNeeded(into: repository)
+        if let value = try await repository.retireActivityAcknowledgment(conversationID: conversationID,
+            runID: runID, expectedBinding: expectedBinding, reviewIDs: reviewIDs) {
+            try await transcriptService.reconcile(value)
+        }
     }
 
     public func publishAutomationActivity(_ publication: AutomationActivityTranscriptPublication,

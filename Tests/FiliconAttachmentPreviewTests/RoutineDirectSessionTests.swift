@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 import CustomDump
+import CSQLite
 import FiliconAgents
 import FiliconAppServices
 import FiliconAutomations
@@ -12,8 +13,16 @@ import FiliconLocalTools
 private actor RoutineDirectProbe {
     var plain: [InferenceRequest] = []
     var shared: [InferenceRequest] = []
+    var acknowledgments: [InferenceRequest] = []
+    var acknowledgmentResults: [Bool] = []
+    var acknowledgmentWriteResults: [NormalizedToolResult] = []
+    var acknowledgmentWriteErrors: [String] = []
     var activityCardsAtInference: [Bool] = []
     func recordPlain(_ request: InferenceRequest) { plain.append(request) }
+    func recordAcknowledgment(_ request: InferenceRequest) { acknowledgments.append(request) }
+    func recordAcknowledgmentResult(_ succeeded: Bool) { acknowledgmentResults.append(succeeded) }
+    func recordAcknowledgmentWriteResult(_ value: NormalizedToolResult) { acknowledgmentWriteResults.append(value) }
+    func recordAcknowledgmentWriteError(_ error: String) { acknowledgmentWriteErrors.append(error) }
     func recordShared(_ request: InferenceRequest, activityCardExists: Bool? = nil) -> Int {
         shared.append(request)
         if let activityCardExists { activityCardsAtInference.append(activityCardExists) }
@@ -51,6 +60,9 @@ private struct RoutineDirectProvider: InteractiveToolProvider {
     var writeRoot: URL? = nil
     var peerID: UUID? = nil
     var activityStoreURL: URL? = nil
+    var acknowledgmentGate: RoutineDirectGate? = nil
+    var acknowledgmentFails = false
+    var ignoresAcknowledgmentCancellation = false
     func models() async throws -> [AIModel] { [.init(id: "fixture")] }
     func stream(_ request: InferenceRequest) -> AsyncThrowingStream<InferenceEvent, Error> {
         AsyncThrowingStream { continuation in
@@ -65,6 +77,30 @@ private struct RoutineDirectProvider: InteractiveToolProvider {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
+                    if request.messages.contains(where: { $0.role == .system && $0.text.contains("host-bound automation activity answer") }) {
+                        await probe.recordAcknowledgment(request)
+                        do { try await acknowledgmentGate?.wait() }
+                        catch { if !ignoresAcknowledgmentCancellation { throw error } }
+                        if acknowledgmentFails { throw ProviderError.transport("Isolated acknowledgment failure") }
+                        if let writeRoot {
+                            do {
+                                let result = try await executeTool(.init(id: "activity-write", name: "local__write_file",
+                                    argumentsJSON: JSONEncoder().encode(["root": writeRoot.path, "path": "activity-created.txt", "content": "APPROVED_ACTIVITY_WRITE"])))
+                                await probe.recordAcknowledgmentWriteResult(result)
+                            } catch {
+                                await probe.recordAcknowledgmentWriteError(error.localizedDescription)
+                                throw error
+                            }
+                        }
+                        do {
+                            let result = try await executeTool(.init(id: "activity-ack", name: "SendMessage",
+                                argumentsJSON: JSONEncoder().encode(["text": "ACK_SELECTED_CHOICE"])))
+                            await probe.recordAcknowledgmentResult(!result.isError)
+                        } catch { await probe.recordAcknowledgmentResult(false); throw error }
+                        continuation.yield(.textDelta("PRIVATE_ACTIVITY_ACK"))
+                        continuation.yield(.completed(.stop)); continuation.finish()
+                        return
+                    }
                     let activityCardExists: Bool?
                     if let activityStoreURL {
                         let chat = try await ConversationStore(fileURL: activityStoreURL).conversation(id: request.conversationID)
@@ -105,6 +141,9 @@ private struct RoutineDirectProvider: InteractiveToolProvider {
 @Suite("Routine direct sessions", .timeLimit(.minutes(1)))
 @MainActor struct RoutineDirectSessionTests {
     private let base = Date(timeIntervalSince1970: 1_000)
+    // Fixed future answer prevents a wall-clock scheduler run when the isolated
+    // resumed fixture is bootstrapped again to check non-replay.
+    private let acknowledgmentAt = Date(timeIntervalSince1970: 1_900_000_000)
     private func fixture(gate: RoutineDirectGate? = nil, question: Bool = false, silent: Bool = false, write: Bool = false, peer: Bool = false, activityProbe: Bool = false) async throws -> (URL, AppModel, Automation, UUID, RoutineDirectProbe) {
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-routine-direct-\(UUID())")
         let service = try AgentService(storeURL: root.appending(path: "agents.json"))
@@ -172,6 +211,348 @@ private struct RoutineDirectProvider: InteractiveToolProvider {
         let snapshot = try decoder.decode(History.self, from: Data(contentsOf: root.appending(path: "automations.json")))
         return try #require(snapshot.runs.last { $0.automationID == automationID })
     }
+    private func pausedActivityFixture(gate: RoutineDirectGate? = nil, fails: Bool = false, ignoresCancellation: Bool = false, write: Bool = false) async throws -> (URL, AppModel, Automation, UUID, RoutineDirectProbe) {
+        let root = FileManager.default.temporaryDirectory.appending(path: "filicon-activity-ack-\(UUID())")
+        let profiles = try AgentService(storeURL: root.appending(path: "agents.json"))
+        let owner = try await profiles.create(name: "Activity owner", instructions: "DIRECT_PERSONA",
+            providerID: "routine-direct-fixture", modelID: "fixture", at: base)
+        try await profiles.applyMemoryChange(.init(operation: .write, memory: .init(accountID: "local", agentID: owner.id,
+            fact: "PRIVATE_SAVED_FACT", createdAt: base)), lifetime: .init())
+        let service = try AutomationService(storeURL: root.appending(path: "automations.json"))
+        let routine = try await service.save(.init(agentID: owner.id, name: "Activity routine", prompt: "DO_NOT_REPEAT_OLD_TASK",
+            trigger: .cron(expression: "@hourly", timeZoneIdentifier: "UTC"), createdAt: base), now: base)
+        try await service.answerSpendGuard(.pause, agentID: owner.id, at: base)
+        var chat = Conversation(id: UUID(uuidString: "00000000-0000-0000-0000-000000001271")!, title: "Original activity chat",
+            providerID: owner.providerID, modelID: owner.modelID,
+            messages: [.init(role: .user, text: "ORIGINAL_ACTIVITY_HISTORY", createdAt: base)], updatedAt: base)
+        chat.agentBinding = .init(accountID: "local", agentID: owner.id)
+        let unrelated = Conversation(id: UUID(uuidString: "00000000-0000-0000-0000-000000001272")!, title: "Other activity chat",
+            messages: [.init(role: .user, text: "UNRELATED_ACTIVITY_HISTORY", createdAt: base)])
+        try await ConversationStore(fileURL: root.appending(path: "conversations.json")).save([chat, unrelated])
+        let model: AppModel
+        if write {
+            let generation = UUID(), key = LocalToolRuntime.randomSessionKey()
+            let authenticator = LocalSessionAuthenticator(sessionKey: key)
+            let host = LocalToolProcessHost(generation: generation, requiresPermissionReceipts: true,
+                authenticate: { _ in true }, verifyReceipt: { authenticator.verify($0) })
+            let runtime = LocalToolRuntime(workspaceStore: WorkspaceAuthorizationStore(fileURL: root.appending(path: "bookmarks.json")),
+                generation: generation, sessionKey: key, helper: host)
+            model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false, localToolRuntime: runtime)
+            _ = try await runtime.workspaceStore.authorize(root)
+            try await model.localToolPermissionPolicy.setChoice(.ask, for: .writeFile)
+        } else { model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false) }
+        let probe = RoutineDirectProbe()
+        await model.registry.register(RoutineDirectProvider(probe: probe, writeRoot: write ? root : nil, acknowledgmentGate: gate,
+            acknowledgmentFails: fails, ignoresAcknowledgmentCancellation: ignoresCancellation))
+        await model.bootstrap(); await model.setAutomationRuntimeActive(false)
+        try await model.loadAllMessages(for: chat.id)
+        await model.reloadAutomationDetails()
+        return (root, model, routine, chat.id, probe)
+    }
+
+    private func executeFixtureSQL(_ statement: String, at root: URL) throws {
+        var handle: OpaquePointer?
+        try #require(sqlite3_open(root.appending(path: "conversations.sqlite3").path, &handle) == SQLITE_OK)
+        defer { sqlite3_close(handle) }
+        try #require(sqlite3_exec(handle, statement, nil, nil, nil) == SQLITE_OK)
+    }
+
+    @Test(arguments: [SpendGuardAnswer.resume, .stayPaused])
+    func anActivityAnswerStartsOneHiddenConfirmationInItsOriginalChat(answer: SpendGuardAnswer) async throws {
+        let (root, model, routine, id, probe) = try await pausedActivityFixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let presentation = try #require(model.conversationSpendGuardPresentation(id: id))
+        let store = ConversationStore(fileURL: root.appending(path: "conversations.json"))
+        let before = try #require(try await store.conversation(id: id))
+        let grants = model.automationDirectBindings, groups = model.automationGroupBindings
+        model.selectRoute(.conversation(UUID(uuidString: "00000000-0000-0000-0000-000000001272")!))
+        await model.answerConversationSpendGuard(answer, presentation: presentation, at: acknowledgmentAt)
+        try await eventually { await probe.acknowledgments.count == 1 && !model.isConversationWorking(id) }
+        let request = try #require(await probe.acknowledgments.first)
+        expectNoDifference(request.conversationID, id)
+        let text = request.messages.map(\.text).joined(separator: "\n")
+        #expect(text.contains("DIRECT_PERSONA") && text.contains("ALREADY applied"))
+        #expect(text.contains("Do NOT ask again") && text.contains("Do NOT edit"))
+        #expect(text.contains("ORIGINAL_ACTIVITY_HISTORY"))
+        #expect(!text.contains("PRIVATE_SAVED_FACT") && !text.contains("UNRELATED_ACTIVITY_HISTORY"))
+        #expect(request.attachmentsByMessageID.isEmpty)
+        let saved = try #require(try await store.conversation(id: id))
+        expectNoDifference(saved.messages.filter { $0.role == .user }, before.messages.filter { $0.role == .user })
+        #expect(saved.messages.contains { $0.text == "ACK_SELECTED_CHOICE" && $0.role == .assistant })
+        #expect(!saved.messages.contains { $0.text.contains("PRIVATE_ACTIVITY_ACK") || $0.text.contains("<system_reminder>") })
+        expectNoDifference(model.automationDirectBindings, grants); expectNoDifference(model.automationGroupBindings, groups)
+        let definitions = model.automations, bytes = try Data(contentsOf: root.appending(path: "automations.json"))
+        expectNoDifference(definitions.first { $0.id == routine.id }?.enabled, answer == .resume)
+        await model.answerConversationSpendGuard(answer, presentation: presentation, at: acknowledgmentAt.addingTimeInterval(1))
+        await model.reloadAutomationDetails()
+        let acknowledgmentCount = await probe.acknowledgments.count
+        expectNoDifference(acknowledgmentCount, 1)
+        expectNoDifference(model.automations, definitions)
+        expectNoDifference(try Data(contentsOf: root.appending(path: "automations.json")), bytes)
+    }
+
+    @Test(arguments: ["busy", "rebind-cycle", "hide-cycle", "account-cycle"])
+    func aQueuedActivityConfirmationWaitsWithoutRetargetingOrRevivingItsOwner(change: String) async throws {
+        let (root, model, _, id, probe) = try await pausedActivityFixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let presentation = try #require(model.conversationSpendGuardPresentation(id: id))
+        model.running.insert(id)
+        await model.answerConversationSpendGuard(.resume, presentation: presentation, at: acknowledgmentAt)
+        let beforeCount = await probe.acknowledgments.count
+        expectNoDifference(beforeCount, 0)
+        let definitions = model.automations, bytes = try Data(contentsOf: root.appending(path: "automations.json"))
+        switch change {
+        case "rebind-cycle":
+            let index = try #require(model.conversations.firstIndex { $0.id == id }), binding = model.conversations[index].agentBinding
+            model.conversations[index].agentBinding = nil; model.conversations[index].agentBinding = binding
+        case "hide-cycle":
+            let index = try #require(model.conversations.firstIndex { $0.id == id })
+            model.conversations[index].hiddenAt = base; model.conversations[index].hiddenAt = nil
+        case "account-cycle":
+            await model.cancelAutoReviewApprovals(nextAccountID: "fixture-away"); model.settings.accountScope = "fixture-away"
+            await model.cancelAutoReviewApprovals(nextAccountID: "local"); model.settings.accountScope = "local"
+        default: break
+        }
+        model.running.remove(id)
+        if change == "busy" { try await eventually { await probe.acknowledgments.count == 1 && !model.isConversationWorking(id) } }
+        else {
+            // Admission registers the task synchronously before it can suspend;
+            // an idle chat here proves the revoked queue did not start a turn.
+            #expect(!model.isConversationWorking(id))
+            let count = await probe.acknowledgments.count
+            expectNoDifference(count, 0)
+        }
+        expectNoDifference(model.automations, definitions)
+        expectNoDifference(try Data(contentsOf: root.appending(path: "automations.json")), bytes)
+    }
+
+    @Test func anAcknowledgmentProviderFailureDoesNotRollBackOrReplayTheAppliedChoice() async throws {
+        let (root, model, _, id, probe) = try await pausedActivityFixture(fails: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let presentation = try #require(model.conversationSpendGuardPresentation(id: id))
+        await model.answerConversationSpendGuard(.resume, presentation: presentation, at: acknowledgmentAt)
+        try await eventually { await probe.acknowledgments.count == 1 && !model.isConversationWorking(id) }
+        let file = root.appending(path: "automations.json"), bytes = try Data(contentsOf: file)
+        let durable = try AutomationService(storeURL: file)
+        let answer = await durable.spendGuardTranscriptEntries(accountID: "local").first { $0.id == presentation.transcriptEntryID }?.answer
+        expectNoDifference(answer, .resume)
+        #expect(model.errorMessage?.contains("Isolated acknowledgment failure") == true)
+        await model.reloadAutomationDetails()
+        let reopened = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+        await reopened.registry.register(RoutineDirectProvider(probe: probe))
+        await reopened.reloadWorkspaceData(); await reopened.reloadAutomationDetails()
+        let acknowledgmentCount = await probe.acknowledgments.count
+        expectNoDifference(acknowledgmentCount, 1)
+        expectNoDifference(try Data(contentsOf: file), bytes)
+    }
+    @Test(arguments: [SpendGuardAnswer.keep, .pause, .neverAsk])
+    func originalNudgeChoicesEachConfirmExactlyTheirAlreadyAppliedSelection(answer: SpendGuardAnswer) async throws {
+        let (root, model, routine, id, probe) = try await fixture(activityProbe: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (store, nudgeAt) = try await seedNudgeActivity(root: root, model: model, id: id)
+        await model.runAutomationScheduleTick(at: nudgeAt)
+        let nudge = try #require(model.conversationSpendGuardPresentation(id: id))
+        #expect(!nudge.prompt.isPaused)
+        let before = try #require(try await store.conversation(id: id))
+        await model.answerConversationSpendGuard(answer, presentation: nudge, at: nudgeAt.addingTimeInterval(1))
+        try await eventually { await probe.acknowledgments.count == 1 && !model.isConversationWorking(id) }
+        let request = try #require(await probe.acknowledgments.first)
+        expectNoDifference(request.messages.last?.text, answer.modelAcknowledgmentReminder)
+        #expect(!request.messages.map(\.text).joined().contains("PRIVATE_SAVED_FACT"))
+        let saved = try #require(try await store.conversation(id: id))
+        expectNoDifference(saved.messages.filter { $0.role == .user }, before.messages.filter { $0.role == .user })
+        #expect(saved.messages.contains { $0.role == .assistant && $0.text == "ACK_SELECTED_CHOICE" })
+        expectNoDifference(model.automations.first { $0.id == routine.id }?.enabled, answer != .pause)
+        expectNoDifference(model.automationDirectBindings, [])
+    }
+
+    @Test func confirmationsPreserveClickOrderEvenIfTheWallClockMovesBack() async throws {
+        let (root, model, _, id, probe) = try await fixture(activityProbe: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (_, nudgeAt) = try await seedNudgeActivity(root: root, model: model, id: id)
+        await model.runAutomationScheduleTick(at: nudgeAt)
+        let nudge = try #require(model.conversationSpendGuardPresentation(id: id))
+        model.running.insert(id)
+        await model.answerConversationSpendGuard(.pause, presentation: nudge, at: nudgeAt.addingTimeInterval(1))
+        let paused = try #require(model.conversationSpendGuardPresentation(id: id))
+        #expect(paused.prompt.isPaused)
+        await model.answerConversationSpendGuard(.resume, presentation: paused, at: nudgeAt)
+        model.running.remove(id)
+        try await eventually { await probe.acknowledgments.count == 2 && !model.isConversationWorking(id) }
+        let requests = await probe.acknowledgments
+        expectNoDifference(requests.map { $0.messages.last?.text }, [SpendGuardAnswer.pause.modelAcknowledgmentReminder,
+            SpendGuardAnswer.resume.modelAcknowledgmentReminder])
+        let results = await probe.acknowledgmentResults
+        expectNoDifference(results, [true, true])
+    }
+
+    @Test(arguments: ["rebind-cycle", "hide-cycle", "account-cycle", "stop"])
+    func aCancelledActivityConfirmationCannotPublishALateProviderResult(change: String) async throws {
+        let gate = RoutineDirectGate()
+        let (root, model, _, id, probe) = try await pausedActivityFixture(gate: gate, ignoresCancellation: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let presentation = try #require(model.conversationSpendGuardPresentation(id: id))
+        await model.answerConversationSpendGuard(.resume, presentation: presentation, at: acknowledgmentAt)
+        try await eventually { await gate.started }
+        let definitions = model.automations, bytes = try Data(contentsOf: root.appending(path: "automations.json"))
+        switch change {
+        case "rebind-cycle":
+            let index = try #require(model.conversations.firstIndex { $0.id == id }), binding = model.conversations[index].agentBinding
+            model.conversations[index].agentBinding = nil; model.conversations[index].agentBinding = binding
+        case "hide-cycle":
+            let index = try #require(model.conversations.firstIndex { $0.id == id })
+            model.conversations[index].hiddenAt = base; model.conversations[index].hiddenAt = nil
+        case "account-cycle":
+            await model.cancelAutoReviewApprovals(nextAccountID: "fixture-away"); model.settings.accountScope = "fixture-away"
+            await model.cancelAutoReviewApprovals(nextAccountID: "local"); model.settings.accountScope = "local"
+        default: model.selectRoute(.conversation(id)); model.cancel()
+        }
+        await gate.release()
+        try await eventually { await probe.acknowledgmentResults.count == 1 && !model.isConversationWorking(id) }
+        let results = await probe.acknowledgmentResults
+        expectNoDifference(results, [false])
+        let saved = try #require(try await ConversationStore(fileURL: root.appending(path: "conversations.json")).conversation(id: id))
+        #expect(!saved.messages.contains { $0.role == .assistant && $0.text == "ACK_SELECTED_CHOICE" })
+        #expect(!saved.messages.contains { $0.role == .user && $0.text.contains("<system_reminder>") })
+        #expect(!saved.messages.contains { $0.role == .assistant && $0.deliveryStatus == .streaming })
+        if change == "stop" { #expect(model.errorMessage == nil) }
+        expectNoDifference(model.automations, definitions)
+        expectNoDifference(try Data(contentsOf: root.appending(path: "automations.json")), bytes)
+    }
+
+    @Test(arguments: ["guard-write", "chat-receipt", "unavailable-provider"])
+    func aFailedAnswerOrReceiptCannotStartAnAcknowledgmentAndRecoveryDoesNotReplayIt(failure: String) async throws {
+        let (root, model, _, id, probe) = try await pausedActivityFixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let presentation = try #require(model.conversationSpendGuardPresentation(id: id))
+        let file = root.appending(path: "automations.json"), before = try Data(contentsOf: file)
+        let backup = root.appending(path: "isolated-automations-backup.json")
+        if failure == "guard-write" {
+            try FileManager.default.moveItem(at: file, to: backup)
+            try FileManager.default.createDirectory(at: file, withIntermediateDirectories: false)
+        }
+        if failure == "chat-receipt" {
+            try executeFixtureSQL("CREATE TRIGGER reject_activity_ack BEFORE INSERT ON messages WHEN NEW.role='system' BEGIN SELECT RAISE(ABORT,'isolated receipt failure'); END", at: root)
+        }
+        if failure == "unavailable-provider" { await model.registry.register(RoutineDirectProvider(supportsTools: false, probe: probe)) }
+        await model.answerConversationSpendGuard(.resume, presentation: presentation, at: acknowledgmentAt)
+        try await eventually { !model.isConversationWorking(id) }
+        let requests = await probe.acknowledgments, plain = await probe.plain
+        expectNoDifference(requests.count, 0); expectNoDifference(plain.count, 0)
+        #expect(model.errorMessage != nil)
+        if failure == "guard-write" {
+            expectNoDifference(try Data(contentsOf: backup), before)
+            try FileManager.default.removeItem(at: file)
+            try FileManager.default.moveItem(at: backup, to: file)
+        }
+        let applied = try Data(contentsOf: file)
+        if failure != "guard-write" { #expect(applied != before) }
+        if failure == "chat-receipt" { try executeFixtureSQL("DROP TRIGGER reject_activity_ack", at: root) }
+        await model.reloadAutomationDetails()
+        let reopened = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+        await reopened.registry.register(RoutineDirectProvider(probe: probe))
+        await reopened.bootstrap(); await reopened.setAutomationRuntimeActive(false)
+        await reopened.reloadAutomationDetails()
+        let after = await probe.acknowledgments
+        expectNoDifference(after.count, 0)
+        expectNoDifference(try Data(contentsOf: file), applied)
+    }
+
+    @Test(arguments: ["review-denied", "local-denied", "allowed"])
+    func answeringAnActivityCardDoesNotApproveAnAcknowledgmentProvidersFileWrite(choice: String) async throws {
+        let (root, model, _, id, probe) = try await pausedActivityFixture(write: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        await model.setAutoReviewEnabled(true)
+        let presentation = try #require(model.conversationSpendGuardPresentation(id: id))
+        await model.answerConversationSpendGuard(.resume, presentation: presentation, at: acknowledgmentAt)
+        let definitions = model.automations, bytes = try Data(contentsOf: root.appending(path: "automations.json"))
+        try await eventually { !model.pendingAutoReviewApprovals.isEmpty }
+        let review = try #require(model.pendingAutoReviewApprovals.first)
+        expectNoDifference(review.action.context.conversationID, id)
+        #expect(review.fence.runID != presentation.transcriptEntryID)
+        let file = root.appending(path: "activity-created.txt")
+        #expect(!FileManager.default.fileExists(atPath: file.path))
+        // Native card intents act on the chat actually visible to the human.
+        model.selectRoute(.conversation(id))
+        model.handleTranscriptCardIntent(choice == "review-denied" ? .rejectReview(reviewID: review.id) : .approveReview(reviewID: review.id))
+        if choice != "review-denied" {
+            try await eventually { !model.pendingToolApprovals.isEmpty }
+            let local = try #require(model.pendingToolApprovals.first)
+            expectNoDifference(local.conversationID, id)
+            #expect(!FileManager.default.fileExists(atPath: file.path))
+            model.resolveLocalToolApproval(id: local.id, allowed: choice == "allowed")
+        }
+        try await eventually { !model.isConversationWorking(id) }
+        let writeResults = await probe.acknowledgmentWriteResults, writeErrors = await probe.acknowledgmentWriteErrors
+        let acknowledgmentResults = await probe.acknowledgmentResults
+        expectNoDifference(writeResults.map(\.isError), choice == "review-denied" ? [] : [choice != "allowed"])
+        expectNoDifference(writeErrors.count, choice == "review-denied" ? 1 : 0)
+        expectNoDifference(acknowledgmentResults, choice == "review-denied" ? [] : [true])
+        expectNoDifference(FileManager.default.fileExists(atPath: file.path), choice == "allowed")
+        if choice == "allowed" { expectNoDifference(try String(contentsOf: file, encoding: .utf8), "APPROVED_ACTIVITY_WRITE") }
+        expectNoDifference(model.conversations.first { $0.id == id }?.messages.flatMap(\.toolActivities)
+            .first { $0.name == "local__write_file" }?.status, choice == "allowed" ? .succeeded : .failed)
+        #expect(model.pendingAutoReviewApprovals.isEmpty && model.pendingToolApprovals.isEmpty)
+        expectNoDifference(model.automations, definitions)
+        expectNoDifference(try Data(contentsOf: root.appending(path: "automations.json")), bytes)
+        expectNoDifference(model.automationDirectBindings, [])
+    }
+
+    @Test(arguments: ["review", "local"])
+    func stoppingAnActivityConfirmationRetiresItsPendingApprovalWithoutWriting(phase: String) async throws {
+        let (root, model, _, id, probe) = try await pausedActivityFixture(write: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        await model.setAutoReviewEnabled(true)
+        let presentation = try #require(model.conversationSpendGuardPresentation(id: id))
+        await model.answerConversationSpendGuard(.resume, presentation: presentation, at: acknowledgmentAt)
+        let bytes = try Data(contentsOf: root.appending(path: "automations.json"))
+        try await eventually { !model.pendingAutoReviewApprovals.isEmpty }
+        let review = try #require(model.pendingAutoReviewApprovals.first)
+        model.selectRoute(.conversation(id))
+        var local: ToolApprovalRequest?
+        if phase == "local" {
+            model.handleTranscriptCardIntent(.approveReview(reviewID: review.id))
+            try await eventually { !model.pendingToolApprovals.isEmpty }
+            local = try #require(model.pendingToolApprovals.first)
+        }
+        model.cancel()
+        if let local { model.resolveLocalToolApproval(id: local.id, allowed: true) }
+        else { model.handleTranscriptCardIntent(.approveReview(reviewID: review.id)) }
+        try await eventually { !model.isConversationWorking(id) && model.pendingAutoReviewApprovals.isEmpty && model.pendingToolApprovals.isEmpty }
+        #expect(!FileManager.default.fileExists(atPath: root.appending(path: "activity-created.txt").path))
+        let saved = try #require(try await ConversationStore(fileURL: root.appending(path: "conversations.json")).conversation(id: id))
+        #expect(!saved.messages.contains { $0.deliveryStatus == .streaming })
+        let card = try #require(saved.messages.flatMap(\.transcriptCards).first {
+            if case .autoReview(let value) = $0.payload { return value.reviewID == review.id }
+            return false
+        })
+        expectNoDifference(card.lifecycle, phase == "review" ? .cancelled : .approved)
+        let requests = await probe.acknowledgments.count
+        expectNoDifference(requests, 1)
+        expectNoDifference(try Data(contentsOf: root.appending(path: "automations.json")), bytes)
+    }
+
+    @Test func anActivityConfirmationWaitsForARealPendingQuestionAndItsHumanReplyTurn() async throws {
+        let (root, model, routine, id, probe) = try await fixture(question: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try await approve(model, automation: routine, id: id)
+        await model.runAutomationNow(id: routine.id)
+        let row = try #require(model.conversations.first { $0.id == id }?.messages.first { $0.transcriptCards.contains { $0.directQuestion != nil } })
+        let card = try #require(row.transcriptCards.first { $0.directQuestion != nil })
+        let (_, nudgeAt) = try await seedNudgeActivity(root: root, model: model, id: id)
+        await model.runAutomationScheduleTick(at: nudgeAt)
+        let presentation = try #require(model.conversationSpendGuardPresentation(id: id))
+        await model.answerConversationSpendGuard(.keep, presentation: presentation, at: nudgeAt.addingTimeInterval(1))
+        let pending = await probe.acknowledgments.count
+        expectNoDifference(pending, 0)
+        #expect(model.canAnswerDirectQuestion(conversationID: id, messageID: row.id, cardID: card.id))
+        await model.directQuestionAnswered(conversationID: id, messageID: row.id, cardID: card.id, answer: .option(0))
+        try await eventually { await probe.acknowledgments.count == 1 && !model.isConversationWorking(id) }
+        let acknowledgment = try #require(await probe.acknowledgments.first)
+        #expect(acknowledgment.messages.contains { $0.role == .user && $0.text == "Inspect only" })
+        expectNoDifference(acknowledgment.messages.last?.text, SpendGuardAnswer.keep.modelAcknowledgmentReminder)
+    }
+
     @Test(arguments: [false, true]) func reviewedRoutineUsesExistingHistoryAndSharedToolsWithIndependentMemoryConsent(memory: Bool) async throws {
         let (root, model, automation, id, probe) = try await fixture()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -325,9 +706,12 @@ private struct RoutineDirectProvider: InteractiveToolProvider {
         #expect(resumed.enabled && !resumed.guardPaused)
         expectNoDifference(model.automationDirectBindings, bindings)
         expectNoDifference(model.conversationSpendGuardPresentation(id: id) == nil, true)
+        try await eventually { await probe.acknowledgments.count == 1 && !model.isConversationWorking(id) }
+        let acknowledgment = try #require(await probe.acknowledgments.first)
+        #expect(acknowledgment.messages.last?.text.contains(SpendGuardAnswer.keep.modelAcknowledgmentReminder) == true)
         await model.runAutomationScheduleTick(at: try #require(resumed.nextRunAt))
         let after = await probe.shared
-        expectNoDifference(after.count, 2)
+        try #require(after.count == 2)
         #expect(!after[1].messages.map(\.text).joined().contains("<system_reminder>"))
     }
 

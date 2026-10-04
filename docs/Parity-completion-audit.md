@@ -1,5 +1,23 @@
 # 完成驗收入口（2026-09-27）
 
+## 回答活動卡片後的原聊天確認回合（2026-10-04）
+
+再次核對 reference `a9f633e09d49a85829b8236331b9e21f7e612634`：`sand-automation-spend-guard.ts` 的 `renderSpendGuardAnswerAck` 要求一句短確認、不重編排程、不再次詢問；`widget-responses.ts` 在 host 已保存選擇後以 `appendUserMessage: false`／`awaitTurn: false` 將它交給原 agent，模型失敗不回滾已生效的選擇。
+
+native 現在於真正 service outbox 回答及原聊天的 native system receipt 均落盤後，透過同一個 shared direct runner 排入一次 hidden acknowledgment。目標仍是原 account／agent／canonical chat，不跟隨畫面選取、不新增聊天；provider 不支援工具時拒絕，不降級 plain text。五種選擇只產生 ephemeral host reminder，要求短 `SendMessage` 確認；沒有假的持久 user row，也不重跑原任務或改排程。history 只來自原聊天，排除 host bookkeeping；attachments、saved facts、memory suggestions／episodes／synthesis 及 workflow library 不注入。原 persona 及 host 工具／peer 核准流程仍在，不增加任何 grant。
+
+process-local FIFO 依實際 click order 而非可能倒退的回答時間；原聊天忙於回合／peer recovery／model sync，或正在等人類 question／secret 時保留排隊。待原工作結束才執行；最多 64 個 pending＋active confirmations，超出只略過模型確認，不回滾選擇或抹掉 native receipt。queue 不保存，重開／reload／重複 callback／receipt 補寫不 replay。每個確認另保留原 repository binding lease、account generation／scope 及原 provider／model／reasoning；重綁／隱藏／刪除／封存／帳號循環或 Stop 使其失效。最終訊息及 review-card SQL 保存仍用該原 lease，不能在 finalization 換成較寬的 account lease。
+
+取消測試另外抓到 canonical streaming placeholder 未退休、Stop 顯示假儲存錯誤的問題。現以獨立 native cleanup 僅取消原 owner 的已知 run ID／pending review ID，不接收聊天 snapshot、不新增正文、復活模型 lease 或修改另一 owner；已完成行及無關訊息／卡片保留，SQL 失敗回滾。帳號切換亦可退休原 run 的未完成本機紀錄，這是取消收尾，不是舊帳號模型回合或 publication permission。晚到 provider 即使忽略 cancellation 仍不能發表；停止不永久留下等待卡片。
+
+有效紅燈 `spend-guard-answer-ack-red-valid.log` 重現 Resume／Stay paused 保存後沒有模型確認（1 test／2 cases／4 issues）；`spend-guard-answer-ack-write-cancel-red-v2.log` 重現四種 active cancellation 留下 streaming row，Stop 另出現儲存錯誤（2 tests／5 issues，檔案核准測試已通過）。寫入測試較早使用了未選取原聊天的 UI intent、並誤以為 review denial 會返回普通 tool result；這些 fixture 失敗及 async assertion 編譯失敗各自保留，不當成產品核准 gate 缺失。`focused-final.log` 的一項失敗是 fixture 把原生 review 的 `approved` 誤寫成 `succeeded`；只修正既有契約的斷言。
+
+最後 source 聚焦 `spend-guard-answer-ack-focused-final-v2.log` exit 0：172 tests／7 suites（核心 71／3，App／direct／group／router 101／4）。涵蓋五選項、真正 shared model／SendMessage、無假人類／私有 draft、FIFO、pending question 與真實 human reply、重開不 replay、保存／provider 故障、十五種最後 binding SQL fence、paged history 保留、八種 cancellation-only storage 邊界，以及真實雙重檔案核准／兩階段 Stop／晚到 provider 拒絕。
+
+最後 source 完整串行 `spend-guard-answer-ack-full-final.log` exit 0：135 XCTest＋1,848 Swift Testing（220 suites；核心 961／107，App 653／83）。兩項 opt-in live Codex 測試略過，不當作真實模型或外部服務驗收。`spend-guard-answer-ack-native-final.log` BUILD SUCCEEDED；`spend-guard-answer-ack-package-final.log` 四個執行檔、deep strict 簽章及 app／XPC entitlements 通過。隔離產物 `.build/validation/SpendGuardAnswerAckPackage/Filicon.app` 為 Debug／ad-hoc 離線 gate，不是 release／公證；未執行列印的 launch smoke。七語各 1,795 keys／0 missing，`git diff --check` 通過；沒有新增 UI layout 或文字，不新增真人／VoiceOver 驗收。日誌及產物僅保留在忽略的 `.build/validation/`。
+
+本節只取代下面歷史 canonical direct-chat branch 的「hidden model answer acknowledgment 尚未接線」。legacy unbound fallback、group read state、完整 core 帳號遷移、雲端 session、真人／VoiceOver、live／release 及全 48 分類仍各自保留，整體 partial 不上調。不宣稱模型一定遵循短句、跨 process lease 或跨 store 原子交易；失敗保留 native 已套用的確認，不 rollback／重送。未 push、啟動或重啟使用者 App／Xcode、改真實帳號／群組／聊天資料。
+
 ## 同一次檢查保留原卡片的回答選項（2026-10-04）
 
 再次核對 reference `a9f633e09d49a85829b8236331b9e21f7e612634`：`automation-spend-guard-runtime.ts` 在 automatic pause 保留原 `cardEntryIds` 並新增 paused entry；`handleWidgetAnswer` 核對仍在 active set 的 host entry 與該 widget 的原選項，而不是要求每張卡都符合最新 stage。Keep／Never ask 可由未回答的原 nudge 恢復 guard-paused routines；Pause 保留檢查，Resume／Stay paused 只屬於 paused widget。檢查結束即退休其餘 sibling entries。
