@@ -1807,5 +1807,12 @@
 "Filicon resumed this agent's guarded routines and postponed activity checks for 30 days." = "Filicon は活動確認で停止した定期処理を再開し、活動確認を 30 日間延期しました。";
 "Filicon left this agent's routines paused." = "Filicon はこのエージェントの定期処理を停止したままにしました。";
 "Task status" = "タスクの状態";
+"Open diagram full screen" = "図を全画面で開く";
+"Diagram preview" = "図のプレビュー";
+"Close diagram preview" = "図のプレビューを閉じる";
+"Zoom in" = "拡大";
+"Zoom out" = "縮小";
+"Fit to screen" = "ウインドウに合わせる";
+"Drag to pan. Scroll or use + and − to zoom; F or 0 fits the diagram. Escape closes the preview." = "ドラッグで図を移動できます。スクロールまたは + と − で拡大・縮小し、F または 0 でウインドウに合わせます。Escape でプレビューを閉じます。";
 "Not completed" = "未完了";
 "Status from the message; this checkbox cannot be changed." = "メッセージ内の状態です。このチェックボックスは変更できません。";

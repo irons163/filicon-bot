@@ -1807,5 +1807,12 @@
 "Filicon resumed this agent's guarded routines and postponed activity checks for 30 days." = "Filicon이 활동 확인으로 중지된 루틴을 재개하고 활동 확인을 30일 연기했습니다.";
 "Filicon left this agent's routines paused." = "Filicon이 이 에이전트의 루틴을 중지된 상태로 유지했습니다.";
 "Task status" = "작업 상태";
+"Open diagram full screen" = "다이어그램을 전체 화면으로 열기";
+"Diagram preview" = "다이어그램 미리보기";
+"Close diagram preview" = "다이어그램 미리보기 닫기";
+"Zoom in" = "확대";
+"Zoom out" = "축소";
+"Fit to screen" = "창에 맞추기";
+"Drag to pan. Scroll or use + and − to zoom; F or 0 fits the diagram. Escape closes the preview." = "드래그하여 다이어그램을 이동합니다. 스크롤하거나 +와 −를 눌러 확대 및 축소하고, F 또는 0을 눌러 창에 맞춥니다. Escape를 누르면 미리보기가 닫힙니다.";
 "Not completed" = "미완료";
 "Status from the message; this checkbox cannot be changed." = "메시지에 표시된 상태입니다. 이 체크박스는 변경할 수 없습니다.";

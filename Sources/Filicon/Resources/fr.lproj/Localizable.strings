@@ -1807,5 +1807,12 @@
 "Filicon resumed this agent's guarded routines and postponed activity checks for 30 days." = "Filicon a repris les routines suspendues par la vérification d’activité et reporté les vérifications de 30 jours.";
 "Filicon left this agent's routines paused." = "Filicon a laissé les routines de cet agent en pause.";
 "Task status" = "État de la tâche";
+"Open diagram full screen" = "Ouvrir le diagramme en plein écran";
+"Diagram preview" = "Aperçu du diagramme";
+"Close diagram preview" = "Fermer l’aperçu du diagramme";
+"Zoom in" = "Agrandir";
+"Zoom out" = "Réduire";
+"Fit to screen" = "Adapter à la fenêtre";
+"Drag to pan. Scroll or use + and − to zoom; F or 0 fits the diagram. Escape closes the preview." = "Faites glisser pour déplacer le diagramme. Faites défiler ou utilisez + et − pour zoomer ; F ou 0 adapte le diagramme à la fenêtre. Échap ferme l’aperçu.";
 "Not completed" = "Non terminé";
 "Status from the message; this checkbox cannot be changed." = "État indiqué dans le message ; cette case ne peut pas être modifiée.";

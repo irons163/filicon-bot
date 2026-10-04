@@ -1,5 +1,25 @@
 # 完成驗收入口（2026-09-27）
 
+## 有界 Mermaid 圖表的原生放大檢視（2026-10-05）
+
+重新核對 reference `a9f633e09d49a85829b8236331b9e21f7e612634` 的 `frontend/src/recovered/features/conversation/workspace/mermaid.tsx`：真正 figure／expand button 可用 click、Return／Space 開啟 portal viewer，支援 0.1…8 倍縮放、pointer-anchored wheel、4-point drag threshold、fit／double-click、鍵盤 +／−／F／0／Escape 及關閉清理。native 原本只有三種有界 diagram 呈現，沒有這個入口。
+
+`MermaidDiagramViewer.swift` 現在由真正 `TranscriptMessageView`／`GroupMessageBubble` 的 `NativeMermaidView` 接上 figure click、具原生鍵盤焦點及可及性名稱的 expand button。獨立 `@Observable` model 保存 transform／drag／close state；0.1…8 倍限制、pointer anchor、精確／非精確 wheel、Control／Command 加速、magnify、拖曳、fit／double-click 和本視窗的鍵盤操作共用同一 bounded state。非法或非有限幾何／事件拒絕，關閉後的晚到事件不復活；沒有 global event monitor，也沒有修改聊天或模型執行權限。
+
+原生 preview 是可調大小的獨立 NSWindow，初次使用所屬螢幕可見範圍，提供 full-screen control／`fullScreenPrimary`，不是 reference 的 DOM portal。再次開啟同一 figure 保留窗口與縮放；source 改變、anchor 移除或 parent 關閉時清理原 window／model。延後通知以 object identity 檢查，舊關閉不能關閉後來的新圖表。Canvas 始終以 viewport 大小繪製，對 logical diagram 做 context transform，不為放大後的巨大座標建立巨大 bitmap；256 nodes／512 edges 的 sequence 在 8 倍縮放仍有實際 viewport-sized render 測試。
+
+保留既有三種有界 parser／native layout 與安全 fallback。unsupported／unsafe source 不新增 viewer／link／資源載入；圖表 labels 保留原文，不因 UI 語言翻譯。七個新控制／說明 keys 補齊七語。沒有 JavaScript、WebView、外部 runtime 或新 dependency；新 source 以最小四個 project references 納入 Xcode 原生 App target。
+
+有效 baseline 紅燈 `mermaid-viewer-route-red-v2.log` exit 1：真正 direct／group × 三種 diagram 的六個 cases 都沒有 expand action，兩個 fallback cases 通過。`route-red`、`focused-final-v2` 是新增測試的 Swift macro 編譯問題，不算產品紅燈；`route-green-v1／v2` 是離屏 SwiftUI Button 沒有可查的 NSButton instrumentation，保留日誌，不冒充產品仍無入口。最終用真正原生 expand button 的 click／focused Return／Space 測試，另外從兩條 actual route 檢查 native control 與 OCR，不靠獨立 model 冒充接線。
+
+最後 `mermaid-viewer-focused-final-v3.log` exit 0：101 tests／12 suites（rich content 37／5、App 64／7）；新增 15 個方法。包括 bounded state、原生 key／mouse／wheel、原 window lifecycle／stale callbacks、maximum sequence render、八個 actual transcript cases，以及既有 reply／reference／rich content 回歸。七語 × 三種 diagram × 明暗共 42 張 viewer PNG；英語六張另 OCR 驗證 header 與內容，人工檢視涵蓋全部七語明暗與三種 diagram。圖片為隔離 NSHostingView／未顯示 window，不是使用者 App 的真人操作或 VoiceOver 證據。
+
+最後 source 完整 `swift test --no-parallel` 的 `mermaid-viewer-full-final.log` exit 0：135 XCTest＋1,904 Swift Testing／225 suites（App 688／87）。兩項 opt-in live Codex 測試略過，不當成真實模型／外部帳號驗收；既有 CoreData NSXPCConnection 診斷仍出現，相關 tests 通過，不宣稱已修好。`mermaid-viewer-localization-final.log` 七語各 1,805 keys／0 missing；`git diff --check` 通過。`mermaid-viewer-native-final.log` BUILD SUCCEEDED 並真正編譯新 viewer source；`mermaid-viewer-package-final.log` exit 0：四個執行檔、deep strict 簽章及 app／XPC entitlements 通過。隔離產物 `.build/validation/MermaidViewerPackage/Filicon.app` 為 Debug／ad-hoc gate，不是 release／公證；未執行列印的 launch smoke。完整回歸不替代真人／外部驗收。
+
+本批使用 SwiftUI／observable-model 技能分離可驗證 state、Swift 測試／CustomDump 技能比對完整值與固定商業 ID／日期，以及 SPM／Xcode 整合技能保留現有 target／dependency。未 push、啟動或重啟使用者 App／Xcode、改真實帳號／群組／聊天；日誌、PNG 及封裝只存於忽略的 `.build/validation/`。
+
+本節取代下節歷史「尚無 diagram viewer」，但不取代 reference 的 shipped strict Mermaid runtime／完整語法、精確 layout／shape／direction／arrow geometry、KaTeX／table inline math、真人 focus／手勢／VoiceOver、OS full-screen transition 或最低 macOS runtime 驗收。`UI-04` 保持 partial，全部 48 項及其餘 namespace／舊資料歸屬、外部服務／release 缺口不變。
+
 ## 聊天待辦勾選狀態與表格行內格式（2026-10-05）
 
 重新核對 reference `a9f633e09d49a85829b8236331b9e21f7e612634` 的 `frontend/src/recovered/features/conversation/workspace/transcript.tsx`：`assistantTextBlocks` 辨認 list item 開頭的 `[ ]`／`[x]`／`[X]`；`AssistantTextBlock` 呈現 `aria-checked`、`aria-disabled` 的唯讀狀態。表格 header／cell 同樣使用 `renderAssistantInlineText`，不是直接顯示 Markdown 字元；真正 assistant transcript 呼叫此元件。native 原本由 Foundation 保留 task marker 原文，表格亦是 `Text(value)`。
@@ -16,7 +36,7 @@ native 現以 Foundation block intent 及原文 source position 辨認真正清�
 
 技能使用現代 SwiftUI 的唯讀 constant binding／分離 presentation 與 Swift 測試的固定商業日期／ID、隔離 AppModel／store、CustomDump 狀態及注入 link callback；沒有新 dependency。未 push、啟動或重啟使用者 App／Xcode、改真實帳號／群組／聊天。日誌、PNG 與封裝只存於忽略的 `.build/validation/`。
 
-同時修正歷史 `UI-04 complete` 標記為 partial，沒有縮小全部 48 項的驗收範圍。reference `math.tsx` 的 shipped KaTeX 與 `mermaid.tsx` 的 shipped strict runtime／full-screen viewer／zoom／drag／fit 是可達功能；native 尚為有界 MathML 及三種 diagram parser，且沒有該圖表 viewer。這些已確認差異、表格 inline math、真人 VoiceOver／焦點及精確排版均保留；帳號 namespace／舊資料歸屬選擇、外部服務與 release 等其餘差異不由本批關閉。
+同時修正歷史 `UI-04 complete` 標記為 partial，沒有縮小全部 48 項的驗收範圍。reference `math.tsx` 的 shipped KaTeX 與 `mermaid.tsx` 的 shipped strict runtime／full-screen viewer／zoom／drag／fit 是可達功能；此批完成當下 native 尚為有界 MathML 及三種 diagram parser，沒有該圖表 viewer（後續 viewer 增量見上節）。其餘完整 runtime、表格 inline math、真人 VoiceOver／焦點及精確排版差異均保留；帳號 namespace／舊資料歸屬選擇、外部服務與 release 等其餘差異不由本批關閉。
 
 ## 單獨聊天無變更查看不執行 read-state UPSERT（2026-10-05）
 
@@ -316,7 +336,7 @@ reference `a9f633e09d49a85829b8236331b9e21f7e612634` 的來源界線：
 
 ## Matrix 不是完成證明
 
-`PARITY.md` 有 48 個 ID；2026-10-05 因確認 `UI-04` 尚缺 reference 的完整 math／diagram viewer，將該歷史 complete 修正為 partial。矩陣現為 42 個歷史 complete、5 個 partial（UI-04、AGENT-01／02／04、AUTO-03）、1 個 NA（UPD-04）。complete 必須逐項連到當前可達流程、對應測試及必要 runtime 驗收；「final gates passed」本身不能證明全功能對等。近期完整 Swift 測試／原生 build／package verifier 是回歸與封裝證據，不替代外部帳號、權限 UI 或 release 驗收；更早日期段落的 43／4／1 是當時紀錄。
+`PARITY.md` 有 48 個 ID；2026-10-05 因確認 `UI-04` 尚缺 reference 的完整 math／diagram runtime 與 viewer，將該歷史 complete 修正為 partial。其後三種有界 diagram viewer 已接線（見本文件最上節），但完整 runtime／語法／精確幾何／table inline math 與必要 runtime 驗收仍保留。矩陣現為 42 個歷史 complete、5 個 partial（UI-04、AGENT-01／02／04、AUTO-03）、1 個 NA（UPD-04）。complete 必須逐項連到當前可達流程、對應測試及必要 runtime 驗收；「final gates passed」本身不能證明全功能對等。近期完整 Swift 測試／原生 build／package verifier 是回歸與封裝證據，不替代外部帳號、權限 UI 或 release 驗收；更早日期段落的 43／4／1 是當時紀錄。
 
 以下保留全部驗收範圍：UI-01…04、CONV-01…04、ATT-01…04、PROV-01…04、MCP-01…04、AGENT-01…04、AUTO-01…04、COMP-01…04、ACCT-01…04、NOTIF-01…04、PERS-01…04、UPD-01…04。尚未逐項重驗者標記為未重驗，不推論缺失，也不視為已完成。
 

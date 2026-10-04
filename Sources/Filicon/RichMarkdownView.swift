@@ -618,49 +618,52 @@ private struct OfflineMathMLView: NSViewRepresentable {
     }
 }
 
-private struct NativeMermaidView: View {
+struct NativeMermaidView: View {
     @Environment(\.locale) private var uiLocale
     let source: String
     let presentation: MermaidPresentation
+    @State private var model: MermaidFigureModel
+
+    init(source: String, presentation: MermaidPresentation) {
+        self.source = source
+        self.presentation = presentation
+        _model = State(initialValue: MermaidFigureModel(source: source, presentation: presentation))
+    }
+
     var body: some View {
         let _ = uiLocale.identifier
-        switch presentation {
-        case .diagram(let diagram):
-            let layout = MermaidNativeLayout.project(diagram)
-            GeometryReader { geometry in
-                ZStack {
-                    MermaidEdgesCanvas(layout: layout)
-                    ForEach(layout.nodes) { node in
-                        Text(node.label).font(.caption).lineLimit(2).multilineTextAlignment(.center)
-                            .padding(.horizontal, 7).padding(.vertical, 5)
-                            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: diagram.kind == .state ? 10 : 5))
-                            .overlay(RoundedRectangle(cornerRadius: diagram.kind == .state ? 10 : 5).stroke(Color.accentColor.opacity(0.5)))
-                            .position(x: geometry.size.width * node.position.x, y: geometry.size.height * node.position.y)
-                            .accessibilityLabel(node.label)
-                    }
+        Group {
+            switch presentation {
+            case .diagram:
+                MermaidDiagramFigure(model: model)
+            case .fallback(let original, let reason):
+                VStack(alignment: .leading, spacing: 4) {
+                    Label(l10n("Diagram shown as source"), systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.secondary)
+                    ScrollView(.horizontal) { Text(original).font(.system(.caption, design: .monospaced)).textSelection(.enabled) }
                 }
+                .padding(8).background(.quaternary, in: RoundedRectangle(cornerRadius: 7))
+                .accessibilityLabel(l10n("Diagram fallback, \(reason): \(original)"))
             }
-            .frame(minHeight: diagram.kind == .sequence ? 220 : 170)
-            .padding(6).background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 7))
-            .accessibilityElement(children: .contain)
-            .accessibilityLabel(l10n("\(diagram.kind.rawValue.capitalized) diagram"))
-        case .fallback(let original, let reason):
-            VStack(alignment: .leading, spacing: 4) {
-                Label(l10n("Diagram shown as source"), systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.secondary)
-                ScrollView(.horizontal) { Text(original).font(.system(.caption, design: .monospaced)).textSelection(.enabled) }
-            }
-            .padding(8).background(.quaternary, in: RoundedRectangle(cornerRadius: 7))
-            .accessibilityLabel(l10n("Diagram fallback, \(reason): \(original)"))
         }
+        .onChange(of: source) { _, _ in model.messageChanged(source: source, presentation: presentation) }
+        .onChange(of: presentation) { _, _ in model.messageChanged(source: source, presentation: presentation) }
+        .onDisappear { model.figureRemoved() }
     }
 }
 
-private struct MermaidEdgesCanvas: View {
+struct MermaidEdgesCanvas: View {
     @Environment(\.locale) private var uiLocale
     let layout: MermaidNativeLayout
+    var imageSize: CGSize?
+    var transform = MermaidViewerTransform()
     var body: some View {
         let _ = uiLocale.identifier
         Canvas { context, size in
+            let viewport = size
+            let size = imageSize ?? viewport
+            context.translateBy(x: (viewport.width - size.width * transform.scale) / 2 + transform.x,
+                                y: (viewport.height - size.height * transform.scale) / 2 + transform.y)
+            context.scaleBy(x: transform.scale, y: transform.scale)
             if layout.kind == .sequence {
                 for node in layout.nodes {
                     var line = Path(); let x = size.width * node.position.x

@@ -1807,5 +1807,12 @@
 "Filicon resumed this agent's guarded routines and postponed activity checks for 30 days." = "Filicon resumed this agent's guarded routines and postponed activity checks for 30 days.";
 "Filicon left this agent's routines paused." = "Filicon left this agent's routines paused.";
 "Task status" = "Task status";
+"Open diagram full screen" = "Open diagram full screen";
+"Diagram preview" = "Diagram preview";
+"Close diagram preview" = "Close diagram preview";
+"Zoom in" = "Zoom in";
+"Zoom out" = "Zoom out";
+"Fit to screen" = "Fit to screen";
+"Drag to pan. Scroll or use + and − to zoom; F or 0 fits the diagram. Escape closes the preview." = "Drag to pan. Scroll or use + and − to zoom; F or 0 fits the diagram. Escape closes the preview.";
 "Not completed" = "Not completed";
 "Status from the message; this checkbox cannot be changed." = "Status from the message; this checkbox cannot be changed.";

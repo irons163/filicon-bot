@@ -11,6 +11,62 @@ import FiliconRichContent
 
 @Suite("Rich Markdown view projection")
 struct RichMarkdownViewTests {
+    @Test(.serialized, .timeLimit(.minutes(1)), arguments: ["direct", "group"], ["flowchart", "sequence", "state", "fallback"])
+    @MainActor func diagramExpansionIsReachableInBothActualTranscriptRoutes(route: String, kind: String) async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "filicon-mermaid-route-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+        let date = Date(timeIntervalSince1970: 1_000)
+        let agentID = UUID(uuidString: "00000000-0000-0000-0000-000000000051")!
+        let groupID = UUID(uuidString: "00000000-0000-0000-0000-000000000052")!
+        let messageID = UUID(uuidString: "00000000-0000-0000-0000-000000000053")!
+        let agent = AgentProfile(id: agentID, name: "Fixture author", createdAt: date, avatar: .pet(.codex))
+        let body: String
+        switch kind {
+        case "flowchart": body = "flowchart LR\nA[Design] --> B[Build]"
+        case "sequence": body = "sequenceDiagram\nDesign->>Build: Review\nBuild-->>Design: Ready"
+        case "state": body = "stateDiagram-v2\nDraft --> Ready"
+        default: body = "flowchart LR\nclick A https://example.com"
+        }
+        let source = "```mermaid\n\(body)\n```"
+        let direct = ChatMessage(id: messageID, role: .assistant, text: source, createdAt: date)
+        let conversation = Conversation(id: UUID(uuidString: "00000000-0000-0000-0000-000000000054")!, messages: [direct], updatedAt: date)
+        let group = RoomMessage(id: messageID, groupID: groupID, senderID: agentID, text: source, createdAt: date)
+        try await withUIRenderTurn(language: "en") {
+            let content = Group {
+                if route == "direct" {
+                    TranscriptMessageView(message: direct, conversation: conversation, onJumpToMessage: { _ in
+                        Issue.record("A diagram must not navigate a transcript")
+                    })
+                } else {
+                    GroupMessageBubble(message: group, agent: agent, onReaction: {
+                        Issue.record("A diagram must not change reactions")
+                    })
+                }
+            }.padding(16).frame(width: 420).environmentObject(model)
+            let host = NSHostingView(rootView: content)
+            host.frame = .init(origin: .zero, size: host.fittingSize)
+            let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+            window.contentView = host
+            defer { window.contentView = nil }
+            host.layoutSubtreeIfNeeded()
+            let buttons = descendants(in: host).compactMap { $0 as? MermaidExpandNativeButton }
+            expectNoDifference(buttons.count, kind == "fallback" ? 0 : 1)
+            #expect(buttons.allSatisfy { $0.isEnabled && $0.keyEquivalent.isEmpty })
+            expectNoDifference(buttons.map(\.title), kind == "fallback" ? [] : ["Open diagram full screen"])
+            let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            let recognition = VNRecognizeTextRequest()
+            recognition.recognitionLevel = .accurate
+            recognition.recognitionLanguages = ["en-US"]
+            try VNImageRequestHandler(cgImage: #require(bitmap.cgImage)).perform([recognition])
+            let text = (recognition.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+            expectNoDifference(text.contains("Open diagram full screen"), kind != "fallback")
+        }
+        expectNoDifference(direct.text, source)
+        expectNoDifference(group.text, source)
+    }
+
     @Test(arguments: ["\n", "\r\n"])
     func taskListStatusPreservesListStructureAndInlineAttributes(newline: String) throws {
         let source = [
