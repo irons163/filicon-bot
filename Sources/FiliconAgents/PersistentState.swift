@@ -12,6 +12,8 @@ struct AgentPersistentState: Codable, Sendable {
     var mailboxHumanInputs: Set<UUID> = []
     var groups: [AgentGroup] = []
     var roomMessages: [RoomMessage] = []
+    /// Absent only in legacy envelopes. Current records may not silently reset.
+    var groupReadBookkeeping: GroupReadBookkeeping?
     var reactions: [MessageReaction] = []
     var memories: [AgentMemory] = []
     var memoryTombstones: Set<AgentMemoryTombstone> = []
@@ -33,6 +35,7 @@ struct AgentPersistentState: Codable, Sendable {
         case memoryTemporalReviews
         case memoryEpisodeSettings, memoryEpisodes
         case sidebarVisibility
+        case groupReadBookkeeping
     }
 
     init() {}
@@ -49,6 +52,9 @@ struct AgentPersistentState: Codable, Sendable {
         mailboxHumanInputs = try values.decodeIfPresent(Set<UUID>.self, forKey: .mailboxHumanInputs) ?? []
         groups = try values.decodeIfPresent([AgentGroup].self, forKey: .groups) ?? []
         roomMessages = try values.decodeIfPresent([RoomMessage].self, forKey: .roomMessages) ?? []
+        // Explicit null is corrupt current data, not a historical envelope.
+        groupReadBookkeeping = values.contains(.groupReadBookkeeping)
+            ? try values.decode(GroupReadBookkeeping.self, forKey: .groupReadBookkeeping) : nil
         reactions = try values.decodeIfPresent([MessageReaction].self, forKey: .reactions) ?? []
         memories = try values.decodeIfPresent([AgentMemory].self, forKey: .memories) ?? []
         memoryTombstones = try values.decodeIfPresent(Set<AgentMemoryTombstone>.self, forKey: .memoryTombstones) ?? []

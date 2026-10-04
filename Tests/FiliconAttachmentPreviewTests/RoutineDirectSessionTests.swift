@@ -502,12 +502,25 @@ private struct RoutineDirectProvider: InteractiveToolProvider {
     func stoppingAnActivityConfirmationRetiresItsPendingApprovalWithoutWriting(phase: String) async throws {
         let (root, model, _, id, probe) = try await pausedActivityFixture(write: true)
         defer { try? FileManager.default.removeItem(at: root) }
+        let canonicalStore = ConversationStore(fileURL: root.appending(path: "conversations.json"))
         await model.setAutoReviewEnabled(true)
         let presentation = try #require(model.conversationSpendGuardPresentation(id: id))
         await model.answerConversationSpendGuard(.resume, presentation: presentation, at: acknowledgmentAt)
         let bytes = try Data(contentsOf: root.appending(path: "automations.json"))
         try await eventually { !model.pendingAutoReviewApprovals.isEmpty }
         let review = try #require(model.pendingAutoReviewApprovals.first)
+        // Registration publishes the pending UI before awaiting its SQL save.
+        // This test retires an existing durable card, not a cancelled pre-save
+        // attempt (which must never create a new row under its revoked lease).
+        try await eventually {
+            guard let saved = try? await canonicalStore.conversation(id: id) else { return false }
+            return saved.messages.flatMap(\.transcriptCards).contains {
+                if case .autoReview(let value) = $0.payload {
+                    return value.reviewID == review.id && $0.lifecycle == .waiting
+                }
+                return false
+            }
+        }
         model.selectRoute(.conversation(id))
         var local: ToolApprovalRequest?
         if phase == "local" {
@@ -520,7 +533,7 @@ private struct RoutineDirectProvider: InteractiveToolProvider {
         else { model.handleTranscriptCardIntent(.approveReview(reviewID: review.id)) }
         try await eventually { !model.isConversationWorking(id) && model.pendingAutoReviewApprovals.isEmpty && model.pendingToolApprovals.isEmpty }
         #expect(!FileManager.default.fileExists(atPath: root.appending(path: "activity-created.txt").path))
-        let saved = try #require(try await ConversationStore(fileURL: root.appending(path: "conversations.json")).conversation(id: id))
+        let saved = try #require(try await canonicalStore.conversation(id: id))
         #expect(!saved.messages.contains { $0.deliveryStatus == .streaming })
         let card = try #require(saved.messages.flatMap(\.transcriptCards).first {
             if case .autoReview(let value) = $0.payload { return value.reviewID == review.id }

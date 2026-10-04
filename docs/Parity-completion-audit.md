@@ -1,5 +1,27 @@
 # 完成驗收入口（2026-09-27）
 
+## 群組聊天的 canonical 已讀／未讀儲存基礎（2026-10-04）
+
+reference `a9f633e09d49a85829b8236331b9e21f7e612634` 的 `agent-db.ts` 提供 `getUnreadState`／`markActivity`／`markViewed`／`markRead`／`markUnread`；`session-summaries.ts` 的 `buildSummary` 在 `isGroup` 分支亦使用同一 unread state。`group-chat-glue.ts` 在非前景的群組公開訊息保存後呼叫 `markSessionActivity`；`session-runtime.ts` 在前景 arrival／focus 保留 manual-unread。native 原本只在 direct-chat SQLite 保存這些標記，群組的 `groups.json` 沒有對應資料。本批先補真正群組 store，而不是拿 direct chat 或 pending wakes 當近似來源。
+
+`groupReadBookkeeping` 使用獨立 schema 1，保留每個精確 group ID 的四個 read fields 及 durable activity message IDs；既有 envelope schema 2、群組／訊息 ID 和短地址不變。公開文字、附件／圖片及問題／secret 卡與真正人類回覆才計 arrival；tool-only 更新、空 PASS／failure notice 與 host 的非人類 routine seed 不計。第一次真正公開的同一訊息可取得 receipt，其後編輯、反應、metadata／成員保存及歷史重播不重算；同名群組不共享標記。訊息與 receipts／count 在同一 atomic JSON envelope 保存成功後才發布到記憶體，不因舊 clock 或 replay 重複增加。
+
+只在舊 envelope 缺少整個欄位時 seed 歷史 IDs，不把全部舊訊息當新未讀，也不在開啟時重寫來源；沒有宣稱還原 reference mtime 的歷史 activity timestamp。current bookkeeping 的 null、缺失／重複／孤立 record、非法 state／receipt 或未知版本會拒絕，原始 bytes 不覆寫，不默認空值／已讀。原生 read action 重用四個 domain 欄位的 monotonic timestamps／manual flag；只更新 read record，不回答 pending question、重新排程或改群組 history／permission。
+
+non-Codable host lease 保留原 GroupService instance、group ID、member IDs、可撤銷生命期及選配 inherited host／account scope，到最後同步保存。membership-away-and-back、手動 close、host scope cycle 與換 instance 不能復活舊 action；失敗的 membership 保存不改成員或撤銷已有效的 lease。automatic view 另要求原 activity receipts／read state，不能清除較新的 arrival 或手動未讀；explicit read 可涵蓋當前 canonical 訊息。這是本機 read bookkeeping，不是 account namespace、model tool 或執行 grant。
+
+有效紅燈 `group-unread-foundation-red.log`：真正公開訊息保存後缺少 bookkeeping（1 test／1 issue）。`group-unread-foundation-rollback-red.log` 另重現保存失敗後 reaction／speaker offset 仍留在記憶體（1 test／7 cases／2 issues）；這些未提交內容可能被下一次 read 保存帶入。GroupService 現在統一回滾整個失敗 envelope，移除只回滾部分 message array 的分散處理；模型／工具尚未開始時的失敗不執行 responder。native read 保存亦只在成功後發布。
+
+最後 source 聚焦 `group-unread-foundation-focused-final.log` exit 0：69 tests／9 suites（核心 54／8，App 群組排程 15／1）；新增 17 個測試方法。涵蓋真正 member publication／tool updates、background seed、human question 不被 read 回答、manual／focus、同名 rooms、membership／host cycles、八種 atomic-save failure、八種 corrupt-data、legacy seed／reopen／replay／receipt tombstone、monotonic divider 及非有限日期。測試技能使用隔離 stores、固定商業時間與 controlled clock；不使用真實模型、帳號或群組。
+
+完整 `group-unread-foundation-full-final.log` 跑完但 exit 1，既有 direct-session Stop fixture 在 pending UI 已發布、SQL 尚未完成時取消，卻要求原本不存在的 durable review card；`group-unread-stop-race-recheck.log` 單獨重現同一 nil-card 斷言。fixture 現先讀取 canonical store，等待真正 waiting card 落盤才取消，保留原 streaming／cancelled-or-approved／沒有寫檔與 schedule bytes 不變的斷言；production cancellation fence 不變，不在撤銷後補造卡片。`group-unread-foundation-focused-final-v5.log` exit 0：74 tests／5 suites（核心 30／3，App direct／group 44／2），包含修正後兩個 Stop phases。較早 `focused-final-v3`／`v4` 均在執行測試前遇到 ad-hoc Code Signing internal error，當時磁碟剩約 239 MB；只清理有本輪 build logs 證明的三份 ignored DerivedData（可重建），保留日誌與封裝後，原簽章設定重跑通過。沒有降低 protection／簽章檢查。
+
+最後 source 完整串行 `group-unread-foundation-full-final-v2.log` exit 0：135 XCTest＋1,865 Swift Testing（221 suites；核心 978／108，App 653／83）。兩項 opt-in live Codex 測試略過，不當作真實模型／外部服務驗收。七語各 1,795 keys／0 missing。`group-unread-foundation-native-final.log` 在 SDK 預編譯遇到明確 `No space left on device`，不是 compile 語意紅燈；又清理五份有本任務 build logs 證明的 ignored DerivedData，保留日誌／封裝並可重建，不碰真實資料。
+
+最後 `group-unread-foundation-native-final-v2.log` BUILD SUCCEEDED；`group-unread-foundation-package-final.log` 四個執行檔、deep strict 簽章及 app／XPC entitlements 通過。隔離產物 `.build/validation/GroupUnreadFoundationPackage/Filicon.app` 為 Debug／ad-hoc gate，不是 release／公證；未執行列印的 launch smoke。最後 source 只修改儲存層與上述 fixture，不新增 UI 文字／佈局；沒有真人／VoiceOver gate。日誌與封裝留在忽略的 `.build/validation/`。
+
+本節只取代下面歷史「群組沒有 canonical read 儲存」的基礎部分。群組側欄 count／manual actions／focused visible callback／projection refresh 與真人／VoiceOver 尚未接線或驗收；不是完整 group unread UI parity。legacy fallback、完整 core 帳號遷移、雲端 session、live／release 及全 48 分類仍各自保留，整體 partial 不上調。atomic JSON 是單 store 保存，不宣稱跨 store、獨立 instance／process 的 CAS 或完整群組帳號隔離；未 push、重啟使用者 App／Xcode 或改真實資料。
+
 ## 回答活動卡片後的原聊天確認回合（2026-10-04）
 
 再次核對 reference `a9f633e09d49a85829b8236331b9e21f7e612634`：`sand-automation-spend-guard.ts` 的 `renderSpendGuardAnswerAck` 要求一句短確認、不重編排程、不再次詢問；`widget-responses.ts` 在 host 已保存選擇後以 `appendUserMessage: false`／`awaitTurn: false` 將它交給原 agent，模型失敗不回滾已生效的選擇。

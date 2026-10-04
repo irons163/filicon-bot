@@ -180,9 +180,45 @@ retarget a changed owner. SQL failure leaves the canonical rows unchanged.
 
 The canonical direct branch now includes the reference's hidden acknowledgment
 and once-only background host reminder. Legacy unbound fallback, group-chat read
-state and live UI/release validation remain separate work.
+UI and live UI/release validation remain separate work.
 An observation or binding lease fences only mutations through its own repository,
 not independent repository instances/processes. Chat and automation timestamps
 reside in separate stores, not one cross-store transaction.
 A read-state transaction does not provide a cross-process CAS for arbitrary
 conversation snapshots or complete account isolation of legacy unbound chats.
+
+## Canonical group read bookkeeping (nested schema 1)
+
+`groups.json` now stores `groupReadBookkeeping` with exact room IDs, the same four
+domain read fields and durable activity message ID receipts. These share the
+atomic JSON envelope with canonical group messages; they are not copied from
+direct chats, model input or pending routine wakes. Visible text, attachments,
+images, question/secret cards and actual human replies count once. Tool-only
+updates, empty PASS/failure notices and the host's non-human routine seed do not.
+An unfinished tool row can count when first publicly completed. Edits, reactions,
+metadata/member saves and replays do not create a second arrival. Receipts survive
+history restoration, and older/equal arrival clocks do not raise counts later.
+
+A legacy envelope missing this entire field seeds historical published IDs
+without inventing unread arrivals or rewriting the source on open. Once present,
+null/invalid bookkeeping, missing/duplicate/orphan room records, invalid receipts
+or unknown nested versions reject loading without silently resetting counts or
+overwriting bytes. The enclosing schema version and existing IDs/addresses do not
+change. Historical activity timestamps are not reconstructed from reference mtime.
+
+Read actions use a non-Codable host lease pinned to the original GroupService,
+room membership and revocable lifetime, optionally inheriting a host/account
+scope. Closed leases, membership cycles and different instances cannot replay an
+action. Automatic views also compare their original activity/read snapshot;
+new arrivals or later manual unread supersede them. Explicit native read can
+cover current canonical messages. Read markers do not answer questions, change
+history, resume routines or grant tools, files, peers or memory access.
+
+Every group content save rolls its full in-memory envelope back on failure, so a
+later native read save cannot publish an uncommitted reaction, speaker offset or
+membership edit. Counts/receipts and native read results publish only after a
+successful atomic write. A failed membership save does not revoke the unchanged
+membership lease. This is a single-store/process-local foundation, not cross-store
+atomicity, independent-instance/process CAS or a new group/account namespace.
+Group sidebar badges, manual read actions, focused-window callbacks and projection
+refresh still need native UI wiring; direct-chat UI remains separately implemented.

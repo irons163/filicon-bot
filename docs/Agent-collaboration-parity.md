@@ -1,5 +1,9 @@
 # 協作能力核對紀錄（更新至 2026-10-04）
 
+## 群組 canonical unread 儲存基礎（2026-10-04）
+
+群組 store 現以精確 group ID 保存 read／activity 時間、manual-unread、count 及 receipt IDs；公開訊息和 read markers 同一 atomic envelope 落盤後才發布，舊 history seed／replay／工具狀態／metadata 不重算。保存失敗完整回滾，避免後續 read 保存帶入失敗的 reaction／speaker 修改。原 room／membership／store instance／可撤銷 host lifetime 保留到最後 commit；automatic view 不清較新 arrival 或手動未讀，explicit read 不回答 question／排程／增加權限。69 tests／9 suites 聚焦通過，來源、有效紅燈及最後 gates 見 [完成驗收入口](Parity-completion-audit.md)。這只補 storage foundation；側欄 count、群組 manual actions、visible callback／refresh 與真人／VoiceOver 還未接線或驗收，並非完整 group UI／帳號隔離／cross-process CAS。其他外部與全 48 分類邊界保留，整體 partial 不上調；未 push、重啟 App／Xcode 或改真實資料。
+
 ## 活動選擇的原聊天 hidden confirmation（2026-10-04）
 
 host 回答及 native receipt 保存後，以原 account／agent／chat 的 shared runner 做一次不新增 user row 的短確認；忙碌或 pending question／secret 時依 click FIFO 排隊，model sync／peer recovery 結束也會繼續排隊工作。五選項不重跑原任務、不補排程、不增加工具／peer／背景記憶同意；不讀另一聊天、注入附件／saved facts 或收集 memory。原 lease／account generation／provider identity 到最後 SQL 保存都保留；ownership-away-and-back、Stop、模型／存檔失敗及無工具 provider 不降級或 replay，已套用選擇不回滾。

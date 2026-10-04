@@ -181,17 +181,23 @@ public actor GroupService {
     public static let maximumMessagesPerMemberTurn = 2
     private let agents: AgentService
     private let storeURL: URL
+    private let activityDate: @Sendable () -> Date
+    private let readStoreID = UUID()
+    private var groupReadScopes: [UUID: AgentWorkflowExecutionScope] = [:]
     private var state: AgentPersistentState
+    private var persistedState: AgentPersistentState
     private var epochs: [UUID: UInt64] = [:]
     private var activeResponses: [UUID: Task<[String], any Error>] = [:]
     private var explicitReplies: [UUID: [RoomMessage]] = [:]
 
-    public init(agents: AgentService, storeURL: URL) throws {
-        self.agents = agents; self.storeURL = storeURL
+    public init(agents: AgentService, storeURL: URL, activityDate: @escaping @Sendable () -> Date = { Date() }) throws {
+        self.agents = agents; self.storeURL = storeURL; self.activityDate = activityDate
         if FileManager.default.fileExists(atPath: storeURL.path) {
             let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .millisecondsSince1970
             state = try decoder.decode(AgentPersistentState.self, from: Data(contentsOf: storeURL))
         } else { state = .init() }
+        if let bookkeeping = state.groupReadBookkeeping { try bookkeeping.validate(groupIDs: state.groups.map(\.id)) }
+        else { state.groupReadBookkeeping = try .init(groups: state.groups, history: state.roomMessages) }
         GroupMessageAddressing.assignMissing(in: &state.roomMessages)
         // A process restart cannot resume an in-flight tool or its approval.
         for index in state.roomMessages.indices {
@@ -199,6 +205,7 @@ public actor GroupService {
                 state.roomMessages[index].toolActivities[toolIndex].status = .cancelled
             }
         }
+        persistedState = state
     }
 
     public func create(name: String, summary: String = "", memberIDs: [UUID]) async throws -> AgentGroup {
@@ -208,7 +215,10 @@ public actor GroupService {
         guard Set(memberIDs).count == memberIDs.count else { throw AgentServiceError.duplicateMember }
         for id in memberIDs where await agents.profile(id: id) == nil { throw AgentServiceError.unknownAgent(id) }
         let group = AgentGroup(name: String(name.prefix(120)), summary: String(summary.prefix(2_000)), memberIDs: memberIDs)
-        state.groups.append(group); try persist(); return group
+        state.groups.append(group)
+        state.groupReadBookkeeping?.records.append(.init(groupID: group.id, state: .init()))
+        try persist()
+        return group
     }
 
     public func list() -> [AgentGroup] { state.groups }
@@ -266,7 +276,7 @@ public actor GroupService {
                   group.name == expected.name, group.memberIDs == expected.memberIDs else { throw AgentGroupPostError.changed }
             guard !state.roomMessages.contains(where: { $0.id == message.id }) else { throw AgentServiceError.duplicateMessage(message.id) }
             state.roomMessages.append(message)
-            do { try persist() } catch { state.roomMessages.removeLast(); throw error }
+            try persist()
         }
     }
 
@@ -277,13 +287,12 @@ public actor GroupService {
         guard message.senderID != nil, state.groups.contains(where: { $0.id == message.groupID }) else {
             throw AgentServiceError.unknownGroup(message.groupID)
         }
-        let previous = state.roomMessages
         var message = message
         message.shortAddress = state.roomMessages.first(where: { $0.id == message.id && $0.groupID == message.groupID })?.shortAddress
         if let index = state.roomMessages.firstIndex(where: { $0.id == message.id && $0.groupID == message.groupID }) {
             state.roomMessages[index] = message
         } else { state.roomMessages.append(message) }
-        do { try persist() } catch { state.roomMessages = previous; throw error }
+        try persist()
     }
 
     /// Save the inspector's fields together, after validating the entire draft.
@@ -295,7 +304,6 @@ public actor GroupService {
         for id in memberIDs where await agents.profile(id: id) == nil { throw AgentServiceError.unknownAgent(id) }
         guard let index = state.groups.firstIndex(where: { $0.id == groupID }) else { throw AgentServiceError.unknownGroup(groupID) }
         let previous = state.groups[index]
-        let previousMessages = state.roomMessages
         var updated = previous
         updated.name = String(name.prefix(120))
         updated.summary = String(summary.prefix(2_000))
@@ -303,9 +311,11 @@ public actor GroupService {
         if previous.memberIDs != memberIDs { updated.nextSpeakerOffset = 0 }
         state.groups[index] = updated
         if previous.memberIDs != memberIDs { retireQuestions(groupID: groupID) }
-        do { try persist() }
-        catch { state.groups[index] = previous; state.roomMessages = previousMessages; throw error }
-        if previous.memberIDs != memberIDs { stop(groupID: groupID) }
+        try persist()
+        if previous.memberIDs != memberIDs {
+            groupReadScopes[groupID]?.invalidate()
+            stop(groupID: groupID)
+        }
     }
 
     public func updateMembers(groupID: UUID, memberIDs: [UUID]) async throws {
@@ -329,10 +339,9 @@ public actor GroupService {
             var message = RoomMessage(id: wake.runID, groupID: group.id, senderID: nil, text: text, createdAt: at)
             message.routineWake = wake
             guard !state.roomMessages.contains(where: { $0.id == wake.runID }) else { throw CancellationError() }
-            let previous = state.roomMessages
             retireQuestions(groupID: group.id, onlyMoveOn: true)
             state.roomMessages.append(message)
-            do { try persist() } catch { state.roomMessages = previous; throw error }
+            try persist()
             return state.roomMessages.last(where: { $0.id == message.id }) ?? message
         }
     }
@@ -360,11 +369,9 @@ public actor GroupService {
         }
         var message = RoomMessage(groupID: groupID, senderID: nil, text: text, images: images)
         message.replyToMessageID = replyToMessageID
-        let previous = state.roomMessages
         retireQuestions(groupID: groupID, onlyMoveOn: true)
         state.roomMessages.append(message)
-        do { try persist() }
-        catch { state.roomMessages = previous; throw error }
+        try persist()
         return state.roomMessages.last(where: { $0.id == message.id }) ?? message
     }
 
@@ -389,11 +396,10 @@ public actor GroupService {
             reply.replyToMessageID = original.id
         }
         try lifetime.commit {
-            let previous = state.roomMessages
             state.roomMessages[index].question?.answer = answer
             state.roomMessages[index].question?.responseMessageID = reply.id
             state.roomMessages.append(reply)
-            do { try persist() } catch { state.roomMessages = previous; throw error }
+            try persist()
         }
         return state.roomMessages.last(where: { $0.id == reply.id }) ?? reply
     }
@@ -700,7 +706,7 @@ public actor GroupService {
         let message = draft
         let commit = {
             self.state.roomMessages.append(message)
-            do { try self.persist() } catch { self.state.roomMessages.removeLast(); throw error }
+            try self.persist()
             let saved = self.state.roomMessages.last(where: { $0.id == message.id }) ?? message
             self.explicitReplies[activity.id, default: []].append(saved)
         }
@@ -760,13 +766,79 @@ public actor GroupService {
     public func messages(groupID: UUID) -> [RoomMessage] { state.roomMessages.filter { $0.groupID == groupID } }
     public func reactions(messageID: UUID) -> [MessageReaction] { state.reactions.filter { $0.messageID == messageID } }
 
+    public func unreadState(groupID: UUID) throws -> ConversationUnreadState {
+        guard state.groups.contains(where: { $0.id == groupID }),
+              let record = state.groupReadBookkeeping?.records.first(where: { $0.groupID == groupID }) else {
+            throw GroupReadStateError.invalidState
+        }
+        return record.state
+    }
+
+    public func leaseReadState(groupID: UUID, inheriting hostLease: AgentWorkflowExecutionScope.Lease? = nil) throws -> GroupReadStateLease {
+        guard let group = state.groups.first(where: { $0.id == groupID }),
+              let record = state.groupReadBookkeeping?.records.first(where: { $0.groupID == groupID }) else {
+            throw GroupReadStateError.invalidState
+        }
+        let scope = groupReadScopes[groupID] ?? AgentWorkflowExecutionScope()
+        groupReadScopes[groupID] = scope
+        return try .init(storeID: readStoreID, group: group, record: record,
+            membershipLease: scope.capture(inheriting: hostLease))
+    }
+
+    /// Final synchronous save under the original host/membership lifetime. A
+    /// stale automatic view cannot clear newer arrivals or a manual unread flag.
+    /// Explicit read/unread are native bookkeeping, not routine/card answers.
+    @discardableResult
+    public func updateReadState(_ lease: GroupReadStateLease, action: ConversationReadAction, at: Date) throws -> ConversationUnreadState {
+        guard at.timeIntervalSince1970.isFinite else { throw GroupReadStateError.invalidState }
+        return try lease.lease.commit {
+            guard lease.storeID == readStoreID,
+                  state.groups.first(where: { $0.id == lease.groupID })?.memberIDs == lease.memberIDs,
+                  let index = state.groupReadBookkeeping?.records.firstIndex(where: { $0.groupID == lease.groupID }) else {
+                throw CancellationError()
+            }
+            var saved = state
+            guard var bookkeeping = saved.groupReadBookkeeping else { throw GroupReadStateError.invalidState }
+            var value = bookkeeping.records[index].state
+            switch action {
+            case .viewed(let preserve):
+                guard bookkeeping.records[index] == lease.originalRecord else { throw CancellationError() }
+                value.markViewed(at: at, preserveManualUnread: preserve)
+            case .read: value.markRead(at: at)
+            case .unread:
+                value.markUnread(at: at, newestMessageAt: state.roomMessages.filter { $0.groupID == lease.groupID }.map(\.createdAt).max())
+            }
+            bookkeeping.records[index].state = value
+            saved.groupReadBookkeeping = bookkeeping
+            try writePrepared(saved)
+            return try unreadState(groupID: lease.groupID)
+        }
+    }
+
     private func persist() throws {
-        var saved = state
+        do {
+            var saved = state
+            guard var bookkeeping = saved.groupReadBookkeeping else { throw GroupReadStateError.invalidState }
+            try bookkeeping.recordActivity(groups: saved.groups, history: saved.roomMessages, at: activityDate())
+            saved.groupReadBookkeeping = bookkeeping
+            try writePrepared(saved)
+        } catch {
+            // The whole envelope rolls back, not only whichever message array
+            // a particular caller happened to restore. A later native read save
+            // must never publish a failed reaction, membership or speaker edit.
+            state = persistedState
+            throw error
+        }
+    }
+
+    private func writePrepared(_ value: AgentPersistentState) throws {
+        var saved = value
         GroupMessageAddressing.assignMissing(in: &saved.roomMessages)
         try FileManager.default.createDirectory(at: storeURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .millisecondsSince1970; encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         try encoder.encode(saved).write(to: storeURL, options: .atomic)
         state = saved
+        persistedState = saved
     }
 
     private func resolveMembers(_ ids: [UUID]) async -> [AgentProfile] {
