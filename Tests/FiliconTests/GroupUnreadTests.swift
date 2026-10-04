@@ -101,6 +101,36 @@ struct GroupUnreadTests {
         expectNoDifference(restored, read)
     }
 
+    @Test(arguments: ["manual-unread", "older-view", "same-view"])
+    func anUnchangedAutomaticViewDoesNotAttemptAPersistentWrite(reason: String) async throws {
+        let root = try directory(); defer { try? FileManager.default.removeItem(at: root) }
+        let (_, groups, group, clock) = try await fixture(root)
+        clock.set(now.addingTimeInterval(1)); try await groups.recordDelegatedMessage(published(group))
+        let initial = try await groups.leaseReadState(groupID: group.id); defer { initial.close() }
+        let manual = reason == "manual-unread"
+        let before = try await groups.updateReadState(initial,
+            action: manual ? .unread : .viewed(preserveManualUnread: true), at: now.addingTimeInterval(3))
+        let view = try await groups.leaseReadState(groupID: group.id); defer { view.close() }
+        let file = root.appending(path: "groups.json"), backup = root.appending(path: "groups-backup.json")
+        let bytes = try Data(contentsOf: file)
+        try FileManager.default.moveItem(at: file, to: backup)
+        try FileManager.default.createDirectory(at: file, withIntermediateDirectories: false)
+        let at = now.addingTimeInterval(reason == "older-view" ? 2 : manual ? 4 : 3)
+        let result = try await groups.updateReadState(view, action: .viewed(preserveManualUnread: true), at: at)
+        expectNoDifference(result, before)
+        expectNoDifference(try Data(contentsOf: backup), bytes)
+        var isDirectory: ObjCBool = false
+        #expect(FileManager.default.fileExists(atPath: file.path, isDirectory: &isDirectory) && isDirectory.boolValue)
+        // Even a no-op still requires the original membership/host lifetime.
+        view.close()
+        await #expect(throws: CancellationError.self) {
+            try await groups.updateReadState(view, action: .viewed(preserveManualUnread: true), at: at)
+        }
+        try FileManager.default.removeItem(at: file)
+        try FileManager.default.moveItem(at: backup, to: file)
+        expectNoDifference(try Data(contentsOf: file), bytes)
+    }
+
     @Test func editsReactionsMetadataAndSameNamedRoomsDoNotCreateArrivals() async throws {
         let root = try directory(); defer { try? FileManager.default.removeItem(at: root) }
         let (_, groups, group, clock) = try await fixture(root)
@@ -201,6 +231,41 @@ struct GroupUnreadTests {
         _ = try await target.updateReadState(current, action: .read, at: now.addingTimeInterval(3))
         let read = try await target.unreadState(groupID: group.id)
         expectNoDifference(read.unreadCount, 0)
+    }
+
+    @Test(arguments: ["child-close", "parent-close", "host-cycle", "membership-cycle"])
+    func aScopedActionRetainsItsOriginalSnapshotAndIndependentCancellation(change: String) async throws {
+        let root = try directory(); defer { try? FileManager.default.removeItem(at: root) }
+        let (_, groups, group, clock) = try await fixture(root)
+        let message = published(group)
+        clock.set(now.addingTimeInterval(1)); try await groups.recordDelegatedMessage(message)
+        let parent = try await groups.leaseReadState(groupID: group.id); defer { parent.close() }
+        let host = AgentWorkflowExecutionScope()
+        let action = try parent.scoped(inheriting: host.capture()), sibling = try parent.scoped()
+        defer { action.close(); sibling.close() }
+        expectNoDifference(action.messageIDs, [message.id]); expectNoDifference(action.state, parent.state)
+        #expect(action.isActive && sibling.isActive)
+        switch change {
+        case "child-close": action.close()
+        case "parent-close": parent.close()
+        case "host-cycle": host.suspend(); host.resume()
+        default:
+            try await groups.updateMembers(groupID: group.id, memberIDs: [])
+            try await groups.updateMembers(groupID: group.id, memberIDs: group.memberIDs)
+        }
+        let bytes = try Data(contentsOf: root.appending(path: "groups.json"))
+        #expect(!action.isActive)
+        #expect(sibling.isActive == ["child-close", "host-cycle"].contains(change))
+        await #expect(throws: CancellationError.self) {
+            try await groups.updateReadState(action, action: .read, at: now.addingTimeInterval(2))
+        }
+        #expect(throws: CancellationError.self) { try action.scoped() }
+        expectNoDifference(try Data(contentsOf: root.appending(path: "groups.json")), bytes)
+        let current = try await groups.leaseReadState(groupID: group.id); defer { current.close() }
+        let saved = try await groups.updateReadState(current, action: .read, at: now.addingTimeInterval(3))
+        expectNoDifference(saved.unreadCount, 0)
+        // A public projection is the captured snapshot, not a fresh authority.
+        expectNoDifference(parent.state.unreadCount, 1); expectNoDifference(action.state.unreadCount, 1)
     }
 
     @Test func legacyHistorySeedsReceiptsWithoutInventingUnreadArrivalsOrRewritingOnOpen() async throws {

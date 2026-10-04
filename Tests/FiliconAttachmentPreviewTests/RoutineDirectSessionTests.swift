@@ -493,12 +493,19 @@ private struct RoutineDirectProvider: InteractiveToolProvider {
         expectNoDifference(model.conversations.first { $0.id == id }?.messages.flatMap(\.toolActivities)
             .first { $0.name == "local__write_file" }?.status, choice == "allowed" ? .succeeded : .failed)
         #expect(model.pendingAutoReviewApprovals.isEmpty && model.pendingToolApprovals.isEmpty)
+        let saved = try #require(try await ConversationStore(fileURL: root.appending(path: "conversations.json")).conversation(id: id))
+        let card = try #require(saved.messages.flatMap(\.transcriptCards).first {
+            if case .autoReview(let value) = $0.payload { return value.reviewID == review.id }
+            return false
+        })
+        expectNoDifference(card.lifecycle, choice == "review-denied" ? .denied : .approved)
+        #expect(!saved.messages.contains { $0.deliveryStatus == .streaming })
         expectNoDifference(model.automations, definitions)
         expectNoDifference(try Data(contentsOf: root.appending(path: "automations.json")), bytes)
         expectNoDifference(model.automationDirectBindings, [])
     }
 
-    @Test(arguments: ["review", "local"])
+    @Test(arguments: ["review", "clicked-review", "local"])
     func stoppingAnActivityConfirmationRetiresItsPendingApprovalWithoutWriting(phase: String) async throws {
         let (root, model, _, id, probe) = try await pausedActivityFixture(write: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -527,6 +534,23 @@ private struct RoutineDirectProvider: InteractiveToolProvider {
             model.handleTranscriptCardIntent(.approveReview(reviewID: review.id))
             try await eventually { !model.pendingToolApprovals.isEmpty }
             local = try #require(model.pendingToolApprovals.first)
+            // The local request can appear before the review action's final
+            // save. This branch stops after that separate approval has become
+            // durable; the interrupted-save race is covered below.
+            try await eventually {
+                guard let saved = try? await canonicalStore.conversation(id: id) else { return false }
+                return saved.messages.flatMap(\.transcriptCards).contains {
+                    if case .autoReview(let value) = $0.payload {
+                        return value.reviewID == review.id && $0.lifecycle == .approved
+                    }
+                    return false
+                }
+            }
+        }
+        if phase == "clicked-review" {
+            // The human handler captures the old execution before its Task
+            // starts; Stop must not let that task acquire a fresh authority.
+            model.handleTranscriptCardIntent(.approveReview(reviewID: review.id))
         }
         model.cancel()
         if let local { model.resolveLocalToolApproval(id: local.id, allowed: true) }
@@ -539,7 +563,63 @@ private struct RoutineDirectProvider: InteractiveToolProvider {
             if case .autoReview(let value) = $0.payload { return value.reviewID == review.id }
             return false
         })
-        expectNoDifference(card.lifecycle, phase == "review" ? .cancelled : .approved)
+        expectNoDifference(card.lifecycle, phase == "local" ? .approved : .cancelled)
+        let requests = await probe.acknowledgments.count
+        expectNoDifference(requests, 1)
+        expectNoDifference(try Data(contentsOf: root.appending(path: "automations.json")), bytes)
+    }
+
+    @Test func stoppingAnActivityConfirmationRetiresAnAdmittedReviewWhoseCompletionDidNotSave() async throws {
+        let (root, model, _, id, probe) = try await pausedActivityFixture(write: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let canonicalStore = ConversationStore(fileURL: root.appending(path: "conversations.json"))
+        await model.setAutoReviewEnabled(true)
+        let presentation = try #require(model.conversationSpendGuardPresentation(id: id))
+        await model.answerConversationSpendGuard(.resume, presentation: presentation, at: acknowledgmentAt)
+        let bytes = try Data(contentsOf: root.appending(path: "automations.json"))
+        try await eventually { !model.pendingAutoReviewApprovals.isEmpty }
+        let review = try #require(model.pendingAutoReviewApprovals.first)
+        try await eventually {
+            guard let saved = try? await canonicalStore.conversation(id: id) else { return false }
+            return saved.messages.flatMap(\.transcriptCards).contains {
+                if case .autoReview(let value) = $0.payload {
+                    return value.reviewID == review.id && $0.lifecycle == .waiting
+                }
+                return false
+            }
+        }
+        // Reject only this isolated database's final approved-card write.
+        // Broker approval can already have admitted the local confirmation,
+        // while the durable review card still says running.
+        try executeFixtureSQL("CREATE TRIGGER reject_approved_activity_card BEFORE INSERT ON messages WHEN NEW.transcript_cards_json LIKE '%\"lifecycle\":\"approved\"%' BEGIN SELECT RAISE(ABORT,'isolated approved-card failure'); END", at: root)
+        model.selectRoute(.conversation(id))
+        model.handleTranscriptCardIntent(.approveReview(reviewID: review.id))
+        try await eventually {
+            !model.pendingToolApprovals.isEmpty && model.pendingAutoReviewApprovals.isEmpty && model.errorMessage != nil
+        }
+        let local = try #require(model.pendingToolApprovals.first)
+        let before = try #require(try await canonicalStore.conversation(id: id))
+        let beforeCard = try #require(before.messages.flatMap(\.transcriptCards).first {
+            if case .autoReview(let value) = $0.payload { return value.reviewID == review.id }
+            return false
+        })
+        expectNoDifference(beforeCard.lifecycle, .running)
+        model.cancel()
+        model.resolveLocalToolApproval(id: local.id, allowed: true)
+        try await eventually { !model.isConversationWorking(id) && model.pendingToolApprovals.isEmpty }
+        let saved = try #require(try await canonicalStore.conversation(id: id))
+        let card = try #require(saved.messages.flatMap(\.transcriptCards).first {
+            if case .autoReview(let value) = $0.payload { return value.reviewID == review.id }
+            return false
+        })
+        expectNoDifference(card.lifecycle, .cancelled)
+        let visibleCard = try #require(model.conversations.first { $0.id == id }?.messages.flatMap(\.transcriptCards).first {
+            if case .autoReview(let value) = $0.payload { return value.reviewID == review.id }
+            return false
+        })
+        expectNoDifference(visibleCard.lifecycle, .cancelled)
+        #expect(!saved.messages.contains { $0.deliveryStatus == .streaming })
+        #expect(!FileManager.default.fileExists(atPath: root.appending(path: "activity-created.txt").path))
         let requests = await probe.acknowledgments.count
         expectNoDifference(requests, 1)
         expectNoDifference(try Data(contentsOf: root.appending(path: "automations.json")), bytes)

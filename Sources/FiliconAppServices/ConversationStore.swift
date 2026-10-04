@@ -186,15 +186,18 @@ public actor ConversationStore {
         try await transcriptService.delete(conversationID: id)
     }
 
+    @discardableResult
     public func retireActivityAcknowledgment(conversationID: UUID, runID: UUID,
                                              expectedBinding: DirectConversationAgentBinding,
-                                             reviewIDs: Set<String>) async throws {
+                                             reviewIDs: Set<String>) async throws -> Conversation? {
         let repository = try resolveRepository()
         try await importLegacyIfNeeded(into: repository)
         if let value = try await repository.retireActivityAcknowledgment(conversationID: conversationID,
             runID: runID, expectedBinding: expectedBinding, reviewIDs: reviewIDs) {
             try await transcriptService.reconcile(value)
+            return value
         }
+        return nil
     }
 
     public func publishAutomationActivity(_ publication: AutomationActivityTranscriptPublication,

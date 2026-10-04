@@ -106,18 +106,7 @@ struct FiliconSidebar: View {
                 LazyVStack(alignment: .leading, spacing: 3) {
                     sidebarCaption(l10n("Group Chats"))
                     ForEach(model.groups) { group in
-                        Button { model.selectGroup(id: group.id) } label: {
-                            ChatListRow(
-                                title: group.name,
-                                subtitle: groupPreview(group),
-                                date: model.groupMessages[group.id]?.last?.createdAt,
-                                selected: model.route == .groups && (model.selectedGroupID == group.id || model.selectedGroupID == nil && model.groups.first?.id == group.id),
-                                isWorking: model.runningGroups.contains(group.id),
-                                needsFolderSelection: model.pendingWorkspaceFolders.contains { $0.conversationID == group.id }
-                            ) {
-                                GroupAvatar(group: group, agents: model.agents, size: 36)
-                            }
-                        }.buttonStyle(.plain)
+                        GroupSidebarRow(group: group)
                     }
                     if model.groups.isEmpty {
                         Button(l10n("Create your first group"), action: onNewGroup)
@@ -184,15 +173,6 @@ struct FiliconSidebar: View {
             .padding(14)
             .overlay(alignment: .top) { Rectangle().fill(FiliconTheme.border.opacity(0.5)).frame(height: 1) }
         }.background(FiliconTheme.sidebar)
-    }
-
-    private func groupPreview(_ group: AgentGroup) -> String {
-        guard let message = model.groupMessages[group.id]?.last else { return group.summary }
-        switch message.memberOutcome {
-        case .passed: return l10n("No new contribution this turn.")
-        case .failed: return l10n("Member response failed. Send a message to retry.")
-        case nil: return message.text
-        }
     }
 
     private func sidebarCaption(_ title: String) -> some View {
@@ -270,6 +250,56 @@ struct ConversationUnreadBadge: View {
             .background(FiliconTheme.surfaceRaised, in: Capsule())
             .fixedSize().help(label).accessibilityLabel(label)
             .accessibilityIdentifier("conversation-unread-count")
+    }
+}
+
+struct GroupSidebarRow: View {
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.locale) private var locale
+    let group: AgentGroup
+
+    var body: some View {
+        let _ = locale.identifier
+        Button(action: groupButtonTapped) {
+            ChatListRow(
+                title: group.name,
+                subtitle: preview,
+                date: model.groupMessages[group.id]?.last?.createdAt,
+                selected: model.visibleGroupID == group.id,
+                isWorking: model.runningGroups.contains(group.id),
+                needsFolderSelection: model.pendingWorkspaceFolders.contains { $0.conversationID == group.id },
+                unreadCount: model.groupUnreadState(id: group.id)?.unreadCount ?? 0
+            ) { GroupAvatar(group: group, agents: model.agents, size: 36) }
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("group-chat-\(group.id.uuidString)")
+        .contextMenu {
+            Button(l10n("Mark as read")) { markReadButtonTapped(.read) }
+                .disabled(!model.canMarkGroupRead(id: group.id))
+            Button(l10n("Mark as unread")) { markReadButtonTapped(.unread) }
+                .disabled(!model.canMarkGroupRead(id: group.id))
+        }
+    }
+
+    private var preview: String {
+        guard let message = model.groupMessages[group.id]?.last else { return group.summary }
+        switch message.memberOutcome {
+        case .passed: return l10n("No new contribution this turn.")
+        case .failed: return l10n("Member response failed. Send a message to retry.")
+        case nil: return message.text
+        }
+    }
+
+    private func markReadButtonTapped(_ action: ConversationReadAction) {
+        guard let context = model.beginGroupRead(id: group.id, action: action) else { return }
+        let at = Date()
+        Task { await model.recordGroupRead(context, at: at) }
+    }
+
+    private func groupButtonTapped() {
+        guard let context = model.beginSidebarGroupActivation(id: group.id) else { return }
+        let at = Date()
+        Task { await model.recordGroupRead(context, at: at) }
     }
 }
 

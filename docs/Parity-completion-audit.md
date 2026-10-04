@@ -1,5 +1,35 @@
 # 完成驗收入口（2026-09-27）
 
+## hidden activity confirmation 的原審核卡取消時序（2026-10-05）
+
+解鎖後 `group-unread-ui-full-final-v2.log` 完整跑完但 exit 1：核心 980 tests／108 suites 通過，App 663／84 有一項既有 Stop/local assertion 失敗，durable review card 仍為 running 而不是 approved；console unlocked，不能歸因於鎖定或算整輪通過。追查發現 broker 核准與卡片最後 SQL 保存是不同非同步邊界，待審 UI 已移除時 native Stop 只收集 pending review IDs，會漏掉尚未保存完成的原卡。
+
+有效紅燈 `activity-review-stop-red.log` exit 1：隔離 SQL trigger 只拒絕最後 approved-card 保存，真正 local confirmation 已出現，但停止後 canonical 卡仍 running、UI 卡卻 approved（1 test／2 issues）。現在 host 在原 acknowledgment/run 註冊審核時保留 exact IDs；停止只退休同 owner 的 unfinished waiting／running 卡，已完成或無關卡不變。native handler 同步捕捉原 execution，所有後續保存沿用同一 lease／binding，不在舊 execution 移除後退回無 fence 的 snapshot write；每個 await 邊界重新檢查撤銷，晚到 action 不改 UI。取消成功後僅投影 exact cancelled review cards，不把整份 canonical 聊天覆蓋新帳號 UI。
+
+正常 provider 可以在 broker 核准／拒絕後先結束；final chat snapshot 現在等待已點擊的原 review action 完成保存，保持原 lease 到該動作結束。Stop／owner cycle 立即撤銷 scope 並解除等待，沒有延長工具 grant、重跑確認或自動同意 local write。既有 local Stop fixture 另明確等到 canonical approved 才檢查保留 completed approval；新增 SQL-save failure 與點擊後 Task 尚未開始即 Stop 的覆蓋，不將 running 接受為成功。
+
+`activity-review-stop-focused-v1.log` 是修改時 Store facade 仍回傳 Void 的編譯錯誤，不當作產品紅燈；修正 facade 回傳原 canonical cleanup 結果後，v2 聚焦 46 tests／3 suites 通過。`group-unread-ui-focused-final-v2.log` 的混合聚焦另有兩個既有排程／question 方法失敗（3 issues）；`activity-review-stop-neighbor-recheck.log` 單獨重跑兩方法通過，沒有移除或跳過測試。最後 source 明確 `--no-parallel` 的 `activity-review-stop-focused-final.log` exit 0：65 tests／4 suites（核心 25／2，App 40／2），包含正常核准／拒絕的 canonical terminal 卡與非 streaming 回合、三種 Stop 邊界、SQL 故障、不執行取消寫入、原 owner SQL fence 及卡片 router。最後整套重跑亦通過，紀錄見下節；技能使用隔離資料／provider、既有固定商業時間及 CustomDump，不降低原存檔或權限檢查。
+
+## 群組未讀側欄與 scoped 原生操作（2026-10-04）
+
+本批接上下一節已驗證的 canonical group read store。真正 `FiliconSidebar` 的群組列顯示 durable unread count（超過 99 顯示 `99+`），並重用七語的可及性說明及「標示為已讀／未讀」選單；側欄點選是明確 human read。前景 arrival／window focus 則只在原群組仍可見、主視窗有焦點、沒有 onboarding／帳號／更新／工具核准／error 遮蓋、history 已載入且 message IDs 匹配原 canonical snapshot 時記 viewed，保留 manual-unread。不把 pending wakes、另一同名群組或載入失敗當作零未讀。
+
+native handler 在建立 Task 前，從原 store／group／member／account lease 同步取得獨立可取消的 action；不在非同步執行時追隨最新選取或重獲權限。human choice 不被 focus 或 projection refresh 覆蓋；較新的 human choice 只撤銷原 pending choice。route／selection／失焦循環撤銷 automatic read，membership／移除恢復／account away-and-back 亦撤銷原 action。投影載入以 owner generation 及 epoch 拒絕晚到結果，真正 member saved callback 刷新 canonical count；保存失敗保留已知 count 及原始 bytes，不發布假的已讀。read action 不回答 question、重播工具或修改 history、排程、review／spend-guard cards。
+
+有效紅燈 `group-unread-ui-red.log` exit 1：在 224-point 的真正群組側欄 OCR 能找到 room，但 canonical 123 arrivals 沒有 `99+`（1 test／1 issue），不是以獨立 badge 冒充接線。`group-unread-ui-focused-v1.log` 是新 fixture 的 callback member 路徑及 async assertion 編譯錯誤，修正測試後另重跑，不當作產品語意紅燈。`group-unread-ui-focused-final.log` exit 0：99 tests／5 suites（核心 18／1，App 81／4），包含新 10 個 App methods 及獨立 child lease 測試。隔離 fixtures 驗證原 human identity、六種 automatic 拒絕、四種 owner 循環、三種保存失敗、pending question 不被回答及真正 shared `SendMessage` saved callback。
+
+reference `agent-db.ts` 的 `markViewed` 在保留 manual-unread 或相同／較舊查看時間時不寫入。native 原先仍保存整份群組 envelope；`group-unread-view-noop-red.log` exit 1 在隔離寫入故障重現三種無變更查看都拋保存錯誤（1 test／3 cases／3 issues），不是鎖定檔案的讀取拒絕。現在僅在 `markViewed` 真正改變 state 時保存，原 store／membership／host lease 及 original-record 檢查仍先執行，closed no-op 也拒絕；explicit read／unread 保存契約不變。`group-unread-view-noop-focused.log` exit 0：核心 19 tests／1 suite 與受保護檔案探針 1 test／1 suite 通過；沒有移除保護，探針通過時 console unlocked。
+
+七語×明暗共 14 張真正 narrow sidebar render 斷言通過，另逐語檢視 selected row 的 `99+` 與 working spinner 無重疊；使用者 fixture 名稱／正文保留原文。最後 source 的 selected-render fixture 在完整測試中亦通過。UI 測試使用 offscreen `NSHostingView`，沒有啟動使用者 App 或操作真人視窗，不宣稱焦點、context-menu 點擊或 VoiceOver 已 live 驗收。七語各 1,795 keys／0 missing，沒有新增 UI keys。
+
+完整 `group-unread-ui-full-final.log` 在途中再次鎖定 Mac，受保護 fixture 檔案出現 Cocoa 257／POSIX 1 拒絕；同時確認 `IOConsoleLocked=Yes`。核心 979 tests／108 suites 與本批 Group read UI suite 已通過，但其餘 App suites 未可靠完成，不能稱整輪綠燈。只停止 stdout／stderr 綁定該日誌的本任務 test helper 及其 swift-test parent，保留失敗日誌（exit 143）；沒有停止使用者 App／Xcode、略過測試或降低檔案保護。解鎖後 v2 的真實 Stop 失敗與修正見上一節。
+
+最後 source 明確 `swift test --no-parallel` 的 `group-unread-ui-full-final-v3.log` exit 0：135 XCTest＋1,878 Swift Testing（222 suites；核心 980／108、App 664／84）。新 group UI suite、三種 Stop 邊界及先前混合聚焦失敗的兩個排程／question 方法均通過；兩項 opt-in live Codex 測試仍略過，不能當成外部模型／帳號驗收。`group-unread-ui-localization-final-v2.log` 七語各 1,795 keys／0 missing，`git diff --check` 通過。
+
+群組 UI 的早期 `group-unread-ui-native-final.log` BUILD SUCCEEDED，`group-unread-ui-package-final.log` 四個執行檔、deep strict 簽章及 app／XPC entitlements 通過；這兩輪在後續 no-op／Stop 修正之前，不能冒充最後 source gate。最後 source 另以 `group-unread-ui-native-final-v2.log` BUILD SUCCEEDED 及 `group-unread-ui-package-final-v2.log` exit 0 驗證四個執行檔、deep strict 簽章與 app／XPC entitlements。最後隔離產物 `.build/validation/GroupUnreadUIFinalPackage/Filicon.app` 與保留的早期 `.build/validation/GroupUnreadUIPackage/Filicon.app` 均為 Debug／ad-hoc gate，不是 release／公證；未執行列印的 launch smoke。本批使用測試及現代 SwiftUI 技能，採隔離 store、controlled clock、同步捕捉 action identity 與 named handlers；日誌、PNG 及封裝只保留在忽略的 `.build/validation/`。
+
+本節局部取代下一節歷史「群組側欄／manual／focused callback 尚未接線」，最後本機完整回歸已通過，但不取代真人 UI gate。legacy fallback、完整 core 帳號 namespace／遷移、雲端 session、live／release 及全 48 分類仍各自保留，整體 partial 不上調；atomic JSON 與原 lease 不是跨 instance／process CAS。未 push、重啟使用者 App／Xcode 或改真實帳號／群組／聊天資料。
+
 ## 群組聊天的 canonical 已讀／未讀儲存基礎（2026-10-04）
 
 reference `a9f633e09d49a85829b8236331b9e21f7e612634` 的 `agent-db.ts` 提供 `getUnreadState`／`markActivity`／`markViewed`／`markRead`／`markUnread`；`session-summaries.ts` 的 `buildSummary` 在 `isGroup` 分支亦使用同一 unread state。`group-chat-glue.ts` 在非前景的群組公開訊息保存後呼叫 `markSessionActivity`；`session-runtime.ts` 在前景 arrival／focus 保留 manual-unread。native 原本只在 direct-chat SQLite 保存這些標記，群組的 `groups.json` 沒有對應資料。本批先補真正群組 store，而不是拿 direct chat 或 pending wakes 當近似來源。

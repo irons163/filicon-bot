@@ -80,15 +80,33 @@ struct GroupReadRecord: Codable, Equatable, Sendable {
 public final class GroupReadStateLease: Sendable {
     public let groupID: UUID
     public let memberIDs: [UUID]
+    public let messageIDs: [UUID]
+    public var state: ConversationUnreadState { originalRecord.state }
+    public var isActive: Bool { (try? lease.check()) != nil }
     let storeID: UUID
     let originalRecord: GroupReadRecord
     let lease: AgentWorkflowExecutionScope.Lease
     private let scope = AgentWorkflowExecutionScope()
 
-    init(storeID: UUID, group: AgentGroup, record: GroupReadRecord,
+    init(storeID: UUID, group: AgentGroup, record: GroupReadRecord, messageIDs: [UUID],
          membershipLease: AgentWorkflowExecutionScope.Lease) throws {
         self.storeID = storeID; groupID = group.id; memberIDs = group.memberIDs; originalRecord = record
+        self.messageIDs = messageIDs
         lease = try scope.capture(inheriting: membershipLease)
+    }
+
+    /// Derive a separately cancellable native action synchronously, before a
+    /// UI Task is queued. Never recapture newer membership/account authority.
+    public func scoped(inheriting hostLease: AgentWorkflowExecutionScope.Lease? = nil) throws -> GroupReadStateLease {
+        try .init(copying: self, inheriting: hostLease)
+    }
+
+    private init(copying original: GroupReadStateLease, inheriting hostLease: AgentWorkflowExecutionScope.Lease?) throws {
+        storeID = original.storeID; groupID = original.groupID; memberIDs = original.memberIDs
+        originalRecord = original.originalRecord; messageIDs = original.messageIDs
+        var parent = original.lease
+        if let hostLease { parent = try parent.inheriting(hostLease) }
+        lease = try scope.capture(inheriting: parent)
     }
 
     public func close() { scope.invalidate() }

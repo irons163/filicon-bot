@@ -240,6 +240,7 @@ struct ContentView: View {
         .onAppear { conversationVisibilityChanged() }
         .onDisappear { model.setConversationWindowFocused(false) }
         .onChange(of: conversationReadPresentation) { _, _ in conversationVisibilityChanged() }
+        .onChange(of: groupReadPresentation) { _, _ in conversationVisibilityChanged() }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in conversationVisibilityChanged() }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didResignKeyNotification)) { _ in conversationVisibilityChanged() }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didChangeOcclusionStateNotification)) { _ in conversationVisibilityChanged() }
@@ -267,11 +268,34 @@ struct ContentView: View {
             generation: model.visibleConversationReadGeneration)
     }
 
+    private struct GroupReadPresentation: Equatable {
+        let id: UUID
+        let memberIDs: [UUID]
+        let messageIDs: [UUID]
+        let lastActivityAt: Date?
+        let generation: UInt64
+    }
+
+    private var groupReadPresentation: GroupReadPresentation? {
+        guard let id = model.visibleGroupID, model.canReadVisibleGroup(id: id),
+              let group = model.groups.first(where: { $0.id == id }),
+              let messages = model.groupMessages[id] else { return nil }
+        return .init(id: id, memberIDs: group.memberIDs, messageIDs: messages.map(\.id),
+            lastActivityAt: model.groupUnreadState(id: id)?.lastActivityAt,
+            generation: model.visibleConversationReadGeneration)
+    }
+
     private func conversationVisibilityChanged() {
         let focused = scenePhase == .active && AppWindowStateController.shared.isWorkspaceWindowFocused
         model.setConversationWindowFocused(focused)
-        guard focused,
-              let presented = conversationReadPresentation,
+        guard focused else { return }
+        if let presented = groupReadPresentation,
+           let read = model.beginGroupRead(id: presented.id, action: .viewed(preserveManualUnread: true)) {
+            let viewedAt = Date()
+            Task { await model.recordGroupRead(read, at: viewedAt) }
+            return
+        }
+        guard let presented = conversationReadPresentation,
               let canonicalRead = model.beginConversationRead(id: presented.id, action: .viewed(preserveManualUnread: true)) else { return }
         let viewedAt = Date(), epoch = model.visibleConversationReadEpoch
         Task {

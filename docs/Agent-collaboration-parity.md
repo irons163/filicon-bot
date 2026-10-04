@@ -1,4 +1,18 @@
-# 協作能力核對紀錄（更新至 2026-10-04）
+# 協作能力核對紀錄（更新至 2026-10-05）
+
+## hidden confirmation 的 Stop／審核保存時序（2026-10-05）
+
+審核請求在 broker 解決後雖不再出現在 pending UI，host 仍保留原 acknowledgment run 的 exact review IDs。Stop 只退休同 owner 尚未完成的卡片，保留 completed／無關內容；真正 SQL failure 已先重現 canonical running 與 UI approved 不一致，再補原 execution capture、最後保存 scope fence、取消卡片的窄投影及正常回合的 review settlement。沒有自動核准 local write 或延長取消權限。測試技能使用隔離 SQL trigger、原 provider、固定商業時間及 CustomDump；正常核准／拒絕與三種 Stop 邊界一併測，完整紅綠與驗收邊界見 [完成驗收入口](Parity-completion-audit.md)。
+
+## 群組未讀側欄與 scoped 原生操作（2026-10-04）
+
+群組側欄改讀真正的 canonical count，顯示至 `99+` 並保留工作中／資料夾狀態；右鍵提供七語「標示為已讀／未讀」。人類點選側欄明確讀取原 group；focus／arrival 保留 manual-unread。UI 在 Task 前同步派生原 store／membership／account lease，refresh 不改投選取群組或撤銷已排隊人類選擇；新的人類選擇才取代舊選擇。membership／account-away-and-back、group projection 移除／還原、blur／route／selection／新 history 均有隔離拒絕測試，失敗保存不清 count。
+
+真正 App SendMessage 保存 callback 會更新各群組 projection；automatic view 要求主工作區可見／focus、未被 modal 或 access cover 遮住，且已呈現的 history IDs 與 canonical lease 一致。read／unread 不回答 question、不改 history／排程／review cards 或權限。SwiftUI 技能使新 row 的多行操作集中在命名方法並於排隊前捕捉原身份；測試技能使用 temp stores、受控 provider／時間、atomic-write 故障與真正 `FiliconSidebar` OCR，非合成 row 代替整個 sidebar。有效 UI 紅燈、最後 gates 及真人／VoiceOver 邊界見 [完成驗收入口](Parity-completion-audit.md)。
+
+automatic view 保留 manual-unread 或相同／較舊時間時不做無效保存；三個隔離寫入故障案例先紅後綠，原 store／member／host lease 仍先檢查，撤銷的 no-op 不復活。explicit read／unread 契約不變；來源與完整 gate 見同一驗收入口。
+
+本節取代下節 storage-only 的未接線 UI 部分，不宣稱 group account namespace、cross-instance／process CAS、legacy fallback、雲端 session 或全 48 分類／外部／release 已完成。未 push、重啟使用者 App／Xcode 或改真實帳號／群組。
 
 ## 群組 canonical unread 儲存基礎（2026-10-04）
 

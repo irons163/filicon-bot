@@ -178,9 +178,19 @@ run/approval IDs against their original durable owner. It cannot add text, write
 a stale chat snapshot, revive model authority, alter unrelated/completed rows or
 retarget a changed owner. SQL failure leaves the canonical rows unchanged.
 
+Review identities are retained when admitted to that exact hidden run, not
+collected only from the pending UI at cancellation: broker resolution can remove
+a request before its terminal card save succeeds. Already clicked native review
+actions retain the original execution/binding for every save and are settled
+before the final chat snapshot. Stop revokes that scope immediately, releases
+the settlement wait, and only projects exact cancelled cards returned by the
+canonical cleanup. It never recaptures an unfenced write after execution removal,
+overwrites a newer UI/account with the old chat, or implicitly approves a local
+file operation. Completed approvals remain completed.
+
 The canonical direct branch now includes the reference's hidden acknowledgment
-and once-only background host reminder. Legacy unbound fallback, group-chat read
-UI and live UI/release validation remain separate work.
+and once-only background host reminder. Legacy unbound fallback and live
+UI/release validation remain separate work; group read UI is described below.
 An observation or binding lease fences only mutations through its own repository,
 not independent repository instances/processes. Chat and automation timestamps
 reside in separate stores, not one cross-store transaction.
@@ -220,5 +230,28 @@ membership edit. Counts/receipts and native read results publish only after a
 successful atomic write. A failed membership save does not revoke the unchanged
 membership lease. This is a single-store/process-local foundation, not cross-store
 atomicity, independent-instance/process CAS or a new group/account namespace.
-Group sidebar badges, manual read actions, focused-window callbacks and projection
-refresh still need native UI wiring; direct-chat UI remains separately implemented.
+
+Native group sidebar rows now project these canonical counts (display capped at
+`99+`) and expose localized Mark as read / Mark as unread actions. A human sidebar
+activation explicitly reads that original room; focus/arrival callbacks preserve
+manual unread. The host captures a separately cancellable child of its cached
+store/membership/account lease synchronously before queuing a Task. Projection
+refresh cannot revoke a queued human choice or retarget it to the selected room;
+a newer human action supersedes it. Account and membership away-and-back cycles
+invalidate the original lease, including actions derived before dispatch.
+
+Automatic viewing requires the focused visible workspace, no modal/access cover,
+and loaded message IDs matching the canonical lease snapshot. Route/selection
+changes, blur, unloading history and new arrivals invalidate an older view.
+Saved publication callbacks and workspace reloads refresh the projection with
+per-room epochs; a failed atomic read write retains the known count and reports
+the error, rather than publishing a fake zero. Read actions leave question
+answers, history, routines, review cards and grants untouched. This native wiring
+does not establish live focus/VoiceOver validation, an account namespace, or
+independent-instance/process CAS.
+
+An automatic view preserving manual unread, or carrying a repeated/older view
+time, does not rewrite the group envelope. It still checks the original store,
+membership, host lifetime and captured record before returning the unchanged
+canonical state; a revoked no-op is not accepted. Explicit read/unread retain
+their existing persistence behavior.

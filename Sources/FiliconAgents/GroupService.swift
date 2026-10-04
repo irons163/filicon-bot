@@ -782,6 +782,7 @@ public actor GroupService {
         let scope = groupReadScopes[groupID] ?? AgentWorkflowExecutionScope()
         groupReadScopes[groupID] = scope
         return try .init(storeID: readStoreID, group: group, record: record,
+            messageIDs: state.roomMessages.filter { $0.groupID == groupID }.map(\.id),
             membershipLease: scope.capture(inheriting: hostLease))
     }
 
@@ -803,7 +804,10 @@ public actor GroupService {
             switch action {
             case .viewed(let preserve):
                 guard bookkeeping.records[index] == lease.originalRecord else { throw CancellationError() }
-                value.markViewed(at: at, preserveManualUnread: preserve)
+                // Reference markViewed does no IO for a preserved manual flag
+                // or a repeated/older view. Still validate the original lease
+                // above; a no-op must not resurrect a revoked native action.
+                guard value.markViewed(at: at, preserveManualUnread: preserve) else { return value }
             case .read: value.markRead(at: at)
             case .unread:
                 value.markUnread(at: at, newestMessageAt: state.roomMessages.filter { $0.groupID == lease.groupID }.map(\.createdAt).max())

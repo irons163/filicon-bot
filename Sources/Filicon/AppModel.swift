@@ -103,6 +103,18 @@ struct ConversationReadContext: Sendable {
     let lifetime: AutomationSpendGuardLifetime
 }
 
+/// A native group read action retains its already resolved store/membership
+/// lease before Task dispatch. Not a model argument, snapshot save or grant.
+struct GroupReadContext: Sendable {
+    let id: UUID
+    let groupID: UUID
+    let accountID: String
+    let generation: UInt64
+    let action: ConversationReadAction
+    let visibleEpoch: UInt64?
+    let lease: GroupReadStateLease
+}
+
 @MainActor
 final class AppModel: ObservableObject {
     @Published var conversations: [Conversation] = [] {
@@ -179,7 +191,9 @@ final class AppModel: ObservableObject {
         didSet { if !oldValue.subtracting(running).isEmpty { drainActivityAcknowledgments() } }
     }
     @Published var route: WorkspaceRoute? = .search {
-        didSet { if route != oldValue { cancelVisibleConversationRead() } }
+        didSet {
+            if route != oldValue { cancelVisibleConversationRead(); cancelVisibleGroupRead() }
+        }
     }
     @Published private(set) var navigationHistory = WorkspaceNavigationHistory()
     @Published var searchQuery = "" {
@@ -218,9 +232,28 @@ final class AppModel: ObservableObject {
     private var revealedMailboxIncomingID: UUID?
     @Published private(set) var agentMessageUnreadCounts: [UUID: Int] = [:]
     @Published private(set) var notificationTrays: [InAppNotificationTray] = []
-    @Published var groups: [AgentGroup] = []
-    @Published var selectedGroupID: UUID?
-    @Published var groupMessages: [UUID: [RoomMessage]] = [:]
+    @Published var groups: [AgentGroup] = [] {
+        didSet {
+            groupReadOwnersChanged(from: oldValue)
+            for id in groups.map(\.id) { Task { [weak self] in await self?.reloadGroupUnreadState(id: id) } }
+        }
+    }
+    @Published var selectedGroupID: UUID? {
+        didSet { if selectedGroupID != oldValue { cancelVisibleGroupRead() } }
+    }
+    @Published var groupMessages: [UUID: [RoomMessage]] = [:] {
+        didSet {
+            invalidateGroupReadContexts()
+            for id in Set(oldValue.keys).union(groupMessages.keys) where oldValue[id] != groupMessages[id] {
+                Task { [weak self] in await self?.reloadGroupUnreadState(id: id) }
+            }
+        }
+    }
+    @Published private(set) var groupUnreadStates: [UUID: ConversationUnreadState] = [:]
+    private var groupReadLeases: [UUID: GroupReadStateLease] = [:]
+    private var groupReadContexts: [UUID: GroupReadContext] = [:]
+    private var groupUnreadLoadEpochs: [UUID: UInt64] = [:]
+    private(set) var visibleGroupReadEpoch: UInt64 = 0
     @Published var runningGroups: Set<UUID> = []
     private var stoppingGroups: Set<UUID> = []
     private var cancelledGroupRuns: Set<UUID> = []
@@ -481,7 +514,11 @@ final class AppModel: ObservableObject {
         let providerID: ProviderID
         let modelID: ModelID
         let reasoningEffort: ReasoningEffort
-        var cancelledReviewIDs: Set<String> = []
+        // Retain admitted identities after broker resolution: the card's final
+        // save can still be in flight or fail after the pending UI disappears.
+        var registeredReviewIDs: Set<String> = []
+        private var reviewActionIDs: Set<UUID> = []
+        private var reviewActionWaiters: [CheckedContinuation<Void, Never>] = []
 
         init(entry: AutomationSpendGuardTranscriptEntry, bindingLease: ConversationBindingLease, generation: UInt64,
              accountLease: AgentWorkflowExecutionScope.Lease, conversation: Conversation) throws {
@@ -489,7 +526,24 @@ final class AppModel: ObservableObject {
             providerID = conversation.providerID; modelID = conversation.modelID; reasoningEffort = conversation.reasoningEffort
             lease = try scope.capture(inheriting: accountLease)
         }
-        func close() { scope.invalidate(); bindingLease.close() }
+        func beginReviewAction(_ id: UUID) { reviewActionIDs.insert(id) }
+        func finishReviewAction(_ id: UUID) {
+            reviewActionIDs.remove(id)
+            if reviewActionIDs.isEmpty { releaseReviewActionWaiters() }
+        }
+        func waitForReviewActions() async {
+            guard !reviewActionIDs.isEmpty, !Task.isCancelled, (try? lease.check()) != nil else { return }
+            await withCheckedContinuation { reviewActionWaiters.append($0) }
+        }
+        private func releaseReviewActionWaiters() {
+            let waiters = reviewActionWaiters
+            reviewActionWaiters.removeAll()
+            for waiter in waiters { waiter.resume() }
+        }
+        func close() {
+            scope.invalidate(); bindingLease.close()
+            releaseReviewActionWaiters()
+        }
     }
     private var preparingActivityAcknowledgmentLeases: [UUID: ConversationBindingLease] = [:]
     // Process-local click order, not wall-clock order (the clock can move back).
@@ -1957,13 +2011,22 @@ final class AppModel: ObservableObject {
             errorMessage = l10n("This card action is stale or ambiguous. No operation was performed.")
             return
         }
-        Task { await executeTranscriptCardIntent(intent, context: context) }
+        let acknowledgment = context.execution?.activityAcknowledgment
+        let actionID = UUID()
+        // Keep the original inference/binding lease alive for an already
+        // clicked native review action, not for new work or a future click.
+        if case .autoReview = context.card.payload { acknowledgment?.beginReviewAction(actionID) }
+        Task {
+            defer { acknowledgment?.finishReviewAction(actionID) }
+            await executeTranscriptCardIntent(intent, context: context)
+        }
     }
 
     private struct TranscriptCardContext {
         let conversationID: UUID
         let messageID: UUID
         let card: TranscriptCard
+        let execution: BackgroundDirectExecution?
     }
 
     private func transcriptCardContext(for intent: TranscriptCardActionIntent) -> TranscriptCardContext? {
@@ -1972,7 +2035,8 @@ final class AppModel: ObservableObject {
         let matches = conversation.messages.flatMap { message in
             message.transcriptCards.compactMap { card -> TranscriptCardContext? in
                 guard card.actions.contains(where: { $0.intent == intent }) else { return nil }
-                return .init(conversationID: conversationID, messageID: message.id, card: card)
+                return .init(conversationID: conversationID, messageID: message.id, card: card,
+                    execution: backgroundDirectExecutions[conversationID])
             }
         }
         return matches.count == 1 ? matches[0] : nil
@@ -1980,8 +2044,14 @@ final class AppModel: ObservableObject {
 
     private func executeTranscriptCardIntent(_ intent: TranscriptCardActionIntent, context: TranscriptCardContext) async {
         let ticket: TranscriptCardActionTicket
-        do { ticket = try await transcriptCardActionRouter.begin(card: context.card, intent: intent) }
+        do {
+            try checkTranscriptCardAcknowledgment(context)
+            ticket = try await transcriptCardActionRouter.begin(card: context.card, intent: intent)
+        }
+        catch is CancellationError { return }
         catch { errorMessage = error.localizedDescription; return }
+        do { try checkTranscriptCardAcknowledgment(context) }
+        catch { await transcriptCardActionRouter.abandon(ticket); return }
 
         var suppliedSecret: String?
         if case .provideSecret = intent {
@@ -2003,8 +2073,12 @@ final class AppModel: ObservableObject {
             return
         }
         do {
-            try await persistTranscriptCardConversation(context.conversationID)
+            try await persistTranscriptCardConversation(context.conversationID, execution: context.execution)
         } catch {
+            if (try? checkTranscriptCardAcknowledgment(context)) == nil {
+                await transcriptCardActionRouter.abandon(ticket)
+                return
+            }
             // No external action has run yet. Restore the provider-authored
             // lifecycle rather than leaving a phantom running operation.
             _ = updateTranscriptCard(
@@ -2017,18 +2091,24 @@ final class AppModel: ObservableObject {
         }
 
         do {
+            try checkTranscriptCardAcknowledgment(context)
             try await performTranscriptCardIntent(intent, card: context.card, conversationID: context.conversationID, secret: suppliedSecret)
-            guard await transcriptCardActionRouter.finish(ticket),
-                  updateTranscriptCard(context: context, expectedUpdatedAt: startedAt, lifecycle: ticket.successLifecycle) else {
+            try checkTranscriptCardAcknowledgment(context)
+            guard await transcriptCardActionRouter.finish(ticket) else {
                 throw TranscriptCardActionRoutingError.staleCard
             }
-            try await persistTranscriptCardConversation(context.conversationID)
+            try checkTranscriptCardAcknowledgment(context)
+            guard updateTranscriptCard(context: context, expectedUpdatedAt: startedAt, lifecycle: ticket.successLifecycle) else {
+                throw TranscriptCardActionRoutingError.staleCard
+            }
+            try await persistTranscriptCardConversation(context.conversationID, execution: context.execution)
         } catch {
             await transcriptCardActionRouter.abandon(ticket)
+            guard (try? checkTranscriptCardAcknowledgment(context)) != nil else { return }
             let actionError = error
             if updateTranscriptCard(context: context, expectedUpdatedAt: startedAt, lifecycle: .failed) {
                 do {
-                    try await persistTranscriptCardConversation(context.conversationID)
+                    try await persistTranscriptCardConversation(context.conversationID, execution: context.execution)
                     errorMessage = actionError.localizedDescription
                 } catch {
                     errorMessage = l10n("\(actionError.localizedDescription) Card failure state could not be persisted: \(error.localizedDescription)")
@@ -2040,6 +2120,11 @@ final class AppModel: ObservableObject {
                 errorMessage = actionError.localizedDescription
             }
         }
+    }
+
+    private func checkTranscriptCardAcknowledgment(_ context: TranscriptCardContext) throws {
+        if let acknowledgment = context.execution?.activityAcknowledgment,
+           !acceptsActivityAcknowledgment(acknowledgment) { throw CancellationError() }
     }
 
     private func updateTranscriptCard(
@@ -2061,12 +2146,15 @@ final class AppModel: ObservableObject {
     /// covers transient SQLite busy/I/O failures; failure is surfaced to the
     /// user and never reported as a successfully persisted lifecycle.
     private func persistTranscriptCardConversation(_ conversationID: UUID) async throws {
+        try await persistTranscriptCardConversation(conversationID, execution: backgroundDirectExecutions[conversationID])
+    }
+
+    private func persistTranscriptCardConversation(_ conversationID: UUID, execution: BackgroundDirectExecution?) async throws {
         guard !deletedConversationIDs.contains(conversationID),
               let conversation = conversations.first(where: { $0.id == conversationID }) else {
             throw TranscriptCardActionRoutingError.staleCard
         }
         var lastError: Error?
-        let execution = backgroundDirectExecutions[conversationID]
         let lease = execution.map { $0.finalizing && $0.activityAcknowledgment == nil ? $0.accountLease : $0.lease }
         let bindingLease = execution?.activityAcknowledgment?.bindingLease
         for attempt in 0..<3 {
@@ -2619,6 +2707,10 @@ final class AppModel: ObservableObject {
                 directMessagingScopes.remove(id)
                 directMessagingBindings[id] = nil
             }
+            // Broker resolution may finish the provider before the already
+            // clicked review action saves its terminal card. Settle that
+            // original action before capturing the final chat snapshot.
+            await routine?.activityAcknowledgment?.waitForReviewActions()
             routine?.finalizing = true
             if let routine, let acknowledgment = routine.activityAcknowledgment,
                Task.isCancelled || (try? routine.lease.check()) == nil {
@@ -2629,8 +2721,26 @@ final class AppModel: ObservableObject {
                 finishTurn(conversationID: id, assistantID: assistantID, succeeded: false,
                     accountID: accountScope, providerID: providerID)
                 do {
-                    try await store.retireActivityAcknowledgment(conversationID: id, runID: assistantID,
-                        expectedBinding: acknowledgment.bindingLease.binding, reviewIDs: acknowledgment.cancelledReviewIDs)
+                    if let retired = try await store.retireActivityAcknowledgment(conversationID: id, runID: assistantID,
+                        expectedBinding: acknowledgment.bindingLease.binding, reviewIDs: acknowledgment.registeredReviewIDs),
+                       publicationGeneration == autoReviewAccountGeneration, accountScope == (settings.accountScope ?? "local"),
+                       let ci = conversations.firstIndex(where: { $0.id == id }),
+                       conversations[ci].agentBinding == acknowledgment.bindingLease.binding {
+                        // Only project exact cancelled review cards, never a
+                        // canonical chat snapshot into a newer UI/account.
+                        let cancelled = retired.messages.flatMap(\.transcriptCards).filter {
+                            guard $0.lifecycle == .cancelled, case .autoReview(let review) = $0.payload else { return false }
+                            return acknowledgment.registeredReviewIDs.contains(review.reviewID)
+                        }
+                        for mi in conversations[ci].messages.indices {
+                            for ti in conversations[ci].messages[mi].transcriptCards.indices {
+                                let current = conversations[ci].messages[mi].transcriptCards[ti]
+                                if cancelled.contains(where: { $0.id == current.id && $0.payload == current.payload }) {
+                                    conversations[ci].messages[mi].transcriptCards[ti].lifecycle = .cancelled
+                                }
+                            }
+                        }
+                    }
                 } catch {
                     if publicationGeneration == autoReviewAccountGeneration, accountScope == (settings.accountScope ?? "local") {
                         errorMessage = error.localizedDescription
@@ -3948,6 +4058,7 @@ final class AppModel: ObservableObject {
         }
         if let automationService { automations = await automationService.list() }
         await reloadConversationUnreadStates()
+        await reloadGroupUnreadStates()
         automationGroupBindings = await automationGroupBindingStore?.list() ?? []
         automationDirectBindings = await automationDirectBindingStore?.list() ?? []
         if let channelService {
@@ -8522,7 +8633,7 @@ final class AppModel: ObservableObject {
         for value in pendingActivityAcknowledgments where shouldInvalidate(value.entry.conversationID) { value.close() }
         pendingActivityAcknowledgments.removeAll { shouldInvalidate($0.entry.conversationID) }
         for value in activityAcknowledgmentTasks.values where shouldInvalidate(value.context.entry.conversationID) {
-            value.context.cancelledReviewIDs.formUnion(pendingAutoReviewByID.values.filter {
+            value.context.registeredReviewIDs.formUnion(pendingAutoReviewByID.values.filter {
                 $0.action.context.conversationID == value.context.entry.conversationID && $0.fence.runID == value.context.runID
             }.map(\.id))
             value.context.close(); value.task.cancel()
@@ -8743,6 +8854,147 @@ final class AppModel: ObservableObject {
     func setConversationWindowFocused(_ focused: Bool) {
         conversationWindowIsFocused = focused
         cancelVisibleConversationRead()
+        cancelVisibleGroupRead()
+    }
+
+    var visibleGroupID: UUID? {
+        guard route == .groups else { return nil }
+        return (groups.first { $0.id == selectedGroupID } ?? groups.first)?.id
+    }
+
+    func canMarkGroupRead(id: UUID) -> Bool {
+        guard !agentMessagingAccountTransition, let group = groups.first(where: { $0.id == id }),
+              let lease = groupReadLeases[id] else { return false }
+        return lease.isActive && lease.memberIDs == group.memberIDs
+    }
+
+    func groupUnreadState(id: UUID) -> ConversationUnreadState? {
+        guard !agentMessagingAccountTransition, groups.contains(where: { $0.id == id }) else { return nil }
+        return groupUnreadStates[id]
+    }
+
+    func canReadVisibleGroup(id: UUID) -> Bool {
+        canReadVisibleConversation && conversationWindowIsFocused && visibleGroupID == id
+            && canMarkGroupRead(id: id) && groupMessages[id] != nil
+            && groupMessages[id]?.map(\.id) == groupReadLeases[id]?.messageIDs
+    }
+
+    private func acceptsGroupRead(_ context: GroupReadContext) -> Bool {
+        guard context.lease.isActive, !agentMessagingAccountTransition,
+              context.generation == autoReviewAccountGeneration,
+              context.accountID == (settings.accountScope ?? "local"),
+              groupReadContexts[context.groupID]?.id == context.id,
+              groups.first(where: { $0.id == context.groupID })?.memberIDs == context.lease.memberIDs else { return false }
+        guard let epoch = context.visibleEpoch else { return true }
+        return epoch == visibleGroupReadEpoch && canReadVisibleGroup(id: context.groupID)
+            && groupMessages[context.groupID]?.map(\.id) == context.lease.messageIDs
+    }
+
+    private func invalidateGroupReadContexts() {
+        for context in Array(groupReadContexts.values) where !acceptsGroupRead(context) {
+            context.lease.close(); groupReadContexts.removeValue(forKey: context.groupID)
+        }
+    }
+
+    private func groupReadOwnersChanged(from previous: [AgentGroup]) {
+        for id in Set(previous.map(\.id)).union(groups.map(\.id))
+        where previous.first(where: { $0.id == id })?.memberIDs != groups.first(where: { $0.id == id })?.memberIDs {
+            groupReadLeases.removeValue(forKey: id)?.close()
+            groupUnreadStates.removeValue(forKey: id)
+            groupUnreadLoadEpochs[id, default: 0] &+= 1
+        }
+        invalidateGroupReadContexts()
+    }
+
+    func beginGroupRead(id: UUID, action: ConversationReadAction) -> GroupReadContext? {
+        guard canMarkGroupRead(id: id), let original = groupReadLeases[id] else { return nil }
+        let epoch: UInt64?
+        if case .viewed = action {
+            guard canReadVisibleGroup(id: id) else { return nil }
+            // Focus/arrival cannot supersede an already queued human choice.
+            if let pending = groupReadContexts[id], pending.visibleEpoch == nil { return nil }
+            epoch = visibleGroupReadEpoch
+        } else {
+            cancelVisibleGroupRead()
+            epoch = nil
+        }
+        do {
+            let lease = try original.scoped()
+            groupReadContexts[id]?.lease.close()
+            let context = GroupReadContext(id: UUID(), groupID: id, accountID: settings.accountScope ?? "local",
+                generation: autoReviewAccountGeneration, action: action, visibleEpoch: epoch, lease: lease)
+            groupReadContexts[id] = context
+            return context
+        } catch { return nil }
+    }
+
+    func beginSidebarGroupActivation(id: UUID) -> GroupReadContext? {
+        selectGroup(id: id)
+        return beginGroupRead(id: id, action: .read)
+    }
+
+    @discardableResult
+    func recordGroupRead(_ context: GroupReadContext, at date: Date = Date()) async -> Bool {
+        defer {
+            context.lease.close()
+            if groupReadContexts[context.groupID]?.id == context.id { groupReadContexts.removeValue(forKey: context.groupID) }
+        }
+        guard acceptsGroupRead(context), let groupService else { return false }
+        do {
+            let state = try await groupService.updateReadState(context.lease, action: context.action, at: date)
+            guard acceptsGroupRead(context) else { return false }
+            // In-flight earlier projection loads cannot publish an old count.
+            groupUnreadLoadEpochs[context.groupID, default: 0] &+= 1
+            groupUnreadStates[context.groupID] = state
+            await reloadGroupUnreadState(id: context.groupID)
+            return true
+        } catch is CancellationError { return false }
+        catch {
+            if acceptsGroupRead(context) { errorMessage = FiliconLocalization.message(error.localizedDescription) }
+            return false
+        }
+    }
+
+    func reloadGroupUnreadStates() async {
+        let generation = autoReviewAccountGeneration
+        for id in groups.map(\.id) {
+            guard generation == autoReviewAccountGeneration, !agentMessagingAccountTransition else { return }
+            await reloadGroupUnreadState(id: id)
+        }
+    }
+
+    func reloadGroupUnreadState(id: UUID) async {
+        guard !agentMessagingAccountTransition, let group = groups.first(where: { $0.id == id }), let groupService else { return }
+        let generation = autoReviewAccountGeneration, account = settings.accountScope ?? "local"
+        groupUnreadLoadEpochs[id, default: 0] &+= 1
+        let epoch = groupUnreadLoadEpochs[id]
+        do {
+            let hostLease = try workflowExecutionScope.capture()
+            let lease = try await groupService.leaseReadState(groupID: id, inheriting: hostLease)
+            guard generation == autoReviewAccountGeneration, account == (settings.accountScope ?? "local"),
+                  !agentMessagingAccountTransition, epoch == groupUnreadLoadEpochs[id], lease.isActive,
+                  lease.memberIDs == group.memberIDs, groups.first(where: { $0.id == id })?.memberIDs == group.memberIDs else {
+                lease.close(); return
+            }
+            // Replacing this cache must not close its old parent scope: a
+            // queued explicit human action retains that original lease until
+            // its own completion. Backend membership/account revocation still
+            // cancels every derived action, including away-and-back cycles.
+            groupReadLeases[id] = lease
+            groupUnreadStates[id] = lease.state
+        } catch is CancellationError { return }
+        catch {
+            guard generation == autoReviewAccountGeneration, account == (settings.accountScope ?? "local"),
+                  epoch == groupUnreadLoadEpochs[id], !agentMessagingAccountTransition else { return }
+            errorMessage = FiliconLocalization.message(error.localizedDescription)
+        }
+    }
+
+    func cancelVisibleGroupRead() {
+        visibleGroupReadEpoch &+= 1
+        for context in Array(groupReadContexts.values) where context.visibleEpoch != nil {
+            context.lease.close(); groupReadContexts.removeValue(forKey: context.groupID)
+        }
     }
 
     private func acceptsVisibleConversationRead(_ read: VisibleConversationReadContext) -> Bool {
@@ -9877,6 +10129,10 @@ final class AppModel: ObservableObject {
             await autoReviewBroker.cancel(reviewID: pending.id, fence: pending.fence)
             return
         }
+        if let acknowledgment = backgroundDirectExecutions[conversationID]?.activityAcknowledgment,
+           pending.fence.runID == acknowledgment.runID {
+            acknowledgment.registeredReviewIDs.insert(pending.id)
+        }
         pendingAutoReviewByID[pending.id] = pending
         pendingAutoReviewApprovals = pendingAutoReviewByID.values.sorted { $0.createdAt < $1.createdAt }
         var publicationDetails: [String] = []
@@ -9978,6 +10234,13 @@ final class AppModel: ObservableObject {
         conversationReadContexts.removeAll()
         conversationUnreadStates.removeAll()
         conversationUnreadLoadEpochs.removeAll()
+        for context in groupReadContexts.values { context.lease.close() }
+        groupReadContexts.removeAll()
+        for lease in groupReadLeases.values { lease.close() }
+        groupReadLeases.removeAll()
+        groupUnreadStates.removeAll()
+        groupUnreadLoadEpochs.removeAll()
+        cancelVisibleGroupRead()
         workflowExecutionScope.suspend()
         cancelVisibleConversationRead()
         for mutation in automationSpendGuardLifetimes.values { mutation.lifetime.cancel() }
