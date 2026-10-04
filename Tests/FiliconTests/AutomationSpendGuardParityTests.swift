@@ -968,7 +968,8 @@ struct AutomationSpendGuardParityTests {
         expectNoDifference(entries, []); expectNoDifference(try Data(contentsOf: root.appending(path: "automations.json")), bytes)
     }
 
-    @Test func nudgeAndAutomaticPauseKeepDistinctTranscriptEntriesWithoutRevivingTheOldPhase() async throws {
+    @Test(arguments: [SpendGuardAnswer.keep, .pause, .neverAsk, .resume, .stayPaused])
+    func nudgeAndAutomaticPauseKeepDistinctEntriesWithTheirOriginalAnswerChoices(answer: SpendGuardAnswer) async throws {
         let (root, service, routine, _) = try await fixture()
         defer { try? FileManager.default.removeItem(at: root) }
         try await nudge(service, routine: routine)
@@ -985,21 +986,61 @@ struct AutomationSpendGuardParityTests {
             entryID: UUID(uuidString: "00000000-0000-0000-0000-000000001207")!,
             acknowledgmentID: UUID(uuidString: "00000000-0000-0000-0000-000000001208")!)
         #expect(initial.id != paused.id && initial.acknowledgmentID != paused.acknowledgmentID)
+        let bytes = try Data(contentsOf: root.appending(path: "automations.json"))
+        // The original nudge remains a host-issued card, not a generic way to
+        // submit the paused card's options or forge its original stage.
         await #expect(throws: SpendGuardError.staleCard) {
-            try await service.answerSpendGuard(.keep, agentID: owner, cardID: guardID,
+            try await service.answerSpendGuard(.resume, agentID: owner, cardID: guardID,
                 at: pauseAt.addingTimeInterval(1), expectedPaused: false, transcriptEntryID: initial.id)
         }
-        try await service.answerSpendGuard(.resume, agentID: owner, cardID: guardID,
-            at: pauseAt.addingTimeInterval(2), expectedPaused: true, transcriptEntryID: paused.id)
+        await #expect(throws: SpendGuardError.staleCard) {
+            try await service.answerSpendGuard(.keep, agentID: owner, cardID: guardID,
+                at: pauseAt.addingTimeInterval(1), expectedPaused: true, transcriptEntryID: initial.id)
+        }
+        expectNoDifference(try Data(contentsOf: root.appending(path: "automations.json")), bytes)
+        let usesPausedCard = [.resume, .stayPaused].contains(answer), selected = usesPausedCard ? paused : initial
+        try await service.answerSpendGuard(answer, agentID: owner, cardID: guardID,
+            at: pauseAt.addingTimeInterval(2), expectedPaused: usesPausedCard, transcriptEntryID: selected.id)
         let reopened = try AutomationService(storeURL: root.appending(path: "automations.json"))
         let entries = await reopened.spendGuardTranscriptEntries(accountID: "local")
-        expectNoDifference(entries.first { $0.id == initial.id }, initial)
-        expectNoDifference(entries.first { $0.id == paused.id }?.answer, .resume)
+        expectNoDifference(entries.first { $0.id == selected.id }?.answer, answer)
+        expectNoDifference(entries.first { $0.id != selected.id }?.answer, nil)
         expectNoDifference(entries.map(\.conversationID), [conversationID, conversationID])
         expectNoDifference(entries.count, 2)
+        let definitions = await reopened.list(), spend = await reopened.spendGuardState(agentID: owner)
+        expectNoDifference(definitions.first { $0.id == routine.id }?.enabled, [.keep, .neverAsk, .resume].contains(answer))
+        expectNoDifference(spend.cardID, answer == .pause ? guardID : nil)
+        if answer != .pause {
+            let retired = usesPausedCard ? initial : paused
+            await #expect(throws: SpendGuardError.staleCard) {
+                try await reopened.answerSpendGuard(usesPausedCard ? .keep : .resume, agentID: owner, cardID: guardID,
+                    at: pauseAt.addingTimeInterval(3), expectedPaused: retired.isPaused, transcriptEntryID: retired.id)
+            }
+            let after = await reopened.list(), retained = await reopened.spendGuardTranscriptEntries(accountID: "local")
+            expectNoDifference(after, definitions); expectNoDifference(retained, entries)
+        }
     }
 
-    @Test(arguments: ["missing-outbox", "duplicate-id", "duplicate-stage", "wrong-answer", "missing-answer-time"])
+    @Test func theAutomaticPauseEntryCannotRetargetAnAlreadyIssuedNudge() async throws {
+        let (root, service, routine, _) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try await nudge(service, routine: routine)
+        let guardID = try #require(await service.spendGuardState(agentID: owner).cardID)
+        let entry = try await service.issueSpendGuardTranscript(agentID: owner, cardID: guardID,
+            accountID: "local", conversationID: owner, isPaused: false, at: nudgeAt)
+        _ = try await service.evaluateSpendGuard(agentID: owner, at: pauseAt)
+        let file = root.appending(path: "automations.json"), bytes = try Data(contentsOf: file)
+        for (account, chat) in [("foreign", owner), ("local", peer)] {
+            await #expect(throws: SpendGuardError.staleCard) {
+                try await service.issueSpendGuardTranscript(agentID: owner, cardID: guardID,
+                    accountID: account, conversationID: chat, isPaused: true, at: pauseAt)
+            }
+        }
+        let entries = await service.spendGuardTranscriptEntries(accountID: "local")
+        expectNoDifference(entries, [entry]); expectNoDifference(try Data(contentsOf: file), bytes)
+    }
+
+    @Test(arguments: ["missing-outbox", "duplicate-id", "duplicate-stage", "wrong-answer", "missing-answer-time", "cross-stage-destination"])
     func malformedTranscriptOutboxesAreRejectedWithoutRewriting(change: String) async throws {
         let (root, service, _, _) = try await fixture(); defer { try? FileManager.default.removeItem(at: root) }
         try await service.answerSpendGuard(.pause, agentID: owner, at: now)
@@ -1014,6 +1055,13 @@ struct AutomationSpendGuardParityTests {
         switch change {
         case "missing-outbox": payload.removeValue(forKey: "spendGuardTranscriptEntries")
         case "duplicate-id": entries[0]["acknowledgmentID"] = entries[0]["id"]
+        case "cross-stage-destination":
+            var displaced = try #require(entries.first)
+            displaced["id"] = UUID(uuidString: "00000000-0000-0000-0000-000000001231")!.uuidString
+            displaced["acknowledgmentID"] = UUID(uuidString: "00000000-0000-0000-0000-000000001232")!.uuidString
+            displaced["isPaused"] = false
+            displaced["accountID"] = "foreign"
+            entries.append(displaced)
         case "duplicate-stage":
             var duplicate = entries[0]
             duplicate["id"] = "00000000-0000-0000-0000-000000001203"

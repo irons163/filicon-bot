@@ -301,6 +301,36 @@ private struct RoutineDirectProvider: InteractiveToolProvider {
         }.count, 1)
         expectNoDifference(model.automationHistory[automation.id]?.map(\.status), [.ok, .ok])
     }
+    @Test func anAutomaticPauseKeepsTheOriginalNudgeCallbackBoundToItsReviewedDirectSession() async throws {
+        let (root, model, automation, id, probe) = try await fixture(activityProbe: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try await approve(model, automation: automation, id: id)
+        let bindings = model.automationDirectBindings
+        let (_, nudgeAt) = try await seedNudgeActivity(root: root, model: model, id: id)
+        await model.runAutomationScheduleTick(at: nudgeAt)
+        let nudge = try #require(model.conversationSpendGuardPresentation(id: id))
+        #expect(!nudge.prompt.isPaused)
+        let pauseAt = nudgeAt.addingTimeInterval(AutomationSpendGuard.pauseDelay)
+        await model.runAutomationScheduleTick(at: pauseAt)
+        let paused = try #require(model.conversationSpendGuardPresentation(id: id))
+        #expect(paused.prompt.isPaused)
+        #expect(nudge.bindingLease.isActive)
+        expectNoDifference(nudge.prompt.id, paused.prompt.id)
+        expectNoDifference(model.automationDirectBindings, bindings)
+        let before = await probe.shared
+        expectNoDifference(before.count, 1)
+        await model.answerConversationSpendGuard(.keep, presentation: nudge, at: pauseAt.addingTimeInterval(1))
+        #expect(model.errorMessage == nil)
+        let resumed = try #require(model.automations.first { $0.id == automation.id })
+        #expect(resumed.enabled && !resumed.guardPaused)
+        expectNoDifference(model.automationDirectBindings, bindings)
+        expectNoDifference(model.conversationSpendGuardPresentation(id: id) == nil, true)
+        await model.runAutomationScheduleTick(at: try #require(resumed.nextRunAt))
+        let after = await probe.shared
+        expectNoDifference(after.count, 2)
+        #expect(!after[1].messages.map(\.text).joined().contains("<system_reminder>"))
+    }
+
     @Test(arguments: [false, true])
     func canonicalActivityReminderDoesNotGrantAnUnreviewedTextOnlyRoutineHistoryOrTools(manual: Bool) async throws {
         let (root, model, automation, id, probe) = try await fixture()

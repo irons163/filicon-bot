@@ -1,5 +1,21 @@
 # 完成驗收入口（2026-09-27）
 
+## 同一次檢查保留原卡片的回答選項（2026-10-04）
+
+再次核對 reference `a9f633e09d49a85829b8236331b9e21f7e612634`：`automation-spend-guard-runtime.ts` 在 automatic pause 保留原 `cardEntryIds` 並新增 paused entry；`handleWidgetAnswer` 核對仍在 active set 的 host entry 與該 widget 的原選項，而不是要求每張卡都符合最新 stage。Keep／Never ask 可由未回答的原 nudge 恢復 guard-paused routines；Pause 保留檢查，Resume／Stay paused 只屬於 paused widget。檢查結束即退休其餘 sibling entries。
+
+native 現在仍先核對當前 owner／cycle ID，再以原始 host outbox entry ID、immutable account／conversation、未回答狀態及該 entry 的選項決定是否接受。App 只由 service outbox 發出 retained nudge 的 live presentation，保留原 binding lease／account generation，不能以模型或匯入 metadata 取得權限。automatic stage change 可保留未回答 nudge 的原 lease；已回答、重綁／隱藏／帳號離開再回來及換 cycle 的回呼不復活。workspace／無 entry 的舊入口仍要求當前 stage，不把任意舊 prompt 當成 host entry。native system receipt／排程同筆保存和聊天 receipt 補寫的原契約保留，沒有 hidden model acknowledgment 或新模型回合。
+
+同一 cycle 的新 stage 必須沿用第一張卡的原目的地；不能借 automatic pause 在另一帳號或聊天建立新的回答入口。schema 3 亦拒絕同一 owner／cycle 跨目的地的矛盾 outbox，保留原來源而不正規化重寫。沒有改 schema、修補真實資料或新增遷移權限。
+
+有效紅燈 `spend-guard-retained-nudge-red.log`：core 的三種 nudge 選項在 auto-pause 後遭 staleCard 拒絕（1 test／5 cases／3 issues），實際 App 重開後原 nudge 沒有 live action（1 test／3 cases／3 issues）。`spend-guard-retained-destination-red.log` 重現新 stage 可被改投，以及矛盾目的地 outbox 未拒絕並改寫來源（2 tests／4 issues）。`spend-guard-retained-focused-final.log` 另是新增測試把 `#require` 巢狀放入另一 macro 的編譯錯誤，修正後另跑最終 gate，不當成產品語意紅燈。
+
+最後 source 聚焦 `spend-guard-retained-focused-final-v2.log` exit 0：155 tests／6 suites（核心 64／2，App／direct／group／router 91／4）；含五種原選項、auto-pause／重開、原 callback／lease、錯選項／錯 stage／retired sibling、rebind／hidden／account cycles、假 entry、immutable destination 與 SQL receipt 故障復原。
+
+最後 source 完整串行 `spend-guard-retained-full-final.log` exit 0：135 XCTest＋1,834 Swift Testing（220 suites；核心 957／107，App 643／83）。兩項 opt-in live Codex 測試略過，不當作真實模型或外部服務驗收。`spend-guard-retained-native-final.log` BUILD SUCCEEDED；`spend-guard-retained-package-final.log` 四個執行檔、deep strict 簽章及 app／XPC entitlements 通過。隔離產物 `.build/validation/SpendGuardRetainedPackage/Filicon.app` 為 Debug／ad-hoc 離線 gate，不是 release／公證；未執行列印的 launch smoke。七語各 1,795 keys／0 missing，`git diff --check` 通過。沒有新增 UI layout 或文字，不新增真人／VoiceOver 驗收；日誌及產物僅保留在忽略的 `.build/validation/`。
+
+本節取代下面歷史「native 只接受當前 stage、retained 舊 nudge 是唯讀」的 canonical host-entry 部分；錯選項、已回答／退休的 entry、模型 metadata、無 canonical lease 與 ownership cycles 仍拒絕。legacy unbound fallback、hidden model answer acknowledgment、group read state、完整 core 帳號遷移、雲端 session、真人／VoiceOver、live／release 與全 48 分類仍各自保留，整體 partial 不上調。未 push、啟動或重啟使用者 App／Xcode、改真實帳號／群組／聊天資料。
+
 ## 背景回合的一次性活動提醒（2026-10-04）
 
 再次核對 reference `a9f633e09d49a85829b8236331b9e21f7e612634`：`automation-spend-guard-runtime.ts` 的 nudge transition 保存 widget 後回傳 `renderSpendGuardNudgeReminder`；`automation-run-path.ts` 只為非群組的 background automation trigger 將提醒附於同一 wake。manual、group、awaiting-ack 與 pause 不重送，也不是額外的模型回合。

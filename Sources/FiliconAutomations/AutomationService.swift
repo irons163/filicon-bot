@@ -45,8 +45,12 @@ private struct AutomationPersistentState: Codable, Sendable {
             spendGuardTranscriptEntries = try values.decode([AutomationSpendGuardTranscriptEntry].self, forKey: .spendGuardTranscriptEntries)
             let ids = spendGuardTranscriptEntries.flatMap { [$0.id, $0.acknowledgmentID] }
             let phases = spendGuardTranscriptEntries.map { "\($0.agentID)/\($0.cardID)/\($0.isPaused)" }
+            let cycles = Dictionary(grouping: spendGuardTranscriptEntries) { "\($0.agentID)/\($0.cardID)" }
             guard spendGuardTranscriptEntries.allSatisfy(\.isValid), Set(ids).count == ids.count,
-                  Set(phases).count == phases.count else {
+                  Set(phases).count == phases.count,
+                  cycles.values.allSatisfy({ entries in
+                      Set(entries.map { AutomationSpendGuardDestination(accountID: $0.accountID, conversationID: $0.conversationID) }).count == 1
+                  }) else {
                 throw DecodingError.dataCorruptedError(forKey: .spendGuardTranscriptEntries, in: values,
                     debugDescription: "Invalid automation activity transcript outbox")
             }
@@ -619,6 +623,13 @@ public actor AutomationService {
                 let spend = spendGuardState(agentID: agentID)
                 guard spend.cardID == cardID, !spend.guardPausedAutomationIDs.isEmpty == isPaused,
                       spend.nudgedAt != nil || isPaused else { throw SpendGuardError.staleCard }
+                // Both stages belong to one original canonical destination.
+                // A phase change must not publish a new action in another chat
+                // or account while retaining the first stage's authority.
+                guard state.spendGuardTranscriptEntries.filter({ $0.agentID == agentID && $0.cardID == cardID })
+                    .allSatisfy({ $0.accountID == accountID && $0.conversationID == conversationID }) else {
+                    throw SpendGuardError.staleCard
+                }
                 if let existing = state.spendGuardTranscriptEntries.first(where: {
                     $0.agentID == agentID && $0.cardID == cardID && $0.isPaused == isPaused
                 }) {
@@ -654,9 +665,9 @@ public actor AutomationService {
         guard let saved = state.spendGuards[agentID] else { throw SpendGuardError.staleCard }
         if let cardID { guard saved.cardID == cardID else { throw SpendGuardError.staleCard } }
         var spend = spendGuardState(agentID: agentID)
-        if let expectedPaused {
-            // Match the host's current projection, including the reviewed
-            // group exemption, rather than reviving an old card stage.
+        if transcriptEntryID == nil, let expectedPaused {
+            // Without an exact durable host entry, callbacks still require
+            // the current stage. Imported display metadata is not authority.
             guard !spend.guardPausedAutomationIDs.isEmpty == expectedPaused else { throw SpendGuardError.staleCard }
         }
         var candidate = state
@@ -665,7 +676,7 @@ public actor AutomationService {
                   candidate.spendGuardTranscriptEntries[index].agentID == agentID,
                   candidate.spendGuardTranscriptEntries[index].cardID == cardID,
                   candidate.spendGuardTranscriptEntries[index].answer == nil,
-                  candidate.spendGuardTranscriptEntries[index].isPaused == !spend.guardPausedAutomationIDs.isEmpty,
+                  expectedPaused.map({ candidate.spendGuardTranscriptEntries[index].isPaused == $0 }) ?? true,
                   AutomationSpendGuardTranscriptEntry.choices(paused: candidate.spendGuardTranscriptEntries[index].isPaused).contains(answer),
                   now.timeIntervalSince1970.isFinite else { throw SpendGuardError.staleCard }
             candidate.spendGuardTranscriptEntries[index].record(answer, at: now)

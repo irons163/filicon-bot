@@ -229,6 +229,9 @@ final class AppModel: ObservableObject {
     @Published var automationWakes: [AutomationWake] = []
     @Published private(set) var automationSpendGuardPrompts: [AutomationSpendGuardPrompt] = []
     @Published private(set) var conversationSpendGuardPresentations: [UUID: ConversationAutomationSpendGuardPresentation] = [:]
+    // Host outbox, not decoded transcript metadata. An unanswered older stage
+    // may share the live cycle's original binding lease and its own choices.
+    private var conversationSpendGuardTranscriptEntries: [UUID: AutomationSpendGuardTranscriptEntry] = [:]
     private var conversationSpendGuardPresentationEpochs: [UUID: UInt64] = [:]
     private var automationSpendGuardLoadEpoch: UInt64 = 0
     @Published private(set) var answeringAutomationSpendGuardIDs: Set<UUID> = []
@@ -8246,14 +8249,24 @@ final class AppModel: ObservableObject {
     }
 
     func conversationSpendGuardPresentation(id: UUID, messageID: UUID, card: TranscriptCard) -> ConversationAutomationSpendGuardPresentation? {
-        guard let presentation = conversationSpendGuardPresentation(id: id), card.id == presentation.transcriptEntryID,
-              messageID == presentation.transcriptEntryID, card.actions.isEmpty, card.lifecycle == .waiting,
+        guard let current = conversationSpendGuardPresentations[id], let entry = conversationSpendGuardTranscriptEntries[messageID],
+              entry.accountID == current.prompt.accountID, entry.agentID == current.prompt.agentID,
+              entry.cardID == current.prompt.id, entry.conversationID == id, entry.answer == nil,
+              card.id == entry.id, messageID == entry.id, card.actions.isEmpty, card.lifecycle == .waiting,
               case .widget(let widget) = card.payload, widget.widgetKind == "automationActivity", let metadata = widget.automationActivity,
-              !metadata.isAcknowledgment, metadata.answer == nil, metadata.entryID == presentation.transcriptEntryID,
-              metadata.guardID == presentation.prompt.id, metadata.binding == presentation.bindingLease.binding,
-              metadata.conversationID == id, metadata.isPaused == presentation.prompt.isPaused,
+              !metadata.isAcknowledgment, metadata.answer == nil, metadata.entryID == entry.id,
+              metadata.guardID == entry.cardID, metadata.binding == current.bindingLease.binding,
+              metadata.conversationID == id, metadata.isPaused == entry.isPaused,
               conversations.first(where: { $0.id == id })?.messages.first(where: { $0.id == messageID })?.transcriptCards.contains(card) == true else { return nil }
-        return presentation
+        // Stage is a property of this actual issued entry, not today's guard
+        // projection. Keep the current owner/cycle and immutable lease.
+        var state = current.prompt.state
+        if !entry.isPaused { state.guardPausedAutomationIDs.removeAll() }
+        let prompt = AutomationSpendGuardPrompt(id: current.prompt.id, agentID: current.prompt.agentID,
+            agentName: current.prompt.agentName, accountID: current.prompt.accountID, generation: current.prompt.generation, state: state)
+        let presentation = ConversationAutomationSpendGuardPresentation(conversationID: id, prompt: prompt,
+            bindingLease: current.bindingLease, transcriptEntryID: entry.id)
+        return acceptsConversationSpendGuardPresentation(presentation) ? presentation : nil
     }
 
     func answerConversationSpendGuard(_ answer: SpendGuardAnswer, presentation: ConversationAutomationSpendGuardPresentation,
@@ -8269,7 +8282,10 @@ final class AppModel: ObservableObject {
               prompt.accountID == (settings.accountScope ?? "local"), prompt.generation == autoReviewAccountGeneration,
               conversationSpendGuardPresentations[presentation.conversationID]?.bindingLease === lease,
               let current = automationSpendGuardPrompts.first(where: { $0.id == prompt.id && $0.agentID == prompt.agentID }),
-              current.accountID == prompt.accountID, current.generation == prompt.generation, current.isPaused == prompt.isPaused,
+              current.accountID == prompt.accountID, current.generation == prompt.generation,
+              let entry = conversationSpendGuardTranscriptEntries[presentation.transcriptEntryID],
+              entry.accountID == prompt.accountID, entry.agentID == prompt.agentID, entry.cardID == prompt.id,
+              entry.conversationID == presentation.conversationID, entry.answer == nil, entry.isPaused == prompt.isPaused,
               agents.contains(where: { $0.id == prompt.agentID && $0.archivedAt == nil }),
               !deletedConversationIDs.contains(presentation.conversationID),
               let chat = conversations.first(where: { $0.id == presentation.conversationID }),
@@ -8293,6 +8309,7 @@ final class AppModel: ObservableObject {
         for id in ids where shouldInvalidate(id) {
             conversationSpendGuardPresentationEpochs[id, default: 0] &+= 1
             conversationSpendGuardPresentations.removeValue(forKey: id)?.bindingLease.close()
+            conversationSpendGuardTranscriptEntries = conversationSpendGuardTranscriptEntries.filter { $0.value.conversationID != id }
         }
     }
 
@@ -8309,6 +8326,9 @@ final class AppModel: ObservableObject {
               !answeringAutomationSpendGuardIDs.contains(prompt.id),
               agents.contains(where: { $0.id == prompt.agentID && $0.archivedAt == nil }) else { return }
         if let presentation, !acceptsConversationSpendGuardPresentation(presentation) { return }
+        if presentation == nil, !automationSpendGuardPrompts.contains(where: {
+            $0.id == prompt.id && $0.agentID == prompt.agentID && $0.isPaused == prompt.isPaused
+        }) { return }
         let generation = autoReviewAccountGeneration
         let lifetime = AutomationSpendGuardLifetime(), mutationID = UUID()
         automationSpendGuardLifetimes[mutationID] = (prompt.agentID, lifetime)
@@ -8765,6 +8785,7 @@ final class AppModel: ObservableObject {
             }
         }
         let initialPrompts = prompts(for: spends)
+        let priorEntries = await automationService.spendGuardTranscriptEntries(accountID: account)
         var presentations: [UUID: ConversationAutomationSpendGuardPresentation] = [:]
         var createdLeases: [ConversationBindingLease] = []
         defer {
@@ -8788,7 +8809,10 @@ final class AppModel: ObservableObject {
                 let lease: ConversationBindingLease
                 if let previous = conversationSpendGuardPresentations[canonical.id], previous.bindingLease.isActive,
                    previous.prompt.id == prompt.id, previous.prompt.generation == generation,
-                   previous.prompt.accountID == account, previous.prompt.isPaused == prompt.isPaused,
+                   previous.prompt.accountID == account,
+                   (previous.prompt.isPaused == prompt.isPaused || priorEntries.contains(where: {
+                       $0.id == previous.transcriptEntryID && $0.answer == nil && $0.cardID == prompt.id
+                   })),
                    previous.bindingLease.binding == binding, previous.bindingLease.legacyHiddenAt == canonical.hiddenAt {
                     lease = previous.bindingLease
                 } else {
@@ -8846,6 +8870,7 @@ final class AppModel: ObservableObject {
         // A permanent prompt is one canonical incoming message. Reflect that
         // arrival now, rather than publishing the pre-insertion unread count
         // and making an unrelated owner's next refresh appear to change it.
+        let currentEntries = await automationService.spendGuardTranscriptEntries(accountID: account)
         let currentPrompts = prompts(for: await automationService.spendGuardStates())
         guard loadEpoch == automationSpendGuardLoadEpoch, generation == autoReviewAccountGeneration,
               account == (settings.accountScope ?? "local"), !agentMessagingAccountTransition else {
@@ -8868,6 +8893,11 @@ final class AppModel: ObservableObject {
         for previous in conversationSpendGuardPresentations.values where presentations[previous.conversationID]?.bindingLease !== previous.bindingLease {
             previous.bindingLease.close()
         }
+        conversationSpendGuardTranscriptEntries = Dictionary(uniqueKeysWithValues: currentEntries.filter { entry in
+            guard let presentation = presentations[entry.conversationID] else { return false }
+            return entry.accountID == presentation.prompt.accountID && entry.agentID == presentation.prompt.agentID
+                && entry.cardID == presentation.prompt.id && entry.answer == nil
+        }.map { ($0.id, $0) })
         conversationSpendGuardPresentations = presentations
         automations = definitions
         automationGroupBindings = groupBindings

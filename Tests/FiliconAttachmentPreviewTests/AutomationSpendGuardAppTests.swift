@@ -245,16 +245,31 @@ private struct CanonicalSpendGuardStoreSeed: Encodable {
         try #require(sqlite3_exec(handle, statement, nil, nil, nil) == SQLITE_OK)
     }
 
-    @Test func aFailedChatReceiptCanRecoverWithoutApplyingTheChoiceAgain() async throws {
-        let (root, model, owner, _, chat) = try await visibleChatFixture()
+    @Test(arguments: [false, true])
+    func aFailedChatReceiptCanRecoverWithoutApplyingTheChoiceAgain(retainedNudge: Bool) async throws {
+        let root: URL, model: AppModel, owner: AgentProfile, chat: Conversation
+        let presentation: ConversationAutomationSpendGuardPresentation
+        if retainedNudge {
+            let fixture = try await retainedNudgeFixture()
+            root = fixture.0; model = fixture.1; owner = fixture.2; chat = fixture.3
+            let message = try #require(model.conversations.first { $0.id == chat.id }?.messages.first { $0.id == fixture.4.id })
+            let card = try #require(message.transcriptCards.first)
+            presentation = try #require(model.conversationSpendGuardPresentation(id: chat.id, messageID: message.id,
+                card: card))
+        } else {
+            let fixture = try await visibleChatFixture()
+            root = fixture.0; model = fixture.1; owner = fixture.2; chat = fixture.4
+            await model.reloadAutomationDetails()
+            presentation = try #require(model.conversationSpendGuardPresentation(id: chat.id))
+        }
         defer { try? FileManager.default.removeItem(at: root) }
-        await model.reloadAutomationDetails()
-        let presentation = try #require(model.conversationSpendGuardPresentation(id: chat.id))
+        let answer: SpendGuardAnswer = retainedNudge ? .keep : .resume
+        let answeredAt = now.addingTimeInterval(retainedNudge ? AutomationSpendGuard.pauseDelay + 3 : 60)
         let store = ConversationStore(fileURL: root.appending(path: "conversations.json"))
         let before = try #require(try await store.conversation(id: chat.id))
         try executeFixtureSQL("CREATE TRIGGER reject_activity_ack BEFORE INSERT ON messages WHEN NEW.role='system' BEGIN SELECT RAISE(ABORT,'isolated receipt failure'); END", at: root)
         await FiliconLocalization.$languageOverride.withValue("en") {
-            await model.answerConversationSpendGuard(.resume, presentation: presentation, at: now.addingTimeInterval(60))
+            await model.answerConversationSpendGuard(answer, presentation: presentation, at: answeredAt)
         }
         #expect(model.errorMessage?.hasPrefix("The routine choice was applied, but its chat confirmation could not be saved:") == true)
         let failed = try #require(try await store.conversation(id: chat.id))
@@ -262,7 +277,7 @@ private struct CanonicalSpendGuardStoreSeed: Encodable {
         let durable = try AutomationService(storeURL: root.appending(path: "automations.json"))
         let entries = await durable.spendGuardTranscriptEntries(accountID: "local")
         let receipt = try #require(entries.first { $0.id == presentation.transcriptEntryID })
-        expectNoDifference(receipt.answer, .resume)
+        expectNoDifference(receipt.answer, answer)
         let definitions = await durable.list(), spend = await durable.spendGuardState(agentID: owner.id)
         #expect(spend.cardID == nil)
         try executeFixtureSQL("DROP TRIGGER reject_activity_ack", at: root)
@@ -380,6 +395,96 @@ private struct CanonicalSpendGuardStoreSeed: Encodable {
         model.selection = chat.id; model.route = .conversation(chat.id)
         await model.loadLatestMessages(for: chat.id)
         return (root, model, owner, peer, chat)
+    }
+
+    private func retainedNudgeFixture() async throws -> (URL, AppModel, AgentProfile, Conversation, AutomationSpendGuardTranscriptEntry) {
+        let (root, initial, owner, _, chat) = try await chatActivityFixture(paused: false)
+        let nudge = try #require(initial.conversationSpendGuardPresentation(id: chat.id))
+        // The seed actor only mutates before the new AppModel is opened. No
+        // competing automation-store writers or real scheduler/model calls.
+        let seed = try AutomationService(storeURL: root.appending(path: "automations.json"))
+        let pauseAt = now.addingTimeInterval(AutomationSpendGuard.pauseDelay + 1)
+        let decision = try await seed.evaluateSpendGuard(agentID: owner.id, at: pauseAt)
+        expectNoDifference(decision, .pause)
+        _ = try await seed.issueSpendGuardTranscript(agentID: owner.id, cardID: nudge.prompt.id,
+            accountID: "local", conversationID: chat.id, isPaused: true, at: pauseAt)
+        let retained = try #require(await seed.spendGuardTranscriptEntries(accountID: "local").first { $0.id == nudge.transcriptEntryID })
+        let store = ConversationStore(fileURL: root.appending(path: "conversations.json"))
+        let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+        await model.registry.register(ConversationReadFixtureProvider())
+        model.conversations = try await store.conversationPage().items
+        await model.reloadWorkspaceData(); await model.reloadAutomationDetails()
+        return (root, model, owner, chat, retained)
+    }
+
+    @Test(arguments: [SpendGuardAnswer.keep, .pause, .neverAsk])
+    func anUnansweredHostNudgeRemainsActionableAfterAutomaticPauseAndReopening(answer: SpendGuardAnswer) async throws {
+        let (root, model, owner, chat, retained) = try await retainedNudgeFixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let current = try #require(model.conversationSpendGuardPresentation(id: chat.id))
+        #expect(current.prompt.isPaused)
+        let message = try #require(model.conversations.first { $0.id == chat.id }?.messages.first { $0.id == retained.id })
+        let card = try #require(message.transcriptCards.first)
+        let old = try #require(model.conversationSpendGuardPresentation(id: chat.id, messageID: message.id, card: card),
+            "The retained host nudge must keep its own choices after automatic pause, not become display-only.")
+        #expect(!old.prompt.isPaused)
+        expectNoDifference(old.prompt.id, current.prompt.id)
+        let before = model.automations, grants = model.automationDirectBindings, groups = model.automationGroupBindings
+        let file = root.appending(path: "automations.json"), bytes = try Data(contentsOf: file)
+        await model.answerConversationSpendGuard(.resume, presentation: old, at: now.addingTimeInterval(AutomationSpendGuard.pauseDelay + 2))
+        expectNoDifference(model.automations, before); expectNoDifference(try Data(contentsOf: file), bytes)
+        await model.answerConversationSpendGuard(answer, presentation: old, at: now.addingTimeInterval(AutomationSpendGuard.pauseDelay + 3))
+        #expect(model.errorMessage == nil)
+        expectNoDifference(model.automationDirectBindings, grants); expectNoDifference(model.automationGroupBindings, groups)
+        let durable = try AutomationService(storeURL: file), entries = await durable.spendGuardTranscriptEntries(accountID: "local")
+        expectNoDifference(entries.first { $0.id == retained.id }?.answer, answer)
+        expectNoDifference(model.automations.first { $0.id == owner.id }?.enabled, answer != .pause)
+        #expect(model.conversationSpendGuardPresentation(id: chat.id, messageID: message.id, card: card) == nil)
+        let definitions = model.automations, receiptBytes = try Data(contentsOf: file)
+        await model.answerConversationSpendGuard(answer, presentation: old, at: now.addingTimeInterval(AutomationSpendGuard.pauseDelay + 4))
+        expectNoDifference(model.automations, definitions); expectNoDifference(try Data(contentsOf: file), receiptBytes)
+        let store = ConversationStore(fileURL: root.appending(path: "conversations.json"))
+        let canonical = try #require(try await store.conversation(id: chat.id))
+        #expect(canonical.messages.contains { $0.id == retained.acknowledgmentID && $0.role == .system })
+        if answer == .pause {
+            let paused = try #require(model.conversationSpendGuardPresentation(id: chat.id))
+            await model.answerConversationSpendGuard(.resume, presentation: paused, at: now.addingTimeInterval(AutomationSpendGuard.pauseDelay + 5))
+            #expect(model.automations.first { $0.id == owner.id }?.enabled == true)
+        } else { #expect(model.conversationSpendGuardPresentation(id: chat.id) == nil) }
+    }
+
+    @Test(arguments: ["rebind-cycle", "hide-cycle", "account-cycle", "forged-entry"])
+    func aRetainedNudgeStillRejectsAnOwnershipCycleOrUnissuedEntry(mode: String) async throws {
+        let (root, model, owner, chat, retained) = try await retainedNudgeFixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let message = try #require(model.conversations.first { $0.id == chat.id }?.messages.first { $0.id == retained.id })
+        let card = try #require(message.transcriptCards.first)
+        let original = try #require(model.conversationSpendGuardPresentation(id: chat.id, messageID: message.id, card: card))
+        var callback = original
+        switch mode {
+        case "rebind-cycle":
+            let index = try #require(model.conversations.firstIndex { $0.id == chat.id })
+            model.conversations[index].agentBinding = nil
+            model.conversations[index].agentBinding = chat.agentBinding
+        case "hide-cycle":
+            let index = try #require(model.conversations.firstIndex { $0.id == chat.id })
+            model.conversations[index].hiddenAt = now
+            model.conversations[index].hiddenAt = nil
+        case "account-cycle":
+            await model.cancelAutoReviewApprovals(nextAccountID: "fixture-away")
+            model.settings.accountScope = "fixture-away"
+            await model.cancelAutoReviewApprovals(nextAccountID: "local"); model.settings.accountScope = "local"
+        default:
+            callback = .init(conversationID: chat.id, prompt: original.prompt, bindingLease: original.bindingLease,
+                transcriptEntryID: UUID(uuidString: "00000000-0000-0000-0000-000000001233")!)
+        }
+        await model.reloadAutomationDetails()
+        let definitions = model.automations, file = root.appending(path: "automations.json"), bytes = try Data(contentsOf: file)
+        await model.answerConversationSpendGuard(.keep, presentation: callback, at: now.addingTimeInterval(AutomationSpendGuard.pauseDelay + 3))
+        expectNoDifference(model.automations, definitions); expectNoDifference(try Data(contentsOf: file), bytes)
+        let fresh = try #require(model.conversationSpendGuardPresentation(id: chat.id, messageID: message.id, card: card))
+        await model.answerConversationSpendGuard(.keep, presentation: fresh, at: now.addingTimeInterval(AutomationSpendGuard.pauseDelay + 4))
+        #expect(model.automations.first { $0.id == owner.id }?.enabled == true)
     }
 
     @Test func chatChecksUseCanonicalBindingsNotTitlesAndViewingDoesNotAnswerThem() async throws {

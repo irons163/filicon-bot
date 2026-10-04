@@ -1,5 +1,11 @@
 # 協作能力核對紀錄（更新至 2026-10-04）
 
+## Retained nudge 保留原選項（2026-10-04）
+
+automatic pause 後，同一檢查的未回答原 nudge 與新 paused entry 均以各自的 host outbox ID／原選項接受回答；回答舊 nudge 可恢復 guard 自己暫停的單人任務，不恢復人工停用、不新增 group／direct／tool／memory 核准或補跑錯過的任務。cycle 結束退休其他 entries；Pause 不結束檢查。workspace／沒有 exact host entry 的入口仍要求當前 stage，模型 widget 沒有 authority。
+
+App retained presentation 共用原 canonical lease，但 automatic phase 不等於換 owner；ownership-away-and-back、已回答／退休 ID 與假 entry 仍拒絕。同 cycle 的新 stage 不能改投另一 account／chat；矛盾目的地 outbox 拒絕且不重寫來源。來源、有效紅燈及本批最後 gates 見 [完成驗收入口](Parity-completion-audit.md)。這只取代下面 retained nudge 回答的差異，不是 hidden model answer acknowledgment；整體 partial、外部驗收及真人／VoiceOver 邊界仍保留。未 push、重啟 App／Xcode 或改真實資料。
+
 ## 背景回合的一次性 nudge reminder（2026-10-04）
 
 原 account／agent／canonical chat 的 host 卡片先保存，第一次 nudge reminder 才進入同一個既有背景回合；scheduler 預先 evaluate 不丟失這次 transition。manual／reviewed group／後續 awaiting-ack 不重送，重啟與原 scope／binding 失效不 replay／retarget；查看、回答與暫停不冒充新的 nudge。publication await 後重驗當前 definition／schedule／claim／guard epoch，使用執行前的目前時區。未審核 plain branch 不取得聊天 history／tools，原 consent／peer／saved-facts 同意不增加。

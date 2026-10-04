@@ -104,6 +104,15 @@ guard ID. Schemas 1/2 migrate with an empty outbox; invalid schema-3 entries or
 colliding IDs fail without rewriting the source. Reopening reuses those IDs;
 merely viewing the card neither answers nor resumes it.
 
+Both stages of one owner/cycle must retain the first entry's exact account and
+conversation. Issuance and schema-3 decoding reject a changed destination without
+rewriting the source. An unanswered original nudge remains actionable after
+automatic pause, using that entry's original Keep/Pause/Never ask choices; the
+paused entry keeps Resume/Stay paused. A resolved cycle retires its siblings.
+The host registry supplies only exact scoped outbox entries under the original
+binding lease and account generation, not imported/model widget metadata.
+Callbacks without an exact durable entry still require the current stage.
+
 The first canonical-chat nudge also carries a host-only, process-local transition
 into one admitted background wake. Its original owner, destination, card, counters
 and revocable source survive scheduler pre-evaluation, not process restarts or
@@ -119,7 +128,7 @@ sources and legacy unbound hosts cannot falsely claim a published native card.
 
 A native answer retains its original repository binding lease through the final
 synchronous guard-store save. Account/owner cycles, hidden or ambiguous bindings,
-archive/delete and an obsolete nudge/paused stage reject old callbacks; a queued
+archive/delete and answered or retired entries reject old callbacks; a queued
 human answer never retargets the currently selected chat. The choice and outbox
 answer commit together with the schedule changes. The prompt update and system
 acknowledgment then commit together in a separate SQLite transaction against
