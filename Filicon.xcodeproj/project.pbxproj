@@ -83,6 +83,8 @@
 		C093B82DCCB0316E3483F6679D1E81A4 /* RichMarkdownView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5CC425B7CB00DB21587EFB65FB16E3BD /* RichMarkdownView.swift */; };
 		A81000000000000000000001 /* RichMarkdownInlineMath.swift in Sources */ = {isa = PBXBuildFile; fileRef = A81000000000000000000002 /* RichMarkdownInlineMath.swift */; };
 		76F1ACFA65388287D965D2C4 /* MermaidDiagramViewer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C17A2B86AF34978B3150091 /* MermaidDiagramViewer.swift */; };
+		A81100000000000000000001 /* OfflineMermaidView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A81200000000000000000001 /* OfflineMermaidView.swift */; };
+		A81100000000000000000002 /* MermaidSVGWebView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A81200000000000000000002 /* MermaidSVGWebView.swift */; };
 		C1FB42A59247D47CAACFEBB0A7FE851B /* AgentMemorySuggestionsSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA9A27EED6559AA419EEF567223DE283 /* AgentMemorySuggestionsSection.swift */; };
 		C434904C9B602EF316496444E5BC285D /* AttachmentSpreadsheetPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E170DAC06297FBA3A51398E2D5D1C5A /* AttachmentSpreadsheetPreview.swift */; };
 		C456029E70A2574199E7267404E5D6E9 /* AgentMessagingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C6DD3B18A3D9DA8A0AAF49D38C99DCB /* AgentMessagingView.swift */; };
@@ -203,6 +205,8 @@
 		5CC425B7CB00DB21587EFB65FB16E3BD /* RichMarkdownView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RichMarkdownView.swift; sourceTree = "<group>"; };
 		A81000000000000000000002 /* RichMarkdownInlineMath.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RichMarkdownInlineMath.swift; sourceTree = "<group>"; };
 		6C17A2B86AF34978B3150091 /* MermaidDiagramViewer.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MermaidDiagramViewer.swift; sourceTree = "<group>"; };
+		A81200000000000000000001 /* OfflineMermaidView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = OfflineMermaidView.swift; sourceTree = "<group>"; };
+		A81200000000000000000002 /* MermaidSVGWebView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MermaidSVGWebView.swift; sourceTree = "<group>"; };
 		5E84C5D550A455B3B5FFA704B33C6E3E /* FiliconLocalToolHelper */ = {isa = PBXFileReference; includeInIndex = 0; path = FiliconLocalToolHelper; sourceTree = BUILT_PRODUCTS_DIR; };
 		623AFFE542F2BD818EFACA38B93EAE27 /* Filicon.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Filicon.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		6362ED32E4A109D5E45900F0623C1FD0 /* AttachmentQuickLook.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AttachmentQuickLook.swift; sourceTree = "<group>"; };
@@ -432,6 +436,8 @@
 				5CC425B7CB00DB21587EFB65FB16E3BD /* RichMarkdownView.swift */,
 				A81000000000000000000002 /* RichMarkdownInlineMath.swift */,
 				6C17A2B86AF34978B3150091 /* MermaidDiagramViewer.swift */,
+				A81200000000000000000001 /* OfflineMermaidView.swift */,
+				A81200000000000000000002 /* MermaidSVGWebView.swift */,
 				A70200000000000000000002 /* RoutineGroupSessionView.swift */,
 				A70300000000000000000002 /* RoutineDirectSessionView.swift */,
 				A70400000000000000000002 /* WorkflowDirectSessionView.swift */,
@@ -768,6 +774,8 @@
 				C093B82DCCB0316E3483F6679D1E81A4 /* RichMarkdownView.swift in Sources */,
 				A81000000000000000000001 /* RichMarkdownInlineMath.swift in Sources */,
 				76F1ACFA65388287D965D2C4 /* MermaidDiagramViewer.swift in Sources */,
+				A81100000000000000000001 /* OfflineMermaidView.swift in Sources */,
+				A81100000000000000000002 /* MermaidSVGWebView.swift in Sources */,
 				A70200000000000000000001 /* RoutineGroupSessionView.swift in Sources */,
 				A70300000000000000000001 /* RoutineDirectSessionView.swift in Sources */,
 				A70400000000000000000001 /* WorkflowDirectSessionView.swift in Sources */,

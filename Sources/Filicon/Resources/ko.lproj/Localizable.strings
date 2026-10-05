@@ -344,7 +344,8 @@
 "Destructive" = "관련 기사";
 "Details" = "제품 정보";
 "Diagram fallback, {0}: {1}" = "다이어그램 백, {0} : {1}";
-"Diagram shown as source" = "소스로 표시된 다이어그램";
+"Diagram shown as source" = "다이어그램을 소스 코드로 표시합니다";
+"Rendering diagram…" = "다이어그램을 그리는 중…";
 "Diff" = "차이";
 "Direct Chats" = "개인 채팅";
 "Directory" = "관련 기사";

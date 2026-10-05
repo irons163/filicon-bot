@@ -108,14 +108,18 @@ struct MermaidViewerState: Equatable {
 }
 
 @MainActor @Observable final class MermaidViewerModel: Identifiable {
-    let diagram: MermaidDiagram
-    let layout: MermaidNativeLayout
+    let diagram: MermaidDiagram?
+    let layout: MermaidNativeLayout?
+    let svg: MermaidSVG?
+    let source: String?
+    private(set) var hasDisplayFailure = false
     private(set) var state: MermaidViewerState
     private(set) var foregroundRequest: UInt = 0
 
     init(diagram: MermaidDiagram) {
         self.diagram = diagram
         layout = MermaidNativeLayout.project(diagram)
+        svg = nil; source = nil
         let size: CGSize
         switch diagram.kind {
         case .sequence:
@@ -127,6 +131,12 @@ struct MermaidViewerState: Equatable {
             size = CGSize(width: Double(columns + 1) * 200, height: max(300, (rows + 1) * 100))
         }
         state = .init(imageSize: size)
+    }
+
+    init(svg: MermaidSVG, source: String) {
+        self.svg = svg; self.source = source
+        diagram = nil; layout = nil
+        state = .init(imageSize: CGSize(width: svg.width, height: svg.height))
     }
 
     func figureOpenedAgain() { if !state.isClosed { foregroundRequest &+= 1 } }
@@ -143,6 +153,7 @@ struct MermaidViewerState: Equatable {
     func canvasMouseDragged(to point: CGPoint) { state.moveDrag(to: point) }
     func canvasMouseUp() { state.endDrag() }
     func closeButtonTapped() { state.close() }
+    func svgDisplayFailed() { if !state.isClosed { hasDisplayFailure = true } }
 
     func canvasKeyPressed(_ key: String, modifiers: NSEvent.ModifierFlags) -> Bool {
         guard !state.isClosed, modifiers.intersection([.command, .control, .option]).isEmpty else { return false }
@@ -292,24 +303,33 @@ struct MermaidViewerContent: View {
     let onFullScreen: () -> Void
 
     var body: some View {
-        let _ = uiLocale.identifier
         VStack(spacing: 0) {
             HStack {
-                Text(l10n("Diagram preview")).font(.headline)
+                Text(localized("Diagram preview")).font(.headline)
                 Spacer()
                 Button(action: onFullScreen) { Image(systemName: "arrow.up.left.and.arrow.down.right") }
-                    .accessibilityLabel(l10n("Full Screen")).help(l10n("Full Screen"))
+                    .accessibilityLabel(localized("Full Screen")).help(localized("Full Screen"))
                 Button(action: onClose) { Image(systemName: "xmark") }
-                    .accessibilityLabel(l10n("Close diagram preview")).help(l10n("Close diagram preview"))
+                    .accessibilityLabel(localized("Close diagram preview")).help(localized("Close diagram preview"))
                     .keyboardShortcut(.cancelAction)
             }.padding(12)
             Divider()
             GeometryReader { geometry in
                 ZStack {
-                    MermaidDiagramCanvas(layout: model.layout, imageSize: model.state.imageSize, transform: model.state.transform)
+                    Group {
+                        if let layout = model.layout {
+                            MermaidDiagramCanvas(layout: layout, imageSize: model.state.imageSize, transform: model.state.transform)
+                        } else if let svg = model.svg, !model.hasDisplayFailure {
+                            MermaidSVGWebView(svg: svg, transform: model.state.transform, onFailure: model.svgDisplayFailed)
+                        } else if let source = model.source {
+                            MermaidSourceFallback(source: source, isLoading: false)
+                        }
+                    }
                         .opacity(model.state.viewportSize == .zero ? 0 : 1)
-                        .allowsHitTesting(false)
-                    MermaidViewerInput(model: model, onClose: onClose).accessibilityHidden(true)
+                        .allowsHitTesting(model.hasDisplayFailure)
+                    if !model.hasDisplayFailure {
+                        MermaidViewerInput(model: model, onClose: onClose).accessibilityHidden(true)
+                    }
                 }
                 .frame(width: geometry.size.width, height: geometry.size.height)
                 .clipped()
@@ -319,22 +339,25 @@ struct MermaidViewerContent: View {
             Divider()
             HStack(spacing: 12) {
                 Button { model.zoomOutButtonTapped() } label: { Image(systemName: "minus.magnifyingglass") }
-                    .accessibilityLabel(l10n("Zoom out")).help(l10n("Zoom out"))
-                    .disabled(model.state.transform.scale <= MermaidViewerState.minimumZoom)
+                    .accessibilityLabel(localized("Zoom out")).help(localized("Zoom out"))
+                    .disabled(model.hasDisplayFailure || model.state.transform.scale <= MermaidViewerState.minimumZoom)
                 Button { model.zoomInButtonTapped() } label: { Image(systemName: "plus.magnifyingglass") }
-                    .accessibilityLabel(l10n("Zoom in")).help(l10n("Zoom in"))
-                    .disabled(model.state.transform.scale >= MermaidViewerState.maximumZoom)
+                    .accessibilityLabel(localized("Zoom in")).help(localized("Zoom in"))
+                    .disabled(model.hasDisplayFailure || model.state.transform.scale >= MermaidViewerState.maximumZoom)
                 Button { model.fitButtonTapped() } label: { Image(systemName: "arrow.down.right.and.arrow.up.left") }
-                    .accessibilityLabel(l10n("Fit to screen")).help(l10n("Fit to screen"))
+                    .accessibilityLabel(localized("Fit to screen")).help(localized("Fit to screen"))
+                    .disabled(model.hasDisplayFailure)
                 Spacer(minLength: 4)
                 Text(model.state.transform.scale, format: .percent.precision(.fractionLength(0)))
-                    .monospacedDigit().accessibilityLabel(l10n("Zoom"))
+                    .monospacedDigit().accessibilityLabel(localized("Zoom"))
             }.padding(12)
         }
         .background(Color(nsColor: .windowBackgroundColor))
-        .help(l10n("Drag to pan. Scroll or use + and − to zoom; F or 0 fits the diagram. Escape closes the preview."))
+        .help(localized("Drag to pan. Scroll or use + and − to zoom; F or 0 fits the diagram. Escape closes the preview."))
         .onChange(of: model.state.isClosed) { _, closed in if closed { onClose() } }
     }
+
+    private func localized(_ key: String) -> String { FiliconLocalization.string(key, language: uiLocale.identifier) }
 }
 
 struct MermaidViewerInput: NSViewRepresentable {

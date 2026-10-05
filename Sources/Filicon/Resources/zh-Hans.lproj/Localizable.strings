@@ -344,7 +344,8 @@
 "Destructive" = "破坏性";
 "Details" = "细节";
 "Diagram fallback, {0}: {1}" = "图表备用显示方式，{0}：{1}";
-"Diagram shown as source" = "显示为源的图表";
+"Diagram shown as source" = "图表以源代码显示";
+"Rendering diagram…" = "正在绘制图表…";
 "Diff" = "差异";
 "Direct Chats" = "单独聊天";
 "Directory" = "目录";

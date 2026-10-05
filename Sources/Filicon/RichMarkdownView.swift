@@ -373,8 +373,8 @@ struct RichMarkdownView: View {
             RichMarkdownTableView(table: table, openLink: open)
         case .math(let source, let mode, let presentation):
             OfflineMathView(source: source, mode: mode, presentation: presentation)
-        case .mermaid(let source, let presentation):
-            NativeMermaidView(source: source, presentation: presentation)
+        case .mermaid(let source, _):
+            OfflineMermaidView(source: source)
         }
     }
 
@@ -767,39 +767,6 @@ struct OfflineMathWebView: NSViewRepresentable {
         guard bounds.width > 0, abs(bounds.width - lastWidth) > 0.5 else { return }
         lastWidth = bounds.width
         resized?()
-    }
-}
-
-struct NativeMermaidView: View {
-    @Environment(\.locale) private var uiLocale
-    let source: String
-    let presentation: MermaidPresentation
-    @State private var model: MermaidFigureModel
-
-    init(source: String, presentation: MermaidPresentation) {
-        self.source = source
-        self.presentation = presentation
-        _model = State(initialValue: MermaidFigureModel(source: source, presentation: presentation))
-    }
-
-    var body: some View {
-        let _ = uiLocale.identifier
-        Group {
-            switch presentation {
-            case .diagram:
-                MermaidDiagramFigure(model: model)
-            case .fallback(let original, let reason):
-                VStack(alignment: .leading, spacing: 4) {
-                    Label(l10n("Diagram shown as source"), systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.secondary)
-                    ScrollView(.horizontal) { Text(original).font(.system(.caption, design: .monospaced)).textSelection(.enabled) }
-                }
-                .padding(8).background(.quaternary, in: RoundedRectangle(cornerRadius: 7))
-                .accessibilityLabel(l10n("Diagram fallback, \(reason): \(original)"))
-            }
-        }
-        .onChange(of: source) { _, _ in model.messageChanged(source: source, presentation: presentation) }
-        .onChange(of: presentation) { _, _ in model.messageChanged(source: source, presentation: presentation) }
-        .onDisappear { model.figureRemoved() }
     }
 }
 

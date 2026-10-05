@@ -1014,10 +1014,13 @@ the complete diagram runtime remain separate gaps; see
 [offline math and its validation boundaries](docs/Offline-math.md).
 
 The clean public Mermaid 11.16.0 engine and 72 dependency notices are bundled
-and verified offline. A serialized, cancellable backend now returns independently
-validated SVG, with bounded source, output, queue and cache. It is not yet wired
-to the transcript/viewer: the visible three-kind native renderer remains in use.
-See [offline Mermaid rendering and remaining integration](docs/Offline-mermaid.md).
+and verified offline. A serialized, cancellable renderer supplies independently
+validated SVG to direct/group transcripts and the native zoom/pan/fit viewer,
+with bounded source, output, queue and cache. Eight diagram families have real
+UI fixtures; unsafe or unsupported output falls back to selectable original
+source. Full grammar, original asset/layout parity and human/minimum-macOS
+acceptance remain unverified. See [offline Mermaid rendering and its validation
+boundaries](docs/Offline-mermaid.md).
 
 Group chat uses the same registered local/MCP tools and approval gates as direct
 chat when the selected provider supports tool calling. Execution badges come

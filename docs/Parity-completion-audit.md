@@ -1,5 +1,23 @@
 # 完成驗收入口（2026-09-27）
 
+## 公開 Mermaid 圖表的聊天與預覽接線
+
+2026-10-05 接續 `f662371` 的離線後端，真正 `TranscriptMessageView`／`GroupMessageBubble` 現在以 `OfflineMermaidView` 顯示 independently validated public-engine SVG，不再只顯示三種 native parser 的圖表。已核對的八類是 flowchart、sequence、state、pie、class、entity relationship、Gantt、mindmap；不將這些 fixtures 外推為完整語法、原版 opaque bytes／精確 geometry 或全功能完成。reference 仍是 `a9f633e09d49a85829b8236331b9e21f7e612634`，公開 11.16.0 的來源與 output gate 邊界不變，詳見 [Offline-mermaid.md](Offline-mermaid.md)。下節 backend-only 的「UI 尚未接線」保留為前一批歷史紀錄，由本節取代。
+
+等待時有七語 progress label 與可選取原文；invalid／unsafe／unavailable 或 static display failure 都回退原始 source，不載入 raw engine SVG／error HTML。source／appearance／移除／取消按 exact request 及 revision 撤銷；同 source 消失後重現也有新的 lifetime，舊 click／failure／child close 不能開啟或關閉新 preview。whole-figure 與 native expand button 支援 click、focused Return／Space；重複開啟沿用同一 viewer／transform，parent 移除與關閉清理自己的 child window。
+
+獨立 `MermaidSVGWebView` 只顯示已通過 native gate 的 static SVG，不載入 Mermaid engine。nonpersistent、page JavaScript disabled、CSP offline fonts only、navigation／downloads／popups／dialogs 拒絕；native isolated-world operation 只等待 fonts 後設定有界 viewport transform 與 appearance。geometry ticket 在 JavaScript 的 await 後再次檢查，native callback 另核對 document／view／revision，防止晚到 transform 改寫新畫面。十秒 display deadline 與 process failure 回退原文；仍不是 hard process termination 或 CPU／memory ceiling。native viewer 保留 pointer zoom／drag／fit／keyboard，20,000-point logical SVG 的 8× zoom 仍使用 viewport-sized surface。resize 按 reference 保留已選 scale，實際 F 鍵／fit 重新置中。canvas 明暗可在同 surface 更新，不 reload SVG 或丟失 transform。failure 時撤除 pan／zoom input overlay、停用無作用的縮放按鈕，原文選取與雙向捲動不再被攔截。
+
+有效紅燈包括 actual-route advanced families 缺少 expand action（`mermaid-ui-advanced-route-red-v2.log`）、same-source lifetime 的舊 callback 改壞新 figure（`mermaid-ui-same-source-failure-red.log`）、七語 dark WebKit corner 實際仍白色（`mermaid-ui-dark-canvas-red-v1.log`）與 failed viewer 殘留 input overlay（`mermaid-ui-fallback-input-red-v1.log`）；修正 production 邏輯後均通過。較早 helper 編譯／簽章失敗不是產品 baseline；v5 重用 figure model 建立第二窗口、v7 預期 resize 自動 fit 都是 fixture 錯誤，已核對 reference 再修正 oracle，沒有放寬 SVG bounds。v6 host／WebKit composite 的 HiDPI 與 copy blending 錯誤已修正，不能把那批圖片當視覺驗收。
+
+最後聚焦 `mermaid-ui-all-focused-final-v9.log` exit 0：33 tests／7 suites，含十八個真正 direct／group route cases（八類正常圖表及 unsafe output 原文 fallback）、native click／Return／Space、七語明暗、source/theme／cancel/removal／同源新 lifetime、display deadline／WebKit process／old document／geometry/font callback、page script 與外部 navigation 拒絕。所有窗口 unshown，使用隔離 App fixture；原 messages 未被改寫。實際 WebKit snapshots 與 native controls 合成的二十八張 380-point figure／540×420 viewer（v8）已逐張檢查，標籤沒有裁切、dark canvas 沒有白邊；v9 這二十八張 PNG 的 SHA-256 全部相同，並重新檢查繁中 light figure 與法文 dark viewer。八個不同 family 的 route SVG crop 另有人工檢查。OCR／actual fitted DOM bounds／dark corner pixels 為獨立斷言，沒有拿只有 host bitmap 的空白 surface 冒充 render。這仍不是真人 VoiceOver、OS full-screen 或最低 macOS 驗收。
+
+最後 source 完整串行 `mermaid-ui-full-final-v2.log` exit 0：135 XCTest＋1,994 Swift Testing／237 suites，全部 17 targets 通過（核心 982／108、App 726／92）；兩項 opt-in live Codex tests 略過，不作外部驗收。較早 full-v1 同樣通過，但在 failure input overlay 修正之前，不能代替這份最終結果。七語各 1,806 keys／0 missing、authored diff whitespace check 與 75 個 Mermaid resources verification 通過。`mermaid-ui-native-final-v1.log` BUILD SUCCEEDED，native verify 與 `mermaid-ui-package-final-v1.log` 的 standalone Debug／ad-hoc 封裝均驗證 offline KaTeX／Mermaid resources、四個 executables、app／XPC entitlements 與 deep strict 簽章；standalone 產物只在 `.build/validation/MermaidUIIntegrationPackage/Filicon.app`。沒有執行列印的 launch smoke，不是 release／公證。既有 CoreData NSXPC 診斷與 compiler warnings 不宣稱由本批修復。
+
+早期低磁碟空間的 build／codesign 失敗保留，沒有把環境失敗當產品紅燈或改寫日誌。按舊 log 確認後，只移除 `.build/validation/markdown-prose.SDrQnO` 下四個自有可重建 build/cache 子目錄：`spm/out`、`native/Build`、`native/Index.noindex`、`native/SDKExplicitPrecompiledModules`，保留 sources、checkouts、screenshots 與 logs；沒有刪使用者 App／資料或 repository metadata。不因空間回復而宣稱所有簽章錯誤只有單一原因。
+
+本批用 SwiftUI／observable-models 技能將 async lifecycle 留在可測 model，testing／CustomDump 技能控制晚到 callbacks 與完整值，SPM／Xcode 技能只新增兩個 source 的八筆 project membership，不改最低 OS／dependencies／scheme。文件技能將實際 UI 證據與完整語法／opaque geometry／真人／最低 macOS／hard containment／external／release 邊界分開。未 push、啟動或重啟使用者 App／Xcode、改真實帳號／群組／聊天；`UI-04` 及整體仍 partial，48 分類範圍不縮減。
+
 ## 公開 Mermaid 引擎的離線後端與 SVG 驗證
 
 2026-10-05 接續公開資源批次，新增 `OfflineMermaidRenderer` 與獨立 `MermaidSVG` output gate。這是後端增量，尚未取代真正 transcript／viewer 的三種 native diagram；不能把八類引擎 fixtures 當成新增可見 UI 能力。reference 來源與公開 11.16.0 候選／opaque asset 的界線不變，詳見 [Offline-mermaid.md](Offline-mermaid.md)。

@@ -2,9 +2,10 @@
 
 Filicon bundles the clean public **Mermaid 11.16.0** IIFE distribution and its
 dependency notices. A serialized offline renderer now produces independently
-validated SVG. This backend is not yet connected to the transcript or viewer:
-the visible UI still uses the three-kind native parser. UI integration remains
-required work, not a capability established by backend tests.
+validated SVG for the actual direct and group transcripts and their native
+diagram viewer. Eight diagram families have real UI fixtures; unsafe, invalid
+or unavailable output stays readable as the original source. This is not proof
+of every Mermaid grammar or the reference's missing shipped assets.
 
 ## Reference and provenance
 
@@ -134,14 +135,56 @@ Focused backend tests cover FIFO, theme/cache isolation, count and byte eviction
 overflow, shutdown, cancellation, stale deadlines/callbacks, output rejection and
 real WebKit recovery. Eight diagram families render with the actual public engine
 in both themes. These fixtures establish backend behavior, not every supported
-grammar, reference geometry or a completed transcript UI.
+grammar or reference geometry. Transcript evidence is separate below.
+
+## Transcript and viewer integration
+
+`OfflineMermaidView` renders by exact source and resolved appearance. While
+waiting, it shows a localized progress label with selectable original source.
+Failures show that source with a localized warning rather than engine error
+HTML. Source changes, appearance changes, cancellation and removal invalidate
+the old request. A revision also fences callbacks from an earlier lifetime of
+the same source, so an old click or display failure cannot open or close a newer
+preview. Closing a preview leaves the current figure available for reopening.
+
+`MermaidSVGWebView` displays only independently validated SVG in a separate
+nonpersistent static document; it does not load or run the Mermaid engine. Page
+JavaScript, scripts, images, network requests, navigation, downloads, popups and
+dialogs are disabled. The only native isolated-world operation waits for fonts
+and applies bounded viewport geometry and appearance. A geometry ticket is
+checked again inside JavaScript after that wait, preventing a delayed older
+transform from replacing a newer one. A ten-second soft display deadline falls
+back to source; it is not a hard WebContent process termination guarantee.
+
+The figure fits the real SVG viewBox inside a bounded native viewport. Its
+whole-figure and expand-button actions support click and focused Return/Space.
+The native viewer uses the same validated vector output and existing pan, zoom,
+fit, keyboard and window-lifetime behavior. Resize preserves the chosen scale,
+as in the recovered reference; F, 0, double-click or the fit button resets it.
+The rendered surface stays viewport-sized even at 8× zoom of a 20,000-point
+logical image. Appearance updates change the static canvas background without
+reloading the SVG or discarding the chosen transform. No file, tool, account or
+integration authority is added by opening a diagram.
+
+If the viewer's display fails, its pan/zoom input overlay is removed and zoom
+controls are disabled. The original source remains selectable and scrollable,
+instead of leaving an empty interactive diagram surface above that text.
+
+Real `TranscriptMessageView` and `GroupMessageBubble` fixtures cover flowchart,
+sequence, state, pie, class, entity relationship, Gantt and mindmap output, plus
+unsafe-source fallback in both routes. Unshown native windows verify figure
+actions, viewer dimensions, fitted SVG bounds, cancellation, late callbacks,
+failure recovery and seven languages in both appearances. Actual WebKit
+snapshots are inspected alongside native controls; a host bitmap alone does not
+establish that the SVG was drawn. These isolated checks are not a human
+VoiceOver, OS full-screen or minimum-macOS acceptance run.
 
 ## Remaining boundary
 
-The existing native transcript renderer remains unchanged in this backend
-increment. Async figure presentation, original-source fallback, safe SVG display,
-viewer integration and their actual UI lifecycle checks are still required.
-Neither the public archive nor dependency notices establish opaque-byte or
-pixel-identical parity. `UI-04`, human/minimum-macOS checks, hard runtime resource
-containment and external/release acceptance remain partial. Final test and build
-evidence is recorded in [the completion audit](Parity-completion-audit.md).
+The public engine is connected to the actual transcript and viewer, but the
+bounded output gate deliberately does not accept every possible public-engine
+output. Eight tested families do not establish the full grammar. Neither the
+public archive nor dependency notices establish opaque-byte or pixel-identical
+parity. `UI-04`, human/minimum-macOS checks, hard runtime resource containment and
+external/release acceptance remain partial. Final test and build evidence is
+recorded in [the completion audit](Parity-completion-audit.md).

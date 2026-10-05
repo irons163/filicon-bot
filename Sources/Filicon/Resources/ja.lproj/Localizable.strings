@@ -344,7 +344,8 @@
 "Destructive" = "ディストリビューター";
 "Details" = "詳細を見る";
 "Diagram fallback, {0}: {1}" = "図フォールバック、{0}:{1}";
-"Diagram shown as source" = "ソースとして示されている図";
+"Diagram shown as source" = "図をソースコードで表示しています";
+"Rendering diagram…" = "図を描画中…";
 "Diff" = "差分";
 "Direct Chats" = "ダイレクトチャット";
 "Directory" = "ディレクトリ";

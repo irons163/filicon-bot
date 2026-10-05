@@ -1,6 +1,7 @@
 import Foundation
 import AppKit
 import SwiftUI
+import WebKit
 import Testing
 import CustomDump
 import Vision
@@ -16,7 +17,7 @@ struct RichMarkdownViewTests {
         expectNoDifference(RichMarkdownProjection.make(source: source).blocks, [.prose(source)])
     }
 
-    @Test(.serialized, .timeLimit(.minutes(1)), arguments: ["direct", "group"], ["flowchart", "sequence", "state", "fallback"])
+    @Test(.serialized, .timeLimit(.minutes(1)), arguments: ["direct", "group"], ["flowchart", "sequence", "state", "pie", "class", "er", "gantt", "mindmap", "fallback"])
     @MainActor func diagramExpansionIsReachableInBothActualTranscriptRoutes(route: String, kind: String) async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-mermaid-route-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }
@@ -31,13 +32,18 @@ struct RichMarkdownViewTests {
         case "flowchart": body = "flowchart LR\nA[Design] --> B[Build]"
         case "sequence": body = "sequenceDiagram\nDesign->>Build: Review\nBuild-->>Design: Ready"
         case "state": body = "stateDiagram-v2\nDraft --> Ready"
-        default: body = "flowchart LR\nclick A https://example.com"
+        case "pie": body = "pie title Tasks\n\"Done\" : 7\n\"Waiting\" : 3"
+        case "class": body = "classDiagram\nAnimal <|-- Bird"
+        case "er": body = "erDiagram\nCUSTOMER ||--o{ ORDER : places"
+        case "gantt": body = "gantt\ntitle Project\ndateFormat YYYY-MM-DD\nsection Plan\nDesign :a1, 2026-09-01, 3d"
+        case "mindmap": body = "mindmap\n  root((Team))\n    Design\n    Build"
+        default: body = "flowchart LR\nA[\"<img src='https://example.invalid/image'>\"]"
         }
         let source = "```mermaid\n\(body)\n```"
         let direct = ChatMessage(id: messageID, role: .assistant, text: source, createdAt: date)
         let conversation = Conversation(id: UUID(uuidString: "00000000-0000-0000-0000-000000000054")!, messages: [direct], updatedAt: date)
         let group = RoomMessage(id: messageID, groupID: groupID, senderID: agentID, text: source, createdAt: date)
-        try await withUIRenderTurn(language: "en") {
+        try await withUIAsyncRenderTurn(language: "en") {
             let content = Group {
                 if route == "direct" {
                     TranscriptMessageView(message: direct, conversation: conversation, onJumpToMessage: { _ in
@@ -48,28 +54,60 @@ struct RichMarkdownViewTests {
                         Issue.record("A diagram must not change reactions")
                     })
                 }
-            }.padding(16).frame(width: 420).environmentObject(model)
+            }.padding(16).frame(width: 420).environmentObject(model).environment(\.locale, Locale(identifier: "en"))
             let host = NSHostingView(rootView: content)
             host.frame = .init(origin: .zero, size: host.fittingSize)
             let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
             window.contentView = host
-            defer { window.contentView = nil }
+            defer { window.contentView = nil; window.close() }
+            host.layoutSubtreeIfNeeded()
+            if kind != "fallback" {
+                let webView = try await waitForMermaidSVG(in: host) {
+                    window.setContentSize(host.fittingSize)
+                    host.layoutSubtreeIfNeeded()
+                }
+                let stats = try await webView.callAsyncJavaScript("""
+                return {text:document.querySelector('svg').textContent, engines:typeof mermaid, links:document.querySelectorAll('a,script,img,iframe').length};
+                """, arguments: [:], in: nil, contentWorld: .defaultClient)
+                let values = try #require(stats as? [String: Any])
+                expectNoDifference(values["engines"] as? String, "undefined")
+                expectNoDifference(values["links"] as? Int, 0)
+                #expect(!(values["text"] as? String ?? "").isEmpty)
+                _ = try await captureMermaidSVG(webView, name: "mermaid-route-\(route)-\(kind)")
+            } else {
+                let limit = ContinuousClock.now.advanced(by: .seconds(4))
+                while try !recognizedText(in: host).contains("Diagram shown as source"), ContinuousClock.now < limit {
+                    try await Task.sleep(for: .milliseconds(25))
+                    window.setContentSize(host.fittingSize)
+                    host.layoutSubtreeIfNeeded()
+                }
+                let fallbackText = try recognizedText(in: host)
+                #expect(fallbackText.contains("Diagram shown as source"), "Missing source fallback: \(fallbackText)")
+                #expect(mermaidDescendants(in: host).allSatisfy { !($0 is MermaidSVGNativeView) })
+            }
+            window.setContentSize(host.fittingSize)
             host.layoutSubtreeIfNeeded()
             let buttons = descendants(in: host).compactMap { $0 as? MermaidExpandNativeButton }
             expectNoDifference(buttons.count, kind == "fallback" ? 0 : 1)
             #expect(buttons.allSatisfy { $0.isEnabled && $0.keyEquivalent.isEmpty })
             expectNoDifference(buttons.map(\.title), kind == "fallback" ? [] : ["Open diagram full screen"])
-            let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
-            host.cacheDisplay(in: host.bounds, to: bitmap)
-            let recognition = VNRecognizeTextRequest()
-            recognition.recognitionLevel = .accurate
-            recognition.recognitionLanguages = ["en-US"]
-            try VNImageRequestHandler(cgImage: #require(bitmap.cgImage)).perform([recognition])
-            let text = (recognition.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+            let text = try recognizedText(in: host)
             expectNoDifference(text.contains("Open diagram full screen"), kind != "fallback")
+            #expect(!window.isVisible)
         }
         expectNoDifference(direct.text, source)
         expectNoDifference(group.text, source)
+    }
+
+    @MainActor private func recognizedText(in host: NSView) throws -> String {
+        let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        let recognition = VNRecognizeTextRequest()
+        recognition.recognitionLevel = .accurate
+        recognition.recognitionLanguages = ["en-US"]
+        try VNImageRequestHandler(cgImage: #require(bitmap.cgImage)).perform([recognition])
+        return (recognition.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
     }
 
     @Test(arguments: ["\n", "\r\n"])

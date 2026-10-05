@@ -356,15 +356,16 @@ struct MermaidViewportTests {
             model.canvasScrolled(delta: 1_000_000, precise: true, accelerated: false, point: CGPoint(x: 270, y: 156))
             expectNoDifference(model.state.transform.scale, 8)
             #expect(model.state.imageSize.width > 40_000 && model.state.imageSize.height > 26_000)
-            let host = NSHostingView(rootView: MermaidDiagramCanvas(layout: model.layout,
+            let layout = try #require(model.layout)
+            let host = NSHostingView(rootView: MermaidDiagramCanvas(layout: layout,
                 imageSize: model.state.imageSize, transform: model.state.transform))
             host.frame = .init(x: 0, y: 0, width: 540, height: 312)
             host.layoutSubtreeIfNeeded()
             let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
             host.cacheDisplay(in: host.bounds, to: bitmap)
             #expect(bitmap.pixelsWide <= 1080 && bitmap.pixelsHigh <= 624)
-            expectNoDifference(model.layout.nodes.count, 256)
-            expectNoDifference(model.layout.edges.count, 512)
+            expectNoDifference(layout.nodes.count, 256)
+            expectNoDifference(layout.edges.count, 512)
             #expect(!model.state.isClosed)
         }
     }

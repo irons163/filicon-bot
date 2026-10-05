@@ -349,6 +349,7 @@
 "Details" = "Details";
 "Diagram fallback, {0}: {1}" = "Diagram fallback, {0}: {1}";
 "Diagram shown as source" = "Diagram shown as source";
+"Rendering diagram…" = "Rendering diagram…";
 "Diff" = "Diff";
 "Direct Chats" = "Direct Chats";
 "Directory" = "Directory";

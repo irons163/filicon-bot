@@ -344,7 +344,8 @@
 "Destructive" = "Destructive";
 "Details" = "Détails";
 "Diagram fallback, {0}: {1}" = "Schéma de recul, {0}: {1}";
-"Diagram shown as source" = "Diagramme indiqué comme source";
+"Diagram shown as source" = "Diagramme affiché en code source";
+"Rendering diagram…" = "Rendu du diagramme…";
 "Diff" = "Différences";
 "Direct Chats" = "Discussions directes";
 "Directory" = "Répertoire";
