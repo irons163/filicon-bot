@@ -1817,3 +1817,6 @@
 "Drag to pan. Scroll or use + and − to zoom; F or 0 fits the diagram. Escape closes the preview." = "拖曳可移動圖表。捲動或按 +、− 縮放；按 F 或 0 使圖表適合視窗，按 Escape 關閉預覽。";
 "Not completed" = "未完成";
 "Status from the message; this checkbox cannot be changed." = "訊息中的狀態；無法變更這個勾選框。";
+"Queue this message to an external channel?" = "要將此訊息排入外部頻道的送件佇列嗎？";
+"Local reply only" = "僅引用本機訊息";
+"Queued is not delivered. Stop does not recall a queued message." = "排入佇列不代表已送達。停止不會撤回已排入佇列的訊息。";

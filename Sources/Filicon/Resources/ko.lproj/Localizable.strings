@@ -226,7 +226,7 @@
 "Cancelled" = "취소됨";
 "Capabilities stay disabled until you configure and authorize them." = "Capabilities는 구성하고 권한이 부여 될 때까지 비활성화됩니다.";
 "Catalog not loaded" = "카탈로그가로드되지 않음";
-"Channel" = "채널 :";
+"Channel" = "채널";
 "Channel IDs, comma-separated" = "채널 ID(쉼표로 구분)";
 "Channel IDs, comma-separated (optional)" = "채널 ID, 쉼표로 구분 (선택 사항)";
 "Channel authorization expired: {0}" = "채널 승인 만료: {0}";
@@ -1817,3 +1817,6 @@
 "Drag to pan. Scroll or use + and − to zoom; F or 0 fits the diagram. Escape closes the preview." = "드래그하여 다이어그램을 이동합니다. 스크롤하거나 +와 −를 눌러 확대 및 축소하고, F 또는 0을 눌러 창에 맞춥니다. Escape를 누르면 미리보기가 닫힙니다.";
 "Not completed" = "미완료";
 "Status from the message; this checkbox cannot be changed." = "메시지에 표시된 상태입니다. 이 체크박스는 변경할 수 없습니다.";
+"Queue this message to an external channel?" = "이 메시지를 외부 채널 전송 대기열에 추가할까요?";
+"Local reply only" = "로컬 메시지 인용만";
+"Queued is not delivered. Stop does not recall a queued message." = "대기열에 추가되어도 전달이 완료된 것은 아닙니다. 중지해도 대기열의 메시지는 회수되지 않습니다.";

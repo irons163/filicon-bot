@@ -1817,3 +1817,6 @@
 "Drag to pan. Scroll or use + and − to zoom; F or 0 fits the diagram. Escape closes the preview." = "拖动可移动图表。滚动或按 +、− 缩放；按 F 或 0 使图表适合窗口，按 Escape 关闭预览。";
 "Not completed" = "未完成";
 "Status from the message; this checkbox cannot be changed." = "消息中的状态；无法更改此复选框。";
+"Queue this message to an external channel?" = "要将此消息加入外部频道的发送队列吗？";
+"Local reply only" = "仅引用本地消息";
+"Queued is not delivered. Stop does not recall a queued message." = "加入队列不代表已送达。停止不会撤回已加入队列的消息。";

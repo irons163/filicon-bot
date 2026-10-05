@@ -2,6 +2,7 @@ import Foundation
 import FiliconAgents
 import FiliconDomain
 import FiliconProviderKit
+import FiliconChannels
 
 public struct AgentGroupDispatch: Sendable {
     public let audience: AgentGroupAudience
@@ -76,6 +77,9 @@ public actor AgentMessagingSession {
     private let importGalleryImage: AgentGalleryImageImporter?
     private let authorizePublication: PublicationAuthorizer
     private let groupFiles: AgentGroupFilePublicationServices?
+    public typealias ChannelPublisherFactory = @Sendable (AgentProfile, ChannelPublicationLifetime) async throws -> AgentChannelPublicationTransaction?
+    private let channelPublisherFactory: ChannelPublisherFactory?
+    private nonisolated let channelPublicationLifetime = ChannelPublicationLifetime()
     public typealias RemotePublicationAuthorizer = @Sendable (AgentProfile, AgentRemotePublicationTransaction.Review, NormalizedToolCall, ToolContext) async throws -> Void
     private let authorizeRemotePublication: RemotePublicationAuthorizer?
     public typealias GalleryPublicationAuthorizer = @Sendable (AgentProfile, AgentGalleryPublicationTransaction.Review, NormalizedToolCall, ToolContext) async throws -> Void
@@ -140,6 +144,7 @@ public actor AgentMessagingSession {
                 authorizeImages: @escaping ImageAuthorizer = { _, _, _, _, _, _ in throw AgentMessagingError.approvalRequired },
                 authorizePublication: @escaping PublicationAuthorizer = { _, _, _, _, _ in throw AgentMessagingError.approvalRequired },
                 groupFiles: AgentGroupFilePublicationServices? = nil,
+                channelPublisherFactory: ChannelPublisherFactory? = nil,
                 authorizeRemotePublication: RemotePublicationAuthorizer? = nil,
                 authorizeGalleryPublication: GalleryPublicationAuthorizer? = nil,
                 prepareGalleryImage: AgentGalleryImagePreparer? = nil,
@@ -168,6 +173,7 @@ public actor AgentMessagingSession {
         self.importGalleryImage = importGalleryImage
         self.authorizePublication = authorizePublication
         self.groupFiles = groupFiles
+        self.channelPublisherFactory = channelPublisherFactory
         self.authorizeRemotePublication = authorizeRemotePublication
         self.authorizeGalleryPublication = authorizeGalleryPublication
         self.prepareGalleryImage = prepareGalleryImage
@@ -215,6 +221,8 @@ public actor AgentMessagingSession {
         guard let sender = await agents.profile(id: senderID), sender.archivedAt == nil else { throw AgentMessagingError.invalidRecipient }
         try checkOpen()
         let filePublication = makeGroupFilePublication(sender: sender, userMessageID: userMessageID, publish: publish)
+        let channelPublication = try await channelPublisherFactory?(sender, .init(parent: channelPublicationLifetime))
+        try checkOpen()
         let remotePublication = makeGroupRemotePublication(sender: sender, userMessageID: userMessageID, publish: publish)
         let galleryPublication: AgentGalleryPublicationTransaction?
         if let authorizeGalleryPublication {
@@ -248,7 +256,7 @@ public actor AgentMessagingSession {
                 return try await publish(.init(text: reference.summary, sourceUserMessageID: userMessageID,
                     lifetime: publicationLifetime, replyToMessageID: replyID, cursorAgent: reference))
             }, filePublication: filePublication, remotePublication: remotePublication,
-            galleryPublication: galleryPublication) { [self] text, images, replyID, question in
+            galleryPublication: galleryPublication, channelPublication: channelPublication) { [self] text, images, replyID, question in
                 try await validateGroupPublication(images: images, senderID: senderID, userMessageID: userMessageID)
                 let card = question.flatMap { question in questionAccountID.map {
                     GroupQuestion(question: question, accountID: $0, memberIDs: memberIDs)
@@ -610,6 +618,7 @@ public actor AgentMessagingSession {
     /// suspension on Stop/account transition, even while this actor unwinds.
     public nonisolated func revokeProfileChanges() {
         management?.close(); groupLifetime.close(); publicationLifetime.close(); memorySuggestionLifetime.close()
+        channelPublicationLifetime.close()
         memorySynthesisLifetime.close()
     }
 
@@ -1171,6 +1180,7 @@ public actor AgentMessagingSession {
         closed = true
         if preservingMemorySynthesis {
             management?.close(); groupLifetime.close(); publicationLifetime.close(); memorySuggestionLifetime.close()
+            channelPublicationLifetime.close()
         } else { revokeProfileChanges() }
         memoryExchanges.removeAll()
         await memoryExtractor?.cancel(sessionID: id)

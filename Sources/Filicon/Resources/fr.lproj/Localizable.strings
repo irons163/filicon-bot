@@ -1817,3 +1817,6 @@
 "Drag to pan. Scroll or use + and − to zoom; F or 0 fits the diagram. Escape closes the preview." = "Faites glisser pour déplacer le diagramme. Faites défiler ou utilisez + et − pour zoomer ; F ou 0 adapte le diagramme à la fenêtre. Échap ferme l’aperçu.";
 "Not completed" = "Non terminé";
 "Status from the message; this checkbox cannot be changed." = "État indiqué dans le message ; cette case ne peut pas être modifiée.";
+"Queue this message to an external channel?" = "Mettre ce message en file d’envoi vers un canal externe ?";
+"Local reply only" = "Réponse locale uniquement";
+"Queued is not delivered. Stop does not recall a queued message." = "Mis en file ne signifie pas livré. Arrêter ne rappelle pas un message déjà en file.";

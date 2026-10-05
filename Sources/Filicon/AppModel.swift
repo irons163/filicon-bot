@@ -659,6 +659,7 @@ final class AppModel: ObservableObject {
     private var automationTriggerHub: AutomationTriggerHub?
     private var automationIngress: AutomationIngressController?
     private let channelService: ChannelService?
+    private let configuredChannelConnectors: [any ChannelConnector]?
     private let channelOAuthCoordinator = ChannelOAuthCoordinator()
     private let mcpConfigStore: MCPConfigurationStore
     private let mcpAccountLibrary: MCPAccountLibrary
@@ -754,7 +755,9 @@ final class AppModel: ObservableObject {
         localToolRuntime: LocalToolRuntime? = nil,
         mcpOAuthTransport: any MCPOAuthTokenTransport = URLSessionMCPOAuthTokenTransport(),
         mcpOAuthBrowserOpener: @escaping @MainActor @Sendable (URL) -> Bool = { NSWorkspace.shared.open($0) },
-        quotaFaultInjector: @escaping StorageQuotaLedger.FaultInjector = { _ in }
+        quotaFaultInjector: @escaping StorageQuotaLedger.FaultInjector = { _ in },
+        channelService: ChannelService? = nil,
+        channelConnectors: [any ChannelConnector]? = nil
     ) {
         let context: AppStartupContext = (try? .isolated(root: applicationSupportRoot, reason: .isolatedUserData))
             ?? .init(root: applicationSupportRoot, settlement: .init(route: .unchanged, reason: .isolatedUserData, root: applicationSupportRoot), warning: "The isolated data root could not be fully verified.")
@@ -764,7 +767,9 @@ final class AppModel: ObservableObject {
             localToolRuntime: localToolRuntime,
             mcpOAuthTransport: mcpOAuthTransport,
             mcpOAuthBrowserOpener: mcpOAuthBrowserOpener,
-            quotaFaultInjector: quotaFaultInjector
+            quotaFaultInjector: quotaFaultInjector,
+            channelService: channelService,
+            channelConnectors: channelConnectors
         )
     }
 
@@ -774,7 +779,9 @@ final class AppModel: ObservableObject {
         localToolRuntime: LocalToolRuntime? = nil,
         mcpOAuthTransport: any MCPOAuthTokenTransport = URLSessionMCPOAuthTokenTransport(),
         mcpOAuthBrowserOpener: @escaping @MainActor @Sendable (URL) -> Bool = { NSWorkspace.shared.open($0) },
-        quotaFaultInjector: @escaping StorageQuotaLedger.FaultInjector = { _ in }
+        quotaFaultInjector: @escaping StorageQuotaLedger.FaultInjector = { _ in },
+        channelService: ChannelService? = nil,
+        channelConnectors: [any ChannelConnector]? = nil
     ) {
         let root = startupContext.root
         dataRoot = root
@@ -841,7 +848,8 @@ final class AppModel: ObservableObject {
         automationGroupBindingStore = try? AutomationGroupSessionBindingStore(url: root.appending(path: "automation-group-sessions.json"))
         automationDirectBindingStore = try? AutomationDirectSessionBindingStore(url: root.appending(path: "automation-direct-sessions.json"))
         workflowDirectBindingStore = try? WorkflowDirectSessionBindingStore(url: root.appending(path: "workflow-direct-sessions.json"))
-        channelService = try? ChannelService(storeURL: root.appending(path: "channels.json"))
+        self.channelService = channelService ?? (try? ChannelService(storeURL: root.appending(path: "channels.json")))
+        configuredChannelConnectors = channelConnectors
         mcpConfigStore = MCPConfigurationStore(url: root.appending(path: "mcp-servers.json"))
         let mcpOAuthCoordinator = MCPOAuthPendingCoordinator()
         self.mcpOAuthCoordinator = mcpOAuthCoordinator
@@ -5133,6 +5141,7 @@ final class AppModel: ObservableObject {
                 try await self.authorizeAgentImagePublication(sender: sender, text: text, images: images, call: call, context: context)
             },
             groupFiles: makeGroupFileServices(originID: originID, generation: generation),
+            channelPublisherFactory: makeGroupChannelPublisherFactory(originID: originID, generation: generation),
             authorizeRemotePublication: makeGroupRemoteAuthorizer(originID: originID, generation: generation),
             authorizeGalleryPublication: makeGroupGalleryAuthorizer(originID: originID, generation: generation),
             prepareGalleryImage: makeGroupGalleryImagePreparer(originID: originID, generation: generation),
@@ -5147,6 +5156,65 @@ final class AppModel: ObservableObject {
     }
 
     func groupApprovalScope(_ groupID: UUID) -> UUID { delegatedGroupOrigins[groupID] ?? groupID }
+
+    /// Foreground saved group publishers only. Direct/mailbox/inbound and
+    /// delegated-group runners do not inherit this channel capability.
+    private func makeGroupChannelPublisherFactory(originID: UUID,
+        generation: UInt64) -> AgentMessagingSession.ChannelPublisherFactory? {
+        guard let channelService, let audience = groups.first(where: { $0.id == originID }) else { return nil }
+        let account = settings.accountScope ?? "local"
+        return { [weak self] sender, lifetime in
+            guard let self else { throw CancellationError() }
+            try await self.checkGroupFileScope(senderID: sender.id, audience: audience,
+                generation: generation, originID: originID, dispatchID: nil)
+            return AgentChannelPublicationTransaction(conversationID: originID, senderID: sender.id,
+                agentID: sender.id, accountID: account, channels: channelService, lifetime: lifetime,
+                validateScope: { [weak self] in
+                    guard let self else { throw CancellationError() }
+                    try await self.checkGroupFileScope(senderID: sender.id, audience: audience,
+                        generation: generation, originID: originID, dispatchID: nil)
+                    let currentAccount = await self.settings.accountScope ?? "local"
+                    guard currentAccount == account else { throw CancellationError() }
+                }, authorize: { [weak self] review, call, context in
+                    guard let self else { throw CancellationError() }
+                    try await self.authorizeGroupChannelPublication(review, sender: sender, audience: audience,
+                        call: call, context: context, account: account, generation: generation)
+                })
+        }
+    }
+
+    private func authorizeGroupChannelPublication(_ review: AgentChannelPublicationTransaction.Review,
+        sender: AgentProfile, audience: AgentGroup, call: NormalizedToolCall, context: ToolContext,
+        account: String, generation: UInt64) async throws {
+        try checkGroupFileScope(senderID: sender.id, audience: audience, generation: generation,
+            originID: audience.id, dispatchID: nil)
+        guard context.conversationID == audience.id, review.conversationID == audience.id,
+              review.senderID == sender.id, review.publication.agentID == sender.id,
+              review.publication.ownerAccountID == account, (settings.accountScope ?? "local") == account,
+              review.attachment == nil, review.publication.outbound.attachments.isEmpty else {
+            throw AgentMessagingError.scopeMismatch
+        }
+        let fence = ApprovalFence(accountID: account, agentID: audience.id.uuidString.lowercased(),
+                                  runID: context.runID, generation: generation)
+        await autoReviewBroker.activate(fence)
+        let publication = review.publication
+        let details = l10n("Queue this message to an external channel?")
+            + "\n\(l10n("Connection")): \(publication.displayName)"
+            + "\n\(l10n("Channel")): \(publication.address.platform):\(publication.address.channelID)"
+            + "\n\n" + publication.outbound.text
+            + (review.replyTo.map { "\n\n\(l10n("Local reply only")): \($0.uuidString)" } ?? "")
+            + "\n\n" + l10n("Queued is not delivered. Stop does not recall a queued message.")
+        let action = AutoReviewAction(summary: "\(sender.name) → \(publication.address.platform):\(publication.address.channelID)",
+            target: .resource(kind: "channel", identifier: publication.connectionID.uuidString),
+            risks: [.sensitive, .externalSideEffect],
+            context: .init(fence: fence, conversationID: audience.id, toolCallID: call.id.rawValue,
+                metadata: ["tool": "SendMessage", "agentChannelPublication": "true", "agentMessage": details]))
+        let pending = PendingApproval(action: action, reason: "Approval required", expiresAt: Date().addingTimeInterval(300))
+        // No generic auto-allow rule can substitute for this publication review.
+        try await autoReviewBroker.waitForApprovalToExecute(pending) { [weak self] in await self?.registerAutoReviewApproval($0) }
+        try checkGroupFileScope(senderID: sender.id, audience: audience, generation: generation,
+            originID: audience.id, dispatchID: nil)
+    }
 
     private func makeMailboxRemoteFactory(originID: UUID, generation: UInt64) -> (@Sendable (AgentMessage) -> AgentMailboxRemoteServices?) {
         return { [weak self] incoming in
@@ -7475,6 +7543,11 @@ final class AppModel: ObservableObject {
 
     private func registerChannelConnectors() async {
         guard let channelService else { return }
+        if let configuredChannelConnectors {
+            for connector in configuredChannelConnectors { await channelService.register(connector) }
+            channelDescriptors = await channelService.connectorDescriptors()
+            return
+        }
         let resolver: ChannelSecretResolver = { [credentials] reference in
             try await credentials.value(for: Self.channelCredentialReference(reference))
         }

@@ -79,11 +79,15 @@ public enum ChannelPublicationError: String, LocalizedError, Equatable, Sendable
 /// not recalled; their current status must be read from ChannelService.
 public final class ChannelPublicationLifetime: @unchecked Sendable {
     private let lock = NSLock()
+    private let parent: ChannelPublicationLifetime?
     private var active = true
     private var receipts: [UUID: (ChannelPublication, ChannelDelivery)] = [:]
-    public init() {}
+    /// Child turn closure leaves sibling turns available; request closure fences
+    /// every child commit under the same parent-first lock order.
+    public init(parent: ChannelPublicationLifetime? = nil) { self.parent = parent }
     public func close() { lock.withLock { active = false } }
     public func check() throws {
+        try parent?.check()
         try lock.withLock {
             guard active else { throw CancellationError() }
             try Task.checkCancellation()
@@ -94,9 +98,7 @@ public final class ChannelPublicationLifetime: @unchecked Sendable {
     }
     func commit(_ proposal: ChannelPublication, idempotencyKey: UUID,
                 operation: () throws -> ChannelDelivery) throws -> ChannelDelivery {
-        try lock.withLock {
-            guard active else { throw CancellationError() }
-            try Task.checkCancellation()
+        try whileActive {
             if let receipt = receipts[idempotencyKey] {
                 guard receipt.0 == proposal else { throw ChannelPublicationError.idempotencyConflict }
                 return receipt.1
@@ -104,6 +106,21 @@ public final class ChannelPublicationLifetime: @unchecked Sendable {
             let receipt = try operation()
             receipts[idempotencyKey] = (proposal, receipt)
             return receipt
+        }
+    }
+
+    private func whileActive<T>(_ operation: () throws -> T) throws -> T {
+        if let parent {
+            return try parent.whileActive { try whileLocallyActive(operation) }
+        }
+        return try whileLocallyActive(operation)
+    }
+
+    private func whileLocallyActive<T>(_ operation: () throws -> T) throws -> T {
+        try lock.withLock {
+            guard active else { throw CancellationError() }
+            try Task.checkCancellation()
+            return try operation()
         }
     }
 }

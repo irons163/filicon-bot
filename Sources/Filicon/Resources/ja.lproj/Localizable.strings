@@ -1817,3 +1817,6 @@
 "Drag to pan. Scroll or use + and − to zoom; F or 0 fits the diagram. Escape closes the preview." = "ドラッグで図を移動できます。スクロールまたは + と − で拡大・縮小し、F または 0 でウインドウに合わせます。Escape でプレビューを閉じます。";
 "Not completed" = "未完了";
 "Status from the message; this checkbox cannot be changed." = "メッセージ内の状態です。このチェックボックスは変更できません。";
+"Queue this message to an external channel?" = "このメッセージを外部チャンネルへの送信キューに追加しますか？";
+"Local reply only" = "ローカルメッセージの引用のみ";
+"Queued is not delivered. Stop does not recall a queued message." = "キューへの追加は配信完了ではありません。停止してもキュー内のメッセージは撤回されません。";

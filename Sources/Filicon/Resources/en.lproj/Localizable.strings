@@ -1817,3 +1817,6 @@
 "Drag to pan. Scroll or use + and − to zoom; F or 0 fits the diagram. Escape closes the preview." = "Drag to pan. Scroll or use + and − to zoom; F or 0 fits the diagram. Escape closes the preview.";
 "Not completed" = "Not completed";
 "Status from the message; this checkbox cannot be changed." = "Status from the message; this checkbox cannot be changed.";
+"Queue this message to an external channel?" = "Queue this message to an external channel?";
+"Local reply only" = "Local reply only";
+"Queued is not delivered. Stop does not recall a queued message." = "Queued is not delivered. Stop does not recall a queued message.";

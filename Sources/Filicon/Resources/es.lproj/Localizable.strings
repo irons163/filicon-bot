@@ -1817,3 +1817,6 @@
 "Drag to pan. Scroll or use + and − to zoom; F or 0 fits the diagram. Escape closes the preview." = "Arrastra para desplazar el diagrama. Desplázate o usa + y − para ampliar o reducir; F o 0 ajusta el diagrama a la ventana. Escape cierra la vista previa.";
 "Not completed" = "Sin completar";
 "Status from the message; this checkbox cannot be changed." = "Estado indicado en el mensaje; esta casilla no se puede cambiar.";
+"Queue this message to an external channel?" = "¿Poner este mensaje en la cola de envío a un canal externo?";
+"Local reply only" = "Solo referencia a un mensaje local";
+"Queued is not delivered. Stop does not recall a queued message." = "En cola no significa entregado. Detener no retira un mensaje ya puesto en cola.";

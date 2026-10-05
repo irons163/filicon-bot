@@ -1,12 +1,16 @@
 # 協作能力核對紀錄（更新至 2026-10-05）
 
-## 外部 channel 先補核准 queue foundation（2026-10-05）
+## 外部 SendMessage 接上前景群組文字核准（2026-10-05）
 
 已確認 reference 的 `SendMessage channel:platform:chat` 文字／附件契約、first-image caption、local transcript 與 delivery-failure wake 路徑；recovered source 未找到 `setChannelDelivery` 的 production 呼叫，不能當作原版 live transport 驗收。
 
-本批新增唯讀 host proposal、精確 owner／agent／connection 與 payload 核准邊界、可關閉 lifetime、durable configuration revision 和 scoped queue。submit／retry／restart 重驗身分與配置，credential writer 前先保存撤銷 pending authority，failed save 不寫 credential；no-op／throwing writer 也退休未提交 proposal。idempotency 不可換內容／地址／thread／檔案／authorization，保存失敗及 legacy collision 全部回滾；inbound activity 不誤撤銷，legacy 人工 rows 不取得 agent authority。queued 不等於 delivered，Stop 不召回已入列或開始送出的訊息，不宣稱 exactly-once／cross-process CAS。
+接續 `86d9a3b` 的 scoped queue foundation，新增 host-bound `AgentChannelPublicationTransaction` 與 SendMessage schema／adapter。模型只提供 platform:chat 和 payload，不能指定 account／agent／connection／credential；先解析自身唯一 enabled 連線才可接觸 source。外部送件不回退本地訊息／question／secret／cloud 卡，與本地 publication 共用兩筆額度及 call ID。已落盤的 original queue receipt 防重播，不冒充 delivered、目前 delivery status 或可供 reply_to 的本地 message receipt。
 
-Swift testing／CustomDump 使用隔離 stores、固定商業時間／delivery IDs、受控 dependencies 和完整 state／bytes 比較；14 個新方法／55 cases 及既有回歸，最後 81 tests／7 suites 聚焦通過。有效 baseline／最後完整與 native gates、metadata bounds 及證據見 [完成驗收入口](Parity-completion-audit.md)。**模型 schema／tool adapter、完整核准 UI、canonical transcript、inbound shared runner 與 model failure follow-up 尚未接線**；既有一次純文字 inbound 回覆未改用本 API。只補 host queue foundation，不關閉 AGENT-02、live 帳號／服務／真人／release 或整體 partial。未 push、重啟 App／Xcode 或改真實資料。
+真正前景 saved-group 文字入口已有逐次人類核准；完整目的地／connection name／text／queued-not-delivered notice 顯示在原核准卡，即使關閉或開啟自動審核亦不可略過。session parent lifetime 在 Stop／account transition 前同步關閉，turn child lifetime 避免某成員回合結束便錯誤退休其他成員。成員更改先停止原群組；connection／connector revision 改變拒絕舊核准，既有 durable retry fences 保留。
+
+core attachment capability 必須同時提供 source reader／CAS installer 才能宣告；HTTPS 另需 host opt-in。獨立 source approval 後捕捉 immutable bytes，再核准精確外部 publication；first URL image 與 text caption 依 reference 契約處理，其他 images 明確不送出。image bytes 經真正 decoder 驗證，installed metadata 必須完全符合 captured bytes。**native App 本批只接文字**；附件／HTTPS source transport、direct／mailbox／delegated group／inbound shared runner、canonical external-publication transcript 和 model failure follow-up 仍缺。安裝後 queue 失敗可留下 unreferenced CAS blob，不宣稱跨 stores 原子交易、exactly-once／cross-process CAS 或 Stop 可召回已入列／開始送出的訊息。
+
+測試使用隔離 stores、固定 core 商業時間／IDs、受控 dependencies、真正 AppModel group tool loop，以及完全替代 live transports 的 fake connectors；沒有讀取真實 Keychain 或送件。SwiftUI 技能核對既有完整 payload 卡片，SPM 技能只為兩個 test targets 補明確 Channels dependency。有效 runtime adapter 紅燈、七語離屏畫面、最後完整／native gates 與 foundation 歷史紀錄見 [完成驗收入口](Parity-completion-audit.md)。AGENT-02、其他 48 分類及整體 partial 不上調，live 帳號／服務／真人／最低 macOS／release 驗收仍保留；未 push、啟動或重啟 App／Xcode，未改真實資料。
 
 ## 單獨聊天的無變更 automatic view（2026-10-05）
 

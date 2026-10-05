@@ -1,5 +1,31 @@
 # 完成驗收入口（2026-09-27）
 
+## SendMessage 的前景群組頻道文字核准
+
+2026-10-05 接續 `86d9a3b`，reference 仍為 `a9f633e09d49a85829b8236331b9e21f7e612634`。這批將 host queue API 接上 `AgentChannelPublicationTransaction`、bound SendMessage schema／adapter 及真正 AppModel 的前景 saved-group 文字 publication。下節 foundation 的「schema／UI 未接線」保留為該 commit 的歷史階段，由本節限定取代；不是全 route／附件／canonical transcript 或外部服務完成。
+
+channel 只接受 `type:text + content` 或有 opt-in captured source capability 的 `type:attachment + url/alt`，strictly reject legacy text、widget、secret、cloud-agent、host image IDs、model account／agent／connection IDs 及 mixed fields。address 解析後由服務選 host account／agent 的唯一 enabled Slack／Discord 連線，未擁有／歧義／外帳號／disabled／未註冊拒絕，source approval 不能代替 destination authority。只有 exact conversation／sender 綁定可宣告 capability；native 前景入口只有 text，不廣告或悄悄讀取附件／HTTPS。conditional schema 的非 channel 分支完整保留原 schema；source opt-in 不擴張本地 gallery／attachment 權限，另以 sorted JSON 完整比對回歸。
+
+core 的 source preparation 與 install closures 必須成對提供，HTTPS 另需 host opt-in；本批 fixtures 用 immutable captured bytes，不作真實 download。image 用真正 image decoder 驗證 MIME／bytes，installer 必須回 exact SHA-256／basename／MIME／length。文字 images 只選第一個 URL，文字為 caption，完整 intent 與 ignored occurrences 保留在 review；獨立附件 alt 為 caption。所有 source／publication／queue await 之間重驗 scope，關閉中途操作不觸及 queue；已裝入但 queue 失敗可能留下 unreferenced CAS blob，尚非跨 store 原子交易。
+
+外部和本地 publications 共用兩筆額度及 call ID；同 ID 改 payload／kind 或失敗後自動重播不取得新送件權限。exact cached result 只證明 original durable enqueue，不證明目前 status 或 remote delivered；after-save 不再用 late cancellation 把成功寫成失敗。local `reply_to` 必須解析原 bounded directory，只供 review quotation，從不當 external thread；queue ID 不加入本地 reply directory。底層 persistent revision、credential write retirement、restart／retry validation 與原值 rollback 延用 foundation。
+
+AppModel 逐次等待人類決定，完整 payload、connection display name、platform:chat 和 queued／Stop disclosure 保留在 `agentMessage`，不受 summary 的 2,000-character bound 截斷。自動審核開關不略過這步。session parent lifetime 在 Stop／account transition 的第一次 await 前關閉，child turn 關閉不退休 siblings；成員修改先停止原工作，connector 即使 descriptor 相同重新註冊也使舊 proposal 失效。為 native integration 注入 ChannelService／connectors，production defaults 不變；fixtures 完全取代 REST，普通 delivery observer 也不能碰真實 Keychain／HTTP。
+
+有效 adapter baseline `channel-message-adapter-red-v1.log` exit 1：2 tests／1 suite／7 issues，在新 transaction 已存在但 adapter 尚未接線時重現未宣告 channel、文字／附件被拒、沒有 source／review／queue。這是 adapter runtime red，不冒充尚無 transaction 的 baseline。較早權限審核容量失敗沒有執行測試，原請求經重試獲准；focused-v1 的 nonescaping closure、v2 optional descriptor description、v3 Sendable fixture／API spelling、v4 missing constructor argument、v5 inaccessible private setter 編譯失敗，以及 v6 fixture credential reference 缺少必要 prefix、v7 subpixel width 使用不當 exact equality 的失敗，皆保留日誌，不當產品紅燈。
+
+最後 source `channel-message-focused-final-v9.log` exit 0：59 tests／7 suites（core 29／4、channels 14／1、App 16／2）。core 測試涵蓋 identity／receipt／shared budget／mixed fields／first image／own route／保存失敗／parent-child／approval、source 和 install retirement；App 測試覆蓋真正 tool loop 的 fresh human review、Stop／account／members／connection／connector、unavailable routes／不回退。完整訊息核准與 lifecycle 共 14 cases，自動審核開／關都不能代替人類決定；五種 unavailable cases 不降級成本地 publication。
+
+七語 × 340／620 points × 明暗，共 28 張真正 pending-review 的 unshown NSHostingView PNG，存於 `ChannelMessageCards/`；每張另以英文 payload 的 OCR 首尾 markers／destination 檢查完整內容。主線重新檢視最後 v9 的 14 張，覆蓋全部七語的明暗與兩種寬度：全文、目的地、queued／Stop disclosure、核准／拒絕按鈕沒有截斷或重疊。較早 v8 雖通過，視覺抽查另發現韓文 Channel 既有翻譯尾端冒號與新 label 重複，修正後重新產生 v9 全套；七語 `channel-message-localization-final-v3.log` 各 1,809 keys／0 missing。這不是 full transcript viewport 捲動、真人 button gesture／keyboard focus 或 VoiceOver 驗收，不冒充已測原生點擊；核准／拒絕行為由 App API integration 另驗證。
+
+最後 source 完整串行 `channel-message-full-final-v1.log` exit 0：135 XCTest＋2,030 Swift Testing／240 suites，按 17 targets 的單數及複數摘要彙總，沒有失敗（核心 997／109、App 730／93、channels 43／3）。兩項 opt-in live Codex tests 略過，不當真實模型或外部服務驗收；既有 CoreData／colorspace 診斷仍出現，相關 tests 通過，不宣稱由本批修好。最後 authored diff whitespace check 通過。
+
+`channel-message-native-final-v1.log` BUILD SUCCEEDED；`channel-message-native-verify-final-v1.log` 與 `channel-message-package-final-v1.log` 均 exit 0，驗證 offline KaTeX／Mermaid resources、四個 executables、app／XPC entitlements 與 deep strict 簽章。原生建置只按既有 `--xcode-debug` 規則允許 debugger exception；standalone 為 Debug／ad-hoc `.build/validation/ChannelMessagePackage/Filicon.app`，不是 release／公證。首次 native 請求因權限審查服務容量不足未執行；重試同一審核請求後獲准，沒有繞過 sandbox。未執行 script 列印的 launch smoke；日誌、PNG 與隔離產物只留在忽略的 `.build/validation/`。
+
+Swift 測試／CustomDump 技能用於精確 identity 與完整快照，SwiftUI 技能檢查真實核准卡及七語布局，SPM 技能只補測試 target 的 explicit dependency，文件技能保留來源、有效紅燈與未接線邊界。
+
+**仍未接線**：App channel 附件／HTTPS source services、direct／mailbox／delegated group／inbound shared runner、canonical external-publication message 與 delivery failure 的 model follow-up。原有一次 inbound 純文字回覆未改；tool activity 加 durable queue 不冒充原版本地 transcript 契約。live Slack／Discord／OAuth、真人 VoiceOver／最低 macOS、release／公證、exactly-once／cross-process CAS 亦未驗收。AGENT-02／整體仍 partial，48 分類不縮減；未 push、啟動或重啟使用者 App／Xcode、改真實帳號／群組／聊天。
+
 ## 外部頻道的核准送件佇列基礎
 
 2026-10-05 接續 `703df89`，核對 reference `a9f633e09d49a85829b8236331b9e21f7e612634` 的 `source/host/runner/tools/send-message-schema.ts`、`source/shared/channel-messaging.ts` 及 `source/host/extensions/transcript/{turn-runtime,background-wakes,transcript-manager}.ts`。原版 `SendMessage` 有 optional `channel: platform:chat`，限文字／附件；文字帶圖片時 outbound helper 取第一張並以文字為 caption，standalone attachment 使用 URL／alt。turn runtime 呼叫頻道 delivery，也保存本地 transcript；失敗另建提醒及 hidden failure wake。recovered source 只有 `setChannelDelivery` 宣告，未找到 production 呼叫，預設 delivery 丟出未註冊錯誤；這是工具／路由契約，不是原版 live 平台可用的證明。
