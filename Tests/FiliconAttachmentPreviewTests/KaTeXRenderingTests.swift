@@ -146,6 +146,11 @@ import FiliconRichContent
         coordinator.measurementCompleted(800, revision: 2)
         coordinator.measurementCompleted(800, revision: 3)
         expectNoDifference(heights, [48, 28])
+        // Even a mistakenly revived completion cannot retain the old host's
+        // height callback after the native view has been dismantled.
+        coordinator.finished = true
+        coordinator.measurementCompleted(800, revision: 3)
+        expectNoDifference(heights, [48, 28])
     }
 
     @Test func veryTallFormulaScrollsInsideTheBoundedViewport() async throws {

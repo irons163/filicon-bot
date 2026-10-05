@@ -1,5 +1,29 @@
 # 完成驗收入口（2026-09-27）
 
+## 段落與表格的行內公式
+
+2026-10-05 再核對 reference `a9f633e09d49a85829b8236331b9e21f7e612634` 的 `transcript.tsx` 與 `math.tsx`：inline formula 是 paragraph／heading／list／quote／table cell 的子節點，不是獨立 transcript block；single-dollar math 不啟用。有效 baseline `inline-math-baseline-red.log` exit 1 重現原生將兩個 inline formula 拆成五個垂直 block，連帶破壞外層 Markdown。native 現只把 display formula 拆出，inline 保留完整段落；比 recovered 簡單 delimiter pattern 更廣的 TeX 指令支援不當作原 opaque asset 的等價證明。
+
+`MarkdownInlineMath` 使用原文中不存在的 deterministic token，在 Foundation 解析整個 Markdown 前保護 TeX。`RichMarkdownInlineMath.swift` 從已解析的文字 attributes 產生 escaped host HTML，插入經驗證的 static KaTeX HTML／MathML；保留標題階層、粗斜體／code／刪除線、清單／quote prefix、唯讀 task 狀態及 host 明確解析的 message reference。公式表格使用同一個靜態 renderer；沒有公式的表格保留 native Grid。使用者原訊息不修改，數學或一般訊息文字不因 UI 語言翻譯。
+
+escaped marker、inline code、Markdown destination、reference-definition 地址與 autolink／HTML tag attributes 不變成公式；TeX 不進 Markdown link／escape parser，也不觸發 metadata requests。inline preparation 受 262,144 bytes／128 formulas 限制，表格另有 2,048 cells／合計 262,144 source bytes，generated HTML 不超過 2 MiB。preparation 拒絕時保留整個 exact literal source；HTML 超量時走 native fallback，在 protected Markdown 解析後才恢復原 formula contents，不漏出 token 或重新啟用 TeX 內的連結。
+
+nonpersistent WebKit 的 page JavaScript 與外部連線仍禁止，只有 verified offline fonts。所有 WebKit navigation／download 取消；只有 user activation 的 exact host-generated link 才交給原 host，HTTP(S) policy 或 deleted message target 在 host 再驗。table 沒有 message navigation 權限。舊 source／superseded width-query 的量測不回寫，新寬度會重新換行；dismantle 撤銷 links、height callback、resize、navigation 與 document references，不留舊 host authority。
+
+追加的 `inline-math-reference-newline-red.log` exit 1 在 LF 通過、CRLF／CR 兩個 cases 漏掉 reference definition 下一行的公式；已改用 Character newline 判斷，三種換行均通過。相同 source 的 isolated scanner 計時另發現未閉合 `<` 的重複 suffix search：2,000／8,000 chars 原為約 0.032／0.482 秒。記住該 suffix 不存在 closer 後，相同 cases 為約 0.001／0.004 秒，200,000 chars 為約 0.113 秒；large inline／display／no-formula fixture 均保留正確結果。
+
+`inline-math-marker-scan-baseline.log` 亦重現不同長度 code markers 與 formula token 名稱碰撞時的重複掃描。code runs 現一次建索引、以二分搜尋選最近且完整同長的 closer；salt 現一次盤點 canonical marker prefixes，不逐個 salt 重掃原文。相同 120／240 runs 的約 0.040／0.480 秒降至 0.0008／0.0019 秒；4,000 個碰撞名稱的約 6.005 秒降至 0.059 秒。新增 600 runs／8,000 名稱分別約 0.011／0.111 秒，均保留一個正確公式；escaped code boundaries、最近 closer、前導零／Unicode／overflow salts 與 TeX 內的碰撞另有功能回歸。計時見 `inline-math-marker-scan-after.log`，這些只是本機小型計時與回歸，不是跨平台 wall-clock deadline 或全面效能保證。
+
+`inline-math-generated-token-red.log` exit 1：實際 KaTeX macro 可生成下一個 formula 的 token-looking text，舊替換順序重新掃描 generated HTML，破壞第一個公式（1 method／4 issues，prose／table 均重現）。現只定位 protected original run 的 tokens，不再掃描 engine output；新回歸檢查原公式 HTML 完整保留、恰有兩個 inline formula，兩個呈現路徑均通過。
+
+`inline-math-focused-final-v8.log` exit 0：112 tests／12 suites（rich content 66／8、App 46／4）。涵蓋 rejected input、各層 source／formula／cell／HTML bounds、unsafe HTML／TeX URL／images、macro-generated marker collision、cross-mode delimiter、安全 fallback、原 host link／deleted target／download／dismantle、兩條真正 transcript route 的同一行 geometry、實際 fixture-window 460→290 縮窄與不裁切 auto-height。之前 table header 被誤當 baseline、過量內容誤設為必須拒絕、只縮 content view 被 AppKit 恢復原寬，以及缺少 test import 的編譯失敗均修正測試 oracle／設定；未以這些失敗當產品 baseline，也未手動觸發 production measurement 來取得綠燈。
+
+七語 × direct／group × 明暗，各保存 prose、table、窄幅 prose 三張 WebKit crop，共 84 張 `InlineMathReviewFinal/inline-*.png`。主線重新人工檢視最後 source 的 18 張，覆蓋七語明暗、兩條 route、表格與縮窄排版；不是全 transcript screenshot、真人 link gesture／keyboard focus 或 VoiceOver 驗收。七語各 1,805 keys／0 missing；pinned local archive 的 resource Ruby tests 為 6 tests／127 assertions／0 skips，resource-signing 為 7／84，皆通過。`inline-math-native-final-v5.log` BUILD SUCCEEDED；`inline-math-native-verify-final-v5.log` 檢查 engine／fonts、四個 executables、app／XPC entitlements 與 deep strict 簽章通過。
+
+最後 source 完整串行 `inline-math-full-final-v5.log` exit 0：135 XCTest＋1,953 Swift Testing／230 suites（核心 982／108、App 708／89），按全部 17 個 target 的單數及複數 summary 彙總。兩項 opt-in live Codex tests 略過，不當作真實模型或外部服務驗收；既有 CoreData NSXPC 診斷仍出現，相關 tests 通過，不宣稱已修好。`inline-math-package-final-v5.log` 的 standalone Debug／ad-hoc 封裝亦通過 engine／fonts、四個 executables、app／XPC entitlements 與 deep strict 簽章，隔離產物為 `.build/validation/InlineMathPackage/Filicon.app`，不是 release／公證。沒有執行列印的 launch smoke；日誌、PNG 及隔離封裝只留在忽略的 `.build/validation/`。
+
+本批以 SwiftUI／SPM 技能分離 static presentation 與原 host actions，測試技能使用固定商業 IDs／日期、隔離 store 與 CustomDump value diff，文件技能保留來源、實際證據與剩餘邊界。未 push、啟動或重啟使用者 App／Xcode、改真實帳號／群組／聊天。此節取代歷史 prose baseline／table inline math 缺口，不關閉 opaque asset bytes、精確 typography／diagram geometry、完整 strict Mermaid、真人／最低 macOS／外部／release 等驗收；`UI-04` 及整體仍 partial，48 項範圍不縮減。
+
 ## 離線 KaTeX 公式排版
 
 2026-10-05 核對 reference `a9f633e09d49a85829b8236331b9e21f7e612634` 的 `math.tsx` 與 root lockfile：它使用 KaTeX `renderToString`、inline／display mode、tolerant parse-error retry 和 escaped fallback，公開依賴固定為 0.16.45。recovered `katex-DHMw6HUq.js` opaque asset 在此 checkout 不存在；本批從相同版本公開套件匯入，不宣稱原 shipped bytes 等價或所有外掛 extension 已對齊。原生先前只有手寫 TeX 小子集，四種矩陣／aligned／math alphabets／annotated root fixture 的有效 baseline 紅燈見 `katex-engine-red-permitted.log` exit 1。
@@ -14,9 +38,9 @@
 
 七語 × 明暗 14 張公式 PNG，另有兩張 actual-route WebKit crop，存於 `KaTeXReview/`；人工檢視覆蓋全部七語明暗和兩條 route。數學內容保持原文，不因 UI 語言翻譯。這些是未顯示 NSHostingView／WebKit 的 fixture 與實際 route bounds 檢查，不是 full transcript screenshot、真人 keyboard／focus 或 VoiceOver 驗收。`katex-resources-final.log` 為已提供 pinned local archive 的 6 個 Ruby tests／127 assertions／0 skips，所有 bytes-preserving 再匯入、missing／tamper／symlink／preflight 拒絕通過；另有既有 resource-signing 7 tests／84 assertions 通過。
 
-最後 source `katex-full-final.log` 的完整 `swift test --no-parallel` exit 0：135 XCTest＋1,919 Swift Testing／227 suites（核心 982／108、App 697／88）。總數由所有 target 的最終 summary 加總；兩項 opt-in live Codex tests 略過，不作外部服務證據。既有 CoreData NSXPC 診斷仍出現，相關 tests 通過，不宣稱已修好。七語各 1,805 keys／0 missing 與 `git diff --check` 通過。`katex-native-final.log` BUILD SUCCEEDED，`katex-native-package-final.log` 與 `katex-package-final.log` 都通過引擎／字型完整性、四個 executables、app／XPC entitlements 和 deep strict 簽章；standalone 隔離產物是 `.build/validation/KaTeXPackage/Filicon.app`，不是 release／公證。未執行列印的 launch smoke。
+最後 source `katex-full-final.log` 的完整 `swift test --no-parallel` exit 0：135 XCTest＋1,930 Swift Testing／228 suites（核心 982／108、App 697／88）。本次重新彙總已納入原先漏算的單數 `suite` 摘要（11 tests／1 suite），不重寫日誌或當作新增測試。兩項 opt-in live Codex tests 略過，不作外部服務證據。既有 CoreData NSXPC 診斷仍出現，相關 tests 通過，不宣稱已修好。七語各 1,805 keys／0 missing 與 `git diff --check` 通過。`katex-native-final.log` BUILD SUCCEEDED，`katex-native-package-final.log` 與 `katex-package-final.log` 都通過引擎／字型完整性、四個 executables、app／XPC entitlements 和 deep strict 簽章；standalone 隔離產物是 `.build/validation/KaTeXPackage/Filicon.app`，不是 release／公證。未執行列印的 launch smoke。
 
-本批以 SwiftUI、SPM／Xcode 與測試技能分離靜態 renderer、使用完整 value diff 與固定商業 IDs／日期，文件技能保留來源／驗證／剩餘差異。未 push、啟動或重啟使用者 App／Xcode、改真實帳號／群組／聊天；日誌、圖片和封裝只在忽略的 `.build/validation/`。本節取代歷史「只有手寫 math 小子集」，不關閉 prose baseline／table inline math、完整 strict Mermaid／精確幾何、真人／最低 macOS／external／release 或其餘分類；`UI-04` 及整體仍 partial，48 項範圍不縮減。
+本批以 SwiftUI、SPM／Xcode 與測試技能分離靜態 renderer、使用完整 value diff 與固定商業 IDs／日期，文件技能保留來源／驗證／剩餘差異。未 push、啟動或重啟使用者 App／Xcode、改真實帳號／群組／聊天；日誌、圖片和封裝只在忽略的 `.build/validation/`。本節保留引擎批次的歷史驗收；後續 prose baseline／table inline math 已接線（見最上節），完整 strict Mermaid／精確幾何、真人／最低 macOS／external／release 或其餘分類仍保留。`UI-04` 及整體仍 partial，48 項範圍不縮減。
 
 ## 有界 Mermaid 圖表的原生放大檢視（2026-10-05）
 
@@ -354,7 +378,7 @@ reference `a9f633e09d49a85829b8236331b9e21f7e612634` 的來源界線：
 
 ## Matrix 不是完成證明
 
-`PARITY.md` 有 48 個 ID；2026-10-05 因確認 `UI-04` 尚缺 reference 的完整 math／diagram runtime 與 viewer，將該歷史 complete 修正為 partial。其後三種有界 diagram viewer 已接線（見本文件最上節），但完整 runtime／語法／精確幾何／table inline math 與必要 runtime 驗收仍保留。矩陣現為 42 個歷史 complete、5 個 partial（UI-04、AGENT-01／02／04、AUTO-03）、1 個 NA（UPD-04）。complete 必須逐項連到當前可達流程、對應測試及必要 runtime 驗收；「final gates passed」本身不能證明全功能對等。近期完整 Swift 測試／原生 build／package verifier 是回歸與封裝證據，不替代外部帳號、權限 UI 或 release 驗收；更早日期段落的 43／4／1 是當時紀錄。
+`PARITY.md` 有 48 個 ID；2026-10-05 因確認 `UI-04` 尚缺 reference 的完整 math／diagram runtime 與 viewer，將該歷史 complete 修正為 partial。其後三種有界 diagram viewer、公開 pinned KaTeX、prose／table inline math 已接線（見本文件最上方各節），但 opaque asset bytes、完整 strict Mermaid runtime／語法／精確幾何及必要 runtime 驗收仍保留。矩陣現為 42 個歷史 complete、5 個 partial（UI-04、AGENT-01／02／04、AUTO-03）、1 個 NA（UPD-04）。complete 必須逐項連到當前可達流程、對應測試及必要 runtime 驗收；「final gates passed」本身不能證明全功能對等。近期完整 Swift 測試／原生 build／package verifier 是回歸與封裝證據，不替代外部帳號、權限 UI 或 release 驗收；更早日期段落的 43／4／1 是當時紀錄。
 
 以下保留全部驗收範圍：UI-01…04、CONV-01…04、ATT-01…04、PROV-01…04、MCP-01…04、AGENT-01…04、AUTO-01…04、COMP-01…04、ACCT-01…04、NOTIF-01…04、PERS-01…04、UPD-01…04。尚未逐項重驗者標記為未重驗，不推論缺失，也不視為已完成。
 

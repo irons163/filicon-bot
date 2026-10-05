@@ -33,7 +33,10 @@ struct RichMarkdownProjection: Sendable, Equatable {
         var seen = Set<String>()
         var result: [URL] = []
         for block in blocks {
-            guard case .prose(let source) = block,
+            guard case .prose(let original) = block else { continue }
+            // Inline TeX is now part of prose. Never let a URL inside it turn
+            // into a metadata request or a Markdown reference.
+            guard let source = MarkdownInlineMath.metadataSource(original),
                   let attributed = try? AttributedString(markdown: source, options: .init(interpretedSyntax: .full)) else { continue }
             for run in attributed.runs {
                 guard let url = run.link, ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
@@ -154,6 +157,7 @@ enum RichMarkdownProseLayout {
         let separator: String
         let prefix: String
         let isTaskChecked: Bool?
+        let headerLevel: Int?
         var content: AttributedString
     }
 
@@ -202,7 +206,7 @@ enum RichMarkdownProseLayout {
                 piece.font = level == 1 ? .title2.bold() : level == 2 ? .title3.bold() : .headline
             }
             // Keep status and synthetic markers separate from the author's attributes.
-            result.append(.init(separator: separator, prefix: prefix, isTaskChecked: task, content: piece))
+            result.append(.init(separator: separator, prefix: prefix, isTaskChecked: task, headerLevel: context.headerLevel, content: piece))
             previous = context
         }
         return result
@@ -259,7 +263,13 @@ enum RichMarkdownProseLayout {
 /// No transcript navigation capability is inherited by a table cell.
 enum RichMarkdownTableCellLayout {
     static func make(_ source: String) -> AttributedString {
-        guard var value = try? AttributedString(markdown: source,
+        let protected: MarkdownInlineMath?
+        switch MarkdownInlineMath.prepare(source) {
+        case .plain: protected = nil
+        case .protected(let value): protected = value
+        case .rejected: return AttributedString(source)
+        }
+        guard var value = try? AttributedString(markdown: protected?.markdown ?? source,
             options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)) else { return AttributedString(source) }
         let blocked = value.runs.compactMap { run -> Range<AttributedString.Index>? in
             guard let url = run.link else { return nil }
@@ -268,7 +278,7 @@ enum RichMarkdownTableCellLayout {
             return nil
         }
         for range in blocked { value[range].link = nil }
-        return value
+        return RichMarkdownInlineContent.literal(value, formulas: protected?.formulas ?? [])
     }
 }
 
@@ -345,7 +355,9 @@ struct RichMarkdownView: View {
         switch block {
         case .prose(let prose):
             Group {
-                if let paragraphs = attributedProseParagraphs(prose) {
+                if let content = inlineMathContent(prose) {
+                    RichMarkdownInlineMathView(content: content, openLink: open)
+                } else if let paragraphs = attributedProseParagraphs(prose) {
                     if paragraphs.contains(where: { $0.isTaskChecked != nil }) {
                         RichMarkdownTaskListView(paragraphs: paragraphs)
                     } else {
@@ -370,10 +382,25 @@ struct RichMarkdownView: View {
         attributedProseParagraphs(prose).map(RichMarkdownProseLayout.join)
     }
 
+    func inlineMathContent(_ prose: String) -> RichMarkdownInlineContent? {
+        guard let protected = MarkdownInlineMath.protect(prose),
+              var paragraphs = RichMarkdownProseLayout.paragraphs(protected.markdown) else { return nil }
+        for index in paragraphs.indices { paragraphs[index].content = attributedReferences(paragraphs[index].content) }
+        return RichMarkdownInlineContent.prose(paragraphs: paragraphs, formulas: protected.formulas)
+    }
+
     private func attributedProseParagraphs(_ prose: String) -> [RichMarkdownProseLayout.Paragraph]? {
-        guard var paragraphs = RichMarkdownProseLayout.paragraphs(prose) else { return nil }
+        let protected: MarkdownInlineMath?
+        switch MarkdownInlineMath.prepare(prose) {
+        case .plain: protected = nil
+        case .protected(let value): protected = value
+        case .rejected:
+            return [.init(separator: "", prefix: "", isTaskChecked: nil, headerLevel: nil, content: AttributedString(prose))]
+        }
+        guard var paragraphs = RichMarkdownProseLayout.paragraphs(protected?.markdown ?? prose) else { return nil }
         for index in paragraphs.indices {
-            paragraphs[index].content = attributedReferences(paragraphs[index].content)
+            paragraphs[index].content = RichMarkdownInlineContent.literal(
+                attributedReferences(paragraphs[index].content), formulas: protected?.formulas ?? [])
         }
         return paragraphs
     }
@@ -494,6 +521,18 @@ struct RichMarkdownTableView: View {
     let openLink: @MainActor (URL) -> Bool
     var body: some View {
         let _ = uiLocale.identifier
+        Group {
+            if let content = RichMarkdownInlineContent.table(table) {
+                RichMarkdownInlineMathView(content: content, openLink: open)
+            } else { nativeTable }
+        }
+        .background(.quaternary, in: RoundedRectangle(cornerRadius: 7))
+        .environment(\.openURL, OpenURLAction { open($0) ? .handled : .discarded })
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(l10n("Table with \(table.headers.count) columns and \(table.rows.count) rows"))
+    }
+
+    private var nativeTable: some View {
         ScrollView(.horizontal) {
             Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 7) {
                 GridRow {
@@ -512,10 +551,6 @@ struct RichMarkdownTableView: View {
             }
             .padding(9)
         }
-        .background(.quaternary, in: RoundedRectangle(cornerRadius: 7))
-        .environment(\.openURL, OpenURLAction { open($0) ? .handled : .discarded })
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel(l10n("Table with \(table.headers.count) columns and \(table.rows.count) rows"))
     }
 
     func open(_ url: URL) -> Bool {
@@ -593,12 +628,27 @@ enum OfflineMathWebPolicy {
 }
 
 struct OfflineMathWebView: NSViewRepresentable {
-    let markup: KaTeXMarkup
-    let display: Bool
-    let dark: Bool
+    private let document: String
+    private let allowedLinks: Set<URL>
+    private let openLink: @MainActor (URL) -> Bool
     let measured: @MainActor (Double) -> Void
 
-    func makeCoordinator() -> Coordinator { Coordinator(measured: measured) }
+    init(markup: KaTeXMarkup, display: Bool, dark: Bool, measured: @escaping @MainActor (Double) -> Void) {
+        document = OfflineMathWebPolicy.document(markup: markup, display: display, dark: dark)
+        allowedLinks = []; openLink = { _ in false }; self.measured = measured
+    }
+
+    init(content: RichMarkdownInlineContent, dark: Bool, openLink: @escaping @MainActor (URL) -> Bool,
+         measured: @escaping @MainActor (Double) -> Void) {
+        document = OfflineMathWebPolicy.document(content: content, dark: dark)
+        allowedLinks = content.allowedLinks; self.openLink = openLink; self.measured = measured
+    }
+
+    func makeCoordinator() -> Coordinator {
+        let coordinator = Coordinator(measured: measured)
+        coordinator.allowedLinks = allowedLinks; coordinator.openLink = openLink
+        return coordinator
+    }
 
     func makeNSView(context: Context) -> OfflineMathWebKitView {
         let configuration = WKWebViewConfiguration()
@@ -622,13 +672,12 @@ struct OfflineMathWebView: NSViewRepresentable {
 
     func updateNSView(_ webView: OfflineMathWebKitView, context: Context) {
         context.coordinator.measured = measured
-        let document = OfflineMathWebPolicy.document(markup: markup, display: display, dark: dark)
+        context.coordinator.allowedLinks = allowedLinks; context.coordinator.openLink = openLink
         guard context.coordinator.loadedDocument != document else { return }
         load(webView, coordinator: context.coordinator)
     }
 
     private func load(_ webView: WKWebView, coordinator: Coordinator) {
-        let document = OfflineMathWebPolicy.document(markup: markup, display: display, dark: dark)
         coordinator.revision += 1
         coordinator.loadedDocument = document
         coordinator.finished = false
@@ -640,6 +689,9 @@ struct OfflineMathWebView: NSViewRepresentable {
         coordinator.finished = false
         coordinator.navigation = nil
         coordinator.loadedDocument = nil
+        coordinator.allowedLinks = []
+        coordinator.openLink = { _ in false }
+        coordinator.measured = { _ in }
         webView.resized = nil
         webView.navigationDelegate = nil
         webView.stopLoading()
@@ -649,7 +701,10 @@ struct OfflineMathWebView: NSViewRepresentable {
         var loadedDocument: String?
         var navigation: WKNavigation?
         var revision: UInt64 = 0
+        private var measurementRevision: UInt64 = 0
         var finished = false
+        var allowedLinks: Set<URL> = []
+        var openLink: @MainActor (URL) -> Bool = { _ in false }
         var measured: @MainActor (Double) -> Void
 
         init(measured: @escaping @MainActor (Double) -> Void) { self.measured = measured }
@@ -657,9 +712,13 @@ struct OfflineMathWebView: NSViewRepresentable {
         func measure(_ webView: WKWebView) {
             guard finished, webView.bounds.width > 0 else { return }
             let expectedRevision = revision
-            webView.callAsyncJavaScript(OfflineMathWebPolicy.measurementJavaScript, arguments: [:], in: nil, in: .defaultClient) { [weak self] result in
-                guard case .success(let value) = result, let raw = value as? Double else { return }
-                self?.measurementCompleted(raw, revision: expectedRevision)
+            measurementRevision += 1
+            let ticket = measurementRevision, width = webView.bounds.width
+            webView.callAsyncJavaScript(OfflineMathWebPolicy.measurementJavaScript, arguments: [:], in: nil, in: .defaultClient) { [weak self, weak webView] result in
+                guard let self, let webView, self.measurementRevision == ticket,
+                      abs(webView.bounds.width - width) < 0.5,
+                      case .success(let value) = result, let raw = value as? Double else { return }
+                self.measurementCompleted(raw, revision: expectedRevision)
             }
         }
 
@@ -675,7 +734,19 @@ struct OfflineMathWebView: NSViewRepresentable {
         }
 
         func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void) {
-            decisionHandler(OfflineMathWebPolicy.allowsNavigation(to: navigationAction.request.url) && navigationAction.shouldPerformDownload == false ? .allow : .cancel)
+            if navigationAction.navigationType == .linkActivated {
+                decisionHandler(.cancel)
+                _ = linkActivated(navigationAction.request.url, download: navigationAction.shouldPerformDownload)
+            } else {
+                decisionHandler(OfflineMathWebPolicy.allowsNavigation(to: navigationAction.request.url) && navigationAction.shouldPerformDownload == false ? .allow : .cancel)
+            }
+        }
+
+        /// Only an actual user link activation can invoke the original host's
+        /// opener/resolver. WebKit never follows it; late/deleted targets recheck there.
+        func linkActivated(_ url: URL?, download: Bool = false) -> Bool {
+            guard finished, !download, let url, allowedLinks.contains(url) else { return false }
+            return openLink(url)
         }
 
         func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse, decisionHandler: @escaping @MainActor (WKNavigationResponsePolicy) -> Void) {

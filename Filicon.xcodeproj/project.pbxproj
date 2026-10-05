@@ -81,6 +81,7 @@
 		B4DC5B0D487F2E262DE0184E524B9B2E /* AgentWorkflowApprovalDetails.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5F2B8935D1846BA29CA5800CCCF1CD6 /* AgentWorkflowApprovalDetails.swift */; };
 		B709BA12C5A437C9E91753E0B1F8C0C7 /* FiliconSharedRooms in Frameworks */ = {isa = PBXBuildFile; productRef = 12F918B2C98B87D6B36C5F71BE50327F /* FiliconSharedRooms */; };
 		C093B82DCCB0316E3483F6679D1E81A4 /* RichMarkdownView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5CC425B7CB00DB21587EFB65FB16E3BD /* RichMarkdownView.swift */; };
+		A81000000000000000000001 /* RichMarkdownInlineMath.swift in Sources */ = {isa = PBXBuildFile; fileRef = A81000000000000000000002 /* RichMarkdownInlineMath.swift */; };
 		76F1ACFA65388287D965D2C4 /* MermaidDiagramViewer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C17A2B86AF34978B3150091 /* MermaidDiagramViewer.swift */; };
 		C1FB42A59247D47CAACFEBB0A7FE851B /* AgentMemorySuggestionsSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA9A27EED6559AA419EEF567223DE283 /* AgentMemorySuggestionsSection.swift */; };
 		C434904C9B602EF316496444E5BC285D /* AttachmentSpreadsheetPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E170DAC06297FBA3A51398E2D5D1C5A /* AttachmentSpreadsheetPreview.swift */; };
@@ -200,6 +201,7 @@
 		5B951307703493779740B74B72D5847C /* LocalToolService-Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = "LocalToolService-Info.plist"; sourceTree = "<group>"; };
 		5C2301F9333816B2F822CAAD95E1B499 /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		5CC425B7CB00DB21587EFB65FB16E3BD /* RichMarkdownView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RichMarkdownView.swift; sourceTree = "<group>"; };
+		A81000000000000000000002 /* RichMarkdownInlineMath.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RichMarkdownInlineMath.swift; sourceTree = "<group>"; };
 		6C17A2B86AF34978B3150091 /* MermaidDiagramViewer.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MermaidDiagramViewer.swift; sourceTree = "<group>"; };
 		5E84C5D550A455B3B5FFA704B33C6E3E /* FiliconLocalToolHelper */ = {isa = PBXFileReference; includeInIndex = 0; path = FiliconLocalToolHelper; sourceTree = BUILT_PRODUCTS_DIR; };
 		623AFFE542F2BD818EFACA38B93EAE27 /* Filicon.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Filicon.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -428,6 +430,7 @@
 				1E9834D8313A46C27D9C170C76DB6706 /* ProviderUsageAppIntegration.swift */,
 				156B5944789EA282A9314B3940E10B5D /* RemoteComputerControlsView.swift */,
 				5CC425B7CB00DB21587EFB65FB16E3BD /* RichMarkdownView.swift */,
+				A81000000000000000000002 /* RichMarkdownInlineMath.swift */,
 				6C17A2B86AF34978B3150091 /* MermaidDiagramViewer.swift */,
 				A70200000000000000000002 /* RoutineGroupSessionView.swift */,
 				A70300000000000000000002 /* RoutineDirectSessionView.swift */,
@@ -763,6 +766,7 @@
 				8080EEFA7E3C149D572D178803E1C46B /* ProviderUsageAppIntegration.swift in Sources */,
 				F64DB99CE2BAD97861B9705022E92F30 /* RemoteComputerControlsView.swift in Sources */,
 				C093B82DCCB0316E3483F6679D1E81A4 /* RichMarkdownView.swift in Sources */,
+				A81000000000000000000001 /* RichMarkdownInlineMath.swift in Sources */,
 				76F1ACFA65388287D965D2C4 /* MermaidDiagramViewer.swift in Sources */,
 				A70200000000000000000001 /* RoutineGroupSessionView.swift in Sources */,
 				A70300000000000000000001 /* RoutineDirectSessionView.swift in Sources */,

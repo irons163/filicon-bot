@@ -138,33 +138,15 @@ public struct RichMarkdownParser: Sendable {
     }
 
     private func parseMath(in prose: String) -> [RichMarkdownBlock] {
-        // Deliberately only accepts explicit LaTeX delimiters. A single '$' is prose.
-        var blocks: [RichMarkdownBlock] = [], cursor = prose.startIndex, proseStart = cursor
-        func emitProse(_ end: String.Index) { if proseStart < end { blocks.append(.prose(String(prose[proseStart..<end]))) } }
-        while cursor < prose.endIndex {
-            let rest = prose[cursor...]
-            let opener: String, closer: String, mode: MathMode
-            if rest.hasPrefix("\\(") && !isEscaped(cursor, in: prose) { opener = "\\("; closer = "\\)"; mode = .inline }
-            else if rest.hasPrefix("\\[") && !isEscaped(cursor, in: prose) { opener = "\\["; closer = "\\]"; mode = .display }
-            else { cursor = prose.index(after: cursor); continue }
-            let contentStart = prose.index(cursor, offsetBy: opener.count)
-            guard let close = prose.range(of: closer, range: contentStart..<prose.endIndex) else { cursor = contentStart; continue }
-            emitProse(cursor)
-            blocks.append(.math(source: String(prose[contentStart..<close.lowerBound]), mode: mode))
-            cursor = close.upperBound; proseStart = cursor
+        // Inline math must stay inside its paragraph, list item or heading.
+        // Extract only display equations, never formula-looking inline code/URLs.
+        var blocks: [RichMarkdownBlock] = [], cursor = prose.startIndex
+        for span in MarkdownMathScanner.spans(in: prose, mode: .display) {
+            if cursor < span.range.lowerBound { blocks.append(.prose(String(prose[cursor..<span.range.lowerBound]))) }
+            blocks.append(.math(source: span.source, mode: .display))
+            cursor = span.range.upperBound
         }
-        emitProse(prose.endIndex)
+        if cursor < prose.endIndex { blocks.append(.prose(String(prose[cursor...]))) }
         return blocks
-    }
-
-    private func isEscaped(_ index: String.Index, in value: String) -> Bool {
-        var cursor = index
-        var count = 0
-        while cursor > value.startIndex {
-            let previous = value.index(before: cursor)
-            guard value[previous] == "\\" else { break }
-            count += 1; cursor = previous
-        }
-        return count.isMultiple(of: 2) == false
     }
 }

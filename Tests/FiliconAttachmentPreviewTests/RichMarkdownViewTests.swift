@@ -11,6 +11,11 @@ import FiliconRichContent
 
 @Suite("Rich Markdown view projection")
 struct RichMarkdownViewTests {
+    @Test func inlineParagraphProjectionKeepsSurroundingMarkdownInOneBlock() {
+        let source = #"Read **before \(x_1\) after**, then \(y\)."#
+        expectNoDifference(RichMarkdownProjection.make(source: source).blocks, [.prose(source)])
+    }
+
     @Test(.serialized, .timeLimit(.minutes(1)), arguments: ["direct", "group"], ["flowchart", "sequence", "state", "fallback"])
     @MainActor func diagramExpansionIsReachableInBothActualTranscriptRoutes(route: String, kind: String) async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-mermaid-route-\(UUID())")
@@ -446,7 +451,7 @@ struct RichMarkdownViewTests {
         | A | B |
         | --- | --- |
         | 1 | 2 |
-        \\(x_1\\)
+        \\[x_1\\]
         ```mermaid
         flowchart LR
         A[Start] --> B[Done]
@@ -456,12 +461,12 @@ struct RichMarkdownViewTests {
         #expect(projection.blocks.contains { if case .prose = $0 { true } else { false } })
         #expect(projection.blocks.contains { if case .code(language: "swift", source: "let value = 1", isTerminated: true) = $0 { true } else { false } })
         #expect(projection.blocks.contains { if case .table(let value) = $0 { value.headers == ["A", "B"] } else { false } })
-        #expect(projection.blocks.contains { if case .math(source: "x_1", mode: .inline, presentation: .rendered) = $0 { true } else { false } })
+        #expect(projection.blocks.contains { if case .math(source: "x_1", mode: .display, presentation: .rendered) = $0 { true } else { false } })
         #expect(projection.blocks.contains { if case .mermaid(_, .diagram(let value)) = $0 { value.kind == .flowchart } else { false } })
     }
 
     @Test func mathAndMermaidFailuresProjectExplicitFallbacks() {
-        let projection = RichMarkdownProjection.make(source: "\\(\\href{x}{y}\\)\n```mermaid\nflowchart LR\nclick A https://evil.example\n```")
+        let projection = RichMarkdownProjection.make(source: "\\[\\href{x}{y}\\]\n```mermaid\nflowchart LR\nclick A https://evil.example\n```")
         #expect(projection.blocks.contains { if case .math(_, _, .fallback(original: #"\href{x}{y}"#)) = $0 { true } else { false } })
         #expect(projection.blocks.contains { if case .mermaid(let source, .fallback(let original, _)) = $0 { source == original } else { false } })
     }

@@ -1007,8 +1007,10 @@ acceptance boundaries and security invariants.
 Explicit transcript math now uses offline KaTeX 0.16.45 with bundled fonts,
 multiline sizing, static HTML/MathML and isolated per-message macros. The previous
 small TeX subset is no longer used. Trust-requiring links/HTML/images fall back
-to source, and page scripts/network access remain disabled. Inline prose flow,
-table math and human accessibility acceptance are still separate gaps; see
+to source, and page scripts/network access remain disabled. Inline formulas now
+flow with surrounding prose and table cells, including reflow when a window
+narrows. Human accessibility/link-gesture acceptance, exact upstream layout and
+the complete diagram runtime remain separate gaps; see
 [offline math and its validation boundaries](docs/Offline-math.md).
 
 Group chat uses the same registered local/MCP tools and approval gates as direct

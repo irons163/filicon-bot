@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import CustomDump
 import JavaScriptCore
 @testable import FiliconRichContent
 
@@ -8,8 +9,19 @@ struct MarkdownContentTests {
     let parser = RichMarkdownParser()
 
     @Test func proseAndExplicitMathAreOrdered() {
-        #expect(parser.parse("before \\(x_1\\) after") == [.prose("before "), .math(source: "x_1", mode: .inline), .prose(" after")])
-        #expect(parser.parse("\\[x^2\\]") == [.math(source: "x^2", mode: .display)])
+        expectNoDifference(parser.parse("before \\(x_1\\) after"), [.prose("before \\(x_1\\) after")])
+        expectNoDifference(parser.parse("\\[x^2\\]"), [.math(source: "x^2", mode: .display)])
+    }
+
+    @Test func inlineMathKeepsHeadingsListsAndParagraphSyntaxTogether() {
+        let source = "# **Area \\(x^2\\)**\n\n- [x] Read \\(y\\) and [reference][r].\n\n[r]: https://example.com"
+        expectNoDifference(parser.parse(source), [.prose(source)])
+    }
+
+    @Test func mathInsideInlineCodeIsNotExtractedAsABlock() {
+        for source in [#"`\(x\)` then \(y\)"#, #"``\[x\] `literal` `` after"#] {
+            expectNoDifference(parser.parse(source), [.prose(source)])
+        }
     }
 
     @Test func singleDollarAndEscapedDelimiterStayProse() {
