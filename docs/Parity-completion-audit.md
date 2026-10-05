@@ -1,5 +1,25 @@
 # 完成驗收入口（2026-09-27）
 
+## 已綁定成員的前景單獨聊天頻道送件
+
+2026-10-06 接續 `048a710`，reference HEAD 仍為 `a9f633e09d49a85829b8236331b9e21f7e612634`。已綁定有效 agent 的前景 direct chat 現在支援 `SendMessage channel` 的文字、本機附件及 HTTPS 附件，沿用下節群組的 source／send 分開核准、captured bytes、first-image caption 和 quota-backed CAS。收件連線屬於實際 bound agent，不是聊天 UUID、目前選取的聊天或另一位成員；tool receipt 的 sender 仍保留原 direct conversation identity。
+
+沒有 binding、自身連線缺失／歧義、外帳號／peer 連線或不支援附件時，先拒絕而不讀檔、下載、排隊或回退本地 publication。只有這條前景入口取得 channel capability；reviewed background direct-session routine 不繼承。`conversations` 的 binding、provider／model、hidden 狀態或刪除會同步退休原 lifetime，即使改回相同值也不復活；Stop／account transition 在首次 await 前關閉，approval 註冊前後、broker activation 後及返回後重驗捕捉的 owner／generation。單純換到別的聊天或改標題不撤銷原送件；在別的聊天不能代替原核准。
+
+本機 read、每個 HTTPS 原 URL／redirect 與精確 external send 各自要求同意，auto-review 開關不代替人類決定。核准卡保留完整 caption、目的地、檔名／MIME／大小／SHA-256／exact source URL、未送出的圖片與 queued-not-delivered／Stop 提示。核准後送捕捉的同一份 bytes，不重新開啟 pathname；安裝後連線撤銷可以留下孤立 CAS，由 quota inventory 計費，但不得入列。既有每附件 8 MiB／image 5 MiB、local helper transport bound、durable queue revision／retry 防護不放寬，也不宣稱跨 store 原子性或已排隊訊息可召回。
+
+direct review card 現在也保存完整 `agentMessage`。renderer 只翻譯 host 固定的核准標題、finding／target wrapper 及 typed approve／reject actions；自訂標題、任意 payload、URL query、檔名和其他 action labels 原樣保留。新增 saved-card 語言切換與完整 presentation 比對；法／西／日／韓／繁中／簡中共修正 11 個既有相關翻譯，沒有新增 keys，也不把此局部修正當作全 catalog 語意驗收。
+
+有效 App baseline `direct-channel-baseline-v1.log` exit 1：保留新 fixture、使用原 `048a710` AppModel，1 test／1 suite 重現沒有獨立 channel review／queue。最後聚焦 `direct-channel-focused-final-v3.log` exit 0：96 tests／10 suites，包含既有群組文字／附件、queue、local execution fence、auto-review、typed card action 及 reviewed background direct-session。新增 direct suite 為 7 個方法／94 parameter cases，使用隔離 stores、fake provider／connectors／downloader 和必要的隔離 LocalProcessHost／HMAC，覆蓋拒絕、Stop、account／binding／route ABA、連線撤銷、pathname 改變、redirect denial、first-image 與 corrupt-image。早期 fixture 編譯、等待錯誤 card ID 與 OCR 把網址 `2` 認成 `Z` 的失敗保留日誌，不當產品紅燈或 URL mutation 證據。
+
+真正 pending-review 的 unshown NSHostingView 產生 source／send 七語 × 340／620 points × 明暗共 56 張 direct card PNG，位於 `direct-channel-cards-final-v3/`。main 逐張檢視其中 14 張，涵蓋全部七語的 source／send、兩種寬度與明暗；全文首尾、URL、附件 metadata、未送出的圖片、提示及核准／拒絕按鈕沒有截斷或重疊。OCR 檢 marker，exact query／full details 由另一路完整值 assertion 檢查。`direct-channel-localization-final-v1.log` 七語各 1,814 keys／0 missing。這些離屏畫面不是完整 transcript viewport 捲動、真人 mouse／keyboard focus、VoiceOver 或最低 macOS 驗收。
+
+最後來源的完整串行 `direct-channel-full-final-v1.log` exit 0：17 個 Swift Testing target summaries 合計 2,052 tests／244 suites，另 17 個 XCTest bundles 合計 135 tests／0 failures；App target 為 751 tests／97 suites。兩項 opt-in installed Codex live tests 依既有設定 skipped，不算真實模型／服務驗收。`direct-channel-native-final-v1.log` 的 `Filicon App`／arm64 Debug BUILD SUCCEEDED；`direct-channel-native-verify-final-v1.log` 及新的 `DirectChannelPackage/Filicon.app`／`direct-channel-package-final-v1.log` 均 exit 0，檢查 version 0.1.0／build 1、四個 executables、app／XPC entitlements、deep strict codesign 和離線 KaTeX／Mermaid resources。原生建置沿用既有隔離 DerivedData 與限定的 `--xcode-debug` 規則；standalone 是 Debug／ad-hoc，不是 Developer ID release／公證。沒有執行 script 印出的 launch smoke；既有 SDK／CoreData／macro 診斷不宣稱由本批修復。`git diff --check` 通過。
+
+Swift 測試／CustomDump／Dependencies 技能用於原 App tool loop、受控 dependencies、固定 identity、隔離故障與完整值比對；SwiftUI 技能限定翻譯 typed host UI 並驗證七語真實卡片。文件技能保留此入口與其他路由的界線。日誌、PNG 和隔離產物留在忽略的 `.build/validation/`。
+
+**仍未接線**：background direct、mailbox、delegated group、inbound shared runner 的 channel publication，canonical external-publication transcript 與 delivery-failure model follow-up。原 inbound 一次純文字 reply 不變；live Slack／Discord／OAuth、真人／VoiceOver／最低 macOS、release／公證仍待驗收，AGENT-02／整體 partial 及 48 分類範圍不變。未 push、啟動或重啟使用者 App／Xcode，未改真實帳號／群組／聊天。本節只取代下節前景 bound direct 缺口，其餘歷史紀錄保留。
+
 ## 前景群組的 channel 附件與 HTTPS source 核准
 
 2026-10-06 接續 `88aae1c`，reference HEAD 仍是 `a9f633e09d49a85829b8236331b9e21f7e612634`。main 再讀 `source/shared/channel-messaging.ts`，保留文字取第一個 image URL＋text caption，以及 standalone attachment URL／alt；本批只接上真正前景 saved-group 的附件能力，取代下節 text-only App 邊界，不當全 route 或 live 平台完成。

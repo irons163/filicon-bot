@@ -119,6 +119,15 @@ struct GroupReadContext: Sendable {
 final class AppModel: ObservableObject {
     @Published var conversations: [Conversation] = [] {
         didSet {
+            // Close synchronously on route changes, including rebind-and-restore
+            // (ABA). An old approval must never revive under a new chat owner.
+            for (id, lifetime) in directChannelLifetimes {
+                let before = oldValue.first { $0.id == id }, after = conversations.first { $0.id == id }
+                if before?.agentBinding != after?.agentBinding || before?.providerID != after?.providerID
+                    || before?.modelID != after?.modelID || before?.hiddenAt != after?.hiddenAt || after == nil {
+                    lifetime.close()
+                }
+            }
             if oldValue.count != conversations.count || !zip(oldValue, conversations).allSatisfy({ before, after in
                 before.id == after.id && before.agentBinding == after.agentBinding && before.hiddenAt == after.hiddenAt
             }) {
@@ -689,6 +698,7 @@ final class AppModel: ObservableObject {
     private var modelRefreshGuard = ModelRefreshGuard()
     private var turnTasks: [UUID: Task<Void, Never>] = [:]
     private var directPublicationIDs: [UUID: [UUID]] = [:]
+    private var directChannelLifetimes: [UUID: ChannelPublicationLifetime] = [:]
     private var draftSaveTask: Task<Void, Never>?
     private var navigationSaveTask: Task<Void, Never>?
     private var draftLoadGeneration = 0
@@ -2415,11 +2425,24 @@ final class AppModel: ObservableObject {
         let accountScope = settings.accountScope ?? "local"
         let publicationGeneration = autoReviewAccountGeneration
         let agentBinding = conversations.first(where: { $0.id == id })?.agentBinding
+        // Foreground bound direct turns get their own destination capability;
+        // unbound chats and background routines do not inherit another owner.
+        let channelLifetime: ChannelPublicationLifetime? = routine == nil && agentBinding != nil ? .init() : nil
+        if let channelLifetime {
+            directChannelLifetimes[id]?.close()
+            directChannelLifetimes[id] = channelLifetime
+        }
         let turnTask = Task { [self] in
             var succeeded = false
             var publisher: AgentUserMessageTool?
             var messaging: AgentMessagingSession?
-            defer { directPublicationIDs.removeValue(forKey: assistantID) }
+            defer {
+                channelLifetime?.close()
+                if let channelLifetime, directChannelLifetimes[id] === channelLifetime {
+                    directChannelLifetimes.removeValue(forKey: id)
+                }
+                directPublicationIDs.removeValue(forKey: assistantID)
+            }
             do {
                 if let routine { try await validateBackgroundDirectExecution(routine) }
                 try await persistOrThrow(conversationID: id)
@@ -2505,6 +2528,13 @@ final class AppModel: ObservableObject {
                                 accountScope: accountScope, generation: publicationGeneration, replyTo: replyTo)
                         }
                     } else { secretPublisher = nil }
+                    let channelPublication: AgentChannelPublicationTransaction?
+                    if let agentIdentity, let agentBinding, let channelLifetime {
+                        channelPublication = try await makeDirectChannelPublication(conversationID: id,
+                            assistantID: assistantID, identity: agentIdentity, binding: agentBinding,
+                            providerID: providerID, modelID: requestModelID, account: accountScope,
+                            generation: publicationGeneration, lifetime: channelLifetime)
+                    } else { channelPublication = nil }
                     publisher = AgentUserMessageTool(conversationID: id, availableImages: images, imageStore: nil,
                         hostImageValidator: { [weak self] images in
                             guard let self, let imageSource else { throw AgentImageError.unavailable }
@@ -2528,6 +2558,7 @@ final class AppModel: ObservableObject {
                             account: accountScope, generation: publicationGeneration),
                         galleryPublication: makeDirectGalleryPublication(conversationID: id, assistantID: assistantID,
                             account: accountScope, generation: publicationGeneration),
+                        channelPublication: channelPublication,
                         replyHistory: replyHistory, receiptSenderID: id, supportsReferenceNavigation: true,
                         directConversationPresentation: true,
                         publishQuestionReceipt: { [weak self] question, replyTo in
@@ -5162,95 +5193,170 @@ final class AppModel: ObservableObject {
 
     func groupApprovalScope(_ groupID: UUID) -> UUID { delegatedGroupOrigins[groupID] ?? groupID }
 
-    /// Foreground saved group publishers only. Direct/mailbox/inbound and
-    /// delegated-group runners do not inherit this channel capability.
+    /// Foreground saved group publishers only. Direct turns bind separately;
+    /// mailbox/inbound/delegated-group runners do not inherit this capability.
     private func makeGroupChannelPublisherFactory(originID: UUID,
         generation: UInt64) -> AgentMessagingSession.ChannelPublisherFactory? {
-        guard let channelService, let audience = groups.first(where: { $0.id == originID }) else { return nil }
+        guard channelService != nil, let audience = groups.first(where: { $0.id == originID }) else { return nil }
         let account = settings.accountScope ?? "local"
-        let downloader = remoteAttachmentDownloader
-        let attachmentsAvailable = quotaWriter != nil
         return { [weak self] sender, lifetime in
             guard let self else { throw CancellationError() }
             try await self.checkGroupFileScope(senderID: sender.id, audience: audience,
                 generation: generation, originID: originID, dispatchID: nil)
-            let prepare: AgentChannelPublicationTransaction.Prepare?
-            let install: AgentChannelPublicationTransaction.Install?
-            if attachmentsAvailable {
-                prepare = { [weak self] source, isImage, call, context in
-                    guard let self else { throw CancellationError() }
-                    let reader = AgentChannelAttachmentSource(prepareLocal: { [weak self] url, call, context in
-                        guard let self else { throw CancellationError() }
-                        return try await self.prepareGroupPublicationFile(sender: sender, url: url, call: call,
-                            context: context, audience: audience, generation: generation, originID: originID, dispatchID: nil)
-                    }, downloader: downloader, validateScope: { [weak self] in
-                        try lifetime.check()
-                        guard let self else { throw CancellationError() }
-                        try await self.checkGroupFileScope(senderID: sender.id, audience: audience,
-                            generation: generation, originID: originID, dispatchID: nil)
-                        try lifetime.check()
-                    }, authorizeDownload: { [weak self] reference, redirectSource, call, context in
-                        guard let self else { throw CancellationError() }
-                        try await self.authorizeGroupChannelSourceDownload(reference, redirectSource: redirectSource,
-                            sender: sender, audience: audience, call: call, context: context, account: account,
-                            generation: generation)
-                    })
-                    return try await reader.prepare(source, isImage: isImage, call: call, context: context)
-                }
-                install = { [weak self] attachment in
-                    guard let self else { throw CancellationError() }
-                    return try await self.installGroupChannelAttachment(attachment, sender: sender, audience: audience,
-                        generation: generation, lifetime: lifetime)
-                }
-            } else { prepare = nil; install = nil }
-            return AgentChannelPublicationTransaction(conversationID: originID, senderID: sender.id,
-                agentID: sender.id, accountID: account, channels: channelService, lifetime: lifetime,
-                validateScope: { [weak self] in
+            return await self.makeAgentChannelPublication(conversationID: originID, senderID: sender.id,
+                agentID: sender.id, senderName: sender.name, account: account, generation: generation,
+                lifetime: lifetime, validateScope: { [weak self] in
                     guard let self else { throw CancellationError() }
                     try await self.checkGroupFileScope(senderID: sender.id, audience: audience,
                         generation: generation, originID: originID, dispatchID: nil)
-                    let currentAccount = await self.settings.accountScope ?? "local"
-                    guard currentAccount == account else { throw CancellationError() }
-                }, authorize: { [weak self] review, call, context in
+                }, prepareLocal: { [weak self] url, call, context in
                     guard let self else { throw CancellationError() }
-                    try await self.authorizeGroupChannelPublication(review, sender: sender, audience: audience,
-                        call: call, context: context, account: account, generation: generation)
-                }, prepare: prepare, install: install, supportsRemoteSources: attachmentsAvailable)
+                    return try await self.prepareGroupPublicationFile(sender: sender, url: url, call: call,
+                        context: context, audience: audience, generation: generation, originID: originID, dispatchID: nil)
+                })
         }
     }
 
-    private func authorizeGroupChannelSourceDownload(_ reference: RemoteAttachmentReference,
-        redirectSource: RemoteAttachmentReference?, sender: AgentProfile, audience: AgentGroup,
-        call: NormalizedToolCall, context: ToolContext, account: String, generation: UInt64) async throws {
-        try checkGroupFileScope(senderID: sender.id, audience: audience, generation: generation,
-            originID: audience.id, dispatchID: nil)
-        guard context.conversationID == audience.id, (settings.accountScope ?? "local") == account else {
-            throw AgentMessagingError.scopeMismatch
+    private func makeDirectChannelPublication(conversationID id: UUID, assistantID: UUID,
+        identity: DirectAgentExecutionIdentity, binding: DirectConversationAgentBinding,
+        providerID: ProviderID, modelID: ModelID, account: String, generation: UInt64,
+        lifetime: ChannelPublicationLifetime) async throws -> AgentChannelPublicationTransaction? {
+        guard channelService != nil else { return nil }
+        let validate: @Sendable () async throws -> Void = { [weak self] in
+            try lifetime.check()
+            guard let self else { throw CancellationError() }
+            try await self.checkDirectFileScope(id, assistantID: assistantID, account: account, generation: generation)
+            let current = try await self.directTurnAgentIdentity(conversationID: id, binding: binding,
+                accountScope: account, generation: generation, providerID: providerID, modelID: modelID)
+            guard current?.agentID == identity.agentID else { throw AgentMessagingError.scopeMismatch }
+            try lifetime.check()
         }
-        let fence = ApprovalFence(accountID: account, agentID: audience.id.uuidString.lowercased(),
+        try await validate()
+        guard let sender = await agentService?.profile(id: identity.agentID) else { throw CancellationError() }
+        try await validate()
+        // Direct transcript receipt identity is the chat, while channel
+        // connection ownership is the actual bound agent, never the chat UUID.
+        return makeAgentChannelPublication(conversationID: id, senderID: id, agentID: identity.agentID,
+            senderName: sender.name, account: account, generation: generation, lifetime: lifetime,
+            validateScope: validate, prepareLocal: { [weak self] url, call, context in
+                guard let self, context.conversationID == id else { throw AgentMessagingError.scopeMismatch }
+                let reader = await AuthorizedAgentFileReader(runtime: self.localToolRuntime, folders: self.workspaceFolders,
+                    policy: self.localToolPermissionPolicy, validateScope: validate,
+                    authorizeRead: { [weak self] operation, context, callID in
+                        guard let self else { throw CancellationError() }
+                        let target = try await self.localToolRuntime.authorizationTarget(for: operation)
+                        let decision = await self.localToolPermissionPolicy.evaluate(action: .readFile,
+                            conversationID: context.conversationID, toolCallID: "publication-source:\(callID.rawValue)",
+                            title: target, reason: "SendMessage")
+                        switch decision {
+                        case .denied: throw LocalToolError.permissionMismatch
+                        case .requiresApproval(let request):
+                            guard await self.localToolApprovalBroker.requestApproval(request) else { throw CancellationError() }
+                        case .allowed: break
+                        }
+                    })
+                return try await AgentPublicationFileSource(reader: reader).prepare(url: url, agentID: identity.agentID,
+                    call: call, context: context)
+            })
+    }
+
+    /// Shared acquisition/review/storage, with an independent route validator
+    /// supplied by the host. Neither arguments nor the selected chat grant it.
+    private func makeAgentChannelPublication(conversationID id: UUID, senderID: UUID, agentID: UUID,
+        senderName: String, account: String, generation: UInt64, lifetime: ChannelPublicationLifetime,
+        validateScope: @escaping @Sendable () async throws -> Void,
+        prepareLocal: @escaping AgentChannelAttachmentSource.PrepareLocal) -> AgentChannelPublicationTransaction? {
+        guard let channelService else { return nil }
+        let check: @Sendable () async throws -> Void = { [weak self] in
+            try lifetime.check()
+            try await validateScope()
+            guard let self else { throw CancellationError() }
+            try await self.checkChannelAccount(account, generation: generation)
+            try lifetime.check()
+        }
+        let prepare: AgentChannelPublicationTransaction.Prepare?
+        let install: AgentChannelPublicationTransaction.Install?
+        let attachmentsAvailable = quotaWriter != nil
+        if attachmentsAvailable {
+            let downloader = remoteAttachmentDownloader
+            prepare = { [weak self] source, isImage, call, context in
+                guard let self else { throw CancellationError() }
+                let reader = AgentChannelAttachmentSource(prepareLocal: prepareLocal, downloader: downloader,
+                    validateScope: check, authorizeDownload: { [weak self] reference, redirectSource, call, context in
+                        guard let self else { throw CancellationError() }
+                        try await self.authorizeChannelSourceDownload(reference, redirectSource: redirectSource,
+                            conversationID: id, senderName: senderName, call: call, context: context,
+                            account: account, generation: generation, lifetime: lifetime, validateScope: check)
+                    })
+                return try await reader.prepare(source, isImage: isImage, call: call, context: context)
+            }
+            install = { [weak self] attachment in
+                guard let self else { throw CancellationError() }
+                return try await self.installChannelAttachment(attachment, lifetime: lifetime, validateScope: check)
+            }
+        } else { prepare = nil; install = nil }
+        return AgentChannelPublicationTransaction(conversationID: id, senderID: senderID, agentID: agentID,
+            accountID: account, channels: channelService, lifetime: lifetime, validateScope: check,
+            authorize: { [weak self] review, call, context in
+                guard let self else { throw CancellationError() }
+                try await self.authorizeChannelPublication(review, conversationID: id, senderID: senderID,
+                    agentID: agentID, senderName: senderName, call: call, context: context, account: account,
+                    generation: generation, lifetime: lifetime, validateScope: check)
+            }, prepare: prepare, install: install, supportsRemoteSources: attachmentsAvailable)
+    }
+
+    private func checkChannelAccount(_ account: String, generation: UInt64) throws {
+        try Task.checkCancellation()
+        guard !agentMessagingAccountTransition, generation == autoReviewAccountGeneration,
+              (settings.accountScope ?? "local") == account else { throw CancellationError() }
+    }
+
+    private func registerChannelApproval(_ pending: PendingApproval, lifetime: ChannelPublicationLifetime) async {
+        do {
+            try lifetime.check()
+            try checkChannelAccount(pending.fence.accountID, generation: pending.fence.generation)
+        } catch {
+            await autoReviewBroker.cancel(reviewID: pending.id, fence: pending.fence)
+            return
+        }
+        await registerAutoReviewApproval(pending)
+    }
+
+    private func authorizeChannelSourceDownload(_ reference: RemoteAttachmentReference,
+        redirectSource: RemoteAttachmentReference?, conversationID id: UUID, senderName: String,
+        call: NormalizedToolCall, context: ToolContext, account: String, generation: UInt64,
+        lifetime: ChannelPublicationLifetime, validateScope: @escaping @Sendable () async throws -> Void) async throws {
+        try await validateScope()
+        guard context.conversationID == id else { throw AgentMessagingError.scopeMismatch }
+        let fence = ApprovalFence(accountID: account, agentID: id.uuidString.lowercased(),
             runID: context.runID, generation: generation)
         await autoReviewBroker.activate(fence)
+        try await validateScope()
         let details = l10n(redirectSource == nil ? "Download this attachment source?" : "Confirm download redirect")
             + (redirectSource.map { "\n\(l10n("Source address")): \($0.url)" } ?? "")
             + "\n\(l10n("Download from this address")): \(reference.url)"
             + "\n\n" + l10n("Downloading does not authorize sending the file to a channel.")
-        let action = AutoReviewAction(summary: "\(sender.name) → \(l10n("Download from this address"))",
+        let action = AutoReviewAction(summary: "\(senderName) → \(l10n("Download from this address"))",
             target: .resource(kind: "remote-attachment-source", identifier: reference.url),
-            risks: [.sensitive, .externalSideEffect], context: .init(fence: fence, conversationID: audience.id,
+            risks: [.sensitive, .externalSideEffect], context: .init(fence: fence, conversationID: id,
                 toolCallID: call.id.rawValue, metadata: ["tool": "SendMessage", "agentChannelSourceDownload": "true", "agentMessage": details]))
         let pending = PendingApproval(action: action, reason: "Approval required", expiresAt: Date().addingTimeInterval(300))
-        // Consent to source I/O is fresh and exact, including each redirect.
-        // A generic auto-review allow rule cannot turn a model URL into a fetch.
-        try await autoReviewBroker.waitForApprovalToExecute(pending) { [weak self] in await self?.registerAutoReviewApproval($0) }
-        try checkGroupFileScope(senderID: sender.id, audience: audience, generation: generation,
-            originID: audience.id, dispatchID: nil)
+        // Fresh source/redirect consent, separate from publication and never
+        // substituted by a generic allow rule or model-supplied authority.
+        try await autoReviewBroker.waitForApprovalToExecute(pending) { [weak self] pending in
+            guard let self else { return }
+            do {
+                try await validateScope()
+                await self.registerChannelApproval(pending, lifetime: lifetime)
+            } catch { await self.autoReviewBroker.cancel(reviewID: pending.id, fence: pending.fence) }
+        }
+        try await validateScope()
     }
 
-    private func installGroupChannelAttachment(_ attachment: PreparedAgentChannelAttachment, sender: AgentProfile,
-        audience: AgentGroup, generation: UInt64, lifetime: ChannelPublicationLifetime) async throws -> ChannelAttachment {
+    private func installChannelAttachment(_ attachment: PreparedAgentChannelAttachment,
+        lifetime: ChannelPublicationLifetime, validateScope: @escaping @Sendable () async throws -> Void) async throws -> ChannelAttachment {
         try lifetime.check()
-        try checkGroupFileScope(senderID: sender.id, audience: audience, generation: generation,
-            originID: audience.id, dispatchID: nil)
+        try await validateScope()
         guard quotaWriter != nil else { throw AgentChannelPublicationTransaction.Failure.unavailable }
         let inferred = try AttachmentStore.publicationMetadata(for: attachment.file, createdAt: Date(timeIntervalSince1970: 0))
         let verifiedImage: String?
@@ -5263,8 +5369,7 @@ final class AppModel: ObservableObject {
             data: attachment.file.bytes) { [weak self] in
                 guard let self else { throw CancellationError() }
                 try lifetime.check()
-                try await self.checkGroupFileScope(senderID: sender.id, audience: audience, generation: generation,
-                    originID: audience.id, dispatchID: nil)
+                try await validateScope()
                 try lifetime.check()
                 return try await self.channelAttachmentStore.ingest(prepared: attachment.file, createdAt: Date(),
                     verifiedImageMIMEType: verifiedImage)
@@ -5272,20 +5377,21 @@ final class AppModel: ObservableObject {
         return .init(blobID: stored.id, filename: stored.filename, mimeType: stored.mimeType, byteCount: stored.byteCount)
     }
 
-    private func authorizeGroupChannelPublication(_ review: AgentChannelPublicationTransaction.Review,
-        sender: AgentProfile, audience: AgentGroup, call: NormalizedToolCall, context: ToolContext,
-        account: String, generation: UInt64) async throws {
-        try checkGroupFileScope(senderID: sender.id, audience: audience, generation: generation,
-            originID: audience.id, dispatchID: nil)
-        guard context.conversationID == audience.id, review.conversationID == audience.id,
-              review.senderID == sender.id, review.publication.agentID == sender.id,
+    private func authorizeChannelPublication(_ review: AgentChannelPublicationTransaction.Review,
+        conversationID id: UUID, senderID: UUID, agentID: UUID, senderName: String,
+        call: NormalizedToolCall, context: ToolContext, account: String, generation: UInt64,
+        lifetime: ChannelPublicationLifetime, validateScope: @escaping @Sendable () async throws -> Void) async throws {
+        try await validateScope()
+        guard context.conversationID == id, review.conversationID == id,
+              review.senderID == senderID, review.publication.agentID == agentID,
               review.publication.ownerAccountID == account, (settings.accountScope ?? "local") == account,
               review.publication.outbound.attachments == (review.attachment.map { [$0.metadata] } ?? []) else {
             throw AgentMessagingError.scopeMismatch
         }
-        let fence = ApprovalFence(accountID: account, agentID: audience.id.uuidString.lowercased(),
+        let fence = ApprovalFence(accountID: account, agentID: id.uuidString.lowercased(),
                                   runID: context.runID, generation: generation)
         await autoReviewBroker.activate(fence)
+        try await validateScope()
         let publication = review.publication
         var details = l10n("Queue this message to an external channel?")
             + "\n\(l10n("Connection")): \(publication.displayName)"
@@ -5307,16 +5413,21 @@ final class AppModel: ObservableObject {
         }
         details += (review.replyTo.map { "\n\n\(l10n("Local reply only")): \($0.uuidString)" } ?? "")
             + "\n\n" + l10n("Queued is not delivered. Stop does not recall a queued message.")
-        let action = AutoReviewAction(summary: "\(sender.name) → \(publication.address.platform):\(publication.address.channelID)",
+        let action = AutoReviewAction(summary: "\(senderName) → \(publication.address.platform):\(publication.address.channelID)",
             target: .resource(kind: "channel", identifier: publication.connectionID.uuidString),
             risks: [.sensitive, .externalSideEffect],
-            context: .init(fence: fence, conversationID: audience.id, toolCallID: call.id.rawValue,
+            context: .init(fence: fence, conversationID: id, toolCallID: call.id.rawValue,
                 metadata: ["tool": "SendMessage", "agentChannelPublication": "true", "agentMessage": details]))
         let pending = PendingApproval(action: action, reason: "Approval required", expiresAt: Date().addingTimeInterval(300))
         // No generic auto-allow rule can substitute for this publication review.
-        try await autoReviewBroker.waitForApprovalToExecute(pending) { [weak self] in await self?.registerAutoReviewApproval($0) }
-        try checkGroupFileScope(senderID: sender.id, audience: audience, generation: generation,
-            originID: audience.id, dispatchID: nil)
+        try await autoReviewBroker.waitForApprovalToExecute(pending) { [weak self] pending in
+            guard let self else { return }
+            do {
+                try await validateScope()
+                await self.registerChannelApproval(pending, lifetime: lifetime)
+            } catch { await self.autoReviewBroker.cancel(reviewID: pending.id, fence: pending.fence) }
+        }
+        try await validateScope()
     }
 
     private nonisolated static func channelSourceAddress(_ input: AgentMessageImageInput) -> String {
@@ -6834,6 +6945,7 @@ final class AppModel: ObservableObject {
     }
 
     private func cancelDirectMessaging(conversationID: UUID) {
+        directChannelLifetimes[conversationID]?.close()
         invalidateBackgroundMemorySynthesis(originID: conversationID)
         guard directMessagingScopes.contains(conversationID) else { return }
         turnTasks[conversationID]?.cancel()
@@ -10352,6 +10464,12 @@ final class AppModel: ObservableObject {
             }
             if let text = pending.action.context.metadata["agentMessage"], !text.isEmpty { publicationDetails.append(text) }
         }
+        if pending.action.context.metadata["tool"] == "SendMessage",
+           (pending.action.context.metadata["agentChannelPublication"] == "true"
+                || pending.action.context.metadata["agentChannelSourceDownload"] == "true"),
+           let details = pending.action.context.metadata["agentMessage"] {
+            publicationDetails.append(details)
+        }
         let card = TranscriptCard(
             lifecycle: .waiting,
             payload: .autoReview(.init(
@@ -10426,6 +10544,7 @@ final class AppModel: ObservableObject {
     }
 
     func cancelAutoReviewApprovals(nextAccountID: String) async {
+        for lifetime in directChannelLifetimes.values { lifetime.close() }
         for lease in sidebarSettingsLeases.values { lease.close() }
         for lifetime in manualSidebarChanges.values { lifetime.close() }
         // Queued peer work is scoped to the account that approved the exchange.

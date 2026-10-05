@@ -448,7 +448,7 @@
 "Find in Chat" = "Rechercher dans le chat";
 "Find in Chat (⌘F)" = "Trouver dans Chat (-)";
 "Find in this chat" = "Rechercher dans ce chat";
-"Finding {0}" = "Conclusions {0}";
+"Finding {0}" = "Constat {0}";
 "Finish" = "Finition";
 "First available provider" = "Premier fournisseur disponible";
 "Follow System" = "Suivre le système";
@@ -1325,7 +1325,7 @@
 "Vertical focus" = "Mise au point verticale";
 "View" = "Affichage";
 "Wait for the model catalog to finish loading before sending." = "Attendez que le catalogue de modèles finisse le chargement avant d'envoyer.";
-"Waiting" = "Attendre";
+"Waiting" = "En attente";
 "Waiting for Browser…" = "Attendre le navigateur...";
 "Waiting for OAuth…" = "En attente d’OAuth…";
 "Warning" = "Avertissement";

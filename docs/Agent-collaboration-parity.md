@@ -1,5 +1,15 @@
 # 協作能力核對紀錄（更新至 2026-10-06）
 
+## 已綁定成員的前景單獨聊天頻道送件
+
+2026-10-06 接續 `048a710`，有效 bound agent 的前景 direct chat 已接上 `SendMessage channel` 文字／本機／HTTPS 附件。host 使用實際成員的唯一 enabled connection，不從選取聊天、模型參數或 peer 推導 authority；receipt 仍屬於原 direct conversation。沒有 binding 或目的地不可用先拒絕，不能讀 source、借用別人的連線或回退本地 publication。reviewed background direct-session routine 沒有因共享 runner 而取得此能力。
+
+source read、每次 HTTPS／redirect 與完整 external send 獨立核准，auto-review 不能代替；送捕捉的 immutable bytes，保留 first-image caption、明確不送出的圖片、既有 quota／durable queue fences 和 queued-not-delivered 提示。Stop、account transition、binding／route ABA、archive／delete 同步退休原回合，approval 註冊及返回前後重驗；換聊天不能核准另一個 conversation。CAS 安裝後連線撤銷仍不排隊，孤立 bytes 由 quota inventory 計費，不宣稱跨 stores 原子性或可召回已入列訊息。
+
+真正 direct 核准卡保存完整 outgoing payload，固定 host 標題／typed actions 隨七語切換，任意訊息／URL query／其他 action label 原樣保留。7 個新增方法／94 parameter cases、96 項聚焦回歸／10 suites、56 張 source／send 七語明暗離屏圖與 14 張逐張檢視，證據及最後 gates 見 [完成驗收入口](Parity-completion-audit.md)。Swift 測試／CustomDump／Dependencies／SwiftUI 技能用於隔離實際入口與完整值／畫面檢查；相關舊翻譯修正不是全 catalog 語意或真人互動驗收。
+
+**尚未接線**：background direct、mailbox、delegated group、inbound shared runner，canonical external-publication transcript 及 delivery-failure model follow-up。live 帳號／服務、真人／VoiceOver／最低 macOS、release／公證仍待驗收，AGENT-02／整體 partial 和 48 分類不變。未 push、啟動或重啟使用者 App／Xcode，未改真實帳號／群組／聊天。本節限定取代下節前景 bound direct 缺口，不移除歷史驗收邊界。
+
 ## 前景群組的外部附件與獨立下載核准（2026-10-06）
 
 接續 `88aae1c`，真正 saved-group 的 `SendMessage channel` 現在接上 host source reader、HTTPS downloader 和 quota-backed channel CAS；本節只取代下節「native App 只接文字」及該前景入口的附件缺口。reference 仍為 `a9f633e09d49a85829b8236331b9e21f7e612634`；first image／text caption、standalone attachment／alt 契約保留，不把 recovered delivery setter 當作原版 live 服務證據。

@@ -55,6 +55,18 @@ extension ChatMessage {
     }
 }
 
+extension TranscriptCardAction {
+    /// These labels belong to the host's typed review actions, not to an
+    /// imported message or an arbitrary user-authored button title.
+    var rendererLabel: String {
+        switch intent {
+        case .approveReview: l10n("Approve")
+        case .rejectReview: l10n("Reject")
+        default: label
+        }
+    }
+}
+
 enum TranscriptCardPresentationKind: String, CaseIterable, Sendable {
     case widget, draft, autoReview, listener, secretRequest, connector
     case localToolPermission, notice, timeline, cloudAgent, fileOperation, shell, unknown
@@ -94,7 +106,11 @@ enum TranscriptCardPresenter {
             let channel = humanized(value.channel)
             return .init(kind: .draft, title: l10n("\(channel) Draft"), subtitle: l10n("Draft · \(status)"), symbolName: value.channel.lowercased() == "email" ? "envelope.badge" : "bubble.left.and.bubble.right", detail: value.subject ?? value.body, fields: value.recipients.isEmpty ? [] : [(l10n("Recipients"), value.recipients.joined(separator: ", "))], longTextTitle: value.subject == nil ? nil : l10n("Message"), longText: value.subject == nil ? nil : value.body)
         case .autoReview(let value):
-            return .init(kind: .autoReview, title: value.title, subtitle: l10n("Auto-review · \(status)"), symbolName: "checkmark.seal", detail: value.summary, fields: value.findings.enumerated().map { (l10n("Finding \($0.offset + 1)"), $0.element) }, longTextTitle: nil, longText: nil)
+            return .init(kind: .autoReview, title: value.title == "Approval required" ? l10n("Approval required") : value.title,
+                subtitle: l10n("Auto-review · \(status)"), symbolName: "checkmark.seal", detail: value.summary,
+                fields: value.findings.enumerated().map {
+                    (l10n("Finding \($0.offset + 1)"), reviewFinding($0.element, at: $0.offset))
+                }, longTextTitle: nil, longText: nil)
         case .listener(let value):
             return .init(kind: .listener, title: l10n("Connect \(humanized(value.connector)) Listener"), subtitle: l10n("Listener · \(status)"), symbolName: "dot.radiowaves.left.and.right", detail: value.event, fields: value.filterSummary.map { [(l10n("Filter"), $0)] } ?? [], longTextTitle: nil, longText: nil)
         case .secretRequest(let value):
@@ -155,6 +171,16 @@ enum TranscriptCardPresenter {
         FiliconLocalization.string(value.replacingOccurrences(of: "_", with: " ").replacingOccurrences(of: "-", with: " ").capitalized)
     }
 
+    private static func reviewFinding(_ value: String, at index: Int) -> String {
+        // Only the closed host wrappers are translated. In particular the
+        // full outgoing payload must never be interpreted as a catalog key.
+        if index == 0, value == "Approval required" { return l10n("Approval required") }
+        if index == 1, value.hasPrefix("Target: ") {
+            return l10n("Target") + ": " + value.dropFirst("Target: ".count)
+        }
+        return value
+    }
+
     private static func noticeSymbol(_ severity: String) -> String {
         switch severity.lowercased() {
         case "error": "xmark.octagon"
@@ -198,7 +224,7 @@ struct TranscriptCardRow: View {
             ForEach(Array(presentation.fields.enumerated()), id: \.offset) { _, field in
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(field.label).font(.caption.bold()).foregroundStyle(.secondary)
-                    Text(field.value).font(.caption).textSelection(.enabled)
+                    Text(verbatim: field.value).font(.caption).textSelection(.enabled)
                 }
             }
             if let title = presentation.longTextTitle, let value = presentation.longText, !value.isEmpty {
@@ -213,9 +239,9 @@ struct TranscriptCardRow: View {
                 HStack(spacing: 6) {
                     ForEach(safeActions) { action in
                         if action.role == "destructive" {
-                            Button(action.label, role: .destructive) { onAction(action.intent) }
+                            Button(action.rendererLabel, role: .destructive) { onAction(action.intent) }
                         } else {
-                            Button(action.label) { onAction(action.intent) }
+                            Button(action.rendererLabel) { onAction(action.intent) }
                         }
                     }
                     Spacer(minLength: 0)

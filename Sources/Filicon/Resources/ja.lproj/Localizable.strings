@@ -448,7 +448,7 @@
 "Find in Chat" = "チャットで見る";
 "Find in Chat (⌘F)" = "チャット (⌘F)";
 "Find in this chat" = "このチャットで探す";
-"Finding {0}" = "見つける {0}";
+"Finding {0}" = "確認結果 {0}";
 "Finish" = "フィニッシュ";
 "First available provider" = "最初に利用可能なプロバイダー";
 "Follow System" = "システム設定に従う";
@@ -1325,7 +1325,7 @@
 "Vertical focus" = "垂直方向の焦点";
 "View" = "プロフィール";
 "Wait for the model catalog to finish loading before sending." = "送信する前に、モデルカタログを完成させるのを待ってください。";
-"Waiting" = "待ち合わせ";
+"Waiting" = "待機中";
 "Waiting for Browser…" = "ブラウザの待ち時間...";
 "Waiting for OAuth…" = "OAuth を待機中…";
 "Warning" = "警告";

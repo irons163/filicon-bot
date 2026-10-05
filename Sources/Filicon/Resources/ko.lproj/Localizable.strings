@@ -448,7 +448,7 @@
 "Find in Chat" = "자주 묻는 질문";
 "Find in Chat (⌘F)" = "채팅 찾기 (⌘F)";
 "Find in this chat" = "이 채팅에서 찾기";
-"Finding {0}" = "찾아가기 {0}";
+"Finding {0}" = "검토 결과 {0}";
 "Finish" = "제품 정보";
 "First available provider" = "첫 번째 제공 업체";
 "Follow System" = "시스템 설정 따르기";
@@ -1019,7 +1019,7 @@
 "Table preview unavailable" = "테이블 미리보기 unavailable";
 "Table with {0} columns and {1} rows" = "테이블 {0} 열 및 {1} 행";
 "Take Control" = "제어권 가져오기";
-"Target" = "제품정보";
+"Target" = "대상";
 "Target channel ID" = "대상 채널 ID";
 "Task prompt" = "작업 프롬프트";
 "Task title" = "작업 제목";
@@ -1325,7 +1325,7 @@
 "Vertical focus" = "세로 초점";
 "View" = "- 연혁";
 "Wait for the model catalog to finish loading before sending." = "전송하기 전에 적재를 완료하는 모델 카탈로그를 기다립니다.";
-"Waiting" = "뚱 베어";
+"Waiting" = "대기 중";
 "Waiting for Browser…" = "브라우저에 대한 대기 ...";
 "Waiting for OAuth…" = "OAuth 대기 중…";
 "Warning" = "경고";
