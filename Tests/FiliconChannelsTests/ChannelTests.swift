@@ -161,7 +161,7 @@ struct ChannelTests {
         await probe.configure(failUntil: 2)
         let key = UUID(), base = Date(timeIntervalSince1970: 1_000)
         let first = try await service.enqueue(.init(text: "hello"), to: .init(platform: "probe", channelID: "general"), connectionID: connection.id, idempotencyKey: key, at: base)
-        let duplicate = try await service.enqueue(.init(text: "ignored"), to: .init(platform: "probe", channelID: "general"), connectionID: connection.id, idempotencyKey: key, at: base)
+        let duplicate = try await service.enqueue(.init(text: " hello \n"), to: .init(platform: "probe", channelID: "general"), connectionID: connection.id, idempotencyKey: key, at: base)
         #expect(first.id == duplicate.id)
         await service.flush(now: base)
         await service.flush(now: base.addingTimeInterval(1))

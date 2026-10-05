@@ -87,7 +87,7 @@ struct ChannelLifecycleTests {
         await f.service.register(LifecycleConnector(descriptor: .init(id: "slack", displayName: "Slack"), profileGate: gate))
         let check = Task { try await f.service.verifyOwnCredential(agentID: owner, accountID: "local", platform: "slack") }
         await gate.waitForEntry()
-        _ = await f.service.commitCredential(connectionID: connection.id) { _ in (true, true) }
+        _ = try await f.service.commitCredential(connectionID: connection.id) { _ in (true, true) }
         await gate.release()
         let status = try await check.value
         expectNoDifference(status, "stale")
@@ -126,7 +126,7 @@ struct ChannelLifecycleTests {
                 }
             }
         } else {
-            let result = await f.service.commitCredential(connectionID: f.first.id) { _ in
+            let result = try await f.service.commitCredential(connectionID: f.first.id) { _ in
                 (42, mode != "replay")
             }
             expectNoDifference(result, 42)
@@ -158,7 +158,7 @@ struct ChannelLifecycleTests {
         await f.service.register(LifecycleConnector(profileGate: gate))
         let task = Task { try await f.service.refreshProfile(connectionID: f.first.id) }
         await gate.waitForEntry()
-        _ = await f.service.commitCredential(connectionID: f.first.id) { _ in (true, true) }
+        _ = try await f.service.commitCredential(connectionID: f.first.id) { _ in (true, true) }
         await gate.release()
         await #expect(throws: CancellationError.self) { _ = try await task.value }
         let connections = await f.service.connections()

@@ -1,5 +1,13 @@
 # 協作能力核對紀錄（更新至 2026-10-05）
 
+## 外部 channel 先補核准 queue foundation（2026-10-05）
+
+已確認 reference 的 `SendMessage channel:platform:chat` 文字／附件契約、first-image caption、local transcript 與 delivery-failure wake 路徑；recovered source 未找到 `setChannelDelivery` 的 production 呼叫，不能當作原版 live transport 驗收。
+
+本批新增唯讀 host proposal、精確 owner／agent／connection 與 payload 核准邊界、可關閉 lifetime、durable configuration revision 和 scoped queue。submit／retry／restart 重驗身分與配置，credential writer 前先保存撤銷 pending authority，failed save 不寫 credential；no-op／throwing writer 也退休未提交 proposal。idempotency 不可換內容／地址／thread／檔案／authorization，保存失敗及 legacy collision 全部回滾；inbound activity 不誤撤銷，legacy 人工 rows 不取得 agent authority。queued 不等於 delivered，Stop 不召回已入列或開始送出的訊息，不宣稱 exactly-once／cross-process CAS。
+
+Swift testing／CustomDump 使用隔離 stores、固定商業時間／delivery IDs、受控 dependencies 和完整 state／bytes 比較；14 個新方法／55 cases 及既有回歸，最後 81 tests／7 suites 聚焦通過。有效 baseline／最後完整與 native gates、metadata bounds 及證據見 [完成驗收入口](Parity-completion-audit.md)。**模型 schema／tool adapter、完整核准 UI、canonical transcript、inbound shared runner 與 model failure follow-up 尚未接線**；既有一次純文字 inbound 回覆未改用本 API。只補 host queue foundation，不關閉 AGENT-02、live 帳號／服務／真人／release 或整體 partial。未 push、重啟 App／Xcode 或改真實資料。
+
 ## 單獨聊天的無變更 automatic view（2026-10-05）
 
 再次核對 reference `agent-db.ts` 的 `markViewed`，native SQLite 現在也於保留 manual-unread 或相同／較舊 view time 時不做無變更 UPSERT。原 finite timestamp、caller commit／binding lease、canonical owner／read row 及 observation publication transaction 仍先檢查；撤銷、帳號重綁後還原、錯 owner、缺失／損壞 row 均不復活為成功。changed view 和 explicit read／unread 仍按原契約保存並在 SQL 故障時回滾。

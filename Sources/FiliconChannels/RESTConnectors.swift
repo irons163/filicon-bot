@@ -34,13 +34,18 @@ public enum RESTChannelConnectorError: Error, LocalizedError, Sendable {
     }
 }
 
-private enum ChannelAttachmentPolicy {
+enum ChannelAttachmentPolicy {
     static let maximumBytes: Int64 = 25 * 1_024 * 1_024
     static func validate(filename: String, mimeType: String, count: Int64) throws {
         guard count >= 0, count <= maximumBytes else { throw RESTChannelConnectorError.attachmentTooLarge(filename) }
-        guard !filename.isEmpty, filename.rangeOfCharacter(from: .newlines) == nil else { throw RESTChannelConnectorError.attachmentIntegrity }
+        guard !filename.isEmpty, filename != ".", filename != "..", filename.utf8.count <= 255,
+              !filename.contains("/"), !filename.contains("\\"),
+              !filename.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else {
+            throw RESTChannelConnectorError.attachmentIntegrity
+        }
         let normalized = mimeType.lowercased()
-        let safeSyntax = normalized.range(of: "^[a-z0-9][a-z0-9.+-]*/[a-z0-9][a-z0-9.+-]*$", options: .regularExpression) != nil
+        let safeSyntax = normalized.utf8.count <= 128
+            && normalized.range(of: "^[a-z0-9][a-z0-9.+-]*/[a-z0-9][a-z0-9.+-]*$", options: .regularExpression) != nil
         let ok = safeSyntax && (normalized.hasPrefix("image/") || normalized.hasPrefix("audio/") || normalized.hasPrefix("video/") || normalized.hasPrefix("text/") || ["application/pdf", "application/json", "application/zip", "application/octet-stream"].contains(normalized))
         guard ok else { throw RESTChannelConnectorError.unsupportedAttachmentType(mimeType) }
     }

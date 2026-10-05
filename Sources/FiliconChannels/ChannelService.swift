@@ -30,17 +30,24 @@ private struct ChannelPersistentState: Codable, Sendable {
     var inbound: [ChannelEnvelope] = []
     var deliveries: [ChannelDelivery] = []
     var failureWakes: [ChannelFailureWake] = []
+    // Absent in legacy files. Versions are persisted with configuration writes
+    // so restored publications cannot follow a replacement connection (or ABA).
+    var publicationRevisions: [String: UUID]? = nil
 }
 
 public actor ChannelService {
     public static let maximumMessageCharacters = 8_000
     public static let maximumAttempts = 3
     public static let maximumRetainedInboundEvents = 10_000
+    public static let maximumAttachmentCount = 64
+    public static let maximumTotalAttachmentBytes: Int64 = 100 * 1_024 * 1_024
 
     private let storeURL: URL
+    private let newDeliveryID: @Sendable () -> UUID
     private var state: ChannelPersistentState
     private var persistedState: ChannelPersistentState
     private var connectors: [String: any ChannelConnector] = [:]
+    private var connectorRevisions: [String: UUID] = [:]
     private struct Listener {
         let token: UUID
         let task: Task<Void, Never>
@@ -55,9 +62,11 @@ public actor ChannelService {
     // Approval snapshots cover counts as well as configuration, including ABA
     // edits. This is a process-local fence, not cross-process compare-and-swap.
     private var storageRevision = UUID()
+    private let publicationIssuerID = UUID()
 
-    public init(storeURL: URL) throws {
+    public init(storeURL: URL, newDeliveryID: @escaping @Sendable () -> UUID = { UUID() }) throws {
         self.storeURL = storeURL
+        self.newDeliveryID = newDeliveryID
         if FileManager.default.fileExists(atPath: storeURL.path) {
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .millisecondsSince1970
@@ -76,6 +85,7 @@ public actor ChannelService {
 
     public func register(_ connector: any ChannelConnector) {
         connectors[connector.descriptor.id] = connector
+        connectorRevisions[connector.descriptor.id] = UUID()
     }
 
     public func connectorDescriptors() -> [ChannelConnectorDescriptor] {
@@ -96,6 +106,7 @@ public actor ChannelService {
         } else {
             state.connections.append(connection)
         }
+        advancePublicationRevision(connectionID: connection.id)
         try persist()
         connectionRevisions[connection.id] = UUID()
         // A listener captured the old credentials/configuration. The caller can
@@ -148,10 +159,24 @@ public actor ChannelService {
     public func commitCredential<Result: Sendable>(
         connectionID: UUID,
         _ operation: @Sendable ([ChannelConnection]) throws -> (result: Result, changed: Bool)
-    ) rethrows -> Result {
+    ) throws -> Result {
+        // Invalidate scoped pending delivery authority durably BEFORE a token
+        // can change. A failed/no-op credential attempt conservatively retires
+        // that authority too. Persistence failure prevents the credential write.
+        // Legacy human queue entries keep their existing configuration policy.
+        if state.deliveries.contains(where: {
+            $0.connectionID == connectionID && $0.authorization != nil
+                && [.queued, .retrying, .sending].contains($0.status)
+        }) {
+            advancePublicationRevision(connectionID: connectionID)
+            try persist()
+        }
+        // Even without a queued row, a throwing/no-op credential writer can
+        // retire a suspended proposal or profile request. This local fence is
+        // advanced before entering the writer, not only on its success path.
+        connectionRevisions[connectionID] = UUID()
         let outcome = try operation(state.connections)
         if outcome.changed {
-            connectionRevisions[connectionID] = UUID()
             profileRequests[connectionID] = nil
             let callback = listeners[connectionID]?.onInbound
             stop(connectionID: connectionID)
@@ -208,6 +233,7 @@ public actor ChannelService {
         // while the remote call was in flight. Never retain an index across await.
         state.connections[index].profile = value
         state.connections[index].accountID = value?.workspaceID ?? value?.id
+        advancePublicationRevision(connectionID: connectionID)
         try persist()
         return value
     }
@@ -222,6 +248,7 @@ public actor ChannelService {
     public func setConnectionEnabled(id: UUID, enabled: Bool) throws {
         guard let index = state.connections.firstIndex(where: { $0.id == id }) else { throw ChannelServiceError.unknownConnection(id) }
         state.connections[index].enabled = enabled
+        advancePublicationRevision(connectionID: id)
         try persist()
         connectionRevisions[id] = UUID()
         if !enabled { stop(connectionID: id) }
@@ -234,6 +261,7 @@ public actor ChannelService {
         state.inbound.removeAll { $0.connectionID == id }
         state.deliveries.removeAll { $0.connectionID == id }
         state.failureWakes.removeAll { $0.connectionID == id }
+        state.publicationRevisions?[id.uuidString] = nil
         try persist()
         // Do not tear down the live connection if the deletion failed to save.
         connectionRevisions[id] = nil
@@ -310,6 +338,66 @@ public actor ChannelService {
         state.inbound.filter { connectionID == nil || $0.connectionID == connectionID }
     }
 
+    /// Read-only preparation. No connection ID, credential or peer identity is
+    /// accepted from model data; one enabled own-account/own-agent route wins.
+    public func proposePublication(
+        agentID: UUID, accountID: String, outbound: ChannelOutbound, to address: ChannelAddress
+    ) throws -> ChannelPublication {
+        let platform = address.platform.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard ["slack", "discord"].contains(platform), !accountID.isEmpty,
+              accountID.utf8.count <= 256,
+              !accountID.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else {
+            throw ChannelPublicationError.invalid
+        }
+        let matches = state.connections.filter {
+            $0.enabled && $0.agentID == agentID && $0.authorizationAccountID == accountID && $0.connectorID == platform
+        }
+        guard let connection = matches.first, let connector = connectors[platform],
+              let connectorRevision = connectorRevisions[platform] else {
+            throw ChannelPublicationError.unavailable
+        }
+        guard matches.count == 1 else { throw ChannelPublicationError.ambiguous }
+        let (outbound, address) = try Self.normalize(outbound, to: address, connection: connection)
+        try Self.validateCapabilities(outbound, address: address, descriptor: connector.descriptor)
+        return .init(agentID: agentID, connection: connection, address: address, outbound: outbound,
+            issuerID: publicationIssuerID, configurationRevision: publicationRevision(connectionID: connection.id),
+            processRevision: connectionRevisions[connection.id], connectorRevision: connectorRevision,
+            connectorDescriptor: connector.descriptor)
+    }
+
+    /// The host must first obtain consent covering this entire proposal. This
+    /// synchronous critical section revalidates and saves, but never sends.
+    @discardableResult
+    public func enqueueApprovedPublication(
+        _ proposal: ChannelPublication, lifetime: ChannelPublicationLifetime,
+        idempotencyKey: UUID, at: Date = Date()
+    ) throws -> ChannelDelivery {
+        try lifetime.commit(proposal, idempotencyKey: idempotencyKey) {
+            guard proposal.issuerID == publicationIssuerID,
+                  state.connections.first(where: { $0.id == proposal.connectionID }).map(ChannelPublication.configuration) == proposal.connection,
+                  proposal.connection.enabled, proposal.connection.agentID == proposal.agentID,
+                  connectionRevisions[proposal.connectionID] == proposal.processRevision,
+                  publicationRevision(connectionID: proposal.connectionID) == proposal.configurationRevision,
+                  connectorRevisions[proposal.address.platform] == proposal.connectorRevision,
+                  let connector = connectors[proposal.address.platform],
+                  connector.descriptor == proposal.connectorDescriptor else { throw ChannelPublicationError.stale }
+            // Keep the revision in the same atomic envelope as the queued row,
+            // including the first publication from a legacy configuration.
+            let before = state
+            do {
+                if state.publicationRevisions == nil { state.publicationRevisions = [:] }
+                state.publicationRevisions?[proposal.connectionID.uuidString] = proposal.configurationRevision
+                let authorization = ChannelDeliveryAuthorization(ownerAccountID: proposal.ownerAccountID,
+                    agentID: proposal.agentID, configurationRevision: proposal.configurationRevision)
+                return try enqueue(proposal.outbound, to: proposal.address, connectionID: proposal.connectionID,
+                    idempotencyKey: idempotencyKey, at: at, authorization: authorization)
+            } catch {
+                state = before
+                throw error
+            }
+        }
+    }
+
     @discardableResult
     public func enqueue(
         _ outbound: ChannelOutbound,
@@ -318,24 +406,35 @@ public actor ChannelService {
         idempotencyKey: UUID = UUID(),
         at: Date = Date()
     ) throws -> ChannelDelivery {
-        guard state.connections.contains(where: { $0.id == connectionID }) else {
+        try enqueue(outbound, to: address, connectionID: connectionID, idempotencyKey: idempotencyKey,
+            at: at, authorization: nil)
+    }
+
+    private func enqueue(
+        _ outbound: ChannelOutbound, to address: ChannelAddress, connectionID: UUID,
+        idempotencyKey: UUID, at: Date, authorization: ChannelDeliveryAuthorization?
+    ) throws -> ChannelDelivery {
+        guard let connection = state.connections.first(where: { $0.id == connectionID }) else {
             throw ChannelServiceError.unknownConnection(connectionID)
         }
-        let text = outbound.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard (!text.isEmpty || !outbound.attachments.isEmpty), text.count <= Self.maximumMessageCharacters,
-              !address.platform.isEmpty, !address.channelID.isEmpty else {
-            throw ChannelServiceError.invalidOutbound
-        }
+        let (outbound, address) = try Self.normalize(outbound, to: address, connection: connection)
         if let existing = state.deliveries.first(where: { $0.idempotencyKey == idempotencyKey }) {
+            guard existing.connectionID == connectionID, existing.address == address,
+                  existing.outbound == outbound, existing.authorization == authorization else {
+                throw ChannelPublicationError.idempotencyConflict
+            }
             return existing
         }
+        let deliveryID = newDeliveryID()
+        guard !state.deliveries.contains(where: { $0.id == deliveryID }) else { throw ChannelServiceError.invalidOutbound }
         let delivery = ChannelDelivery(
+            id: deliveryID,
             connectionID: connectionID,
             address: address,
-            outbound: .init(text: text, attachments: outbound.attachments),
+            outbound: outbound,
             idempotencyKey: idempotencyKey,
             nextAttemptAt: at,
-            createdAt: at
+            createdAt: at, authorization: authorization
         )
         state.deliveries.append(delivery)
         try persist()
@@ -375,10 +474,25 @@ public actor ChannelService {
             deadLetter(index: index, error: ChannelServiceError.disabledConnection(delivery.connectionID).localizedDescription, now: now)
             return
         }
+        do {
+            _ = try Self.normalize(delivery.outbound, to: delivery.address, connection: connection)
+            if let authorization = delivery.authorization {
+                guard connection.agentID == authorization.agentID,
+                      connection.authorizationAccountID == authorization.ownerAccountID,
+                      state.publicationRevisions?[connection.id.uuidString] == authorization.configurationRevision else {
+                    throw ChannelPublicationError.stale
+                }
+            }
+        } catch {
+            deadLetter(index: index, error: error.localizedDescription, now: now)
+            return
+        }
         guard let connector = connectors[connection.connectorID] else {
             scheduleFailure(index: index, error: ChannelServiceError.unknownConnector(connection.connectorID).localizedDescription, now: now)
             return
         }
+        do { try Self.validateCapabilities(delivery.outbound, address: delivery.address, descriptor: connector.descriptor) }
+        catch { deadLetter(index: index, error: error.localizedDescription, now: now); return }
         state.deliveries[index].status = .sending
         state.deliveries[index].attemptCount += 1
         do { try persist() } catch { return }
@@ -453,6 +567,51 @@ public actor ChannelService {
             state = persistedState
             throw error
         }
+    }
+
+    private func publicationRevision(connectionID: UUID) -> UUID {
+        state.publicationRevisions?[connectionID.uuidString] ?? publicationIssuerID
+    }
+    private func advancePublicationRevision(connectionID: UUID) {
+        if state.publicationRevisions == nil { state.publicationRevisions = [:] }
+        state.publicationRevisions?[connectionID.uuidString] = UUID()
+    }
+    private static func validateCapabilities(
+        _ outbound: ChannelOutbound, address: ChannelAddress, descriptor: ChannelConnectorDescriptor
+    ) throws {
+        guard descriptor.id == address.platform,
+              descriptor.supportsAttachments || outbound.attachments.isEmpty,
+              descriptor.supportsThreads || address.threadID == nil else {
+            throw ChannelServiceError.unsupportedCapability("this publication")
+        }
+    }
+    private static func normalize(
+        _ outbound: ChannelOutbound, to address: ChannelAddress, connection: ChannelConnection
+    ) throws -> (ChannelOutbound, ChannelAddress) {
+        let text = outbound.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let platform = address.platform.trimmingCharacters(in: .whitespacesAndNewlines)
+        let channel = address.channelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let thread = address.threadID?.trimmingCharacters(in: .whitespacesAndNewlines)
+        func validIdentifier(_ value: String) -> Bool {
+            !value.isEmpty && value.utf8.count <= 512
+                && !value.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) })
+        }
+        guard (!text.isEmpty || !outbound.attachments.isEmpty), text.count <= maximumMessageCharacters,
+              platform == connection.connectorID, ChannelCompatibility.safePlatformIdentifier(platform) == platform,
+              validIdentifier(channel), thread.map(validIdentifier) != false,
+              outbound.attachments.count <= maximumAttachmentCount else { throw ChannelServiceError.invalidOutbound }
+        var total: Int64 = 0
+        for attachment in outbound.attachments {
+            try ChannelAttachmentPolicy.validate(filename: attachment.filename, mimeType: attachment.mimeType, count: attachment.byteCount)
+            guard attachment.blobID.utf8.count == 64,
+                  attachment.blobID.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }) else {
+                throw RESTChannelConnectorError.attachmentIntegrity
+            }
+            total += attachment.byteCount // Per-item/count bounds exclude overflow.
+        }
+        guard total <= maximumTotalAttachmentBytes else { throw ChannelServiceError.invalidOutbound }
+        return (.init(text: text, attachments: outbound.attachments),
+                .init(platform: platform, channelID: channel, threadID: thread))
     }
 
     private static func save(_ state: ChannelPersistentState, to url: URL) throws {

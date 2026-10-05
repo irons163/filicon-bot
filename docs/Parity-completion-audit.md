@@ -1,5 +1,27 @@
 # 完成驗收入口（2026-09-27）
 
+## 外部頻道的核准送件佇列基礎
+
+2026-10-05 接續 `703df89`，核對 reference `a9f633e09d49a85829b8236331b9e21f7e612634` 的 `source/host/runner/tools/send-message-schema.ts`、`source/shared/channel-messaging.ts` 及 `source/host/extensions/transcript/{turn-runtime,background-wakes,transcript-manager}.ts`。原版 `SendMessage` 有 optional `channel: platform:chat`，限文字／附件；文字帶圖片時 outbound helper 取第一張並以文字為 caption，standalone attachment 使用 URL／alt。turn runtime 呼叫頻道 delivery，也保存本地 transcript；失敗另建提醒及 hidden failure wake。recovered source 只有 `setChannelDelivery` 宣告，未找到 production 呼叫，預設 delivery 丟出未註冊錯誤；這是工具／路由契約，不是原版 live 平台可用的證明。
+
+native 原有 REST transports／人工送件不等於模型 `SendMessage channel` 接線。這批新增 `ChannelPublication`、`ChannelDeliveryAuthorization` 及 `ChannelPublicationLifetime` 的 host API，**尚未接入模型 schema、App 核准卡、canonical transcript 或 inbound shared runner**。現有 `respondToScheduledChannel` 的一次純文字回覆亦未改成這條核准路徑；外部 channel 的 AGENT-02 缺口仍 partial，其他 48 分類及外部／release 邊界不縮減。
+
+preparation 無網路／寫入，只能選該 account／agent 的唯一 enabled Slack／Discord 連線，不借用 peer、receive-only 或外帳號；歧義及未註冊介面拒絕。proposal 公開 JSON／debug mirror 不含 credential reference、profile 或內部 fences。host 日後必須取得涵蓋精確目的地、thread、內容及所有附件 metadata 的人類同意，再使用 scoped enqueue；proposal 本身不是同意，這批沒有自動核准。Stop／account／dispatch retirement 要由尚待接線的 host 關閉 lifetime。
+
+提交前重驗 issuer、configuration／process／registered-connector generation 與完整 descriptor；即使 descriptor 相同，替換介面也退休未提交 proposal。metadata／owner／agent／enabled／profile／remove-recreate／ABA 修改均失效；inbound cursor／activity 不誤撤銷核准。scoped queue 保存無憑證的 owner／agent／persistent configuration revision，每次 transport attempt 重驗；重開後的修改、憑證寫入嘗試（含 no-op／失敗）及 ABA 不讓待送件跟隨另一身分。若有 scoped pending rows，revision 必須先落盤才可呼叫 credential writer；保存失敗不執行 writer。沒有 pending rows 時仍先退休 process-local proposals／profile requests。legacy 人工 rows 的 optional authorization 維持 absent，不憑空授權給 agent。
+
+同一 idempotency key 只能對應完全相同的 connection、normalized address／payload／authorization；不同內容、目的地、thread、檔案或人工／scoped 身分衝突拒絕。queue 與首次 legacy revision 在同一 atomic envelope 保存；失敗不保留 receipt 或新 authority，legacy collision 不污染記憶體或下一次保存。8,000 characters、512-byte IDs、64 files、每檔 25 MiB／總計 100 MiB、basename／MIME／lowercase SHA-256 metadata 有界；queue 只檢 metadata，既有 REST transport 讀出 bytes 後仍驗長度／SHA-256，保留 pinned HTTPS origins／redirect policy，不授予模型 URL／path 讀取權。
+
+queued receipt 只證明已落盤，不冒充 delivered。flush／retry 保留同一地址、內容及 key，final failure 保留 durable wake。lifetime 關閉不召回已入列訊息，也不能撤回已開始的 remote request；retry 不宣稱 exactly-once、cross-process CAS 或跨 transcript／queue 原子交易。真人 App／VoiceOver、live Slack／Discord／OAuth、release／公證仍未驗收。
+
+有效 baseline `channel-publication-baseline-red-v3.log` exit 1：2 tests／19 issues，重現五種 idempotency 替換及七種 invalid metadata 被錯誤接受。v1 compiler cache 拒寫及 v2 async assertion 編譯錯誤不是產品紅燈，紀錄保留。最後 source 聚焦 `channel-publication-focused-final-v4.log` exit 0：81 tests／7 suites（core credential／disconnect 29／3、channels 43／3、既有 secure card 9／1）。新增 14 個方法／55 cases，使用固定商業時間／delivery IDs、隔離 stores、受控 writer／transport 及 CustomDump 完整值比較；包含保存 rollback、重開、credential failure／no-op、legacy decode／collision、proposal 異動、輸入上下界、介面能力及 retry，不操作真實 Keychain／remote send。
+
+最後 source 完整串行 `channel-publication-full-final-v1.log` exit 0：135 XCTest＋2,012 Swift Testing／238 suites，17 targets 全部跑完且沒有失敗（核心 982／108、App 727／92、channels 43／3）；兩項 opt-in live Codex tests 略過，不作外部驗收。七語 `channel-publication-localization-final-v1.log` 各 1,806 keys／0 missing，authored diff whitespace check 通過。較早 focused-v2 的 immutable fixture assignment 編譯錯誤保留，v1／v3 的成功不代替最後 v4；沒有新增 UI／dependency／scheme 或降低最低 OS。
+
+`channel-publication-native-final-v1.log` BUILD SUCCEEDED；`channel-publication-native-verify-final-v1.log` 及 `channel-publication-package-final-v1.log` 的 standalone Debug／ad-hoc 封裝，均通過 offline KaTeX／Mermaid resources、四個 executables、app／XPC entitlements 與 deep strict 簽章。standalone 只在 `.build/validation/ChannelPublicationPackage/Filicon.app`，未執行列印的 launch smoke，不是 release／公證；原生建置的 debugger exception 只按既有 `--xcode-debug` 規則驗證。既有 compiler／CoreData 診斷不宣稱由本批修復。
+
+Swift 測試／CustomDump 技能用於隔離失效與完整快照，SPM 技能保留既有 package target，文件技能分清工具契約、queue foundation 與未接線項目。沒有刪除 cache、改產品權限或停用 compiler sandbox；未 push、啟動或重啟使用者 App／Xcode、改真實帳號／群組／聊天。完整工具 adapter／UI／shared channel runner 仍為下一步，不因這批 gate 通過而上調整體 partial。
+
 ## Mermaid 十二類圖表及濾鏡驗證
 
 2026-10-05 接續 `1c21bf0` 的真正聊天與預覽接線，新增 journey、timeline、quadrant、requirement 四類 fixed public-engine fixtures，與原八類合計十二類。reference 仍是 `a9f633e09d49a85829b8236331b9e21f7e612634`，執行的是已驗證公開 11.16.0 engine；官方 rolling syntax docs 只供語法參照，不當作 pinned engine 的輸出 oracle。原 opaque bytes／精確 geometry、完整語法、真人／最低 macOS／external／release 等價仍未證明；`UI-04` 及整體維持 partial，48 分類不縮減。詳見 [Offline-mermaid.md](Offline-mermaid.md)。下節八類 UI 紀錄保留為前一批證據。
