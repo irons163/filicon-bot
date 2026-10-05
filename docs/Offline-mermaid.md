@@ -3,7 +3,7 @@
 Filicon bundles the clean public **Mermaid 11.16.0** IIFE distribution and its
 dependency notices. A serialized offline renderer now produces independently
 validated SVG for the actual direct and group transcripts and their native
-diagram viewer. Eight diagram families have real UI fixtures; unsafe, invalid
+diagram viewer. Twelve diagram families have real UI fixtures; unsafe, invalid
 or unavailable output stays readable as the original source. This is not proof
 of every Mermaid grammar or the reference's missing shipped assets.
 
@@ -16,6 +16,14 @@ It refers to an unavailable opaque `mermaid.core-CYC_FcEu.js` asset. The recover
 application contract declares `^11.16.0`, but its root lockfile does **not** pin
 a Mermaid dependency tree. A clean public package is a replacement candidate,
 not proof of the original version, shipped bytes or exact layout.
+
+The additional [journey](https://mermaid.js.org/syntax/userJourney.html),
+[timeline](https://mermaid.js.org/syntax/timeline.html),
+[quadrant](https://mermaid.js.org/syntax/quadrantChart.html) and
+[requirement](https://mermaid.js.org/syntax/requirementDiagram.html) fixtures use
+original labels and documented syntax as candidates. Those rolling documentation
+pages are not a pinned-version oracle: actual rendering, output validation and
+native UI tests run against the bundled 11.16.0 engine.
 
 The imported [public archive](https://registry.npmjs.org/mermaid/-/mermaid-11.16.0.tgz)
 is verified with SHA-512 before reading entries. The engine is copied unchanged,
@@ -89,7 +97,7 @@ are the only permitted data resources. Navigation, downloads, new windows and
 script dialogs are rejected. The service does not create an application window.
 
 Each request initializes strict security, a fixed light/dark theme, deterministic
-IDs, a 65,536-byte source limit and 512-edge limit. The secure configuration
+IDs, 65,536-byte and 1,000-line source limits, and a 512-edge limit. The secure configuration
 list prevents frontmatter from replacing those settings or installing arbitrary
 theme CSS. Parsing and rendering use the public engine; `bindFunctions` is never
 called. Strict mode alone is insufficient: the actual engine still emits an
@@ -108,11 +116,19 @@ theme rules, but external references remain forbidden. The output has at most
 must be finite, positive and no greater than 20,000; numeric geometry and shadows
 have separate bounds.
 
-Two inert public-engine artifacts are normalized: later duplicate ID attributes
+Three inert public-engine artifacts are normalized: later duplicate ID attributes
 are removed while preserving the first target, and bare `undefined` inline CSS
-statements are dropped. No resource, markup capability or network permission is
-added. Validated serialization is idempotent. Unsupported or unsafe output yields
-a typed fallback, not raw engine SVG or raw engine error text. Source CSS
+statements are dropped; plain `foreignObject` labels that omit their XHTML
+namespace receive it explicitly. Namespace overrides, HTML outside those labels
+and active descendants still reject the whole output. Static `switch` label
+wrappers and enumerated overflow values are accepted for journey diagrams.
+Timeline brightness is a single finite filter from 0–2 or 0–200%, not a resource
+or a filter chain. SVG filter attributes and CSS declarations share the same
+validation. A filter value beginning with a local URL must consist of that
+single reference to a bounded definition.
+No network, file, script or tool permission is added. Validated serialization is
+idempotent. Unsupported or unsafe output yields a typed fallback, not raw engine
+SVG or raw engine error text. Source CSS
 keyframes remain in the accepted subset; the engine document disables animations
 with host CSS, which is not a proof that every possible SVG animation is absent.
 
@@ -133,9 +149,9 @@ deprecated process-pool setting is presented as a separate-process guarantee.
 
 Focused backend tests cover FIFO, theme/cache isolation, count and byte eviction,
 overflow, shutdown, cancellation, stale deadlines/callbacks, output rejection and
-real WebKit recovery. Eight diagram families render with the actual public engine
-in both themes. These fixtures establish backend behavior, not every supported
-grammar or reference geometry. Transcript evidence is separate below.
+real WebKit recovery. Twelve diagram families render with the actual public
+engine in both themes. These fixtures establish backend behavior, not every
+supported grammar or reference geometry. Transcript evidence is separate below.
 
 ## Transcript and viewer integration
 
@@ -171,8 +187,9 @@ controls are disabled. The original source remains selectable and scrollable,
 instead of leaving an empty interactive diagram surface above that text.
 
 Real `TranscriptMessageView` and `GroupMessageBubble` fixtures cover flowchart,
-sequence, state, pie, class, entity relationship, Gantt and mindmap output, plus
-unsafe-source fallback in both routes. Unshown native windows verify figure
+sequence, state, pie, class, entity relationship, Gantt, mindmap, journey,
+timeline, quadrant and requirement output, plus unsafe-source fallback in both
+routes and appearances. Unshown native windows verify figure
 actions, viewer dimensions, fitted SVG bounds, cancellation, late callbacks,
 failure recovery and seven languages in both appearances. Actual WebKit
 snapshots are inspected alongside native controls; a host bitmap alone does not
@@ -183,7 +200,7 @@ VoiceOver, OS full-screen or minimum-macOS acceptance run.
 
 The public engine is connected to the actual transcript and viewer, but the
 bounded output gate deliberately does not accept every possible public-engine
-output. Eight tested families do not establish the full grammar. Neither the
+output. Twelve tested families do not establish the full grammar. Neither the
 public archive nor dependency notices establish opaque-byte or pixel-identical
 parity. `UI-04`, human/minimum-macOS checks, hard runtime resource containment and
 external/release acceptance remain partial. Final test and build evidence is

@@ -38,7 +38,7 @@ public struct MermaidSVG: Sendable, Equatable {
         static let svgNamespace = "http://www.w3.org/2000/svg"
         static let htmlNamespace = "http://www.w3.org/1999/xhtml"
         static let mathNamespace = "http://www.w3.org/1998/Math/MathML"
-        static let svgElements: Set<String> = ["svg", "g", "defs", "title", "desc", "path", "rect", "circle", "ellipse",
+        static let svgElements: Set<String> = ["svg", "g", "defs", "title", "desc", "path", "rect", "circle", "ellipse", "switch",
             "line", "polyline", "polygon", "text", "tspan", "marker", "symbol", "style", "foreignObject",
             "clipPath", "linearGradient", "radialGradient", "stop", "filter", "feDropShadow"]
         static let htmlElements: Set<String> = ["div", "span", "p", "br", "strong", "em", "b", "i", "u", "s",
@@ -56,7 +56,7 @@ public struct MermaidSVG: Sendable, Equatable {
             "color", "vector-effect", "font-family", "font-size", "font-weight", "font-style", "text-anchor", "textLength",
             "lengthAdjust", "dominant-baseline", "alignment-baseline", "dx", "dy", "marker-end", "marker-start", "marker-mid",
             "markerHeight", "markerWidth", "markerUnits", "refX", "refY", "orient", "clip-path", "filter", "filterUnits",
-            "stdDeviation", "flood-color", "flood-opacity"]
+            "stdDeviation", "flood-color", "flood-opacity", "overflow"]
         static let mathAttributes: Set<String> = ["display", "encoding", "mathvariant", "mathsize", "mathcolor",
             "mathbackground", "stretchy", "fence", "separator", "lspace", "rspace", "minsize", "maxsize",
             "movablelimits", "accent", "accentunder", "scriptlevel", "displaystyle", "linethickness", "numalign",
@@ -85,7 +85,9 @@ public struct MermaidSVG: Sendable, Equatable {
             nodes += 1
             guard nodes <= 16_384, stack.count < 128, !name.contains(":"),
                   stack.last?.name != "style", stack.last?.name != "annotation" else { reject(parser); return }
-            let namespace = values["xmlns"] ?? stack.last?.namespace ?? ""
+            let implicitForeignLabel = values["xmlns"] == nil && stack.last?.name == "foreignObject"
+                && Self.htmlElements.contains(name)
+            let namespace = implicitForeignLabel ? Self.htmlNamespace : values["xmlns"] ?? stack.last?.namespace ?? ""
             let allowed: Set<String>
             switch namespace {
             case Self.svgNamespace:
@@ -109,6 +111,7 @@ public struct MermaidSVG: Sendable, Equatable {
                 rootSeen = true
             }
             var normalized = values
+            if implicitForeignLabel { normalized["xmlns"] = Self.htmlNamespace }
             if let id = values["id"] {
                 guard Self.matches(id, Self.identifier) else { reject(parser); return }
                 if !ids.insert(id).inserted { normalized.removeValue(forKey: "id") }
@@ -118,6 +121,8 @@ public struct MermaidSVG: Sendable, Equatable {
                 guard value.utf8.count <= 65_536, allowed.contains(key) || Self.dataAttribute(key),
                       !value.unicodeScalars.contains(where: { CharacterSet.controlCharacters.subtracting(.whitespacesAndNewlines).contains($0) }) else { reject(parser); return }
                 if key == "xmlns:xlink", value != "http://www.w3.org/1999/xlink" { reject(parser); return }
+                if key == "overflow", !["visible", "hidden", "scroll", "auto", "clip", "inherit"].contains(value) { reject(parser); return }
+                if key == "filter", !CSS.safeFilter(value) { reject(parser); return }
                 if key == "style" {
                     guard CSS.declarations(value), collectReferences(in: value, resourceElement: name) else { reject(parser); return }
                     let clean = CSS.normalizedDeclarations(value)
@@ -228,9 +233,10 @@ public struct MermaidSVG: Sendable, Equatable {
             "transform-origin", "transition-duration", "vertical-align", "visibility", "white-space", "width",
             "word-break", "overflow-wrap", "z-index"]
         static let functions: Set<String> = ["rgb", "rgba", "hsl", "hsla", "var", "calc", "min", "max", "clamp", "url",
-            "translate", "translatex", "translatey", "scale", "scalex", "scaley", "rotate", "matrix", "linear-gradient", "drop-shadow"]
+            "translate", "translatex", "translatey", "scale", "scalex", "scaley", "rotate", "matrix", "linear-gradient", "drop-shadow", "brightness"]
         static let functionPattern = try? NSRegularExpression(pattern: #"([A-Za-z_-][A-Za-z0-9_-]*)\s*\("#)
         static let shadowLengths = try? NSRegularExpression(pattern: #"^drop-shadow\(\s*([-+]?(?:[0-9]+\.?[0-9]*|\.[0-9]+)(?:[eE][-+]?[0-9]+)?)(?:px)?\s+([-+]?(?:[0-9]+\.?[0-9]*|\.[0-9]+)(?:[eE][-+]?[0-9]+)?)(?:px)?(?:\s+([-+]?(?:[0-9]+\.?[0-9]*|\.[0-9]+)(?:[eE][-+]?[0-9]+)?)(?:px)?)?(?:\s|\))"#)
+        static let brightness = try? NSRegularExpression(pattern: #"^brightness\(\s*([-+]?(?:[0-9]+\.?[0-9]*|\.[0-9]+)(?:[eE][-+]?[0-9]+)?)(%)?\s*\)$"#, options: .caseInsensitive)
 
         static func declarations(_ value: String) -> Bool {
             guard safeTokens(value), !value.contains("{") && !value.contains("}"), !value.contains("@") else { return false }
@@ -307,8 +313,16 @@ public struct MermaidSVG: Sendable, Equatable {
             }
         }
 
-        private static func safeFilter(_ value: String) -> Bool {
-            if ["none", "inherit"].contains(value) || value.hasPrefix("url(") { return true }
+        static func safeFilter(_ value: String) -> Bool {
+            if ["none", "inherit"].contains(value) { return true }
+            let range = NSRange(value.startIndex..<value.endIndex, in: value)
+            if let match = Validator.url?.firstMatch(in: value, range: range), match.range == range { return true }
+            if let regex = brightness, let match = regex.firstMatch(in: value, range: NSRange(value.startIndex..<value.endIndex, in: value)) {
+                guard let range = Range(match.range(at: 1), in: value), let amount = Double(value[range]),
+                      amount.isFinite, amount >= 0 else { return false }
+                return amount <= (match.range(at: 2).location == NSNotFound ? 2 : 200)
+            }
+            guard value.range(of: "brightness", options: .caseInsensitive) == nil else { return false }
             guard let regex = shadowLengths, let match = regex.firstMatch(in: value, range: NSRange(value.startIndex..<value.endIndex, in: value)) else { return false }
             for index in 1...3 where match.range(at: index).location != NSNotFound {
                 guard let range = Range(match.range(at: index), in: value), let length = Double(value[range]),

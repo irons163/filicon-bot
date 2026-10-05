@@ -160,6 +160,54 @@ import WebKit
         }
     }
 
+    @Test(arguments: ["journey", "timeline", "quadrantChart", "requirementDiagram"])
+    func additionalGrammarFamiliesRenderInTheNativeFigureAndViewer(kind: String) async throws {
+        let original = try #require(mermaidGrammarFixture(kind))
+        for dark in [false, true] {
+            try await withUIAsyncRenderTurn(language: "en") {
+                let request = MermaidFigureRequest(source: original, theme: dark ? .dark : .light)
+                let model = MermaidRenderedFigureModel()
+                await model.task(request: request)
+                guard case .rendered(let svg) = model.presentation else { Issue.record("Real \(kind) SVG required"); return }
+                let host = NSHostingView(rootView: OfflineMermaidFigure(model: model, svg: svg, request: request,
+                    revision: model.revision, showsPreviewWindow: false)
+                    .padding(12).frame(width: 380).background(Color(nsColor: .windowBackgroundColor))
+                    .environment(\.locale, Locale(identifier: "en")).environment(\.colorScheme, dark ? .dark : .light))
+                host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+                let window = makeWindow(host, size: host.fittingSize)
+                defer { model.figureRemoved(); window.contentView = nil; window.close() }
+                let surface = try await waitForMermaidSVG(in: host) {
+                    window.setContentSize(host.fittingSize)
+                    host.layoutSubtreeIfNeeded()
+                }
+                try await verifyFittedBounds(surface)
+                let appearance = dark ? "dark" : "light"
+                _ = try await captureMermaidHost(host, webView: surface, name: "mermaid-grammar-figure-\(kind)-\(appearance)")
+                let button = try #require(mermaidDescendants(in: host).compactMap { $0 as? MermaidExpandNativeButton }.first)
+                #expect(button.isEnabled && host.bounds.contains(host.convert(button.bounds, from: button)))
+
+                let viewer = MermaidViewerModel(svg: svg, source: original)
+                let coordinator = MermaidPreviewWindowCoordinator()
+                defer { coordinator.observeParent(nil); coordinator.dismiss() }
+                coordinator.observeParent(window)
+                coordinator.update(model: viewer, locale: Locale(identifier: "en"), dark: dark, show: false, onClose: { _ in })
+                let preview = try #require(coordinator.window)
+                preview.setContentSize(CGSize(width: 540, height: 420))
+                let viewerHost = try #require(preview.contentView)
+                let viewerSurface = try await waitForMermaidSVG(in: viewerHost) { viewerHost.layoutSubtreeIfNeeded() }
+                viewer.fitButtonTapped()
+                try await waitForTransform(viewer.state.transform, in: viewerSurface, host: viewerHost)
+                try await verifyFittedBounds(viewerSurface)
+                let text = try await viewerSurface.callAsyncJavaScript("return document.querySelector('svg').textContent", arguments: [:], in: nil, contentWorld: .defaultClient)
+                #expect((text as? String ?? "").contains("Delivery"))
+                expectNoDifference(viewer.svg, svg)
+                expectNoDifference(viewer.source, original)
+                #expect(!viewer.hasDisplayFailure && !preview.isVisible && !window.isVisible)
+                _ = try await captureMermaidHost(viewerHost, webView: viewerSurface, name: "mermaid-grammar-viewer-\(kind)-\(appearance)")
+            }
+        }
+    }
+
     @Test func anSVGDisplayFailureKeepsTheOriginalSourceInTheViewer() async throws {
         try await withUIRenderTurn(language: "en") {
             let svg = try #require(MermaidSVG.validated("<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 300 200\"><text x=\"10\" y=\"30\">Fixture</text></svg>"))

@@ -207,7 +207,7 @@ import CustomDump
 @Suite("Actual public Mermaid engine in isolated WebKit", .serialized, .timeLimit(.minutes(1)))
 @MainActor struct MermaidWebEngineTests {
     @Test(arguments: [MermaidTheme.light, .dark])
-    func publicEngineRendersEightDiagramFamiliesWithoutPageScriptExecution(theme: MermaidTheme) async throws {
+    func publicEngineRendersTwelveDiagramFamiliesWithoutPageScriptExecution(theme: MermaidTheme) async throws {
         _ = NSApplication.shared
         let driver = MermaidWebRenderDriver()
         let renderer = OfflineMermaidRenderer(driver: driver)
@@ -297,7 +297,11 @@ import CustomDump
         "classDiagram\nclass Animal {\n+String name\n+speak()\n}\nAnimal <|-- Bird",
         "erDiagram\nCUSTOMER ||--o{ ORDER : places\nCUSTOMER {\nstring name\n}",
         "gantt\ntitle Project\ndateFormat YYYY-MM-DD\nsection Plan\nDesign :a1, 2026-09-01, 3d\nBuild :after a1, 5d",
-        "mindmap\n  root((Team))\n    Design\n    Build"
+        "mindmap\n  root((Team))\n    Design\n    Build",
+        "journey\ntitle Delivery\nsection Planning\nDesign: 5: Designer\nBuild: 3: Engineer",
+        "timeline\ntitle Delivery\n2026 : Design : Build\n2027 : Review",
+        "quadrantChart\ntitle Delivery priorities\nx-axis Low effort --> High effort\ny-axis Low value --> High value\nquadrant-1 Plan\nquadrant-2 Deliver\nquadrant-3 Ignore\nquadrant-4 Review\nDesign: [0.25, 0.75]\nBuild: [0.75, 0.75]",
+        "requirementDiagram\nrequirement delivery {\nid: 1\ntext: Ready for delivery\nrisk: low\nverifymethod: test\n}\nelement build {\ntype: project\ndocref: Delivery\n}\nbuild - satisfies -> delivery"
     ] }
 
     private func evaluate<Value: Sendable>(_ web: WKWebView, script: String, world: WKContentWorld) async throws -> Value {

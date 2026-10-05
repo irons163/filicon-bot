@@ -40,6 +40,34 @@ struct MermaidSVGTests {
         expectNoDifference(MermaidSVG.validated(svg.markup), svg)
     }
 
+    @Test func journeySwitchLabelsAndOverflowRemainInertAndCanonical() throws {
+        let svg = try #require(MermaidSVG.validated(document("""
+        <g><switch><foreignObject width="100" height="40"><div class="task" style="display:table;height:100%;width:100%"><div class="label" style="display:table-cell;text-align:center;vertical-align:middle">Design &amp; review</div></div></foreignObject><text>Design &amp; review</text></switch></g>
+        <circle cx="20" cy="30" r="15" overflow="visible"/>
+        """)))
+        #expect(svg.markup.contains("<switch>"))
+        #expect(svg.markup.contains("overflow=\"visible\""))
+        #expect(svg.markup.contains("Design &amp; review"))
+        expectNoDifference(svg.markup.components(separatedBy: "xmlns=\"http://www.w3.org/1999/xhtml\"").count, 2)
+        expectNoDifference(MermaidSVG.validated(svg.markup), svg)
+    }
+
+    @Test(arguments: ["brightness(0)", "brightness(1.2)", "brightness(120%)", "brightness(0%)", "brightness(200%)"])
+    func boundedBrightnessFilterSupportsTimelineWithoutResources(value: String) throws {
+        let svg = try #require(MermaidSVG.validated(document("<style>#diagram .eventWrapper{filter:\(value);}</style><g class=\"eventWrapper\" filter=\"\(value)\"><text>Delivery</text></g>")))
+        #expect(svg.markup.contains("filter:\(value)"))
+        expectNoDifference(MermaidSVG.validated(svg.markup), svg)
+    }
+
+    @Test func aSingleLocalFilterResolvesToItsBoundedDefinition() throws {
+        let svg = try #require(MermaidSVG.validated(document("""
+        <defs><filter id="shadow"><feDropShadow stdDeviation="2"/></filter></defs>
+        <rect style="filter:url(#shadow)"/><rect filter="url(#shadow)"/>
+        """)))
+        #expect(svg.markup.contains("filter=\"url(#shadow)\""))
+        expectNoDifference(MermaidSVG.validated(svg.markup), svg)
+    }
+
     @Test(arguments: [
         "<script>globalThis.bad=true</script>", "<rect onclick=\"bad()\"/>", "<rect onLoad=\"bad()\"/>",
         "<image href=\"https://example.invalid/image\"/>", "<image href=\"data:image/svg+xml,bad\"/>",
@@ -49,6 +77,13 @@ struct MermaidSVGTests {
         "<foreignObject><iframe xmlns=\"http://www.w3.org/1999/xhtml\" src=\"about:blank\"/></foreignObject>",
         "<foreignObject><div xmlns=\"http://www.w3.org/1999/xhtml\"><form><input/></form></div></foreignObject>",
         "<foreignObject><div xmlns=\"http://www.w3.org/1999/xhtml\" contenteditable=\"true\"/></foreignObject>",
+        "<switch><script>globalThis.bad=true</script></switch>",
+        "<switch><foreignObject><div><img src=\"https://example.invalid/image\"/></div></foreignObject></switch>",
+        "<switch requiredExtensions=\"https://example.invalid\"><text>Label</text></switch>",
+        "<foreignObject><div xmlns=\"urn:foreign\">Label</div></foreignObject>",
+        "<foreignObject><div><svg viewBox=\"0 0 1 1\"/></div></foreignObject>",
+        "<foreignObject><div onclick=\"bad()\">Label</div></foreignObject>",
+        "<circle overflow=\"url(https://example.invalid)\"/>", "<circle overflow=\"unknown\"/>",
         "<rect href=\"file:///private/fixture\"/>", "<g xml:base=\"https://example.invalid\"/>",
         "<foreignObject><div xmlns=\"http://www.w3.org/1999/xhtml\"><style>body{display:none}</style></div></foreignObject>",
         "<g xmlns=\"urn:foreign\"><rect/></g>", "<div/>", "<svg viewBox=\"0 0 1 1\"/>",
@@ -71,7 +106,19 @@ struct MermaidSVGTests {
         "<!-- discarded comment -->", "<rect x=\"1e999\"/>", "<rect width=\"20001\"/>",
         "<rect style=\"font-size:1e999px\"/>", "<filter><feDropShadow stdDeviation=\"1000000\"/></filter>",
         "<rect style=\"filter:drop-shadow(1px 2px 1000000px black)\"/>",
-        "<rect style=\"filter:drop-shadow(1px 2px 2px black) drop-shadow(1px 2px 1000000px black)\"/>"
+        "<rect style=\"filter:drop-shadow(1px 2px 2px black) drop-shadow(1px 2px 1000000px black)\"/>",
+        "<rect style=\"filter:brightness(200.1%)\"/>", "<rect style=\"filter:brightness(2.001)\"/>",
+        "<rect style=\"filter:brightness(-1)\"/>", "<rect style=\"filter:brightness(1e999)\"/>",
+        "<rect style=\"filter:brightness(nan)\"/>", "<rect style=\"filter:brightness(120%) brightness(120%)\"/>",
+        "<rect style=\"filter:brightness(var(--mermaid-font-family))\"/>",
+        "<rect style=\"filter:brightness(120%) url(https://example.invalid)\"/>",
+        "<rect style=\"filter:drop-shadow(1px 2px 2px black) brightness(300%)\"/>",
+        "<rect style=\"filter:drop-shadow(1px 2px 2px black) brightness(120%)\"/>",
+        "<defs><filter id=\"shadow\"><feDropShadow stdDeviation=\"2\"/></filter></defs><rect style=\"filter:url(#shadow) brightness(300%)\"/>",
+        "<defs><filter id=\"shadow\"><feDropShadow stdDeviation=\"2\"/></filter></defs><rect style=\"filter:url(#shadow) brightness(120%)\"/>",
+        "<rect filter=\"brightness(300%)\"/>", "<rect filter=\"brightness(1e999)\"/>",
+        "<rect filter=\"drop-shadow(1px 2px 1000000px black)\"/>",
+        "<rect filter=\"drop-shadow(1px 2px 2px black) brightness(120%)\"/>"
     ])
     func activeAndResourceBearingOutputFailsClosed(body: String) {
         #expect(MermaidSVG.validated(document(body)) == nil, "Must reject: \(body)")

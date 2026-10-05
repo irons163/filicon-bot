@@ -3,6 +3,16 @@ import Testing
 import WebKit
 @testable import Filicon
 
+func mermaidGrammarFixture(_ kind: String) -> String? {
+    switch kind {
+    case "journey": "journey\ntitle Delivery\nsection Planning\nDesign: 5: Designer\nBuild: 3: Engineer"
+    case "timeline": "timeline\ntitle Delivery\n2026 : Design : Build\n2027 : Review"
+    case "quadrantChart": "quadrantChart\ntitle Delivery priorities\nx-axis Low effort --> High effort\ny-axis Low value --> High value\nquadrant-1 Plan\nquadrant-2 Deliver\nquadrant-3 Ignore\nquadrant-4 Review\nDesign: [0.25, 0.75]\nBuild: [0.75, 0.75]"
+    case "requirementDiagram": "requirementDiagram\nrequirement delivery {\nid: 1\ntext: Ready for delivery\nrisk: low\nverifymethod: test\n}\nelement build {\ntype: project\ndocref: Delivery\n}\nbuild - satisfies -> delivery"
+    default: nil
+    }
+}
+
 @MainActor func mermaidDescendants(in view: NSView) -> [NSView] {
     view.subviews.flatMap { [$0] + mermaidDescendants(in: $0) }
 }

@@ -1,5 +1,25 @@
 # 完成驗收入口（2026-09-27）
 
+## Mermaid 十二類圖表及濾鏡驗證
+
+2026-10-05 接續 `1c21bf0` 的真正聊天與預覽接線，新增 journey、timeline、quadrant、requirement 四類 fixed public-engine fixtures，與原八類合計十二類。reference 仍是 `a9f633e09d49a85829b8236331b9e21f7e612634`，執行的是已驗證公開 11.16.0 engine；官方 rolling syntax docs 只供語法參照，不當作 pinned engine 的輸出 oracle。原 opaque bytes／精確 geometry、完整語法、真人／最低 macOS／external／release 等價仍未證明；`UI-04` 及整體維持 partial，48 分類不縮減。詳見 [Offline-mermaid.md](Offline-mermaid.md)。下節八類 UI 紀錄保留為前一批證據。
+
+`mermaid-grammar-families-red-v1.log` exit 1，在真正 engine 的兩種 appearance 重現 journey／timeline 被 output gate 拒絕（1 test／4 issues）；`mermaid-grammar-svg-red-v1.log` exit 1，以獨立 SVG fixtures 重現 inert journey 標籤與五種正常 brightness 的誤拒（8 tests／6 issues）。journey 的 static `switch`／enumerated overflow 現在可通過，缺少 namespace 的 plain `foreignObject` label root 明確正規化為 XHTML。namespace override、HTML 在 label 外、active child／event／external resource 仍拒絕；序列化重驗保持 idempotent，不將 raw engine output 直接顯示。
+
+timeline 的 brightness 限單一有限值 0–2 或 0–200%。新增此函式時，額外拒絕測試抓到既有 shadow prefix 可夾帶 brightness，及 URL prefix／SVG attribute 的檢查差異：`mermaid-grammar-filter-composite-red.log` exit 1（1 test／2 issues），`mermaid-grammar-filter-attribute-red.log` exit 1（9 tests／8 issues）。最後 SVG filter attribute 與 CSS 共用檢查；URL 開頭的 filter 必須是完整單一 local reference，brightness 不得藏在 shadow／URL 的組合值後。超量／非有限數字／resource cycle 仍拒絕，既有 source、output、node、depth、attribute、geometry、queue、cache 與 deadline bounds 不變，沒有新增 network、file、script 或 tool authority。
+
+最後 source 聚焦 `mermaid-grammar-all-focused-final-v2.log` exit 0：60 tests／11 suites（backend 26／4、App 34／7），包含真正十二類明暗 engine、73 個 unsafe-output 拒絕案例、queue／cancel／resources、既有 native click／keyboard／lifecycle／七語 figure／viewer 回歸。真正 direct／group route 是 26 個 English fixture cases，每個測兩種 appearance，合計 48 個正常 diagram render 與 4 個 unsafe 原文 fallback；journey 另要求非空 HTML labels 全部具有正確 XHTML namespace。不是以空集合通過 namespace 斷言，也沒有把測試文字自動翻譯成 UI 語言。窗口皆 unshown，原 messages 不改寫。
+
+新增四類的 380-point figure／540×420 viewer 共 16 張 native controls 加 actual WebKit snapshot 已檢視，另檢查八張 actual-route SVG crop，覆蓋四類的 direct light 與 group dark。最終 V2 相較 V1 有十二張 composite PNG 的 SHA-256 相同；四張 requirement PNG 不同，已逐張重新檢查 V2，沒有把差異當作 pixel-identical 保證。標籤及 fit bounds 正常、dark canvas 無白邊；DOM／OCR／native expand-button bounds 為獨立檢查，不以空白 host bitmap 冒充 render。這仍不是真人 VoiceOver、OS full-screen 或最低 macOS 驗收。
+
+最後 source 完整串行 `mermaid-grammar-full-final-v1.log` exit 0：135 XCTest＋1,998 Swift Testing／237 suites，17 targets 全部跑完且沒有失敗（核心 982／108、App 727／92）；兩項 opt-in live Codex tests 略過，不作外部驗收。`mermaid-grammar-localization-final-v2.log` 七語各 1,806 keys／0 missing，`mermaid-grammar-resources-final-v1.log` 驗證 75 個 Mermaid resources，authored diff whitespace check 通過。較早 localization-v1 呼叫不存在的 script，屬命令錯誤而不是產品紅燈，失敗日誌保留。
+
+`mermaid-grammar-native-final-v1.log` BUILD SUCCEEDED；native verify 及 `mermaid-grammar-package-final-v3.log` standalone Debug／ad-hoc 封裝均通過 offline KaTeX／Mermaid resources、四個 executables、app／XPC entitlements 與 deep strict 簽章。standalone 只在 `.build/validation/MermaidGrammarPackage/Filicon.app`，未執行列印的 launch smoke，不是 release／公證。package-v1 的 compiler cache 寫入拒絕、v2 的 nested `sandbox-exec` 拒絕保留；把 module cache 指向專案內目錄後，經建置權限審核的 v3 成功，沒有停用 compiler sandbox 或改產品權限。既有 compiler／CoreData 診斷不宣稱由本批修復。
+
+低磁碟空間時，先按舊成功日誌與實際路徑確認，只移除五份自有隔離 DerivedData（`LocalGalleryFormatsNative`、`GalleryRepeatNative`、`GalleryCardinalityNative`、`MixedGalleryNative`、`GalleryAnimationNative`）各自的 `SDKExplicitPrecompiledModules` 及 `Index.noindex`，共十個可重建快取目錄；保留 Products、sources、logs、screenshots、repository metadata 與使用者資料。沒有刪除正在建置所用的 cache，或以其他目錄代替失敗的刪除目標。
+
+本批沿用 Swift 測試／CustomDump 的隔離 fixtures 與完整值比較、SPM 技能的既有 targets／dependencies／最低 OS 邊界；文件技能將新增正常語法、安全紅燈與最後 gates 分開記錄。不新增 dependency、改 scheme 或降低安全 bounds。未 push、啟動或重啟使用者 App／Xcode、改真實帳號／群組／聊天。
+
 ## 公開 Mermaid 圖表的聊天與預覽接線
 
 2026-10-05 接續 `f662371` 的離線後端，真正 `TranscriptMessageView`／`GroupMessageBubble` 現在以 `OfflineMermaidView` 顯示 independently validated public-engine SVG，不再只顯示三種 native parser 的圖表。已核對的八類是 flowchart、sequence、state、pie、class、entity relationship、Gantt、mindmap；不將這些 fixtures 外推為完整語法、原版 opaque bytes／精確 geometry 或全功能完成。reference 仍是 `a9f633e09d49a85829b8236331b9e21f7e612634`，公開 11.16.0 的來源與 output gate 邊界不變，詳見 [Offline-mermaid.md](Offline-mermaid.md)。下節 backend-only 的「UI 尚未接線」保留為前一批歷史紀錄，由本節取代。
