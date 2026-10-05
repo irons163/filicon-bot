@@ -28,6 +28,7 @@ extension TranscriptCard {
 
     var rendererActions: [TranscriptCardAction] {
         guard directSecretRequest == nil, automationActivity == nil else { return [] }
+        if case .widget(let widget) = payload, widget.externalPublication != nil { return [] }
         return actions.filter { $0.intent.isRendererSafe }
     }
 
@@ -200,6 +201,8 @@ struct TranscriptCardRow: View {
         let _ = uiLocale.identifier
         if let reference = card.externalCursorReference {
             CursorAgentReferenceCard(reference: reference)
+        } else if case .widget(let widget) = card.payload, let publication = widget.externalPublication {
+            ExternalChannelPublicationCard(publication: publication)
         } else {
             standardCard
         }
@@ -272,6 +275,54 @@ struct TranscriptCardRow: View {
         case .failed, .denied: .red
         case .succeeded, .sent, .provided, .connected, .approved: .green
         default: .secondary
+        }
+    }
+}
+
+/// Inert delivery evidence, shared by direct and group transcripts. Locators
+/// stay verbatim text: rendering is not approval to fetch or open them.
+struct ExternalChannelPublicationCard: View {
+    @Environment(\.locale) private var uiLocale
+    let publication: ExternalChannelTranscriptPublication
+    var status: String {
+        switch publication.delivery.status {
+        case .queued: l10n("Queued")
+        case .sending: l10n("Sending…")
+        case .retrying: l10n("Retrying")
+        case .delivered: l10n("Delivered")
+        case .deadLetter: l10n("Failed")
+        }
+    }
+    var body: some View {
+        let _ = uiLocale.identifier
+        if publication.isValid {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(l10n("External channel message")).font(.headline)
+                Label(status, systemImage: publication.delivery.status == .delivered ? "checkmark.circle" : publication.delivery.status == .deadLetter ? "xmark.circle" : "clock")
+                    .font(.subheadline)
+                Text(publication.platform + ":" + publication.channelID + (publication.threadID.map { " / " + $0 } ?? ""))
+                    .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                ForEach(Array(publication.files.enumerated()), id: \.offset) { _, file in
+                    Text(file.filename + " · " + file.mimeType + " · " + ByteCountFormatter.string(fromByteCount: file.byteCount, countStyle: .file))
+                        .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                }
+                ForEach(Array(publication.sources.enumerated()), id: \.offset) { _, source in
+                    Text(source.url).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                    if let alt = source.alt { Text(alt).textSelection(.enabled).fixedSize(horizontal: false, vertical: true) }
+                }
+                if publication.sources.count > 1 {
+                    Text(l10n("Only the first image is sent to the channel. The remaining images are not sent."))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if [.queued, .sending, .retrying].contains(publication.delivery.status) {
+                    Text(l10n("Queued is not delivered. Stop does not recall a queued message."))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .font(.caption).foregroundStyle(FiliconTheme.textSecondary)
+            .padding(12).frame(maxWidth: .infinity, alignment: .leading)
+            .background(FiliconTheme.input, in: RoundedRectangle(cornerRadius: 12))
+            .accessibilityIdentifier("external-channel-publication-\(publication.deliveryID)")
         }
     }
 }

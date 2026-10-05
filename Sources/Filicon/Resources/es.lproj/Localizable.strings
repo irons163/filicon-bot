@@ -335,7 +335,7 @@
 "Delete" = "Eliminar";
 "Delete Skill" = "Eliminar la habilidad";
 "Delete “{0}”?" = "Eliminar “{0}”?";
-"Delivered" = "Entrega";
+"Delivered" = "Entregado";
 "Delivery queue" = "Cola de envío";
 "Denied" = "Denied";
 "Denied in System Settings" = "Denegado en Configuración del Sistema";
@@ -421,7 +421,7 @@
 "Export…" = "Exportar...";
 "External hardware security keys require macOS 14.4 or later." = "Las teclas de seguridad del hardware externo requieren macOS 14.4 o posterior.";
 "Fail closed" = "Denegar en caso de error";
-"Failed" = "Error";
+"Failed" = "Fallido";
 "Feedback URL (optional)" = "URL de comentarios (opcional)";
 "Feedback sent" = "Opiniones enviadas";
 "File name or type (leave empty for recent)" = "Nombre o tipo de archivo (dejar vacío para reciente)";
@@ -885,7 +885,7 @@
 "Retired" = "Retirada";
 "Retired Permission" = "Permiso retirado";
 "Retry" = "Reintentar";
-"Retrying" = "Retiro";
+"Retrying" = "Reintentando";
 "Room name" = "Nombre de la habitación";
 "Rooms" = "Habitaciones";
 "Roster" = "Lista";
@@ -943,7 +943,7 @@
 "Send message" = "Enviar mensaje";
 "Send process input" = "Enviar entrada de proceso";
 "Send the first message between the selected agents." = "Envía el primer mensaje entre los agentes seleccionados.";
-"Sending…" = "Enviando...";
+"Sending…" = "Enviando…";
 "Sent" = "Sent";
 "Sentry" = "Sentry";
 "Server URL" = "URL del servidor";
@@ -1825,3 +1825,4 @@
 "Source address" = "Dirección de origen";
 "Only the first image is sent to the channel. The remaining images are not sent." = "Solo se envía la primera imagen al canal. Las demás imágenes no se envían.";
 "Images not sent" = "Imágenes que no se enviarán";
+"External channel message" = "Mensaje del canal externo";

@@ -57,7 +57,7 @@ private struct GroupChannelProvider: AIProvider {
                     let result = try #require(request.toolExchanges.last?.results.first)
                     expectNoDifference(result.isError, !expectedSuccess)
                     expectNoDifference(result.wireText.contains("durably queued, not confirmed delivered"), expectedSuccess)
-                    #expect(!result.wireText.contains("Saved message receipt:"))
+                    expectNoDifference(result.wireText.contains("Saved message receipt:"), expectedSuccess)
                     continuation.yield(.completed(.stop))
                 }
                 continuation.finish()
@@ -124,11 +124,15 @@ private struct GroupChannelProvider: AIProvider {
             expectNoDifference(origin["senderName"] as? String, sender.name)
             expectNoDifference(origin["route"] as? String, "groupConversation")
             expectNoDifference(origin["callID"] as? String, "external-publication")
+            let publication = try #require(model.groupMessages[group.id, default: []].first { $0.id == delivery.id },
+                "The approved external message must have a canonical entry in its original group")
+            expectNoDifference(publication.text, content)
         }
         #expect(!model.runningGroups.contains(group.id))
         #expect(model.pendingAutoReviewApprovals.isEmpty)
-        // The queue identity is not a fabricated local publication or reply.
-        #expect(model.groupMessages[group.id, default: []].filter { $0.senderID != nil }.allSatisfy { $0.text.isEmpty })
+        // Only successful, durable canonical saves acquire a local receipt.
+        expectNoDifference(model.groupMessages[group.id, default: []].filter { $0.externalPublication != nil }.map(\.text), mode == "approve" ? [content] : [])
+        #expect(model.groupMessages[group.id, default: []].filter { $0.senderID != nil && $0.externalPublication == nil }.allSatisfy { $0.text.isEmpty })
         if mode != "approve" {
             let sentAfterRejection = await probe.sent
             expectNoDifference(sentAfterRejection, [])

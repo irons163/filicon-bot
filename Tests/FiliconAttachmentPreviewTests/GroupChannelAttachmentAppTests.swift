@@ -5,6 +5,7 @@ import Vision
 import Testing
 import CustomDump
 @testable import FiliconAppServices
+import FiliconAgents
 import FiliconAutoReview
 import FiliconChannels
 import FiliconDomain
@@ -94,7 +95,7 @@ private struct AttachmentFixtureProvider: AIProvider {
                     let result = try #require(request.toolExchanges.last?.results.first)
                     expectNoDifference(result.isError, !expectedSuccess)
                     expectNoDifference(result.wireText.contains("durably queued, not confirmed delivered"), expectedSuccess)
-                    #expect(!result.wireText.contains("Saved message receipt:"))
+                    expectNoDifference(result.wireText.contains("Saved message receipt:"), expectedSuccess)
                     continuation.yield(.completed(.stop))
                 }
                 continuation.finish()
@@ -190,6 +191,9 @@ private struct AttachmentFixtureProvider: AIProvider {
             expectNoDifference(deniedQueue, []); expectNoDifference(deniedSends, [])
             #expect(model.pendingAutoReviewApprovals.isEmpty && model.pendingToolApprovals.isEmpty)
             #expect(!FileManager.default.fileExists(atPath: root.appending(path: "channel-attachments").path))
+            try await expectCanonicalPublication(root: root, model: model, channels: channels, groupID: group.id, sender: sender,
+                succeeds: false, kind: .attachment, text: "Reviewed report",
+                sources: [.init(url: source.absoluteString, alt: "Reviewed report")], files: [])
             return
         }
         let send = try #require(model.pendingAutoReviewApprovals.first)
@@ -235,6 +239,9 @@ private struct AttachmentFixtureProvider: AIProvider {
             expectNoDifference(sent, [])
         }
         if mode.hasPrefix("quota-") { #expect(fault.didTrigger) }
+        try await expectCanonicalPublication(root: root, model: model, channels: channels, groupID: group.id, sender: sender,
+            succeeds: mode == "approve", kind: .attachment, text: "Reviewed report",
+            sources: [.init(url: source.absoluteString, alt: "Reviewed report")], files: [expected])
         if mode == "corrupt" { expectNoDifference(try Data(contentsOf: blob), Data("Tampered CAS bytes".utf8)) }
         if mode == "blob-link" { expectNoDifference(try Data(contentsOf: outside), bytes) }
         if mode == "queue-write" {
@@ -359,8 +366,48 @@ private struct AttachmentFixtureProvider: AIProvider {
             expectNoDifference(queued, []); expectNoDifference(sent, [])
             #expect(!FileManager.default.fileExists(atPath: root.appending(path: "channel-attachments").path))
         }
+        let file = try PreparedAgentPublicationFile(bytes: bytes, filename: image ? "first.png" : "report.txt")
+        let sources: [ExternalChannelTranscriptPublication.Source] = image
+            ? [.init(url: sourceURL, alt: caption),
+               .init(url: "file:///never-read/not-sent.png", alt: "EXCLUDED LOCAL"),
+               .init(url: "https://never.example/not-sent.png", alt: "EXCLUDED REMOTE")]
+            : [.init(url: sourceURL, alt: caption)]
+        try await expectCanonicalPublication(root: root, model: model, channels: channels, groupID: group.id, sender: sender,
+            succeeds: succeeds, kind: image ? .text : .attachment, text: caption, sources: sources,
+            files: [.init(blobID: file.digest, filename: file.filename,
+                mimeType: image ? "image/png" : "text/plain", byteCount: Int64(bytes.count))])
         #expect(model.pendingAutoReviewApprovals.isEmpty && model.pendingToolApprovals.isEmpty && model.pendingWorkspaceFolders.isEmpty)
         #expect(!model.runningGroups.contains(group.id))
+    }
+
+    private func expectCanonicalPublication(root: URL, model: AppModel, channels: ChannelService, groupID: UUID, sender: AgentProfile,
+        succeeds: Bool, kind: ExternalChannelTranscriptPublication.Kind, text: String,
+        sources: [ExternalChannelTranscriptPublication.Source], files: [ChannelAttachment]) async throws {
+        let visible = model.groupMessages[groupID, default: []]
+        let agents = try AgentService(storeURL: root.appending(path: "agents.json"))
+        let reopened = try GroupService(agents: agents, storeURL: root.appending(path: "groups.json"))
+        let stored = await reopened.messages(groupID: groupID)
+        let publications = stored.filter { $0.externalPublication != nil }
+        expectNoDifference(publications.count, succeeds ? 1 : 0)
+        expectNoDifference(visible.filter { $0.externalPublication != nil }, publications)
+        #expect(stored.filter { $0.senderID != nil && $0.externalPublication == nil }.allSatisfy { $0.text.isEmpty })
+        guard succeeds else { return }
+        let deliveries = await channels.deliveries()
+        expectNoDifference(deliveries.count, 1)
+        let delivery = try #require(deliveries.first)
+        let origin = try #require(delivery.origin)
+        let expected = ExternalChannelTranscriptPublication(deliveryID: delivery.id, connectionID: delivery.connectionID,
+            owner: .init(accountID: "local", agentID: sender.id), route: .groupConversation,
+            conversationID: groupID, senderID: sender.id, senderName: sender.name,
+            runID: origin.runID, callID: "publish-external-file", replyToMessageID: nil,
+            queuedAt: delivery.createdAt, kind: kind, text: text, sources: sources,
+            files: files.map { .init(digest: $0.blobID, filename: $0.filename, mimeType: $0.mimeType, byteCount: $0.byteCount) },
+            platform: "slack", channelID: "C_FILES", threadID: nil,
+            delivery: .init(status: .queued, attemptCount: 0, deliveredAt: nil))
+        let row = try #require(publications.first)
+        expectNoDifference(row.externalPublication, expected)
+        #expect(row.matchesExternalPublication(expected))
+        #expect(row.images == nil && row.files == nil && row.remoteAttachment == nil && row.remoteImages == nil)
     }
 
     @Test(arguments: ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"], [340.0, 620.0])

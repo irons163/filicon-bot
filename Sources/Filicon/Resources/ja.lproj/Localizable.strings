@@ -335,7 +335,7 @@
 "Delete" = "削除";
 "Delete Skill" = "スキルの削除";
 "Delete “{0}”?" = "「{0}」を削除しますか?";
-"Delivered" = "納入実績";
+"Delivered" = "配信済み";
 "Delivery queue" = "送信キュー";
 "Denied" = "サインイン";
 "Denied in System Settings" = "システム設定で拒否";
@@ -885,7 +885,7 @@
 "Retired" = "リティレッド";
 "Retired Permission" = "無効になった権限";
 "Retry" = "再試行";
-"Retrying" = "リトリート";
+"Retrying" = "再試行中";
 "Room name" = "ルーム名";
 "Rooms" = "宿泊プラン";
 "Roster" = "一覧";
@@ -943,7 +943,7 @@
 "Send message" = "送信メッセージ";
 "Send process input" = "プロセス入力の送信";
 "Send the first message between the selected agents." = "選択したエージェント間で最初のメッセージを送信します。";
-"Sending…" = "送信...";
+"Sending…" = "送信中…";
 "Sent" = "サインイン";
 "Sentry" = "セントリー";
 "Server URL" = "サーバ URL";
@@ -1825,3 +1825,4 @@
 "Source address" = "取得元のアドレス";
 "Only the first image is sent to the channel. The remaining images are not sent." = "最初の画像だけがチャンネルに送信されます。残りの画像は送信されません。";
 "Images not sent" = "送信されない画像";
+"External channel message" = "外部チャンネルのメッセージ";

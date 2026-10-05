@@ -255,13 +255,15 @@ public actor AgentUserMessageTool: ToolExecutor, ToolRuntimeContextProviding {
                                  replyTo: UUID?, question: AgentQuestion? = nil, cursorAgent: CursorAgentReference? = nil,
                                  files: [AttachmentMetadata] = [], remote: RemoteAttachmentReference? = nil,
                                  gallery: RemoteImageGallery? = nil,
-                                 imageGalleryLayout: ImageGalleryLayout? = nil) -> String {
+                                 imageGalleryLayout: ImageGalleryLayout? = nil,
+                                 externalPublication: ExternalChannelTranscriptPublication? = nil) -> String {
         guard var saved = message, saved.groupID == replyGroupID, let senderID, saved.senderID == senderID,
               saved.text == text, saved.images ?? [] == images, saved.files ?? [] == files, saved.memberOutcome == nil,
               saved.replyToMessageID == replyTo, saved.question?.question == question,
               saved.questionReplyTo == nil, saved.secretRequest == nil, saved.cursorAgent == cursorAgent,
               saved.remoteAttachment == remote, saved.remoteImages == gallery,
               saved.imageGalleryLayout == imageGalleryLayout,
+              saved.externalPublication == externalPublication,
               !knownMessageIDs.contains(saved.id) else { return "" }
         // A bad or colliding alias must not hide a successful save, invent an
         // identity, or make a foreign/ambiguous address actionable. UUIDs remain
@@ -478,7 +480,9 @@ public actor AgentUserMessageTool: ToolExecutor, ToolRuntimeContextProviding {
                 let proof = Proof(deliveryID: receipt.delivery.id, address: receipt.delivery.address, originallyQueuedAt: receipt.delivery.createdAt)
                 let proofText = (try? JSONEncoder().encode(proof)).map { String(decoding: $0, as: UTF8.self) }
                     ?? "deliveryID: \(receipt.delivery.id.uuidString); receipt formatting unavailable"
-                let result = NormalizedToolResult(callID: call.id, content: [.text("External channel publication durably queued, not confirmed delivered. Do not resend. This is the original queue receipt, not current delivery status or a local message receipt: " + proofText)])
+                let localReceipt = registerReceipt(receipt.savedMessage, text: message.text, images: [], replyTo: reply,
+                    externalPublication: receipt.savedMessage?.externalPublication)
+                let result = NormalizedToolResult(callID: call.id, content: [.text("External channel publication durably queued, not confirmed delivered. Do not resend. This is the original queue receipt, not current delivery status: " + proofText + localReceipt)])
                 channelCalls[key] = (message, reply, result)
                 texts.append(message.text.isEmpty ? "Queued attachment: \(receipt.review.attachment?.file.filename ?? "attachment")" : message.text)
                 return result

@@ -165,8 +165,9 @@ public actor ConversationStore {
         let repository = try resolveRepository()
         try await importLegacyIfNeeded(into: repository)
         guard !historyComplete, let canonical = try await repository.conversation(id: conversation.id) else {
-            try await repository.upsert(conversation, expectedBinding: expectedBinding, bindingLease: bindingLease, activityAt: activityAt, commit: commit)
-            try await transcriptService.reconcile(conversation)
+            try await repository.upsert(conversation, expectedBinding: expectedBinding, bindingLease: bindingLease, activityAt: activityAt,
+                replacingLoadedMessageIDs: replacingLoadedMessageIDs, commit: commit)
+            if let saved = try await repository.conversation(id: conversation.id) { try await transcriptService.reconcile(saved) }
             return
         }
         var merged = conversation
@@ -175,8 +176,9 @@ public actor ConversationStore {
         merged.messageAddressReservations.merge(canonical.messageAddressReservations) { _, saved in saved }
         let unseen = canonical.messages.filter { !replacingLoadedMessageIDs.contains($0.id) }
         merged.messages = Self.mergeChronologically(older: unseen, newer: conversation.messages)
-        try await repository.upsert(merged, expectedBinding: expectedBinding, bindingLease: bindingLease, activityAt: activityAt, commit: commit)
-        try await transcriptService.reconcile(merged)
+        try await repository.upsert(merged, expectedBinding: expectedBinding, bindingLease: bindingLease, activityAt: activityAt,
+            replacingLoadedMessageIDs: replacingLoadedMessageIDs, commit: commit)
+        if let saved = try await repository.conversation(id: merged.id) { try await transcriptService.reconcile(saved) }
     }
 
     public func delete(id: UUID) async throws {
@@ -206,6 +208,17 @@ public actor ConversationStore {
         let repository = try resolveRepository()
         try await importLegacyIfNeeded(into: repository)
         let value = try await repository.publishAutomationActivity(publication, expectedHiddenAt: expectedHiddenAt,
+            activityAt: activityAt, commit: commit)
+        try await transcriptService.reconcile(value)
+        return value
+    }
+
+    public func publishExternalChannel(_ publication: ExternalChannelTranscriptPublication,
+                                       expectedHiddenAt: Date?, activityAt: Date,
+                                       commit: ConversationCommitGuard = { try $0() }) async throws -> Conversation {
+        let repository = try resolveRepository()
+        try await importLegacyIfNeeded(into: repository)
+        let value = try await repository.publishExternalChannel(publication, expectedHiddenAt: expectedHiddenAt,
             activityAt: activityAt, commit: commit)
         try await transcriptService.reconcile(value)
         return value

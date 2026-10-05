@@ -335,7 +335,7 @@
 "Delete" = "刪除";
 "Delete Skill" = "刪除技能";
 "Delete “{0}”?" = "刪除“{0}”?";
-"Delivered" = "已交付";
+"Delivered" = "已送達";
 "Delivery queue" = "傳送佇列";
 "Denied" = "被拒絕";
 "Denied in System Settings" = "已在系統設定中拒絕";
@@ -885,7 +885,7 @@
 "Retired" = "已停用";
 "Retired Permission" = "已停用的權限";
 "Retry" = "重試";
-"Retrying" = "重試";
+"Retrying" = "重試中";
 "Room name" = "聊天室名稱";
 "Rooms" = "聊天室";
 "Roster" = "名單";
@@ -943,7 +943,7 @@
 "Send message" = "傳送訊息";
 "Send process input" = "傳送程序輸入";
 "Send the first message between the selected agents." = "在選取的代理人之間傳送第一則訊息。";
-"Sending…" = "正在傳送...";
+"Sending…" = "傳送中…";
 "Sent" = "已傳送";
 "Sentry" = "Sentry";
 "Server URL" = "伺服器 URL";
@@ -1825,3 +1825,4 @@
 "Source address" = "來源網址";
 "Only the first image is sent to the channel. The remaining images are not sent." = "只會將第一張圖片傳送到頻道，其餘圖片不會傳送。";
 "Images not sent" = "不會傳送的圖片";
+"External channel message" = "外部頻道訊息";

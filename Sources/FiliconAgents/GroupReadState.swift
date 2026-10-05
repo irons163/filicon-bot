@@ -120,5 +120,6 @@ extension RoomMessage {
         return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             || !(images ?? []).isEmpty || !(files ?? []).isEmpty
             || remoteAttachment != nil || remoteImages != nil || question != nil || secretRequest != nil
+            || externalPublication.map { $0.route == .groupConversation && matchesExternalPublication($0) } == true
     }
 }

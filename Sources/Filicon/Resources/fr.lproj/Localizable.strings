@@ -335,7 +335,7 @@
 "Delete" = "Supprimer";
 "Delete Skill" = "Supprimer les compétences";
 "Delete “{0}”?" = "Supprimer {0}?";
-"Delivered" = "délivré";
+"Delivered" = "Livré";
 "Delivery queue" = "File d’envoi";
 "Denied" = "Refusé";
 "Denied in System Settings" = "Refusé dans les paramètres du système";
@@ -885,7 +885,7 @@
 "Retired" = "Retraités";
 "Retired Permission" = "Autorisation retirée";
 "Retry" = "Réessayer";
-"Retrying" = "Réessayer";
+"Retrying" = "Nouvelle tentative en cours";
 "Room name" = "Nom de la chambre";
 "Rooms" = "Chambres";
 "Roster" = "Liste";
@@ -943,7 +943,7 @@
 "Send message" = "Envoyer un message";
 "Send process input" = "Envoi de l'entrée du processus";
 "Send the first message between the selected agents." = "Envoyez le premier message entre les agents sélectionnés.";
-"Sending…" = "Envoyer...";
+"Sending…" = "Envoi en cours…";
 "Sent" = "Envoyé";
 "Sentry" = "Entrée";
 "Server URL" = "URL du serveur";
@@ -1825,3 +1825,4 @@
 "Source address" = "Adresse source";
 "Only the first image is sent to the channel. The remaining images are not sent." = "Seule la première image est envoyée au canal. Les autres images ne sont pas envoyées.";
 "Images not sent" = "Images non envoyées";
+"External channel message" = "Message du canal externe";

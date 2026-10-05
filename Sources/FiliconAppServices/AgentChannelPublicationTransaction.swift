@@ -99,6 +99,10 @@ public actor AgentChannelPublicationTransaction {
     public struct Receipt: Sendable, Equatable {
         public let review: Review
         public let delivery: ChannelDelivery
+        public let savedMessage: RoomMessage?
+        public init(review: Review, delivery: ChannelDelivery, savedMessage: RoomMessage? = nil) {
+            self.review = review; self.delivery = delivery; self.savedMessage = savedMessage
+        }
     }
     public enum Failure: String, LocalizedError, Sendable, Equatable {
         case unavailable = "Channel publication is not available in this host context. Nothing new was queued."
@@ -111,6 +115,7 @@ public actor AgentChannelPublicationTransaction {
     public typealias Prepare = @Sendable (AgentMessageImageInput, Bool, NormalizedToolCall, ToolContext) async throws -> PreparedAgentChannelAttachment
     public typealias Authorize = @Sendable (Review, NormalizedToolCall, ToolContext) async throws -> Void
     public typealias Install = @Sendable (PreparedAgentChannelAttachment) async throws -> ChannelAttachment
+    public typealias PublishTranscript = @Sendable (ExternalChannelTranscriptPublication) async throws -> RoomMessage?
     public nonisolated let conversationID: UUID
     public nonisolated let senderID: UUID
     public nonisolated let agentID: UUID
@@ -126,6 +131,7 @@ public actor AgentChannelPublicationTransaction {
     private let makeID: @Sendable () -> UUID
     private let now: @Sendable () -> Date
     private let transcriptSource: TranscriptSource?
+    private let publishTranscript: PublishTranscript?
     private struct Key: Hashable { let run: UUID; let call: ToolCallID }
     private struct Input: Equatable { let message: AgentChannelMessage; let replyTo: UUID? }
     private struct Completed { let input: Input; let receipt: Receipt }
@@ -142,6 +148,7 @@ public actor AgentChannelPublicationTransaction {
                 authorize: @escaping Authorize, prepare: Prepare? = nil, install: Install? = nil,
                 supportsRemoteSources: Bool = false,
                 transcriptSource: TranscriptSource? = nil,
+                publishTranscript: PublishTranscript? = nil,
                 makeID: @escaping @Sendable () -> UUID = { UUID() },
                 now: @escaping @Sendable () -> Date = { Date() }) {
         self.conversationID = conversationID; self.senderID = senderID; self.agentID = agentID
@@ -152,6 +159,7 @@ public actor AgentChannelPublicationTransaction {
         self.prepare = supportsAttachments ? prepare : nil; self.install = supportsAttachments ? install : nil
         self.makeID = makeID; self.now = now
         self.transcriptSource = transcriptSource
+        self.publishTranscript = publishTranscript
     }
 
     /// Synchronous Stop fence, including while this actor waits for approval.
@@ -206,9 +214,19 @@ public actor AgentChannelPublicationTransaction {
         attempted.insert(key)
         let delivery = try await channels.enqueueApprovedPublication(publication, lifetime: lifetime,
             idempotencyKey: id, at: now(), origin: origin)
-        let receipt = Receipt(review: review, delivery: delivery)
+        var receipt = Receipt(review: review, delivery: delivery)
         completed[key] = .init(input: input, receipt: receipt)
         published.insert(fingerprint)
+        if let publication = ChannelTranscriptProjection.publication(for: delivery), let publishTranscript {
+            // The durable outbox is already committed. A missing/cancelled chat
+            // save is a pending projection, never permission to resend.
+            if let saved = try? await publishTranscript(publication),
+               let actual = saved.externalPublication, actual.samePublication(as: publication),
+               saved.matchesExternalPublication(actual) {
+                receipt = Receipt(review: review, delivery: delivery, savedMessage: saved)
+                completed[key] = .init(input: input, receipt: receipt)
+            }
+        }
         // No post-save cancellation check: the durable queue receipt is the
         // truth even if Stop/account transition arrived during the save.
         return receipt

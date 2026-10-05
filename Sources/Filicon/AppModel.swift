@@ -4101,12 +4101,9 @@ final class AppModel: ObservableObject {
         automationGroupBindings = await automationGroupBindingStore?.list() ?? []
         automationDirectBindings = await automationDirectBindingStore?.list() ?? []
         if let channelService {
-            channelConnections = await channelService.connections()
             channelDescriptors = await channelService.connectorDescriptors()
-            channelInboundEvents = await channelService.inboundEvents()
-            channelDeliveries = await channelService.deliveries()
-            channelFailureWakes = await channelService.failureWakes()
         }
+        await reloadChannelState()
         do {
             var storedConfigs = try await mcpConfigStore.load()
             var definitions = try await mcpAccountLibrary.reconcile(existingConfigs: storedConfigs)
@@ -5199,7 +5196,7 @@ final class AppModel: ObservableObject {
         generation: UInt64) -> AgentMessagingSession.ChannelPublisherFactory? {
         guard channelService != nil, let audience = groups.first(where: { $0.id == originID }) else { return nil }
         let account = settings.accountScope ?? "local"
-        return { [weak self] sender, lifetime in
+        return { [weak self] sender, lifetime, publishTranscript in
             guard let self else { throw CancellationError() }
             try await self.checkGroupFileScope(senderID: sender.id, audience: audience,
                 generation: generation, originID: originID, dispatchID: nil)
@@ -5209,7 +5206,7 @@ final class AppModel: ObservableObject {
                     guard let self else { throw CancellationError() }
                     try await self.checkGroupFileScope(senderID: sender.id, audience: audience,
                         generation: generation, originID: originID, dispatchID: nil)
-                }, prepareLocal: { [weak self] url, call, context in
+                }, publishTranscript: publishTranscript, prepareLocal: { [weak self] url, call, context in
                     guard let self else { throw CancellationError() }
                     return try await self.prepareGroupPublicationFile(sender: sender, url: url, call: call,
                         context: context, audience: audience, generation: generation, originID: originID, dispatchID: nil)
@@ -5238,7 +5235,11 @@ final class AppModel: ObservableObject {
         // connection ownership is the actual bound agent, never the chat UUID.
         return makeAgentChannelPublication(conversationID: id, senderID: id, agentID: identity.agentID,
             senderName: sender.name, route: .directConversation, account: account, generation: generation, lifetime: lifetime,
-            validateScope: validate, prepareLocal: { [weak self] url, call, context in
+            validateScope: validate, publishTranscript: { [weak self] publication in
+                try await validate()
+                guard let self else { throw CancellationError() }
+                return try await self.materializeDirectChannelTranscript(publication, generation: generation)
+            }, prepareLocal: { [weak self] url, call, context in
                 guard let self, context.conversationID == id else { throw AgentMessagingError.scopeMismatch }
                 let reader = await AuthorizedAgentFileReader(runtime: self.localToolRuntime, folders: self.workspaceFolders,
                     policy: self.localToolPermissionPolicy, validateScope: validate,
@@ -5265,6 +5266,7 @@ final class AppModel: ObservableObject {
     private func makeAgentChannelPublication(conversationID id: UUID, senderID: UUID, agentID: UUID,
         senderName: String, route: ChannelDeliveryOrigin.Route, account: String, generation: UInt64, lifetime: ChannelPublicationLifetime,
         validateScope: @escaping @Sendable () async throws -> Void,
+        publishTranscript: @escaping AgentChannelPublicationTransaction.PublishTranscript,
         prepareLocal: @escaping AgentChannelAttachmentSource.PrepareLocal) -> AgentChannelPublicationTransaction? {
         guard let channelService else { return nil }
         let check: @Sendable () async throws -> Void = { [weak self] in
@@ -5303,7 +5305,7 @@ final class AppModel: ObservableObject {
                     agentID: agentID, senderName: senderName, call: call, context: context, account: account,
                     generation: generation, lifetime: lifetime, validateScope: check)
             }, prepare: prepare, install: install, supportsRemoteSources: attachmentsAvailable,
-            transcriptSource: .init(route: route, senderName: senderName))
+            transcriptSource: .init(route: route, senderName: senderName), publishTranscript: publishTranscript)
     }
 
     private func checkChannelAccount(_ account: String, generation: UInt64) throws {
@@ -7890,10 +7892,101 @@ final class AppModel: ObservableObject {
 
     private func reloadChannelState() async {
         guard let channelService else { return }
-        channelConnections = await channelService.connections()
-        channelInboundEvents = await channelService.inboundEvents()
-        channelDeliveries = await channelService.deliveries()
-        channelFailureWakes = await channelService.failureWakes()
+        let generation = autoReviewAccountGeneration, account = settings.accountScope ?? "local"
+        let connections = await channelService.connections(), inbound = await channelService.inboundEvents()
+        let deliveries = await channelService.deliveries(), wakes = await channelService.failureWakes()
+        guard !agentMessagingAccountTransition, generation == autoReviewAccountGeneration,
+              account == (settings.accountScope ?? "local") else { return }
+        channelConnections = connections; channelInboundEvents = inbound
+        channelDeliveries = deliveries; channelFailureWakes = wakes
+        await reconcileChannelPublications()
+    }
+
+    /// Reads durable receipts only. Reopening does not flush the queue, reread
+    /// a source, create approval, or start a member turn.
+    func reconcileChannelPublications() async {
+        guard let channelService, !agentMessagingAccountTransition else { return }
+        let generation = autoReviewAccountGeneration, account = settings.accountScope ?? "local"
+        let accountLease: AgentWorkflowExecutionScope.Lease
+        do { accountLease = try workflowExecutionScope.capture() } catch { return }
+        let deliveries = await channelService.deliveries()
+        for delivery in deliveries {
+            guard !Task.isCancelled, generation == autoReviewAccountGeneration,
+                  account == (settings.accountScope ?? "local"), !agentMessagingAccountTransition else { return }
+            guard let value = ChannelTranscriptProjection.publication(for: delivery), value.owner.accountID == account,
+                  agents.contains(where: { $0.id == value.owner.agentID && $0.archivedAt == nil }) else { continue }
+            do {
+                try accountLease.check()
+                switch value.route {
+                case .directConversation:
+                    _ = try await materializeDirectChannelTranscript(value, generation: generation)
+                case .groupConversation:
+                    guard let groupService else { continue }
+                    let saved = try await groupService.projectExternalChannel(value, commit: { write in try accountLease.commit(write) })
+                    try accountLease.check()
+                    if let row = groupMessages[value.conversationID]?.firstIndex(where: { $0.id == saved.id }) {
+                        let previous = groupMessages[value.conversationID]?[row].externalPublication
+                        if previous.map({ saved.externalPublication?.shouldAdvance(from: $0) == true }) ?? true {
+                            groupMessages[value.conversationID]?[row] = saved
+                        }
+                    } else { groupMessages[value.conversationID, default: []].append(saved) }
+                    await reloadGroupUnreadStates()
+                }
+            } catch {
+                // Keep the durable outbox row for later repair. Never turn a
+                // projection error into an external resend or new identity.
+                continue
+            }
+        }
+    }
+
+    private func materializeDirectChannelTranscript(_ value: ExternalChannelTranscriptPublication,
+        generation: UInt64) async throws -> RoomMessage? {
+        try checkChannelAccount(value.owner.accountID, generation: generation)
+        guard value.route == .directConversation, !deletedConversationIDs.contains(value.conversationID),
+              agents.contains(where: { $0.id == value.owner.agentID && $0.archivedAt == nil }) else { throw CancellationError() }
+        let accountLease = try workflowExecutionScope.capture()
+        let lease = try await store.leaseUniqueBinding(accountID: value.owner.accountID,
+            agentID: value.owner.agentID, conversationID: value.conversationID)
+        defer { lease.close() }
+        guard lease.legacyHiddenAt == nil, let canonical = try await store.conversation(id: value.conversationID) else { throw CancellationError() }
+        try checkChannelAccount(value.owner.accountID, generation: generation)
+        var estimate = canonical
+        if let row = estimate.messages.firstIndex(where: { $0.id == value.deliveryID }) {
+            if let previous = estimate.messages[row].externalChannelPublication, value.shouldAdvance(from: previous) {
+                estimate.messages[row].transcriptCards = [value.transcriptCard]
+            }
+        } else { estimate.messages.append(value.directMessage) }
+        DirectMessageAddressing.assignMissing(in: &estimate)
+        let store = self.store
+        let operation: @Sendable () async throws -> Conversation = {
+            try await store.publishExternalChannel(value, expectedHiddenAt: lease.legacyHiddenAt, activityAt: value.queuedAt,
+                commit: { write in try accountLease.commit { try lease.withValidBinding(write) } })
+        }
+        let saved: Conversation
+        if estimate == canonical { saved = try await operation() }
+        else if let quotaWriter {
+            saved = try await quotaWriter.perform(scope: "conversation", key: value.conversationID.uuidString,
+                data: JSONEncoder().encode(estimate), operation: operation)
+        } else { throw StorageQuotaError.corruptLedger }
+        try checkChannelAccount(value.owner.accountID, generation: generation); try accountLease.check()
+        guard let message = saved.messages.first(where: { $0.id == value.deliveryID }),
+              let actual = message.externalChannelPublication else { throw CancellationError() }
+        if let index = conversations.firstIndex(where: { $0.id == saved.id }), conversations[index].agentBinding == value.owner {
+            if let row = conversations[index].messages.firstIndex(where: { $0.id == message.id }) {
+                let previous = conversations[index].messages[row].externalChannelPublication
+                if previous.map({ actual.shouldAdvance(from: $0) }) ?? true {
+                    conversations[index].messages[row].transcriptCards = message.transcriptCards
+                    conversations[index].messages[row].shortAddress = message.shortAddress
+                }
+            } else { conversations[index].messages.append(message) }
+            conversations[index].updatedAt = max(conversations[index].updatedAt, saved.updatedAt)
+            conversations[index].messageAddressReservations.merge(saved.messageAddressReservations) { _, saved in saved }
+            loadedMessageIDs[saved.id, default: []].insert(message.id)
+            await reloadConversationUnreadState(id: saved.id)
+        }
+        var receipt = RoomMessage.externalChannelMessage(actual); receipt.shortAddress = message.shortAddress
+        return receipt
     }
 
     private static func channelCredentialReference(_ secretReference: String) -> CredentialRef {

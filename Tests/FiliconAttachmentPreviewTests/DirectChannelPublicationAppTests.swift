@@ -2,6 +2,7 @@ import Foundation
 import AppKit
 import SwiftUI
 import Vision
+import CSQLite
 import Testing
 import CustomDump
 import FiliconAgents
@@ -196,17 +197,21 @@ private struct DirectChannelProvider: AIProvider {
             expectNoDifference(origin["senderName"] as? String, sender.name)
             expectNoDifference(origin["route"] as? String, "directConversation")
             expectNoDifference(origin["callID"] as? String, "direct-external-publication")
+            let publication = try #require(model.conversations.first { $0.id == id }?.messages.first { $0.id == delivery.id },
+                "The approved external message must have a canonical entry in its original direct chat")
+            expectNoDifference(publication.text, content)
         }
         let capabilities = await probe.channelCapabilities
         expectNoDifference(capabilities, [true])
         let results = await probe.results
         expectNoDifference(results.contains { !$0.isError && $0.wireText.contains("durably queued, not confirmed delivered") }, succeeds)
-        #expect(results.allSatisfy { !$0.wireText.contains("Saved message receipt:") })
+        expectNoDifference(results.contains { $0.wireText.contains("Saved message receipt:") }, succeeds)
         if !succeeds { let finalSent = await probe.sent; expectNoDifference(finalSent, []) }
         #expect(model.pendingAutoReviewApprovals.isEmpty)
         if mode != "delete" {
             let saved = try #require(try await ConversationStore(fileURL: root.appending(path: "conversations.json")).conversation(id: id))
-            #expect(saved.messages.filter { $0.role == .assistant }.allSatisfy { $0.text.isEmpty })
+            expectNoDifference(saved.messages.filter { $0.externalChannelPublication != nil }.map(\.text), succeeds ? [content] : [])
+            #expect(saved.messages.filter { $0.role == .assistant && $0.externalChannelPublication == nil }.allSatisfy { $0.text.isEmpty })
         }
     }
 
@@ -475,6 +480,60 @@ private struct DirectChannelProvider: AIProvider {
             let queued = await f.channels.deliveries(), sent = await f.probe.sent
             expectNoDifference(queued, []); expectNoDifference(sent, [])
         }
+    }
+
+    @Test(arguments: ["missing-row", "save-failure", "foreign-owner", "deleted"])
+    func outboxRecoveryOnlyRepairsTheOriginalCanonicalChatWithoutSending(mode: String) async throws {
+        let root = temporaryRoot("recovery"); defer { try? FileManager.default.removeItem(at: root) }
+        let f = try await fixture(root: root, arguments: Data("{}".utf8))
+        let chat = try #require(f.model.conversations.first { $0.id == f.id })
+        let store = ConversationStore(fileURL: root.appending(path: "conversations.json"))
+        try await store.upsert(chat, replacingLoadedMessageIDs: Set(chat.messages.map(\.id)), historyComplete: true)
+        let proposal = try await f.channels.proposePublication(agentID: f.sender.id, accountID: "local",
+            outbound: .init(text: "Preserve exact original outgoing caption"), to: .init(platform: "slack", channelID: "C_DIRECT"))
+        let delivery = try await f.channels.enqueueApprovedPublication(proposal, lifetime: .init(), idempotencyKey: UUID(), at: Date(),
+            origin: .init(route: .directConversation, conversationID: f.id, senderID: f.id, senderName: f.sender.name,
+                runID: UUID(), callID: "recovery-fixture", replyToMessageID: nil,
+                intent: .init(kind: .text, text: proposal.outbound.text, sources: [])))
+        if mode == "foreign-owner" {
+            var changed = chat; changed.agentBinding = .init(accountID: "other", agentID: f.sender.id)
+            try await store.upsert(changed, replacingLoadedMessageIDs: [], historyComplete: true)
+        }
+        if mode == "deleted" { try await store.delete(id: f.id) }
+        func sql(_ statement: String) throws {
+            var handle: OpaquePointer?
+            try #require(sqlite3_open(root.appending(path: "conversations.sqlite3").path, &handle) == SQLITE_OK)
+            defer { sqlite3_close(handle) }
+            try #require(sqlite3_exec(handle, statement, nil, nil, nil) == SQLITE_OK)
+        }
+        if mode == "save-failure" {
+            try sql("CREATE TRIGGER reject_external_projection BEFORE INSERT ON messages WHEN NEW.transcript_cards_json LIKE '%externalChannelPublication%' BEGIN SELECT RAISE(ABORT,'isolated projection failure'); END")
+            await f.model.reconcileChannelPublications()
+            let failed = try await store.conversation(id: f.id)
+            #expect(failed?.messages.contains { $0.id == delivery.id } == false)
+            try sql("DROP TRIGGER reject_external_projection")
+        }
+        let sendsBefore = await f.probe.sent
+        await f.model.reconcileChannelPublications()
+        let repaired = try await store.conversation(id: f.id)
+        let rows = repaired?.messages.filter { $0.id == delivery.id } ?? []
+        let shouldRepair = ["missing-row", "save-failure"].contains(mode)
+        expectNoDifference(rows.count, shouldRepair ? 1 : 0)
+        if shouldRepair {
+            let row = try #require(rows.first), value = try #require(ChannelTranscriptProjection.publication(for: delivery))
+            #expect(row.matchesExternalPublication(value))
+            expectNoDifference(row.externalChannelPublication?.delivery.status, .queued)
+        }
+        // A second repair reuses IDs and status; no
+        // publication/source/model callback or implicit queue flush is involved.
+        await f.model.reconcileChannelPublications()
+        let replay = try await store.conversation(id: f.id), sendsAfter = await f.probe.sent
+        expectNoDifference(replay, repaired)
+        expectNoDifference(sendsAfter, sendsBefore)
+        let queue = await f.channels.deliveries()
+        expectNoDifference(queue.map(\.id), [delivery.id])
+        let downloads = await f.probe.downloads
+        expectNoDifference(downloads, [])
     }
 
     private func renderCard(_ f: Fixture, pending: PendingApproval, language: String, width: Double, dark: Bool,

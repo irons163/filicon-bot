@@ -649,6 +649,9 @@ struct GroupMessageBubble: View {
                     .accessibilityIdentifier("group-file-\(file.id)")
                     .help(file.altText ?? file.filename)
                 }
+                if let publication = message.externalPublication {
+                    ExternalChannelPublicationCard(publication: publication)
+                }
                 ForEach(message.toolActivities) { tool in
                     let waitingForFolder = tool.status == .pending && waitingForFolderCallIDs.contains(tool.id)
                     HStack(spacing: 7) {
@@ -670,7 +673,7 @@ struct GroupMessageBubble: View {
                     )
                     .font(.caption).foregroundStyle(FiliconTheme.textSecondary)
                     .accessibilityIdentifier("group-member-outcome-\(outcome.rawValue)")
-                } else if !isUser && message.toolActivities.isEmpty && message.question == nil && message.cursorAgent == nil
+                } else if !isUser && message.toolActivities.isEmpty && message.question == nil && message.cursorAgent == nil && message.externalPublication == nil
                             && message.images?.isEmpty != false && message.files?.isEmpty != false && !message.text.isEmpty {
                     Text(l10n("Text reply · no tools used"))
                         .font(.system(size: 10)).foregroundStyle(FiliconTheme.textTertiary)

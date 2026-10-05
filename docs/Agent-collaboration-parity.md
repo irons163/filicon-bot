@@ -1,5 +1,15 @@
 # 協作能力核對紀錄（更新至 2026-10-06）
 
+## 前景外部送件的正式聊天記錄與狀態恢復
+
+2026-10-06 接續 `782f850`，前景 bound direct／saved-group 的核准送件會在原聊天保存一筆 typed canonical entry，ID 來自實際 durable queue；原作者／owner／run／call／local quote、完整 ordered URL／alt 和實際 captured file metadata 保留。local saved receipt 只來自成功存檔，不等於 remote delivered。queue 成功後 chat save／Stop／cancel／forged callback 失敗不重送；既有 refresh／bootstrap 可在當前有效 account／原聊天下以同一 ID 補記，並單向更新實際 delivery status，不讀 source、不觸發 approval／model 或新增回覆成員。
+
+完整歷史、reactions、持久短位址、未讀及 reply navigation 保留，無 alt 的附件也不遺漏；舊 full／paged UI save 不抹掉尚未載入的新外部記錄，已載入後的 native deletion 不被 repair 復活。terminal evidence 不降級，legacy nil-origin 不猜測；group 同 caption 的不同核准目的地各自佔用原 publication budget。owner／member／binding／hidden／deleted／generation 及最終 commit fence 保留，這不是 queue／chat／CAS 跨 store 原子性或跨 process exactly-once。
+
+direct／group 使用七語唯讀狀態卡，完整 inert URL／alt、檔案 metadata、first-image omissions、queued-not-delivered 提示不截斷；卡片不能 retry／dismiss 或授權 source read，也沒有新增 CAS preview／open。19 個相關舊誤譯修正不是全 catalog 語意驗收。隔離實際 App、核心 reopen／故障／collision、獨立翻譯預期和最後 gate 證據見 [完成驗收入口](Parity-completion-audit.md)。Swift 測試／CustomDump／Dependencies／SwiftUI 和文件技能保留此驗收界線。
+
+**尚未接線**：delivery-failure model follow-up，background direct／mailbox／delegated group／inbound shared runner 的 channel publication／projection；live／真人／VoiceOver／最低 macOS／release 仍保留。AGENT-02／整體 partial 和 48 分類不變；未 push、重啟 App／Xcode 或改真實資料。本節只取代下方歷史批次的前景 canonical transcript／recovery／UI 缺口。
+
 ## 外部送件的原始對話保存
 
 2026-10-06 接續 `ffcbc67`，前景 bound direct／saved-group 的已核准送件保存原 route、conversation、sender／name、run／call、local quote 和完整 ordered intent，包括不送出的圖片。host 提供來源，模型不能指定；queue／authorization／source 同一 envelope 保存，cached／fresh／restored replay 不得改投或改名，重試與 terminal failure 保留原資料。transport 仍只送核准的 outbound，不讀其他 URL，也不把來源當成新的權限或 delivery 證據。

@@ -1,5 +1,7 @@
 # Filicon / Grok Bot 0.18 功能 parity matrix（current implementation）
 
+2026-10-06 前景 external transcript 增量：核准的 bound direct／saved-group 送件以實際 queue ID 保存原聊天的正式 typed entry，成功存檔才回傳 local saved receipt；完整 intent／原 owner／quote 與附件 metadata 保留。既有 refresh／bootstrap 只補記或單向更新 delivery evidence，不重送、不讀 source、不啟動 model；stale UI save 不抹掉新記錄，native deletion 不被復活。無 alt 附件亦計未讀／分配短位址，相同 caption 不同目的地仍受原 budget 限制。七語唯讀卡／完整 inert locators／first-image omissions 已接線，terminal 不降級，generic retry／dismiss 不取得權限。有效 baseline、實際 App／隔離保存／重開／畫面及最後 gates 見 [完成驗收入口](Parity-completion-audit.md) 與 [協作核對紀錄](Agent-collaboration-parity.md)。本段只取代下方歷史的前景 canonical transcript／recovery／UI 缺口；**model failure follow-up、background direct／mailbox／delegated group／inbound publication／projection、安全 CAS preview／open、live／真人／最低 macOS／release 仍未完成**。queue／chat／CAS 非跨 store 原子交易，AGENT-02／整體 partial 及 48 分類不變。未 push、重啟 App／Xcode 或改真實資料。
+
 2026-10-06 外部送件來源增量：前景 bound direct／saved-group 保存原 conversation／sender／run／call／quote 與完整 ordered intent，和 queue／authorization 同一 envelope 提交；cached／fresh／重開 replay 不可改投，重試／terminal failure 保留原資料，legacy rows 不猜測或自動加入來源。來源是資料，不是新的聊天／source／連線／模型權限。新增 50 個 cases、實際 App assertions 及最後 gates 見 [完成驗收入口](Parity-completion-audit.md) 與 [協作核對紀錄](Agent-collaboration-parity.md)。**canonical external transcript／recovery／UI 與 model failure follow-up 尚未接線**，其他 background／mailbox／delegated／inbound、live／真人／最低 macOS／release 仍保留；AGENT-02／整體 partial 和 48 分類不變。未 push、重啟 App／Xcode 或改真實資料。
 
 2026-10-06 foreground direct channel 增量：有效 bound agent 的前景單獨聊天已支援 `SendMessage channel` 文字／本機／HTTPS 附件，使用該實際成員的唯一 enabled connection；沒有 binding、目的地缺失／歧義／外帳號或不支援附件先拒絕，不借用 peer、不讀 source、不回退本地 publication。source／每次 redirect／external send 各自人類核准，保留完整 intent、captured bytes、quota 及 queued-not-delivered 提示。Stop／account／binding 與 route ABA／archive／delete 同步退休原 lifetime；真正 direct card 完整 payload 和 typed host labels 已接七語。有效紅燈、94 個新增 cases、96 項聚焦／10 suites、七語離屏畫面及最後 gates 見 [完成驗收入口](Parity-completion-audit.md) 與 [協作核對紀錄](Agent-collaboration-parity.md)。此段只取代前景 bound direct 缺口；background direct／mailbox／delegated group／inbound shared runner、canonical external transcript／model failure follow-up、live／真人／最低 macOS／release 仍未完成，AGENT-02／整體 partial 及 48 分類不變。未 push、重啟 App／Xcode 或改真實資料。
@@ -368,6 +370,8 @@ PDF 預覽安全修正（2026-09-24）：PDF 畫面、頁數與文字擷取改�
 | MCP-04 | `ToolPermissionPolicy.swift`、`ToolApprovalBroker`、`FiliconLocalTools` 與 approval UI 提供 always/ask/never、allow-once scope、TTL/generation fencing、admin ceiling、deny 與 replay protection。 | complete | final gates passed |
 
 ### 6. Agents / groups / channels
+
+AGENT-02 的長篇 row 保留早期驗收描述；最新完成範圍以本文件上方日期增量及 [協作核對紀錄](Agent-collaboration-parity.md) 為準。前景 channel publication／canonical transcript／recovery／唯讀 UI 已接線，不再列作該前景入口缺口；delivery-failure model follow-up 及其他 channel 入口仍未完成，狀態維持 partial。
 
 | ID | 現行實作（authoritative evidence） | 狀態 | 驗證 |
 |---|---|---|---|

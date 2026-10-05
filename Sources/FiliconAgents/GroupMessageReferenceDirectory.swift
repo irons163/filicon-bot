@@ -20,7 +20,7 @@ public struct GroupMessageReferenceDirectory: Sendable {
             guard idCounts[message.id] == 1 else { continue }
             positions[message.id] = index
             guard message.memberOutcome == nil,
-                  (!message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || message.remoteAttachment != nil),
+                  (!message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || message.remoteAttachment != nil || message.externalPublication != nil),
                   let address = message.shortAddress, addressCounts[address] == 1,
                   GroupMessageAddressing.isValid(address, for: message) else { continue }
             targets[address] = Target(id: message.id, index: index)

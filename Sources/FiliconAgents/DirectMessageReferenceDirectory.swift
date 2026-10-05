@@ -12,10 +12,15 @@ public struct DirectMessageReferenceDirectory: Sendable {
         let reservations = conversation.messageAddressReservations
         let owners = Dictionary(grouping: reservations, by: \.value).mapValues { $0.map(\.key) }
         let rows: [RoomMessage] = historyComplete ? conversation.messages.map { message in
+            let external = message.externalChannelPublication.flatMap { value in
+                value.route == .directConversation && value.conversationID == conversation.id
+                    && value.owner == conversation.agentBinding && message.matchesExternalPublication(value) ? value : nil
+            }
             var row = RoomMessage(
                 id: message.id, groupID: conversation.id,
                 senderID: message.role == .user ? nil : conversation.id,
-                text: message.text, remoteAttachment: message.remoteAttachment)
+                text: message.text, createdAt: message.createdAt,
+                remoteAttachment: message.remoteAttachment, externalPublication: external)
             // Keep every row/address for duplicate detection, including invalid roles.
             row.shortAddress = message.shortAddress
             let address = message.shortAddress

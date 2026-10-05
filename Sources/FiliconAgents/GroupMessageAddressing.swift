@@ -60,7 +60,7 @@ public enum GroupMessageAddressing {
                 }
             } else if message.memberOutcome == nil,
                       message.senderID == nil || !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                          || !(message.images ?? []).isEmpty || !(message.files ?? []).isEmpty || message.remoteAttachment != nil {
+                          || !(message.images ?? []).isEmpty || !(message.files ?? []).isEmpty || message.remoteAttachment != nil || message.externalPublication != nil {
                 if message.senderID == nil {
                     while nextTurn < limit, reserved.contains("t\(nextTurn)u") { nextTurn += 1 }
                     if nextTurn < limit {

@@ -433,7 +433,8 @@ public struct RoomMessage: Identifiable, Codable, Hashable, Sendable {
     /// Host-assigned, group-local address. Never recomputed from a bounded prompt.
     public var shortAddress: String?
     public internal(set) var routineWake: GroupRoutineWake?
-    public init(id: UUID = UUID(), groupID: UUID, senderID: UUID?, text: String, createdAt: Date = Date(), toolActivities: [RoomToolActivity] = [], memberOutcome: RoomMemberOutcome? = nil, images: [AttachmentMetadata] = [], files: [AttachmentMetadata] = [], remoteAttachment: RemoteAttachmentReference? = nil, remoteImages: RemoteImageGallery? = nil, imageGalleryLayout: ImageGalleryLayout? = nil) {
+    public internal(set) var externalPublication: ExternalChannelTranscriptPublication?
+    public init(id: UUID = UUID(), groupID: UUID, senderID: UUID?, text: String, createdAt: Date = Date(), toolActivities: [RoomToolActivity] = [], memberOutcome: RoomMemberOutcome? = nil, images: [AttachmentMetadata] = [], files: [AttachmentMetadata] = [], remoteAttachment: RemoteAttachmentReference? = nil, remoteImages: RemoteImageGallery? = nil, imageGalleryLayout: ImageGalleryLayout? = nil, externalPublication: ExternalChannelTranscriptPublication? = nil) {
         self.id = id; self.groupID = groupID; self.senderID = senderID; self.text = text; self.createdAt = createdAt
         self.toolActivities = toolActivities
         self.memberOutcome = memberOutcome
@@ -442,9 +443,10 @@ public struct RoomMessage: Identifiable, Codable, Hashable, Sendable {
         self.remoteAttachment = remoteAttachment
         self.remoteImages = remoteImages
         self.imageGalleryLayout = imageGalleryLayout
+        self.externalPublication = externalPublication
     }
 
-    private enum CodingKeys: String, CodingKey { case id, groupID, senderID, text, createdAt, toolActivities, memberOutcome, images, files, remoteAttachment, remoteImages, imageGalleryLayout, question, secretRequest, cursorAgent, questionReplyTo, replyToMessageID, shortAddress, routineWake }
+    private enum CodingKeys: String, CodingKey { case id, groupID, senderID, text, createdAt, toolActivities, memberOutcome, images, files, remoteAttachment, remoteImages, imageGalleryLayout, question, secretRequest, cursorAgent, questionReplyTo, replyToMessageID, shortAddress, routineWake, externalPublication }
     public init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         id = try values.decode(UUID.self, forKey: .id)
@@ -470,6 +472,23 @@ public struct RoomMessage: Identifiable, Codable, Hashable, Sendable {
         replyToMessageID = try values.decodeIfPresent(UUID.self, forKey: .replyToMessageID)
         shortAddress = try values.decodeIfPresent(String.self, forKey: .shortAddress)
         routineWake = try values.decodeIfPresent(GroupRoutineWake.self, forKey: .routineWake)
+        externalPublication = try values.decodeIfPresent(ExternalChannelTranscriptPublication.self, forKey: .externalPublication)
+        if let externalPublication, !matchesExternalPublication(externalPublication) {
+            throw DecodingError.dataCorruptedError(forKey: .externalPublication, in: values,
+                debugDescription: "External publication must match the saved message")
+        }
+    }
+
+    public static func externalChannelMessage(_ value: ExternalChannelTranscriptPublication) -> Self {
+        var result = Self(id: value.deliveryID, groupID: value.conversationID, senderID: value.senderID,
+            text: value.text, createdAt: value.queuedAt, externalPublication: value)
+        result.replyToMessageID = value.replyToMessageID
+        return result
+    }
+
+    public func matchesExternalPublication(_ value: ExternalChannelTranscriptPublication) -> Bool {
+        var copy = self; copy.shortAddress = nil
+        return value.isValid && copy == Self.externalChannelMessage(value)
     }
 }
 

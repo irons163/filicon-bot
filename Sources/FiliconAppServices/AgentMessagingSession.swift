@@ -77,7 +77,7 @@ public actor AgentMessagingSession {
     private let importGalleryImage: AgentGalleryImageImporter?
     private let authorizePublication: PublicationAuthorizer
     private let groupFiles: AgentGroupFilePublicationServices?
-    public typealias ChannelPublisherFactory = @Sendable (AgentProfile, ChannelPublicationLifetime) async throws -> AgentChannelPublicationTransaction?
+    public typealias ChannelPublisherFactory = @Sendable (AgentProfile, ChannelPublicationLifetime, @escaping AgentChannelPublicationTransaction.PublishTranscript) async throws -> AgentChannelPublicationTransaction?
     private let channelPublisherFactory: ChannelPublisherFactory?
     private nonisolated let channelPublicationLifetime = ChannelPublicationLifetime()
     public typealias RemotePublicationAuthorizer = @Sendable (AgentProfile, AgentRemotePublicationTransaction.Review, NormalizedToolCall, ToolContext) async throws -> Void
@@ -221,7 +221,10 @@ public actor AgentMessagingSession {
         guard let sender = await agents.profile(id: senderID), sender.archivedAt == nil else { throw AgentMessagingError.invalidRecipient }
         try checkOpen()
         let filePublication = makeGroupFilePublication(sender: sender, userMessageID: userMessageID, publish: publish)
-        let channelPublication = try await channelPublisherFactory?(sender, .init(parent: channelPublicationLifetime))
+        let channelPublication = try await channelPublisherFactory?(sender, .init(parent: channelPublicationLifetime), { [publicationLifetime] value in
+            try await publish(.init(text: value.text, lifetime: publicationLifetime,
+                replyToMessageID: value.replyToMessageID, externalPublication: value))
+        })
         try checkOpen()
         let remotePublication = makeGroupRemotePublication(sender: sender, userMessageID: userMessageID, publish: publish)
         let galleryPublication: AgentGalleryPublicationTransaction?

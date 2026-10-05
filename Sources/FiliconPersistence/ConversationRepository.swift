@@ -154,8 +154,35 @@ public actor ConversationRepository {
     public func upsert(_ conversation: Conversation, expectedBinding: DirectConversationAgentBinding? = nil,
                        bindingLease: ConversationBindingLease? = nil,
                        activityAt: Date = Date(),
+                       replacingLoadedMessageIDs: Set<UUID>? = nil,
                        commit: ConversationCommitGuard = { try $0() }) throws {
         var values = try load()
+        var conversation = conversation
+        if let canonical = values.first(where: { $0.id == conversation.id }) {
+            for row in conversation.messages.indices {
+                guard let existing = canonical.messages.first(where: { $0.id == conversation.messages[row].id }),
+                      let previous = existing.externalChannelPublication else { continue }
+                guard let incoming = conversation.messages[row].externalChannelPublication,
+                      previous.samePublication(as: incoming), existing.matchesExternalPublication(previous),
+                      conversation.messages[row].matchesExternalPublication(incoming) else { throw CancellationError() }
+                // Ordinary turn saves may carry an old UI snapshot; only the
+                // authoritative outbox projector can advance delivery evidence.
+                conversation.messages[row].transcriptCards = existing.transcriptCards
+            }
+            if let replacingLoadedMessageIDs {
+                let suppliedIDs = Set(conversation.messages.map(\.id))
+                // A receipt may have arrived after the host captured even a
+                // complete chat snapshot. Only a loaded row can be deleted by
+                // that snapshot; never erase a newly projected external send.
+                for message in canonical.messages where message.externalChannelPublication != nil
+                    && !suppliedIDs.contains(message.id) && !replacingLoadedMessageIDs.contains(message.id) {
+                    let insertion = conversation.messages.firstIndex { $0.createdAt > message.createdAt }
+                        ?? conversation.messages.endIndex
+                    conversation.messages.insert(message, at: insertion)
+                }
+                conversation.messageAddressReservations.merge(canonical.messageAddressReservations) { _, saved in saved }
+            }
+        }
         if let expectedBinding {
             guard let current = values.first(where: { $0.id == conversation.id }),
                   current.agentBinding == expectedBinding, conversation.agentBinding == expectedBinding,
@@ -259,6 +286,41 @@ public actor ConversationRepository {
         // Only transcript fields change above; every durable owner/visibility
         // remains identical. Do not re-enter the caller's binding lease while
         // holding it through this synchronous SQL transaction.
+        if values[index] != before { try commit { try persist(values, activityAt: activityAt, historicalImport: false) } }
+        else { try commit {} }
+        return values[index]
+    }
+
+    /// Outbox-to-transcript projection only. No network send, approval, source
+    /// read or model wake can be caused by this data-only operation.
+    public func publishExternalChannel(_ publication: ExternalChannelTranscriptPublication,
+                                       expectedHiddenAt: Date?, activityAt: Date,
+                                       commit: ConversationCommitGuard = { try $0() }) throws -> Conversation {
+        guard publication.isValid, publication.route == .directConversation,
+              let owner = try uniqueBoundConversation(accountID: publication.owner.accountID, agentID: publication.owner.agentID),
+              owner.id == publication.conversationID, owner.hiddenAt == expectedHiddenAt else { throw CancellationError() }
+        var values = try load()
+        guard let index = values.firstIndex(where: { $0.id == publication.conversationID }),
+              !values.contains(where: { $0.id != publication.conversationID && $0.messages.contains { $0.id == publication.deliveryID } }) else {
+            throw CancellationError()
+        }
+        let before = values[index]
+        if let row = values[index].messages.firstIndex(where: { $0.id == publication.deliveryID }) {
+            let existing = values[index].messages[row]
+            guard let previous = existing.externalChannelPublication, previous.samePublication(as: publication),
+                  existing.matchesExternalPublication(previous) else { throw CancellationError() }
+            if publication.shouldAdvance(from: previous) { values[index].messages[row].transcriptCards = [publication.transcriptCard] }
+        } else {
+            // Activity receipts survive native message deletion. An absent row
+            // that was already published is not a failed append to repair.
+            let receipt = try database.prepare("SELECT 1 FROM conversation_activity_receipts WHERE conversation_id=? AND message_id=?", operation: "check deleted external publication")
+            try receipt.bind(publication.conversationID.uuidString, at: 1)
+            try receipt.bind(publication.deliveryID.uuidString, at: 2)
+            guard try receipt.step() != SQLITE_ROW else { throw CancellationError() }
+            values[index].messages.append(publication.directMessage)
+        }
+        values[index].updatedAt = max(before.updatedAt, publication.queuedAt)
+        DirectMessageAddressing.assignMissing(in: &values[index])
         if values[index] != before { try commit { try persist(values, activityAt: activityAt, historicalImport: false) } }
         else { try commit {} }
         return values[index]

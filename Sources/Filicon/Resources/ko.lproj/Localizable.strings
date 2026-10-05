@@ -335,7 +335,7 @@
 "Delete" = "삭제";
 "Delete Skill" = "스킬을 삭제";
 "Delete “{0}”?" = "삭제 “{0}”?";
-"Delivered" = "지원하다";
+"Delivered" = "전달 완료";
 "Delivery queue" = "전송 대기열";
 "Denied" = "담당자: Mr. James";
 "Denied in System Settings" = "시스템 설정에서 Denied";
@@ -885,7 +885,7 @@
 "Retired" = "전체장편";
 "Retired Permission" = "폐기된 권한";
 "Retry" = "다시 시도";
-"Retrying" = "관련 기사";
+"Retrying" = "재시도 중";
 "Room name" = "객실 이름";
 "Rooms" = "호텔 & 료칸";
 "Roster" = "명단";
@@ -943,7 +943,7 @@
 "Send message" = "자주 묻는 질문";
 "Send process input" = "공정 입력";
 "Send the first message between the selected agents." = "선택한 에이전트 간에 첫 메시지를 보내세요.";
-"Sending…" = "이름 *";
+"Sending…" = "전송 중…";
 "Sent" = "(주)";
 "Sentry" = "(주)대영";
 "Server URL" = "서버 URL";
@@ -1825,3 +1825,4 @@
 "Source address" = "원본 주소";
 "Only the first image is sent to the channel. The remaining images are not sent." = "첫 번째 이미지만 채널로 전송됩니다. 나머지 이미지는 전송되지 않습니다.";
 "Images not sent" = "전송되지 않는 이미지";
+"External channel message" = "외부 채널 메시지";

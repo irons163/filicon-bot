@@ -94,6 +94,9 @@ extension ChatMessage {
             guard source.kind == .publication, let binding,
                   binding.accountID == source.accountID, binding.agentID == source.authorAgentID else { return false }
         }
+        if let external = externalChannelPublication,
+           external.route == .directConversation, external.conversationID == conversationID,
+           external.owner == binding, matchesExternalPublication(external) { return true }
         if transcriptCards.contains(where: { card in
             guard case .secretRequest(let secret) = card.payload, let request = secret.directRequest, let binding else { return false }
             return request.binding == binding && request.conversationID == conversationID

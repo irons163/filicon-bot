@@ -1,5 +1,31 @@
 # 完成驗收入口（2026-09-27）
 
+## 前景外部送件的正式聊天記錄與狀態恢復
+
+2026-10-06 接續 `782f850`，reference HEAD 仍為 `a9f633e09d49a85829b8236331b9e21f7e612634`。main 核對 `source/host/extensions/transcript/turn-runtime.ts` 的 channel canonical publication，以及 `send-message-shaping.ts` 的 source URL／file name／alt／thread。這批只補兩條已核准的前景 bound direct／saved-group：queue receipt 對應原聊天中一筆正式記錄；取得實際保存的 message ID／shortAddress 後才回傳 local saved receipt。原 local quote 與 platform thread 分開，完整 ordered URL／alt 和 first-image 契約未送出的圖片保留；實際 transport 仍只有已核准的 outbound。
+
+`ExternalChannelTranscriptPublication` 是有界、唯顯示的 typed evidence，不是 source／帳號／重試／模型權限。文字、目的地、原作者／run／call、附件 digest／filename／MIME／byte count 和 queued timestamp 不可改名或改投；只有 authoritative outbox 的 queued／sending／retrying／delivered／dead-letter 狀態與 attempt／delivery timestamp 能前進，terminal 不被舊快照降級。direct 保留完整歷史、reactions、持久短位址和 read-state；group 沿用原保存／未讀／引用／討論串。附件沒有 alt 時仍是一筆可見 activity，不漏掉未讀、短位址或引用導航；status refresh 不重複計數。相同 caption 的兩筆不同目的地送件各自可取得 receipt，原每 turn 兩筆額度及 group budget 不放寬。
+
+durable queue 先提交並快取真實 queued receipt。聊天保存失敗、Stop／cancel 或 callback shape 不符時，不捏造 saved receipt，也不以失敗為由重送；兩秒既有狀態 refresh／bootstrap 可用同一 delivery ID 補記或更新原記錄。repair 只讀 outbox，不執行 connector、source read／download、approval 或 member turn。當前 account／generation、active original agent、unique bound direct／非 hidden／未刪除、原 group member／完整 immutable owner 及最終同步 commit fence 都須有效；legacy nil-origin 不猜測聊天。original foreground lifetime 退休仍禁止該回合追加，但原已核准 outbox 的 display-only repair 可以在目前有效 owner 下完成。queue／chat／CAS 仍非跨 store 原子交易，沒有新增跨 process exactly-once 保證。
+
+direct repository 在最終 actor write 保存舊 UI snapshot 尚未載入的新 external row，拒絕重標 publication 或帶動 delivery evidence；載入後的明確 native deletion 則由既有 activity receipt 區分，不被 repair 加回。group projector 也不呼叫 responder、不耗回覆 budget，兩條路由的 UI 只更新原 stable row，不整批取代正在串流或尚未載入的歷史。
+
+direct／group 共用原生唯讀送件卡，七語顯示標題與五種狀態；queued 提示明確不是 delivered，first-image omissions 仍可見。exact URL／query、任意 filename／alt 原樣換行，只是 inert locators，不抓 remote bytes、不開啟來源、不新增 CAS preview／open。generic retry／dismiss 對帶 external evidence 的 widget 一律拒絕，即使修改 widget kind 亦不取得執行能力。修正 19 個既有相關狀態翻譯，新增一個七語 title key；獨立預期用語檢查避免翻譯自我比對，這不是全 catalog 語意驗收。
+
+有效 baseline `channel-transcript-red-v1.log` 使用 `782f850` production 與新增原 App assertions，exit 1：2 methods／2 suites／6 issues 重現成功排隊卻無 canonical local row。完整 `channel-transcript-full-final-v1.log` 是 nested `#require` fixture macro 編譯失敗，不當產品紅燈；v2 執行後的 20 issues 是一處 fixture 使用未受控 wall-clock 的 sub-millisecond reopen 比對，以及 19 個舊 attachment success assertions 仍要求沒有 local saved receipt。已改成固定核心商業時鐘和更強的成功完整 row／重新開啟存檔比對，拒絕、Stop、account／membership／connection、queue／quota 故障情境仍須零新增 row／零送件，沒有跳過或降低拒絕邊界。
+
+新增核心 13 methods／35 parameter cases、App recovery 一個方法／四種情境、畫面／inert actions 兩個方法；既有實際 App 文字／附件成功情境亦檢查 exact canonical evidence。SQLite 保存故障、回滾、terminal replay、stale full／paged snapshot、native deletion、owner／ID collisions、被撤銷的最終 commit、group 重開與 callback race，以及 queue 成功後 chat 保存失敗／cancel／forged receipt 均使用隔離 stores、受控 dependencies、fake connectors／downloader 和完整 CustomDump 值比對。App recovery fixture 重跑原 host 的 reconcile；core store 的 reopen 不冒充新 App bootstrap 或 live 平台驗收。
+
+最後聚焦 `channel-transcript-focused-final-v7.log` exit 0：31 tests／5 suites（core 13／1、App 18／4），包含新增正式記錄、原 direct／group 文字與完整群組附件測試。原成功附件情境重新開啟自己的 group／agent 存檔，比對實際可見 row、完整來源與未送出圖片；失敗情境仍禁止 saved acknowledgment 和新增正式 row。較早 v6 的 43 tests 是不同聚焦集合，不取代最後 v7。
+
+真正 unshown NSHostingView 產生七語 × 280／680 points × 明暗 × 五種 delivery status，共 140 張 PNG，存於 `channel-transcript-card-renders/`。每張檢查原生 fitting bounds 和全文末尾 marker；exact query、全部 URL／alt 與 inert actions 另用完整值 assertion。main 逐張檢視其中 17 張最後來源的代表畫面，涵蓋七語、兩種寬度、明暗與所有五種狀態：附件 metadata、完整 URL／首尾 alt、first-image omissions 與 queued 提示沒有截斷或重疊。沒有聲稱人工看過全部 140 張，也不當作完整 transcript viewport／真人 mouse、keyboard focus／VoiceOver 驗收。
+
+`channel-transcript-full-final-v3.log` 因回合中斷停止，沒有完整結果或 exit，不當作 green。重新跑最後來源的完整串行 `channel-transcript-full-final-v4.log` exit 0：17 個 Swift Testing target summaries 合計 2,076 tests／247 suites，另 17 個 XCTest bundles 合計 135 tests／0 failures；App target 為 754 tests／98 suites。兩項 opt-in installed Codex live tests 依既有設定 skipped，不算 live 驗收。`channel-transcript-localization-final-v1.log` 七語各 1,815 keys／0 missing。
+
+`channel-transcript-native-final-v1.log` 的 `Filicon App`／arm64 Debug BUILD SUCCEEDED，確認新 domain／projection 檔案實際編譯；`channel-transcript-native-verify-final-v1.log` 及新的 `ChannelTranscriptPackage/Filicon.app`／`channel-transcript-package-final-v1.log` 均 exit 0，檢查 version 0.1.0／build 1、四個 executables、app／XPC entitlements、deep strict codesign，以及 KaTeX 0.16.45／20 fonts 和 Mermaid 11.16.0／72 notices。standalone 為 Debug／ad-hoc，不是 Developer ID release／公證，未執行 script 印出的 launch smoke。既有 SDK／CoreData／macro 診斷不宣稱由本批修復。`git diff --check` 通過。日誌和隔離產物只留於忽略的 `.build/validation/`。Swift 測試／CustomDump／Dependencies 技能用於原 App 入口及完整值比較；SwiftUI 技能用於有界、唯讀原生卡和七語畫面；文件技能保留最新完成範圍與歷史紀錄。
+
+**仍未完成**：delivery-failure model follow-up；background direct／mailbox／delegated group／inbound shared runner 的 channel publication 及其 canonical projection；locators 的安全 CAS preview／open；真實 Slack／Discord／OAuth、真人／VoiceOver／最低 macOS、Developer ID release／公證。AGENT-02／整體 partial 和 48 分類不變。未 push、啟動或重啟使用者 App／Xcode，未改真實帳號／群組／聊天。本節只取代下方歷史紀錄的前景 canonical transcript／recovery／UI 缺口，不取代其他待驗收項目。
+
 ## 外部送件的原始對話保存
 
 2026-10-06 接續 `ffcbc67`，reference HEAD 仍為 `a9f633e09d49a85829b8236331b9e21f7e612634`。前景 bound direct／saved-group 的已核准送件現在保存原 route、conversation、sender／name、run／call、local reply quote 及完整 parsed intent。intent 保留所有 ordered source URL／alt，包括 first-image 契約不送出的圖片；實際 transport 仍只收到原 outbound，不因此讀取其他 source。這是補回正式聊天紀錄所需的保存基礎，**本批尚未產生 canonical external-publication transcript 或模型失敗通知**。

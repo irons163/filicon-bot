@@ -108,11 +108,13 @@ public struct GroupAgentPublication: Sendable {
     public let file: ReviewedGroupFile?
     public let remoteAttachment: ReviewedGroupRemoteAttachment?
     public let remoteImages: ReviewedGroupImageGallery?
+    public let externalPublication: ExternalChannelTranscriptPublication?
 
     public init(text: String, images: [AttachmentMetadata] = [], sourceUserMessageID: UUID? = nil,
                 lifetime: AgentPublicationLifetime? = nil, question: GroupQuestion? = nil, replyToMessageID: UUID? = nil,
                 cursorAgent: CursorAgentReference? = nil, file: ReviewedGroupFile? = nil,
-                remoteAttachment: ReviewedGroupRemoteAttachment? = nil, remoteImages: ReviewedGroupImageGallery? = nil) {
+                remoteAttachment: ReviewedGroupRemoteAttachment? = nil, remoteImages: ReviewedGroupImageGallery? = nil,
+                externalPublication: ExternalChannelTranscriptPublication? = nil) {
         self.text = text; self.images = images
         self.sourceUserMessageID = sourceUserMessageID; self.lifetime = lifetime
         self.question = question
@@ -121,6 +123,7 @@ public struct GroupAgentPublication: Sendable {
         self.file = file
         self.remoteAttachment = remoteAttachment
         self.remoteImages = remoteImages
+        self.externalPublication = externalPublication
     }
 }
 
@@ -540,7 +543,7 @@ public actor GroupService {
                 total += published.count
                 messagesThisRound += published.count
                 for message in published {
-                    publishedTexts[memberID, default: []].insert(Self.replyFingerprint(message.text, images: message.images ?? [], files: message.files ?? [], remote: message.remoteAttachment, gallery: message.remoteImages, layout: message.imageGalleryLayout))
+                    publishedTexts[memberID, default: []].insert(Self.replyFingerprint(message.text, images: message.images ?? [], files: message.files ?? [], remote: message.remoteAttachment, gallery: message.remoteImages, layout: message.imageGalleryLayout, external: message.externalPublication))
                 }
                 var sentThisTurn = published.count
                 for text in responses.filter({ !Self.isPass($0) }).prefix(Self.maximumMessagesPerMemberTurn) {
@@ -602,6 +605,7 @@ public actor GroupService {
     }
 
     private enum ReplyFingerprint: Hashable {
+        case external(UUID)
         case text(String)
         case imageIDs([String])
         case fileIDs([String])
@@ -609,7 +613,8 @@ public actor GroupService {
         case gallery(String, [GalleryImageFingerprint], RemoteImageGallery?, ImageGalleryLayout?)
     }
 
-    private static func replyFingerprint(_ text: String, images: [AttachmentMetadata], files: [AttachmentMetadata] = [], remote: RemoteAttachmentReference? = nil, gallery: RemoteImageGallery? = nil, layout: ImageGalleryLayout? = nil) -> ReplyFingerprint {
+    private static func replyFingerprint(_ text: String, images: [AttachmentMetadata], files: [AttachmentMetadata] = [], remote: RemoteAttachmentReference? = nil, gallery: RemoteImageGallery? = nil, layout: ImageGalleryLayout? = nil, external: ExternalChannelTranscriptPublication? = nil) -> ReplyFingerprint {
+        if let external { return .external(external.deliveryID) }
         if gallery != nil || layout != nil {
             // Reimporting the same bytes changes createdAt, not the message's
             // reviewed content. It must not bypass the round duplicate fence.
@@ -627,6 +632,20 @@ public actor GroupService {
         guard epochs[activity.groupID] == epoch else { throw CancellationError() }
         let text = publication.text, images = publication.images
         let files = publication.file.map { [$0.metadata] } ?? []
+        if let external = publication.externalPublication {
+            guard external.isValid, external.route == .groupConversation,
+                  external.conversationID == activity.groupID, external.senderID == activity.senderID,
+                  external.text == text, external.replyToMessageID == publication.replyToMessageID,
+                  publication.lifetime != nil, publication.sourceUserMessageID == nil,
+                  images.isEmpty, files.isEmpty, publication.remoteImages == nil, publication.remoteAttachment == nil,
+                  publication.question == nil, publication.cursorAgent == nil,
+                  state.roomMessages.first(where: { $0.id == external.deliveryID }).map({ existing in
+                      existing.externalPublication.map { $0.samePublication(as: external) && existing.matchesExternalPublication($0) } == true
+                  }) ?? true,
+                  state.groups.first(where: { $0.id == activity.groupID })?.memberIDs.contains(external.senderID) == true else {
+                throw AgentPublicationError.invalid
+            }
+        }
         if let reviewed = publication.remoteImages {
             guard reviewed.groupID == activity.groupID, reviewed.senderID == activity.senderID,
                   !state.roomMessages.contains(where: { $0.id == reviewed.messageID }),
@@ -690,23 +709,26 @@ public actor GroupService {
             }
         }
         let replies = explicitReplies[activity.id] ?? []
-        let fingerprint = Self.replyFingerprint(text, images: images, files: files, remote: publication.remoteAttachment?.reference, gallery: publication.remoteImages?.gallery, layout: publication.remoteImages?.imageGalleryLayout)
-        guard (!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !images.isEmpty || !files.isEmpty || publication.remoteAttachment != nil), text.count <= 8_000,
+        let fingerprint = Self.replyFingerprint(text, images: images, files: files, remote: publication.remoteAttachment?.reference, gallery: publication.remoteImages?.gallery, layout: publication.remoteImages?.imageGalleryLayout, external: publication.externalPublication)
+        guard (!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !images.isEmpty || !files.isEmpty || publication.remoteAttachment != nil || publication.externalPublication != nil), text.count <= 8_000,
               replies.count < min(remainingBudget, Self.maximumMessagesPerMemberTurn),
-              !previousTexts.contains(fingerprint), !replies.contains(where: { Self.replyFingerprint($0.text, images: $0.images ?? [], files: $0.files ?? [], remote: $0.remoteAttachment, gallery: $0.remoteImages, layout: $0.imageGalleryLayout) == fingerprint }) else {
+              !previousTexts.contains(fingerprint), !replies.contains(where: { Self.replyFingerprint($0.text, images: $0.images ?? [], files: $0.files ?? [], remote: $0.remoteAttachment, gallery: $0.remoteImages, layout: $0.imageGalleryLayout, external: $0.externalPublication) == fingerprint }) else {
             throw AgentServiceError.invalidName
         }
-        var draft = RoomMessage(id: publication.remoteImages?.messageID ?? publication.remoteAttachment?.messageID ?? publication.file?.messageID ?? UUID(), groupID: activity.groupID, senderID: activity.senderID, text: text, images: images, files: files)
+        var draft = RoomMessage(id: publication.externalPublication?.deliveryID ?? publication.remoteImages?.messageID ?? publication.remoteAttachment?.messageID ?? publication.file?.messageID ?? UUID(), groupID: activity.groupID, senderID: activity.senderID, text: text, createdAt: publication.externalPublication?.queuedAt ?? Date(), images: images, files: files,
+            externalPublication: publication.externalPublication)
         draft.remoteAttachment = publication.remoteAttachment?.reference
         draft.remoteImages = publication.remoteImages?.gallery
         draft.imageGalleryLayout = publication.remoteImages?.imageGalleryLayout
         draft.question = publication.question
         draft.cursorAgent = publication.cursorAgent
-        draft.replyToMessageID = publication.replyToMessageID ?? activity.replyToMessageID
-        let message = draft
+        draft.replyToMessageID = publication.externalPublication != nil ? publication.replyToMessageID : publication.replyToMessageID ?? activity.replyToMessageID
+        let message = publication.externalPublication.flatMap { value in state.roomMessages.first { $0.id == value.deliveryID } } ?? draft
         let commit = {
-            self.state.roomMessages.append(message)
-            try self.persist()
+            if !self.state.roomMessages.contains(where: { $0.id == message.id }) {
+                self.state.roomMessages.append(message)
+                try self.persist()
+            }
             let saved = self.state.roomMessages.last(where: { $0.id == message.id }) ?? message
             self.explicitReplies[activity.id, default: []].append(saved)
         }
@@ -717,6 +739,31 @@ public actor GroupService {
         let saved = state.roomMessages.last(where: { $0.id == message.id }) ?? message
         await onMessage(saved)
         return saved
+    }
+
+    /// Recovery of durable outbox evidence. It never enters a member turn,
+    /// consumes a reply budget, invokes a model, or performs an external send.
+    public func projectExternalChannel(_ publication: ExternalChannelTranscriptPublication,
+        commit: @Sendable (_ operation: () throws -> Void) throws -> Void = { try $0() }) throws -> RoomMessage {
+        guard publication.isValid, publication.route == .groupConversation,
+              state.groups.first(where: { $0.id == publication.conversationID })?.memberIDs.contains(publication.senderID) == true else {
+            throw CancellationError()
+        }
+        let message: RoomMessage
+        if let index = state.roomMessages.firstIndex(where: { $0.id == publication.deliveryID }) {
+            let existing = state.roomMessages[index]
+            guard let previous = existing.externalPublication, previous.samePublication(as: publication),
+                  existing.matchesExternalPublication(previous) else { throw CancellationError() }
+            if publication.shouldAdvance(from: previous) {
+                try commit { self.state.roomMessages[index].externalPublication = publication; try self.persist() }
+            } else { try commit {} }
+            message = state.roomMessages[index]
+        } else {
+            try commit { self.state.roomMessages.append(.externalChannelMessage(publication)); try self.persist() }
+            guard let saved = state.roomMessages.first(where: { $0.id == publication.deliveryID }) else { throw CancellationError() }
+            message = saved
+        }
+        return message
     }
 
     private func recordTools(_ tools: [RoomToolActivity], message: RoomMessage, epoch: UInt64, onMessage: @Sendable (RoomMessage) async -> Void) async throws {

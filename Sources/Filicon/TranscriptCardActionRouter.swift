@@ -75,7 +75,7 @@ actor TranscriptCardActionRouter {
         // Even generic retry/dismiss must go through the bound host flow so the
         // durable request and its receipt cannot disagree with the card status.
         if case .secretRequest(let value) = payload, value.directRequest != nil { return false }
-        if case .widget(let value) = payload, value.automationActivity != nil { return false }
+        if case .widget(let value) = payload, value.automationActivity != nil || value.externalPublication != nil { return false }
         switch (intent, payload) {
         case (.approveReview(let lhs), .autoReview(let rhs)), (.rejectReview(let lhs), .autoReview(let rhs)):
             return lhs == rhs.reviewID

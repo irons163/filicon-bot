@@ -79,14 +79,17 @@ public struct WidgetTranscriptCard: Codable, Hashable, Sendable {
     /// Display-only bookkeeping. Buttons require a separately issued native
     /// lease and automation-store entry; decoded metadata grants no authority.
     public var automationActivity: AutomationActivityTranscriptCard?
+    public var externalPublication: ExternalChannelTranscriptPublication?
     public var title: String
     public var body: String
     public var widgetKind: String
     public var facts: [String: String]
     public init(title: String, body: String = "", widgetKind: String = "summary", facts: [String: String] = [:], question: GroupQuestion? = nil,
-                automationActivity: AutomationActivityTranscriptCard? = nil) {
+                automationActivity: AutomationActivityTranscriptCard? = nil,
+                externalPublication: ExternalChannelTranscriptPublication? = nil) {
         self.question = question
         self.automationActivity = automationActivity
+        self.externalPublication = externalPublication
         self.title = title; self.body = body; self.widgetKind = widgetKind; self.facts = facts
     }
 }

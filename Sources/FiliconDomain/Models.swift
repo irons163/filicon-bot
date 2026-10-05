@@ -214,7 +214,7 @@ public enum DirectMessageAddressing {
             guard message.role == .user || message.role == .assistant else { continue }
             let key = message.id.uuidString
             var address = conversation.messageAddressReservations[key] ?? message.shortAddress
-            if address == nil, message.role == .user || !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !message.attachments.isEmpty || message.remoteAttachment != nil {
+            if address == nil, message.role == .user || !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !message.attachments.isEmpty || message.remoteAttachment != nil || message.externalChannelPublication != nil {
                 if message.role == .user, nextTurn < limit {
                     address = "t\(nextTurn)u"
                     nextTurn += 1
