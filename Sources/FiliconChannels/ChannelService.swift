@@ -71,6 +71,14 @@ public actor ChannelService {
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .millisecondsSince1970
             state = try decoder.decode(ChannelPersistentState.self, from: Data(contentsOf: storeURL))
+            for delivery in state.deliveries {
+                if let origin = delivery.origin {
+                    guard let authorization = delivery.authorization,
+                          origin.isConsistent(agentID: authorization.agentID, outbound: delivery.outbound) else {
+                        throw ChannelServiceError.invalidEnvelope
+                    }
+                }
+            }
             for index in state.deliveries.indices where state.deliveries[index].status == .sending {
                 state.deliveries[index].status = .retrying
             }
@@ -376,9 +384,12 @@ public actor ChannelService {
     @discardableResult
     public func enqueueApprovedPublication(
         _ proposal: ChannelPublication, lifetime: ChannelPublicationLifetime,
-        idempotencyKey: UUID, at: Date = Date()
+        idempotencyKey: UUID, at: Date = Date(), origin: ChannelDeliveryOrigin? = nil
     ) throws -> ChannelDelivery {
-        try lifetime.commit(proposal, idempotencyKey: idempotencyKey) {
+        guard origin?.isConsistent(agentID: proposal.agentID, outbound: proposal.outbound) ?? true else {
+            throw ChannelPublicationError.invalid
+        }
+        return try lifetime.commit(proposal, origin: origin, idempotencyKey: idempotencyKey) {
             guard proposal.issuerID == publicationIssuerID,
                   state.connections.first(where: { $0.id == proposal.connectionID }).map(ChannelPublication.configuration) == proposal.connection,
                   proposal.connection.enabled, proposal.connection.agentID == proposal.agentID,
@@ -396,7 +407,7 @@ public actor ChannelService {
                 let authorization = ChannelDeliveryAuthorization(ownerAccountID: proposal.ownerAccountID,
                     agentID: proposal.agentID, configurationRevision: proposal.configurationRevision)
                 return try enqueue(proposal.outbound, to: proposal.address, connectionID: proposal.connectionID,
-                    idempotencyKey: idempotencyKey, at: at, authorization: authorization)
+                    idempotencyKey: idempotencyKey, at: at, authorization: authorization, origin: origin)
             } catch {
                 state = before
                 throw error
@@ -413,12 +424,12 @@ public actor ChannelService {
         at: Date = Date()
     ) throws -> ChannelDelivery {
         try enqueue(outbound, to: address, connectionID: connectionID, idempotencyKey: idempotencyKey,
-            at: at, authorization: nil)
+            at: at, authorization: nil, origin: nil)
     }
 
     private func enqueue(
         _ outbound: ChannelOutbound, to address: ChannelAddress, connectionID: UUID,
-        idempotencyKey: UUID, at: Date, authorization: ChannelDeliveryAuthorization?
+        idempotencyKey: UUID, at: Date, authorization: ChannelDeliveryAuthorization?, origin: ChannelDeliveryOrigin?
     ) throws -> ChannelDelivery {
         guard let connection = state.connections.first(where: { $0.id == connectionID }) else {
             throw ChannelServiceError.unknownConnection(connectionID)
@@ -426,7 +437,7 @@ public actor ChannelService {
         let (outbound, address) = try Self.normalize(outbound, to: address, connection: connection)
         if let existing = state.deliveries.first(where: { $0.idempotencyKey == idempotencyKey }) {
             guard existing.connectionID == connectionID, existing.address == address,
-                  existing.outbound == outbound, existing.authorization == authorization else {
+                  existing.outbound == outbound, existing.authorization == authorization, existing.origin == origin else {
                 throw ChannelPublicationError.idempotencyConflict
             }
             return existing
@@ -440,7 +451,7 @@ public actor ChannelService {
             outbound: outbound,
             idempotencyKey: idempotencyKey,
             nextAttemptAt: at,
-            createdAt: at, authorization: authorization
+            createdAt: at, authorization: authorization, origin: origin
         )
         state.deliveries.append(delivery)
         try persist()

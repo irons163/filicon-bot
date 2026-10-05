@@ -81,7 +81,7 @@ public final class ChannelPublicationLifetime: @unchecked Sendable {
     private let lock = NSLock()
     private let parent: ChannelPublicationLifetime?
     private var active = true
-    private var receipts: [UUID: (ChannelPublication, ChannelDelivery)] = [:]
+    private var receipts: [UUID: (ChannelPublication, ChannelDeliveryOrigin?, ChannelDelivery)] = [:]
     /// Child turn closure leaves sibling turns available; request closure fences
     /// every child commit under the same parent-first lock order.
     public init(parent: ChannelPublicationLifetime? = nil) { self.parent = parent }
@@ -94,17 +94,17 @@ public final class ChannelPublicationLifetime: @unchecked Sendable {
         }
     }
     public func queuedReceipt(idempotencyKey: UUID) -> ChannelDelivery? {
-        lock.withLock { receipts[idempotencyKey]?.1 }
+        lock.withLock { receipts[idempotencyKey]?.2 }
     }
-    func commit(_ proposal: ChannelPublication, idempotencyKey: UUID,
+    func commit(_ proposal: ChannelPublication, origin: ChannelDeliveryOrigin?, idempotencyKey: UUID,
                 operation: () throws -> ChannelDelivery) throws -> ChannelDelivery {
         try whileActive {
             if let receipt = receipts[idempotencyKey] {
-                guard receipt.0 == proposal else { throw ChannelPublicationError.idempotencyConflict }
-                return receipt.1
+                guard receipt.0 == proposal, receipt.1 == origin else { throw ChannelPublicationError.idempotencyConflict }
+                return receipt.2
             }
             let receipt = try operation()
-            receipts[idempotencyKey] = (proposal, receipt)
+            receipts[idempotencyKey] = (proposal, origin, receipt)
             return receipt
         }
     }

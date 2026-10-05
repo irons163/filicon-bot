@@ -1,5 +1,23 @@
 # 完成驗收入口（2026-09-27）
 
+## 外部送件的原始對話保存
+
+2026-10-06 接續 `ffcbc67`，reference HEAD 仍為 `a9f633e09d49a85829b8236331b9e21f7e612634`。前景 bound direct／saved-group 的已核准送件現在保存原 route、conversation、sender／name、run／call、local reply quote 及完整 parsed intent。intent 保留所有 ordered source URL／alt，包括 first-image 契約不送出的圖片；實際 transport 仍只收到原 outbound，不因此讀取其他 source。這是補回正式聊天紀錄所需的保存基礎，**本批尚未產生 canonical external-publication transcript 或模型失敗通知**。
+
+來源與 queue row／authorization 在同一 channels envelope 保存，寫入失敗整筆回滾；不是 queue／chat／CAS 跨 stores 原子交易。cached、fresh lifetime 和重開後的相同 idempotency key 都要求完全相同來源，不允許改 conversation／sender／run／call／quote／intent 或移除來源。重試與 terminal failure 保留原 row／source；原 cached receipt 仍只是最初 queued 狀態，不是目前 delivered 證據。來源只有 consistency／size bounds，不能授權 source access、收件連線、聊天寫入或恢復模型。正式 projector 仍須獨立驗證當前 canonical owner／destination。
+
+模型不能指定 host provenance；只有兩條既有前景入口加入它，background／mailbox／delegated group／inbound 不繼承。legacy human／scoped queue 保持 `origin == nil`，不猜測或自動遷移到聊天；含損壞來源的 envelope 在重寫或 sending recovery 前拒絕，保留原 bytes。既有外部核准、account／lifetime／configuration revision、附件 quota 和不可召回已排隊訊息的界線不放寬。
+
+有效 baseline `channel-origin-red-v2.log` exit 1：保留新增 App assertions、使用原 `ffcbc67` production，2 methods／2 suites／36 parameter cases 中 6 issues 重現沒有來源欄位。`channel-origin-red-v1.log` 的 nested compiler sandbox 拒絕沒有執行測試，不當產品紅燈。`channel-origin-focused-v2.log` 的 62 App issues 發生在受限系統服務的本機 bookmark／離屏 render；相同最後來源在具備必要本機系統存取的 `channel-origin-focused-v3.log` exit 0，48 tests／5 suites，包含完整 direct／group 既有入口回歸，沒有降低產品 sandbox 或跳過失敗測試。
+
+新增 8 個方法／47 parameter cases，另加 3 個 strict model-fields cases，共 50 個新增 cases；既有 6 個 App 核准成功 cases 另比對實際 host source。隔離 stores、固定核心 identity／商業時間、fake connectors／downloader 與完整 CustomDump 值比對涵蓋文字／附件／gallery、source bounds、保存故障、Stop／cancel、重開／重試／terminal failure、損壞來源和 legacy rows。保存完整 intent 不等於額外 source fetch、local publication 或 remote delivery。
+
+最後來源的完整串行 `channel-origin-full-final-v1.log` exit 0：17 個 Swift Testing target summaries 合計 2,060 tests／245 suites，另 17 個 XCTest bundles 合計 135 tests／0 failures；App target 為 751 tests／97 suites。兩項 opt-in installed Codex live tests 依既有設定 skipped，不算 live 驗收。`channel-origin-localization-final-v1.log` 七語各 1,814 keys／0 missing。`channel-origin-native-final-v1.log` 的 `Filicon App`／arm64 Debug BUILD SUCCEEDED，並確認新來源檔案實際參與編譯；`channel-origin-native-verify-final-v1.log` 及新的 `ChannelOriginPackage/Filicon.app`／`channel-origin-package-final-v1.log` 均 exit 0，驗證 version 0.1.0／build 1、四個 executables、app／XPC entitlements、deep strict codesign 及離線 KaTeX／Mermaid。standalone 為 Debug／ad-hoc，不是 Developer ID release／公證；沒有執行 script 印出的 launch smoke，既有 SDK／CoreData／macro 診斷不宣稱由本批修復。`git diff --check` 通過。
+
+Swift 測試／CustomDump／Dependencies 技能用於原 App tool loop、受控依賴與完整狀態比對；文件技能保留保存基礎與未接線流程的界線。日誌及隔離產物只留於忽略的 `.build/validation/`；本批沒有新增 UI 或截圖驗收。
+
+**仍未接線**：canonical external-publication transcript／recovery／UI、delivery-failure model follow-up，以及 background direct／mailbox／delegated group／inbound shared runner 的 channel publication。live 帳號／服務、真人／VoiceOver／最低 macOS、release／公證仍待驗收，AGENT-02／整體 partial 和 48 分類不變。未 push、啟動或重啟使用者 App／Xcode，未改真實帳號／群組／聊天；下方歷史驗收紀錄保留。
+
 ## 已綁定成員的前景單獨聊天頻道送件
 
 2026-10-06 接續 `048a710`，reference HEAD 仍為 `a9f633e09d49a85829b8236331b9e21f7e612634`。已綁定有效 agent 的前景 direct chat 現在支援 `SendMessage channel` 的文字、本機附件及 HTTPS 附件，沿用下節群組的 source／send 分開核准、captured bytes、first-image caption 和 quota-backed CAS。收件連線屬於實際 bound agent，不是聊天 UUID、目前選取的聊天或另一位成員；tool receipt 的 sender 仍保留原 direct conversation identity。

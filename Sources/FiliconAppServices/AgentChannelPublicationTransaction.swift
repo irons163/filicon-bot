@@ -78,6 +78,15 @@ public struct PreparedAgentChannelAttachment: Sendable, Equatable {
 /// One host-bound SendMessage destination capability. Approval covers the exact
 /// queue proposal and captured bytes. It never sends a network request itself.
 public actor AgentChannelPublicationTransaction {
+    /// Host-supplied foreground route, never decoded from model arguments or a
+    /// restored delivery. Absence preserves legacy/non-transcript callers.
+    public struct TranscriptSource: Sendable {
+        public let route: ChannelDeliveryOrigin.Route
+        public let senderName: String
+        public init(route: ChannelDeliveryOrigin.Route, senderName: String) {
+            self.route = route; self.senderName = senderName
+        }
+    }
     public struct Review: Sendable, Equatable {
         public let conversationID: UUID
         public let senderID: UUID
@@ -116,6 +125,7 @@ public actor AgentChannelPublicationTransaction {
     private let authorize: Authorize
     private let makeID: @Sendable () -> UUID
     private let now: @Sendable () -> Date
+    private let transcriptSource: TranscriptSource?
     private struct Key: Hashable { let run: UUID; let call: ToolCallID }
     private struct Input: Equatable { let message: AgentChannelMessage; let replyTo: UUID? }
     private struct Completed { let input: Input; let receipt: Receipt }
@@ -131,6 +141,7 @@ public actor AgentChannelPublicationTransaction {
                 validateScope: @escaping @Sendable () async throws -> Void,
                 authorize: @escaping Authorize, prepare: Prepare? = nil, install: Install? = nil,
                 supportsRemoteSources: Bool = false,
+                transcriptSource: TranscriptSource? = nil,
                 makeID: @escaping @Sendable () -> UUID = { UUID() },
                 now: @escaping @Sendable () -> Date = { Date() }) {
         self.conversationID = conversationID; self.senderID = senderID; self.agentID = agentID
@@ -140,6 +151,7 @@ public actor AgentChannelPublicationTransaction {
         self.supportsRemoteSources = supportsAttachments && supportsRemoteSources
         self.prepare = supportsAttachments ? prepare : nil; self.install = supportsAttachments ? install : nil
         self.makeID = makeID; self.now = now
+        self.transcriptSource = transcriptSource
     }
 
     /// Synchronous Stop fence, including while this actor waits for approval.
@@ -190,15 +202,33 @@ public actor AgentChannelPublicationTransaction {
         }
         let id = makeID()
         guard usedIDs.insert(id).inserted else { throw Failure.duplicateCall }
+        let origin = try transcriptOrigin(message: message, replyTo: replyTo, call: call, context: context)
         attempted.insert(key)
         let delivery = try await channels.enqueueApprovedPublication(publication, lifetime: lifetime,
-            idempotencyKey: id, at: now())
+            idempotencyKey: id, at: now(), origin: origin)
         let receipt = Receipt(review: review, delivery: delivery)
         completed[key] = .init(input: input, receipt: receipt)
         published.insert(fingerprint)
         // No post-save cancellation check: the durable queue receipt is the
         // truth even if Stop/account transition arrived during the save.
         return receipt
+    }
+
+    private func transcriptOrigin(message: AgentChannelMessage, replyTo: UUID?, call: NormalizedToolCall,
+                                  context: ToolContext) throws -> ChannelDeliveryOrigin? {
+        guard let transcriptSource else { return nil }
+        let inputs = message.attachment.map { [$0] } ?? message.images
+        let sources = try inputs.map { input -> ChannelDeliveryOrigin.Intent.Source in
+            switch input.source {
+            case .localFile(let url): return .init(url: url, alt: input.alt)
+            case .remote(let reference): return .init(url: reference.url, alt: input.alt)
+            case .hostImage: throw ChannelPublicationError.invalid
+            }
+        }
+        return .init(route: transcriptSource.route, conversationID: conversationID, senderID: senderID,
+            senderName: transcriptSource.senderName, runID: context.runID, callID: call.id.rawValue,
+            replyToMessageID: replyTo, intent: .init(kind: message.attachment == nil ? .text : .attachment,
+                text: message.text, sources: sources))
     }
 
     private func checkScope() async throws {

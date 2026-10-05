@@ -60,13 +60,14 @@ struct AgentUserChannelPublicationTests {
         install: AgentChannelPublicationTransaction.Install? = nil,
         authorize: AgentChannelPublicationTransaction.Authorize? = nil,
         lifetime: ChannelPublicationLifetime = .init(), scope: UUID? = nil, author: UUID? = nil,
+        transcriptSource: AgentChannelPublicationTransaction.TranscriptSource? = nil,
         remote: Bool = false, makeID: (@Sendable () -> UUID)? = nil,
         validate: @escaping @Sendable () async throws -> Void = {}) -> AgentChannelPublicationTransaction {
         let ids = ChannelMessageIDs(), date = self.date
         return .init(conversationID: scope ?? origin, senderID: author ?? sender, agentID: agent, accountID: "local",
             channels: f.channels, lifetime: lifetime, validateScope: validate,
             authorize: authorize ?? { review, _, _ in await f.probe.review(review) },
-            prepare: prepare, install: install, supportsRemoteSources: remote,
+            prepare: prepare, install: install, supportsRemoteSources: remote, transcriptSource: transcriptSource,
             makeID: makeID ?? { ids.next() }, now: { date })
     }
     private func tool(_ f: Fixture, transaction: AgentChannelPublicationTransaction?) -> AgentUserMessageTool {
@@ -212,6 +213,9 @@ struct AgentUserChannelPublicationTests {
         #"{"type":"text","content":"X","channel":"slack:C_SAFE","images":[{"url":"http://example.test/image"}]}"#,
         #"{"type":"text","content":"X","channel":"slack:C_SAFE","url":"file:///private"}"#,
         #"{"type":"text","content":"X","channel":"slack:C_SAFE","connectionID":"chosen-by-model"}"#,
+        #"{"type":"text","content":"X","channel":"slack:C_SAFE","origin":{"route":"groupConversation","senderID":"chosen-by-model"}}"#,
+        #"{"type":"text","content":"X","channel":"slack:C_SAFE","senderID":"chosen-by-model"}"#,
+        #"{"type":"text","content":"X","channel":"slack:C_SAFE","runID":"chosen-by-model"}"#,
         #"{"type":"attachment","channel":"slack:C_SAFE","url":"file:///a","image_id":"private-id"}"#,
         #"{"type":"attachment","channel":"slack:C_SAFE","url":"file:///a","content":"mixed"}"#,
         #"{"type":"attachment","channel":"slack:C_SAFE","url":"file:///a","images":[]}"#,
@@ -269,6 +273,47 @@ struct AgentUserChannelPublicationTests {
         expectNoDifference(deliveries.map(\.outbound), [.init(text: "Caption", attachments: [prepared.metadata])])
         let context = try await tool.runtimeContext(for: .init(conversationID: origin, runID: channelTestID(5)))
         #expect(context.contains("Only the first image is sent"))
+    }
+
+    @Test(arguments: [ChannelDeliveryOrigin.Route.directConversation, .groupConversation], ["text", "attachment", "gallery"])
+    func hostSourceRetainsExactParsedIntentWithoutNewSourceReadsOrLocalReceipts(route: ChannelDeliveryOrigin.Route, kind: String) async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let png = try #require(Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNgAAAAAgABSK+kcQAAAABJRU5ErkJggg=="))
+        let prepared = try PreparedAgentChannelAttachment(file: .init(bytes: png, filename: "captured.png"), mimeType: "image/png")
+        let author = route == .directConversation ? origin : agent
+        let tx = transaction(f, prepare: { input, isImage, _, _ in
+            expectNoDifference(input.source, .remote(try .init(url: "https://example.test/first?signature=a%2Bb", alt: "First")))
+            expectNoDifference(isImage, kind == "gallery")
+            await f.probe.record("capture first only")
+            return prepared
+        }, install: { $0.metadata }, author: author,
+            transcriptSource: .init(route: route, senderName: "真實成員"), remote: true)
+        let inputs: [[String: String]] = kind == "text" ? [] : [
+            ["url": "https://example.test/first?signature=a%2Bb", "alt": "First"]
+        ] + (kind == "gallery" ? [["url": "file:///not-read.png", "alt": "Not sent"],
+                                 ["url": "https://example.test/not-downloaded", "alt": "Also not sent"]] : [])
+        var object: [String: Any] = ["type": kind == "attachment" ? "attachment" : "text", "channel": "slack:C_SAFE"]
+        if kind == "attachment" { object["url"] = inputs[0]["url"]; object["alt"] = "First" }
+        else { object["content"] = "Caption"; object["images"] = inputs }
+        let call = try NormalizedToolCall(id: "origin-proof", name: "SendMessage", argumentsJSON: JSONSerialization.data(withJSONObject: object))
+        let message = try AgentChannelMessage.parse(object), context = ToolContext(conversationID: origin, runID: channelTestID(5))
+        let receipt = try await tx.publish(message, replyTo: channelTestID(9), call: call, context: context)
+        let expected = ChannelDeliveryOrigin(route: route, conversationID: origin, senderID: author, senderName: "真實成員",
+            runID: context.runID, callID: call.id.rawValue, replyToMessageID: channelTestID(9),
+            intent: .init(kind: kind == "attachment" ? .attachment : .text, text: kind == "attachment" ? "First" : "Caption",
+                sources: inputs.map { .init(url: $0["url"]!, alt: $0["alt"]) }))
+        expectNoDifference(receipt.delivery.origin, expected)
+        expectNoDifference(receipt.delivery.address, .init(platform: "slack", channelID: "C_SAFE"))
+        expectNoDifference(receipt.delivery.outbound, .init(text: expected.intent.text, attachments: kind == "text" ? [] : [prepared.metadata]))
+        let reopened = try ChannelService(storeURL: f.root.appending(path: "channels.json"))
+        let restored = await reopened.delivery(id: receipt.delivery.id)
+        expectNoDifference(restored, receipt.delivery)
+        tx.close()
+        let replay = try await tx.publish(message, replyTo: channelTestID(9), call: call, context: context)
+        expectNoDifference(replay, receipt)
+        let events = await f.probe.events, sends = await f.probe.sends
+        expectNoDifference(events, kind == "text" ? ["review"] : ["capture first only", "review"])
+        expectNoDifference(sends, [])
     }
 
     @Test(arguments: ["text-only", "no-install", "https-without-grant", "corrupt-image", "wrong-installed-bytes", "deny"])

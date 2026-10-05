@@ -187,6 +187,16 @@ private struct DirectChannelProvider: AIProvider {
         let succeeds = mode == "approve" || mode == "navigation"
         expectNoDifference(queued.map(\.outbound), succeeds ? [.init(text: content)] : [])
         expectNoDifference(queued.compactMap { $0.authorization?.agentID }, succeeds ? [sender.id] : [])
+        if succeeds {
+            let delivery = try #require(queued.first)
+            let encoded = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(delivery)) as? [String: Any])
+            let origin = try #require(encoded["origin"] as? [String: Any], "The durable queue must retain its host-bound conversation source")
+            expectNoDifference(origin["conversationID"] as? String, id.uuidString)
+            expectNoDifference(origin["senderID"] as? String, id.uuidString)
+            expectNoDifference(origin["senderName"] as? String, sender.name)
+            expectNoDifference(origin["route"] as? String, "directConversation")
+            expectNoDifference(origin["callID"] as? String, "direct-external-publication")
+        }
         let capabilities = await probe.channelCapabilities
         expectNoDifference(capabilities, [true])
         let results = await probe.results

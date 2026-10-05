@@ -115,6 +115,16 @@ private struct GroupChannelProvider: AIProvider {
         expectNoDifference(deliveries.map(\.outbound), mode == "approve" ? [.init(text: content)] : [])
         expectNoDifference(deliveries.map(\.address), mode == "approve" ? [.init(platform: "slack", channelID: "C_FIXTURE")] : [])
         expectNoDifference(deliveries.compactMap { $0.authorization?.agentID }, mode == "approve" ? [sender.id] : [])
+        if mode == "approve" {
+            let delivery = try #require(deliveries.first)
+            let encoded = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(delivery)) as? [String: Any])
+            let origin = try #require(encoded["origin"] as? [String: Any], "The durable queue must retain its host-bound group and member")
+            expectNoDifference(origin["conversationID"] as? String, group.id.uuidString)
+            expectNoDifference(origin["senderID"] as? String, sender.id.uuidString)
+            expectNoDifference(origin["senderName"] as? String, sender.name)
+            expectNoDifference(origin["route"] as? String, "groupConversation")
+            expectNoDifference(origin["callID"] as? String, "external-publication")
+        }
         #expect(!model.runningGroups.contains(group.id))
         #expect(model.pendingAutoReviewApprovals.isEmpty)
         // The queue identity is not a fabricated local publication or reply.

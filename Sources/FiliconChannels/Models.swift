@@ -157,6 +157,7 @@ public struct ChannelDelivery: Identifiable, Codable, Hashable, Sendable {
     public let createdAt: Date
     public var deliveredAt: Date?
     public let authorization: ChannelDeliveryAuthorization?
+    public let origin: ChannelDeliveryOrigin?
 
     public init(
         id: UUID = UUID(), connectionID: UUID, address: ChannelAddress,
@@ -164,7 +165,8 @@ public struct ChannelDelivery: Identifiable, Codable, Hashable, Sendable {
         status: ChannelDeliveryStatus = .queued, attemptCount: Int = 0,
         nextAttemptAt: Date = Date(), lastError: String? = nil,
         createdAt: Date = Date(), deliveredAt: Date? = nil,
-        authorization: ChannelDeliveryAuthorization? = nil
+        authorization: ChannelDeliveryAuthorization? = nil,
+        origin: ChannelDeliveryOrigin? = nil
     ) {
         self.id = id
         self.connectionID = connectionID
@@ -178,6 +180,7 @@ public struct ChannelDelivery: Identifiable, Codable, Hashable, Sendable {
         self.createdAt = createdAt
         self.deliveredAt = deliveredAt
         self.authorization = authorization
+        self.origin = origin
     }
 }
 

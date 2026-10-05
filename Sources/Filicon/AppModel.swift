@@ -5204,7 +5204,7 @@ final class AppModel: ObservableObject {
             try await self.checkGroupFileScope(senderID: sender.id, audience: audience,
                 generation: generation, originID: originID, dispatchID: nil)
             return await self.makeAgentChannelPublication(conversationID: originID, senderID: sender.id,
-                agentID: sender.id, senderName: sender.name, account: account, generation: generation,
+                agentID: sender.id, senderName: sender.name, route: .groupConversation, account: account, generation: generation,
                 lifetime: lifetime, validateScope: { [weak self] in
                     guard let self else { throw CancellationError() }
                     try await self.checkGroupFileScope(senderID: sender.id, audience: audience,
@@ -5237,7 +5237,7 @@ final class AppModel: ObservableObject {
         // Direct transcript receipt identity is the chat, while channel
         // connection ownership is the actual bound agent, never the chat UUID.
         return makeAgentChannelPublication(conversationID: id, senderID: id, agentID: identity.agentID,
-            senderName: sender.name, account: account, generation: generation, lifetime: lifetime,
+            senderName: sender.name, route: .directConversation, account: account, generation: generation, lifetime: lifetime,
             validateScope: validate, prepareLocal: { [weak self] url, call, context in
                 guard let self, context.conversationID == id else { throw AgentMessagingError.scopeMismatch }
                 let reader = await AuthorizedAgentFileReader(runtime: self.localToolRuntime, folders: self.workspaceFolders,
@@ -5263,7 +5263,7 @@ final class AppModel: ObservableObject {
     /// Shared acquisition/review/storage, with an independent route validator
     /// supplied by the host. Neither arguments nor the selected chat grant it.
     private func makeAgentChannelPublication(conversationID id: UUID, senderID: UUID, agentID: UUID,
-        senderName: String, account: String, generation: UInt64, lifetime: ChannelPublicationLifetime,
+        senderName: String, route: ChannelDeliveryOrigin.Route, account: String, generation: UInt64, lifetime: ChannelPublicationLifetime,
         validateScope: @escaping @Sendable () async throws -> Void,
         prepareLocal: @escaping AgentChannelAttachmentSource.PrepareLocal) -> AgentChannelPublicationTransaction? {
         guard let channelService else { return nil }
@@ -5302,7 +5302,8 @@ final class AppModel: ObservableObject {
                 try await self.authorizeChannelPublication(review, conversationID: id, senderID: senderID,
                     agentID: agentID, senderName: senderName, call: call, context: context, account: account,
                     generation: generation, lifetime: lifetime, validateScope: check)
-            }, prepare: prepare, install: install, supportsRemoteSources: attachmentsAvailable)
+            }, prepare: prepare, install: install, supportsRemoteSources: attachmentsAvailable,
+            transcriptSource: .init(route: route, senderName: senderName))
     }
 
     private func checkChannelAccount(_ account: String, generation: UInt64) throws {

@@ -1,5 +1,13 @@
 # 協作能力核對紀錄（更新至 2026-10-06）
 
+## 外部送件的原始對話保存
+
+2026-10-06 接續 `ffcbc67`，前景 bound direct／saved-group 的已核准送件保存原 route、conversation、sender／name、run／call、local quote 和完整 ordered intent，包括不送出的圖片。host 提供來源，模型不能指定；queue／authorization／source 同一 envelope 保存，cached／fresh／restored replay 不得改投或改名，重試與 terminal failure 保留原資料。transport 仍只送核准的 outbound，不讀其他 URL，也不把來源當成新的權限或 delivery 證據。
+
+legacy human／scoped rows 保持沒有來源，不猜測聊天；損壞來源在重寫之前拒絕。這一批是後續 canonical transcript 的保存基礎，**還沒有正式聊天紀錄、重開補記或 delivery-failure model follow-up**，其他 background／mailbox／delegated／inbound 入口亦未增加能力。新增 50 個 parameter cases 與實際 App source assertions，以隔離 stores、受控依賴和完整值比對驗證；有效紅燈、最後 gates 及失敗類別見 [完成驗收入口](Parity-completion-audit.md)。文件技能保留此完成界線。
+
+AGENT-02／整體 partial 和 48 分類不變；live／真人／VoiceOver／最低 macOS／release 驗收保留，未 push、重啟 App／Xcode 或改真實帳號／群組／聊天。
+
 ## 已綁定成員的前景單獨聊天頻道送件
 
 2026-10-06 接續 `048a710`，有效 bound agent 的前景 direct chat 已接上 `SendMessage channel` 文字／本機／HTTPS 附件。host 使用實際成員的唯一 enabled connection，不從選取聊天、模型參數或 peer 推導 authority；receipt 仍屬於原 direct conversation。沒有 binding 或目的地不可用先拒絕，不能讀 source、借用別人的連線或回退本地 publication。reviewed background direct-session routine 沒有因共享 runner 而取得此能力。
