@@ -1,5 +1,15 @@
 # 協作能力核對紀錄（更新至 2026-10-06）
 
+## 外部送件失敗後通知原代理人
+
+2026-10-06 接續 `89e5a35`，reference 的 delivery-failure notice 現在接到原前景 bound direct member 的 shared runner。提醒從 authoritative terminal queue 與原 canonical publication 產生，回到原 account／agent／chat，不跟隨選取；busy 先不 claim、off-page 載回 exact owner。原 persona／history 保留，要求以沒有 channel target 的 `SendMessage` 更正；plain assistant draft 保持 private，沒有新的人類 row、memory suggestion／episode／synthesis 或隱含重送權限。raw error／token／outbound text／附件 locators 不進提醒，一般 transport 只說未確認送達。
+
+admission 先 durable 保存一次，terminal 不 replay，重開的 running 改為 interrupted。原 binding／account／persona／provider／model／reasoning lease 到最後 publication／SQL save 仍有效；Stop、真正 acknowledgment／側欄隱藏／成員編輯／封存與各類 ownership 循環拒絕遲到回覆，不借用另一聊天或較寬 finalization lease。啟動 admission 已移到帳號 restoration 完成之後，避免先建立後立刻被啟動清理取消；operational presence／unread 不當作 persona 變更。saved-group 不因單筆失敗啟動全群組輪次，legacy／listener 無來源不猜測聊天。
+
+22 tests／3 suites、80 個 standalone／parameter cases及完整 135 XCTest＋2,098 Swift Testing／250 suites 通過；原生建置、兩種封裝驗證、七語 1,815 keys／0 missing 通過。有效 baseline、bootstrap／exclusivity 修正、protocol error 與 fixture 失敗區分，以及最後 gate 日誌見 [完成驗收入口](Parity-completion-audit.md)。測試技能採隔離假服務、受控時間與完整值比較；文件技能保留完成範圍。沒有新增真人／VoiceOver 或 live 平台驗收。
+
+**尚未接線**：background direct／mailbox／delegated group／inbound channel publication／projection 及其 failure routing、安全 CAS preview／open；live／真人／最低 macOS／release 驗收仍保留。AGENT-02／整體 partial 和 48 分類不變；不宣稱跨 process exactly-once、queue／chat 原子性或模型一定發表更正。未 push、重啟 App／Xcode 或改真實資料。本節只取代下方歷史的前景 bound direct failure follow-up 缺口。
+
 ## 前景外部送件的正式聊天記錄與狀態恢復
 
 2026-10-06 接續 `782f850`，前景 bound direct／saved-group 的核准送件會在原聊天保存一筆 typed canonical entry，ID 來自實際 durable queue；原作者／owner／run／call／local quote、完整 ordered URL／alt 和實際 captured file metadata 保留。local saved receipt 只來自成功存檔，不等於 remote delivered。queue 成功後 chat save／Stop／cancel／forged callback 失敗不重送；既有 refresh／bootstrap 可在當前有效 account／原聊天下以同一 ID 補記，並單向更新實際 delivery status，不讀 source、不觸發 approval／model 或新增回覆成員。

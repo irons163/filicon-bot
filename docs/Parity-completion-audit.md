@@ -1,5 +1,27 @@
 # 完成驗收入口（2026-09-27）
 
+## 外部送件失敗後通知原代理人
+
+2026-10-06 接續 `89e5a35`，reference HEAD 仍為 `a9f633e09d49a85829b8236331b9e21f7e612634`。main 核對 `background-wakes.ts` 的 `runChannelFailureWake`、`session-runtime.ts` 的原 agent background session，以及 `channel-messaging.ts` 的失敗提醒：不是新的人類訊息或權限，須以沒有 channel target 的 `SendMessage` 在 App 更正先前送達說法，不默默重送。本批補原前景 bound direct 的 terminal delivery failure → 原 account／agent／canonical chat → shared direct runner；saved-group 仍保留原生失敗狀態，不因此啟動全群組回合。legacy nil-origin／listener failure 不猜測收件聊天。
+
+host 從 authoritative dead-letter queue 與已保存的 exact canonical publication 建立有界提醒。只提供 delivery ID、平台／目的地 ID、attempts 及 allow-listed typed reason；raw connector／server error、token、outbound text、任意附件 URL／filename／alt／bytes 不加入提醒。一般 transport／legacy 無型別失敗只能說「未確認送達」，不能推論收件人什麼都沒收到。原 persona／聊天 history 維持，但提醒只在 request 中暫存，不保存假的 user row，也不將它當作記憶建議、episode 或 synthesis 的人類證據。
+
+durable `ChannelFailureFollowUp` 在模型執行前保存一次 admission。completed／failed／cancelled 不重播；重開遇到 running 轉 interrupted，避免重複已可能發表的更正，不把舊 spinner 當成仍在執行。原聊天忙碌時先不 claim；不在側欄首頁時只載回 exact canonical owner，不跟隨目前選取或新增聊天。hidden／刪除／封存／歧義 binding／外帳號／無工具 provider 拒絕，不回退其他聊天。corrupt bookkeeping 在重寫前拒絕；claim／finish／acknowledgment 保存失敗回滾完整 state，非有限日期拒絕，完成時間不因倒退時鐘早於 admission。
+
+原 repository binding lease、account generation／scope、provider／model／reasoning 及 persona identity 維持到最後 publication／review-card／SQL save。Stop、acknowledgment、帳號或 binding／hidden／provider／model／reasoning／persona 的離開再返回，以及同一 App 的實際側欄隱藏、成員編輯／封存操作，均同步退休原回合；遲到且忽略 cancellation 的 provider 不能追加文字或借用較寬 finalization lease。status／unread／updatedAt 等 operational changes 不當作 persona 變更。取消只清理原 run／review IDs，不覆寫另一 owner 的 history。這是本機 admission／lifetime fence，不是跨 process exactly-once 或 queue／chat 跨 store 原子交易。
+
+有效 baseline `channel-failure-wake-red-v2.log` 使用 `89e5a35` production，exit 1：真正 App 的 terminal failure 沒有進入原 bound member runner（1 test／1 suite／1 issue，requests 為 0）。接線後的隔離 bootstrap 測試另抓到帳號 restoration 的既有 cancellation 會提前消耗新 claim；`channel-failure-wake-app-v8.log` 的暫時 stack 證明路徑為 restoreAccount → cancelAutoReviewApprovals → cancelConversationWork。現待帳號與 bootstrap 完成才 admission，最後來源已移除診斷輸出。另修正 acknowledgment optional state mutation 的 Swift exclusivity crash；沒有略過取消情境。
+
+`channel-failure-wake-focused-v12.log` 的兩項失敗是 fixture 誤以為未支援的 `channel` 會回傳一般 executor error。真正 ToolLoop schema 在 executor 前拒絕 unknown property，既有 interactive bridge 讓該 protocol error 結束回合；沒有修改 ToolLoop／bridge 或宣稱模型一定能接續更正。最後 App fixture 要求 exact typed rejection、failed admission、零 local correction／新外部送件／核准。另一純 executor bypass 測試確認即使不經 schema，unsupported channel 仍不能發表或消耗兩筆本地 publication 額度。其餘編譯、fixture 日期精度和斷言修正日誌保留，不當作新的產品安全紅燈。
+
+最後聚焦 `channel-failure-wake-focused-final-v15.log` exit 0：22 tests／3 suites，包含 80 個 standalone／parameter cases（notice 5 methods／15 cases、channel service 10／32、真正 App 7／33）。涵蓋原 runner 實際 `SendMessage` 更正、private draft／silence／provider failure、busy／unselected／off-page／重開、14 種遲到 publication 撤銷、實際開啟 memory suggestions＋episodes／synthesis 仍無寫入、typed reason privacy、corrupt／rollback／nonfinite clock 和 terminal no-replay。使用隔離 stores、假 connector／provider、受控商業時間與完整 CustomDump 值比較；另一聊天完整值及原一次 external send 不變，不使用真實帳號或模型。
+
+最後完整串行 `channel-failure-wake-full-final-v1.log` exit 0：17 個 Swift Testing target summaries 合計 2,098 tests／250 suites，另 17 個 XCTest bundles 合計 135 tests／0 failures；App target 為 761 tests／99 suites。兩項 opt-in installed Codex live tests skipped，不算 live 驗收。`channel-failure-wake-localization-final-v1.log` 七語各 1,815 keys／0 missing；本批未新增 UI layout／文字，不新增真人／VoiceOver 驗收。
+
+`channel-failure-wake-native-final-v1.log` 的 `Filicon App`／arm64 Debug BUILD SUCCEEDED，新 notice／record 實際編譯；`channel-failure-wake-native-verify-final-v1.log` 及新 `ChannelFailurePackage/Filicon.app`／`channel-failure-wake-package-final-v1.log` 均 exit 0，四個 executables、app／XPC entitlements、deep strict codesign、KaTeX 0.16.45／20 fonts、Mermaid 11.16.0／72 notices 通過。standalone 為 Debug／ad-hoc，不是 Developer ID release／公證，未執行印出的 launch smoke。`git diff --check` 通過；日誌／隔離產物只留於忽略的 `.build/validation/`。Swift Testing／CustomDump／Dependencies 技能用於受控原入口與完整值斷言；文件技能保留實際接線與驗收界線。
+
+**仍未完成**：background direct／mailbox／delegated group／inbound shared runner 的 channel publication、canonical projection 與相應 failure routing；locators 的安全 CAS preview／open；真實 Slack／Discord／OAuth、真人／VoiceOver／最低 macOS、Developer ID release／公證。AGENT-02／整體 partial 和 48 分類（42 個歷史 complete／5 partial／1 NA）不變。本節只取代下方歷史「前景 bound direct 沒有 delivery-failure model follow-up」的缺口；不保證模型遵循更正文案，也不擴大任何工具 grant。未 push、啟動或重啟使用者 App／Xcode，未改真實帳號／群組／聊天。
+
 ## 前景外部送件的正式聊天記錄與狀態恢復
 
 2026-10-06 接續 `782f850`，reference HEAD 仍為 `a9f633e09d49a85829b8236331b9e21f7e612634`。main 核對 `source/host/extensions/transcript/turn-runtime.ts` 的 channel canonical publication，以及 `send-message-shaping.ts` 的 source URL／file name／alt／thread。這批只補兩條已核准的前景 bound direct／saved-group：queue receipt 對應原聊天中一筆正式記錄；取得實際保存的 message ID／shortAddress 後才回傳 local saved receipt。原 local quote 與 platform thread 分開，完整 ordered URL／alt 和 first-image 契約未送出的圖片保留；實際 transport 仍只有已核准的 outbound。

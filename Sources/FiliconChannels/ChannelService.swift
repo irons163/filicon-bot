@@ -33,6 +33,7 @@ private struct ChannelPersistentState: Codable, Sendable {
     // Absent in legacy files. Versions are persisted with configuration writes
     // so restored publications cannot follow a replacement connection (or ABA).
     var publicationRevisions: [String: UUID]? = nil
+    var failureFollowUps: [ChannelFailureFollowUp]? = nil
 }
 
 public actor ChannelService {
@@ -64,7 +65,8 @@ public actor ChannelService {
     private var storageRevision = UUID()
     private let publicationIssuerID = UUID()
 
-    public init(storeURL: URL, newDeliveryID: @escaping @Sendable () -> UUID = { UUID() }) throws {
+    public init(storeURL: URL, newDeliveryID: @escaping @Sendable () -> UUID = { UUID() },
+                now: @Sendable () -> Date = { Date() }) throws {
         self.storeURL = storeURL
         self.newDeliveryID = newDeliveryID
         if FileManager.default.fileExists(atPath: storeURL.path) {
@@ -78,6 +80,29 @@ public actor ChannelService {
                         throw ChannelServiceError.invalidEnvelope
                     }
                 }
+            }
+            let followUps = state.failureFollowUps ?? []
+            let wakes = state.failureWakes
+            guard followUps.count <= state.deliveries.count,
+                  Set(followUps.map(\.id)).count == followUps.count,
+                  Set(followUps.map(\.deliveryID)).count == followUps.count else { throw ChannelServiceError.invalidEnvelope }
+            for followUp in followUps {
+                guard let delivery = state.deliveries.first(where: { $0.id == followUp.deliveryID }),
+                      followUp.isConsistent(with: delivery),
+                      followUp.status != .running || wakes.contains(where: {
+                          $0.id == followUp.id && $0.deliveryID == followUp.deliveryID && $0.connectionID == followUp.connectionID
+                      }) else { throw ChannelServiceError.invalidEnvelope }
+            }
+            // A crashed model may already have published. Never silently replay
+            // an ambiguous run or represent a restored spinner as still live.
+            if var values = state.failureFollowUps {
+                let date = now()
+                guard date.timeIntervalSince1970.isFinite else { throw ChannelServiceError.invalidEnvelope }
+                for index in values.indices where values[index].status == .running {
+                    values[index].status = .interrupted
+                    values[index].finishedAt = max(date, values[index].startedAt)
+                }
+                state.failureFollowUps = values
             }
             for index in state.deliveries.indices where state.deliveries[index].status == .sending {
                 state.deliveries[index].status = .retrying
@@ -269,6 +294,7 @@ public actor ChannelService {
         state.inbound.removeAll { $0.connectionID == id }
         state.deliveries.removeAll { $0.connectionID == id }
         state.failureWakes.removeAll { $0.connectionID == id }
+        state.failureFollowUps?.removeAll { $0.connectionID == id }
         state.publicationRevisions?[id.uuidString] = nil
         try persist()
         // Do not tear down the live connection if the deletion failed to save.
@@ -473,8 +499,61 @@ public actor ChannelService {
         state.deliveries.first(where: { $0.id == id })
     }
     public func failureWakes() -> [ChannelFailureWake] { state.failureWakes }
+    public func failureFollowUps() -> [ChannelFailureFollowUp] { state.failureFollowUps ?? [] }
 
-    public func acknowledgeFailureWake(id: UUID) throws {
+    /// Caller additionally fences the current account, canonical unique direct
+    /// binding and host run lifetime around this synchronous durable admission.
+    public func claimFailureFollowUp(wakeID: UUID, accountID: String, agentID: UUID, conversationID: UUID,
+        at: Date = Date(), commit: @Sendable (() throws -> Void) throws -> Void = { try $0() }
+    ) throws -> ChannelFailureFollowUp? {
+        guard !(state.failureFollowUps ?? []).contains(where: { $0.id == wakeID }) else { return nil }
+        guard at.timeIntervalSince1970.isFinite,
+              let wake = state.failureWakes.first(where: { $0.id == wakeID }),
+              let delivery = state.deliveries.first(where: { $0.id == wake.deliveryID }),
+              delivery.connectionID == wake.connectionID, delivery.status == .deadLetter,
+              let authorization = delivery.authorization, let origin = delivery.origin,
+              origin.route == .directConversation, origin.conversationID == conversationID,
+              authorization.ownerAccountID == accountID, authorization.agentID == agentID,
+              origin.isConsistent(agentID: agentID, outbound: delivery.outbound),
+              !(state.failureFollowUps ?? []).contains(where: { $0.deliveryID == delivery.id }) else {
+            throw ChannelServiceError.invalidEnvelope
+        }
+        let record = ChannelFailureFollowUp(wake: wake, authorization: authorization, origin: origin, at: at)
+        try commit {
+            if state.failureFollowUps == nil { state.failureFollowUps = [] }
+            state.failureFollowUps?.append(record)
+            try persist()
+        }
+        return record
+    }
+
+    public func isFailureFollowUpCurrent(_ expected: ChannelFailureFollowUp) -> Bool {
+        expected.status == .running && state.failureFollowUps?.contains(expected) == true
+            && state.failureWakes.contains(where: {
+                $0.id == expected.id && $0.deliveryID == expected.deliveryID && $0.connectionID == expected.connectionID
+            }) && state.deliveries.contains(where: { expected.isConsistent(with: $0) })
+    }
+
+    /// Finishes only this already admitted run. No new run, publication, or
+    /// authority is created, including when the host account has since changed.
+    public func finishFailureFollowUp(_ expected: ChannelFailureFollowUp,
+        status: ChannelFailureFollowUp.Status, at: Date = Date()
+    ) throws {
+        guard status != .running, at.timeIntervalSince1970.isFinite,
+              isFailureFollowUpCurrent(expected),
+              let index = state.failureFollowUps?.firstIndex(where: { $0 == expected }) else { return }
+        state.failureFollowUps?[index].status = status
+        state.failureFollowUps?[index].finishedAt = max(at, expected.startedAt)
+        try persist()
+    }
+
+    public func acknowledgeFailureWake(id: UUID, at: Date = Date()) throws {
+        guard at.timeIntervalSince1970.isFinite else { throw ChannelServiceError.invalidEnvelope }
+        if let index = state.failureFollowUps?.firstIndex(where: { $0.id == id && $0.status == .running }) {
+            let startedAt = state.failureFollowUps?[index].startedAt ?? at
+            state.failureFollowUps?[index].status = .cancelled
+            state.failureFollowUps?[index].finishedAt = max(at, startedAt)
+        }
         state.failureWakes.removeAll { $0.id == id }
         try persist()
     }
@@ -488,7 +567,8 @@ public actor ChannelService {
               sendingDeliveryIDs.insert(id).inserted else { return }
         defer { sendingDeliveryIDs.remove(id) }
         guard let connection = state.connections.first(where: { $0.id == delivery.connectionID }), connection.enabled else {
-            deadLetter(index: index, error: ChannelServiceError.disabledConnection(delivery.connectionID).localizedDescription, now: now)
+            deadLetter(index: index, error: ChannelServiceError.disabledConnection(delivery.connectionID).localizedDescription,
+                reason: .connectionUnavailable, now: now)
             return
         }
         do {
@@ -501,15 +581,16 @@ public actor ChannelService {
                 }
             }
         } catch {
-            deadLetter(index: index, error: error.localizedDescription, now: now)
+            deadLetter(index: index, error: error.localizedDescription, reason: .classify(error), now: now)
             return
         }
         guard let connector = connectors[connection.connectorID] else {
-            scheduleFailure(index: index, error: ChannelServiceError.unknownConnector(connection.connectorID).localizedDescription, now: now)
+            scheduleFailure(index: index, error: ChannelServiceError.unknownConnector(connection.connectorID).localizedDescription,
+                reason: .connectorUnavailable, now: now)
             return
         }
         do { try Self.validateCapabilities(delivery.outbound, address: delivery.address, descriptor: connector.descriptor) }
-        catch { deadLetter(index: index, error: error.localizedDescription, now: now); return }
+        catch { deadLetter(index: index, error: error.localizedDescription, reason: .classify(error), now: now); return }
         state.deliveries[index].status = .sending
         state.deliveries[index].attemptCount += 1
         do { try persist() } catch { return }
@@ -526,17 +607,17 @@ public actor ChannelService {
         } catch {
             guard let liveIndex = state.deliveries.firstIndex(where: { $0.id == id }) else { return }
             if case ChannelServiceError.authExpired = error {
-                deadLetter(index: liveIndex, error: error.localizedDescription, now: now)
+                deadLetter(index: liveIndex, error: error.localizedDescription, reason: .classify(error), now: now)
             } else {
-                scheduleFailure(index: liveIndex, error: error.localizedDescription, now: now)
+                scheduleFailure(index: liveIndex, error: error.localizedDescription, reason: .classify(error), now: now)
             }
         }
     }
 
-    private func scheduleFailure(index: Int, error: String, now: Date) {
+    private func scheduleFailure(index: Int, error: String, reason: ChannelFailureReason, now: Date) {
         state.deliveries[index].lastError = error
         if state.deliveries[index].attemptCount >= Self.maximumAttempts {
-            deadLetter(index: index, error: error, now: now)
+            deadLetter(index: index, error: error, reason: reason, now: now)
         } else {
             state.deliveries[index].status = .retrying
             let delay = pow(2.0, Double(max(0, state.deliveries[index].attemptCount - 1)))
@@ -545,12 +626,13 @@ public actor ChannelService {
         }
     }
 
-    private func deadLetter(index: Int, error: String, now: Date) {
+    private func deadLetter(index: Int, error: String, reason: ChannelFailureReason, now: Date) {
         state.deliveries[index].status = .deadLetter
         state.deliveries[index].lastError = error
         let delivery = state.deliveries[index]
         if !state.failureWakes.contains(where: { $0.deliveryID == delivery.id }) {
-            state.failureWakes.append(.init(connectionID: delivery.connectionID, deliveryID: delivery.id, error: error, createdAt: now))
+            state.failureWakes.append(.init(connectionID: delivery.connectionID, deliveryID: delivery.id,
+                error: error, createdAt: now, reason: reason))
         }
         try? persist()
     }

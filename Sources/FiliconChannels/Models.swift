@@ -190,12 +190,15 @@ public struct ChannelFailureWake: Identifiable, Codable, Hashable, Sendable {
     public let deliveryID: UUID
     public let error: String
     public let createdAt: Date
-    public init(id: UUID = UUID(), connectionID: UUID, deliveryID: UUID, error: String, createdAt: Date = Date()) {
+    public let reason: ChannelFailureReason?
+    public init(id: UUID = UUID(), connectionID: UUID, deliveryID: UUID, error: String, createdAt: Date = Date(),
+                reason: ChannelFailureReason? = nil) {
         self.id = id
         self.connectionID = connectionID
         self.deliveryID = deliveryID
         self.error = error
         self.createdAt = createdAt
+        self.reason = reason
     }
 }
 
