@@ -1,5 +1,23 @@
 # 完成驗收入口（2026-09-27）
 
+## 公開 Mermaid 的離線資源與授權告示基礎
+
+2026-10-05 再核對 reference `a9f633e09d49a85829b8236331b9e21f7e612634` 的 `mermaid.tsx`：它以 strict runtime 做 `initialize`／`parse`／`render`，但 opaque `mermaid.core-CYC_FcEu.js` 不在 recovered checkout。根 lockfile 沒有 Mermaid dependency tree；recovered contract 的 `^11.16.0` 只讓公開 11.16.0 成為替代候選，不證明原 shipped version／bytes／layout。
+
+本批保留目前三種 native diagram parser／viewer，不新增 UI 語法能力。從 pinned public archive 匯入未修改的 IIFE engine／MIT notice；source map 顯示 59 個外層 package/version identities，pre-bundled parser 再包含 12 個。其 32 個 parser source entries 與公開 `@mermaid-js/parser` 1.2.0 archive 逐 byte 相符，連 parser 本身告示共 72 個 component notices。patched／peer suffix 保留原 source identity，沒有把它們冒充 registry code 等價；每個依賴 archive 只讀 original license document，不 install 或執行其程式。完整來源與限制見 [Offline-mermaid.md](Offline-mermaid.md)。
+
+importer 在任何 vendor write 前驗證全部 archive SHA-512、locked entry bytes／SHA-256 和每層 destination，拒絕 missing／changed input、duplicate entry、symlink 和未知既存檔案。runtime／封裝 verifier 固定 manifest，再驗 engine／MIT／72 notices；runtime 有 manifest／per-file／total bounds，整個 bundle 缺失不呼叫 trapping `Bundle.module`，damaged preferred bundle 不借用另一安裝。取得 verified string 不等於執行 script，更不提供網路、導航或 host tools。
+
+`mermaid-assets-focused-v1.log` exit 0：19 tests／3 suites；五個新方法涵蓋全部 75 個檔案的 modified／missing、五種 identical-byte symlink、root／兩層 notices directory、whole-bundle missing／damaged preferred。提供 pinned local inputs 的 `mermaid-resources-final-v2.log` 為 9 runs／420 assertions／0 failures／0 errors／0 skips，包含全部檔案重複 byte-preserving 再匯入及 late invalid input 不部分覆寫。新增 repository attributes 對兩個 offline vendor folders 關閉 text conversion／filters／ident expansion；獨立 Git index／export fixture 在 `core.autocrlf=true` 下仍逐一保留全部 Mermaid bytes，不 commit 或執行 user hooks。前一版 8／342 的日誌保留。既有 resource-signing 為 7／84；七語各 1,805 keys／0 missing。原生 `mermaid-assets-native-v1.log` BUILD SUCCEEDED，`mermaid-assets-native-verify-v1.log` 的 Mermaid／KaTeX resources、四個 executables、app／XPC entitlements 與 deep strict 簽章通過。
+
+第一輪完整 `mermaid-assets-full-v1.log` exit 1，包含大量 protected-file Cocoa 257／POSIX 1 及其他 downstream issues，不能算通過，也不把每項語意失敗一律歸因鎖定。解鎖後獨立 protected-profile probe 通過；`mermaid-assets-full-unlocked-v2.log` 的 17 targets 跑完仍 exit 1，唯一 issue 是既有 memory-history fixture 的 Cocoa 640／POSIX 28（磁碟不足），App 的 708 tests／89 suites 通過。console-before 是 unlocked；沒有改測試或降低 file protection。以各自 build log 確認後，只移除五份舊隔離 DerivedData 的 `Intermediates.noIndex`／`ModuleCache.noindex` 可重建快取，保留 sources、logs、Products 與封裝。
+
+最後 source 完整串行 `mermaid-assets-full-final-v3.log` exit 0：135 XCTest＋1,958 Swift Testing／231 suites（核心 982／108、App 708／89），全部 17 target summaries 通過；console-before／after 均 unlocked。兩項 opt-in live Codex tests 略過，不作外部服務或真人模型證據。`mermaid-assets-package-final-v1.log` 的 standalone Debug／ad-hoc 封裝亦通過 Mermaid／KaTeX resources、四個 executables、app／XPC entitlements 與 deep strict 簽章，產物只在 `.build/validation/MermaidAssetsPackage/Filicon.app`；沒有執行列印的 launch smoke，也不是 release／公證。既有 CoreData NSXPC 診斷和 compiler warnings 不因本批而宣稱修好。authored staged diff check 通過；原 engine 空白、Chevrotain-allstar notice 的 CRLF 及 DOMPurify notice 的末尾空行按 upstream 原 bytes 保留，不改寫授權文件來消除 whitespace 診斷。另直接比較 Git index，全部 75 resources 與 verified working bytes 相同。
+
+獨立非持久離屏 WebKit probe 使用 verified engine、isolated native content world、page JavaScript disabled 與 CSP，沒有 user App launch、message handler 或 host tool。八種正常 graph 與一種 frontmatter injection fixture 均 parse／render 成功且 config 仍 strict；v3／v4 直接查 `.page` world，原 page script／event injection 均未執行。較早 v1 的 engine 最後回傳 JS object 不可 bridge、v2 查 isolated world 的錯誤安全 oracle 保留，不當成產品安全驗收。strict output 仍保留 frontmatter fixture 的外部 `img src`；這正是下一階段必須做 native SVG resource／active-content gate 的證據，不代表安全 UI 已接線。probe 輸出不是 full App screenshot、完整語法或真人事件驗收。
+
+本批使用 SPM／Xcode 技能保留原 target／最低 OS／dependencies，測試與 CustomDump 技能驗證完整值及隔離檔案，文件技能記錄來源及未完成邊界。未 push、啟動或重啟使用者 App／Xcode、改真實帳號／群組／聊天；inputs、logs、probe outputs 和隔離產品留在忽略的暫存／`.build/validation/`。完整 public-engine renderer、serialized／cancelled lifecycle、safe SVG、transcript／viewer integration 尚未完成，opaque bytes／精確 geometry、真人／最低 macOS／external／release 缺口不變；`UI-04` 與整體仍 partial，全部 48 分類不縮減。
+
 ## 段落與表格的行內公式
 
 2026-10-05 再核對 reference `a9f633e09d49a85829b8236331b9e21f7e612634` 的 `transcript.tsx` 與 `math.tsx`：inline formula 是 paragraph／heading／list／quote／table cell 的子節點，不是獨立 transcript block；single-dollar math 不啟用。有效 baseline `inline-math-baseline-red.log` exit 1 重現原生將兩個 inline formula 拆成五個垂直 block，連帶破壞外層 Markdown。native 現只把 display formula 拆出，inline 保留完整段落；比 recovered 簡單 delimiter pattern 更廣的 TeX 指令支援不當作原 opaque asset 的等價證明。

@@ -116,13 +116,17 @@ expect_regular_executable "$app_path/Contents/Helpers/FiliconLocalToolHelper"
 expect_regular_executable "$app_path/Contents/Helpers/FiliconUpdateHelper"
 expect_regular_executable "$xpc_bundle/Contents/MacOS/FiliconLocalToolXPCService"
 
-# SwiftPM package and native Xcode both ship the same offline math resource bundle.
+# SwiftPM and native Xcode ship the same offline math/diagram resource bundle.
 math_bundle="$app_path/Contents/Resources/Filicon_FiliconRichContent.bundle"
 [[ -d "$math_bundle" && ! -L "$math_bundle" ]] || die "missing offline math resource bundle"
 math_root="$math_bundle/Contents/Resources/KaTeX"
 [[ -d "$math_root" ]] || math_root="$math_bundle/KaTeX"
 ruby "$project_dir/scripts/verify-katex.rb" "$math_root" \
   || die "offline math resource verification failed"
+diagram_root="$math_bundle/Contents/Resources/Mermaid"
+[[ -d "$diagram_root" ]] || diagram_root="$math_bundle/Mermaid"
+ruby "$project_dir/scripts/verify-mermaid.rb" "$diagram_root" \
+  || die "offline diagram resource verification failed"
 
 [[ -f "$app_entitlements_source" ]] \
   || die "missing app entitlements source: $app_entitlements_source"

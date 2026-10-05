@@ -1,0 +1,3 @@
+# Offline vendor resources are hashed byte-for-byte; never normalize them.
+Sources/FiliconRichContent/Resources/KaTeX/** -text -filter -ident
+Sources/FiliconRichContent/Resources/Mermaid/** -text -filter -ident
