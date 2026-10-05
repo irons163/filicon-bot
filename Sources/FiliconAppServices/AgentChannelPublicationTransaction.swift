@@ -161,7 +161,8 @@ public actor AgentChannelPublicationTransaction {
         // Resolve ownership before source reads. Neither a model address nor a
         // source approval can create a connection or use another agent's token.
         _ = try await channels.proposePublication(agentID: agentID, accountID: accountID,
-            outbound: .init(text: message.text.isEmpty ? "Attachment" : message.text), to: message.address)
+            outbound: .init(text: message.text.isEmpty ? "Attachment" : message.text), to: message.address,
+            requiresAttachments: message.source != nil)
         try await checkScope()
         let attachment: PreparedAgentChannelAttachment?
         if let source = message.source {

@@ -46,9 +46,11 @@ public actor LocalToolRuntime {
         agentID: UUID,
         runID: UUID,
         toolCallID: String,
-        now: Date = Date()
+        now: Date = Date(),
+        validateScope: @Sendable () throws -> Void = {}
     ) async throws -> LocalOperationResult {
         try Task.checkCancellation()
+        try validateScope()
         let target = try Self.canonicalTarget(for: operation)
         let bookmarks: [Data]
         if let root = Self.root(for: operation) {
@@ -56,6 +58,8 @@ public actor LocalToolRuntime {
         } else {
             bookmarks = []
         }
+        try Task.checkCancellation()
+        try validateScope()
 
         let expiresAt = now.addingTimeInterval(120)
         let unsigned = LocalPermissionReceipt(
@@ -83,12 +87,18 @@ public actor LocalToolRuntime {
             permissionReceipt: receipt,
             securityScopedBookmarks: bookmarks
         )
+        // Stop may retire the host run while bookmark resolution was awaiting
+        // another actor. This is a pre-dispatch fence, not recall of helper work
+        // that has already been admitted or completed.
+        try Task.checkCancellation()
+        try validateScope()
         runsByConversation[conversationID, default: []].insert(runID)
         if case .runCommand = operation {
             liveShellRunsByConversation[conversationID, default: []].insert(runID)
         }
         let response = await helper.perform(.init(scope: scope, operation: operation))
         try Task.checkCancellation()
+        try validateScope()
         if let error = response.error {
             liveShellRunsByConversation[conversationID]?.remove(runID)
             throw error

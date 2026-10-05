@@ -1,5 +1,31 @@
 # 完成驗收入口（2026-09-27）
 
+## 前景群組的 channel 附件與 HTTPS source 核准
+
+2026-10-06 接續 `88aae1c`，reference HEAD 仍是 `a9f633e09d49a85829b8236331b9e21f7e612634`。main 再讀 `source/shared/channel-messaging.ts`，保留文字取第一個 image URL＋text caption，以及 standalone attachment URL／alt；本批只接上真正前景 saved-group 的附件能力，取代下節 text-only App 邊界，不當全 route 或 live 平台完成。
+
+`AgentChannelAttachmentSource` 將 preparation、CAS install 和 queue 分開。本機沿用 exact authorized root 的 reader；HTTPS 原 URL 和每個 redirect 都需獨立、fresh 人類核准，目的地送件核准不能授權 source fetch，generic auto-review allow 也不代替它。選取自身唯一 enabled connection／registered connector 後，若介面不支援附件，先拒絕而不要求 file／download access。remote source filename 在問核准前驗證，不接受 host image IDs；下載結果重驗 original reference、非空／長度，不信 declared MIME。圖片由真正 decoder 驗證，metadata 用同一 pure projector，沒有 projection 階段 blob 寫入或 source pathname reopen。
+
+下載沿用既有 ephemeral、無 cache／cookies／credentials 的 bounded HTTPS GET，原 downloader 的 timeout、reviewed redirect 上限／loop／TLS 規則不降低。每 attachment 的 host bound 為 8 MiB，image 5 MiB，local helper 10 MiB transport 不是額外 quota；connector 25 MiB 不允許繞過 host 每記錄／總儲存限額。這不是 DNS pinning、全面 private-IP 封鎖或真實網路驗收。
+
+送件 review 保留完整 caption、own connection／platform:chat、filename、MIME、跟隨 App 語言的 size、SHA-256 和 exact source URL。first-image 模式另列出所有未送出的 URL／alt；排入 queue 不代表 delivered，Stop 不召回已入列訊息。核准後以 captured immutable bytes 做 quota reservation／CAS install，不重新開啟來源。channel inventory 納入 ledger，active 與 retained quarantine 相同 digest 的兩份實體 bytes 分開計費。install 成功而 queue 失敗仍可能留下 orphan CAS，reconciliation 會計入；不宣稱跨 stores 原子交易、exactly-once 或跨 process CAS。
+
+有效 App baseline `channel-attachment-native-baseline-red-v3.log` exit 1：1 test／3 issues，在還原原 AppModel、保留新 fixture 的狀態，重現 attachment capability 未接線，沒有 local read review／結果／queue；之後恢復本批 forward diff。v1 fixture 編譯、v2 未等 Task 開始即讀 finished 狀態不是有效產品紅燈。早期 focused-v2 的 error enum 拼字、v4 quota fault fixture 未辨認 UUID-keyed Codable array、v5 dynamic localization overload、v6 OCR 將 Latin a 視為 Cyrillic confusable，亦保留日誌但不當產品證據；exact URL 仍由獨立 state assertion 檢查，不靠 OCR confusable 字元認定 equality。
+
+完整串行 `channel-attachment-full-final-v1.log` exit 1：新增附件 routes 通過，但既有 `stoppingAnActivityConfirmationRetiresAnAdmittedReviewWhoseCompletionDidNotSave` 在 local approval 返回後仍寫入隔離的 `activity-created.txt`。沒有略過該測試或以聚焦單獨通過當成全套通過。root cause 是同步退休 host scope，並未跨 local approval await 保存到 executor／runtime，actor cancellation 可以晚於 approval。
+
+工具現在 capture 原背景 run／account execution check，policy／local approval await 後及 runtime bookmark resolution 後、helper dispatch 前重驗；不重新 lookup／capture 新 generation。Stop 不放寬核准、不把正常 denial 改成 permission。`channel-attachment-stop-fence-red-v3.log` exit 1：2 tests／1 suite／5 issues，以新增 capture-hook scaffold 但未啟用檢查的 executor，確定性重現 late allow、late deny、fresh generation 的舊回合未退休；這是 scaffold red，不冒充未新增 hook 的 HEAD unit baseline。v1 nested compiler sandbox 拒絕及 v2 async CustomDump autoclosure 編譯失敗不是產品紅燈。原 full-v1 的實際 App 寫檔失敗為獨立 integration 證據。新 runtime checkpoint 測試檢查 pre-bookmark／post-bookmark／pre-helper 三處，並明示已 admitted helper work 不可召回，只丟棄其晚到結果；正常有效回合的 local approval 控制組仍成功。
+
+最後 source `channel-attachment-focused-final-v9.log` exit 0：85 tests／10 suites（core 23／3、channels 14／1、App 48／6），包含完整 RoutineDirectSessionTests、ProcessResultPresentationTests 及新增 retirement suite。source adapter 的 22 format/image、9 HTTPS、8 local 及 3 unavailable cases；真正 App 的 local 26、11 actual formats、HTTPS 26，以及 active/quarantine reconciliation 均以隔離 stores、fake connectors／downloader 和必要的隔離 LocalProcessHost／HMAC 驗證，不冒充 shipping XPC service 驗收。quota reserve／commit failure、source mutation、Stop／account／membership／connection、redirect denial、corrupt image 和排隊結果有完整 state／bytes 比對。沒有讀真實 Keychain、HTTP、群組或聊天。
+
+真正 pending-review 的 unshown NSHostingView 產生 source＋send 各七語 × 340／620 points × 明暗，共 56 張新附件 PNG；原文字回歸另 28 張，共 84 張，位於 `channel-attachment-cards-final/`。OCR 檢 caption 首尾／destination／digest／excluded image 等 markers，state 另檢 exact details。main 重新檢視 v8 的 14 張覆蓋七語；v9 的 80 張 SHA-256 與 v8 一致，四張 Korean send cards 因 Type 翻譯修正變動，四張均逐張重檢。韓文 Type／Size／bytes 舊翻譯與日文 Size 冒號一併修正，新 size formatter 使用所選 App locale。`channel-attachment-localization-final-v2.log` 七語各 1,814 keys／0 missing；這不是全 catalog 語意或真人 gesture／keyboard focus／完整 transcript viewport／VoiceOver 驗收。
+
+最終 gates 均 exit 0：完整串行 `channel-attachment-full-final-v2.log` 為 17 個 Swift Testing target summaries 合計 2,045 tests／243 suites，另 17 個 XCTest bundles 合計 135 tests／0 failures。App target 為 744 tests／96 suites，原 Stop integration 在全套通過；兩項 opt-in installed Codex live tests 依既有設定 skipped，不能算 live 驗收。完整 Xcode 的 `Filicon App`／arm64 Debug 使用既有隔離 DerivedData，`channel-attachment-native-final-v1.log` 為 BUILD SUCCEEDED；`channel-attachment-native-verify-final-v1.log` 驗證 version 0.1.0／build 1、四個 executables、app／XPC entitlements、deep strict codesign 及離線資源。新的 `ChannelAttachmentPackage/Filicon.app` 與 `channel-attachment-package-final-v1.log` 完成 standalone Debug packaging 和相同 verify。只建置／檢查，沒有執行 script 印出的 launch smoke；ad-hoc Debug 不當 Developer ID release／公證證據。`git diff --check` 通過。
+
+Swift 測試／CustomDump 技能用於固定 core 商業時間／IDs、受控 dependencies、原 App tool loop、故障注入及完整值比對；SwiftUI 技能驗證真正 card，SPM 技能移除前批兩個 test targets 的 redundant Channels dependency，仍沿用既有 targets／transitive module，不新增套件或降低最低 OS。文件技能保留失敗類別、原 reference 和未接線邊界。日誌、PNG 與隔離產物只留於忽略的 `.build/validation/`。
+
+**仍未接線**：direct／mailbox／delegated group／inbound shared runner 的 channel publication、canonical external-publication transcript 及 delivery failure model follow-up；原 inbound 一次純文字回覆不變。live Slack／Discord／OAuth、真人／VoiceOver／最低 macOS、release／公證仍未驗收，AGENT-02／整體 partial 和 48 分類範圍不變。未 push、啟動或重啟使用者 App／Xcode，未改真實帳號／群組／聊天。
+
 ## SendMessage 的前景群組頻道文字核准
 
 2026-10-05 接續 `86d9a3b`，reference 仍為 `a9f633e09d49a85829b8236331b9e21f7e612634`。這批將 host queue API 接上 `AgentChannelPublicationTransaction`、bound SendMessage schema／adapter 及真正 AppModel 的前景 saved-group 文字 publication。下節 foundation 的「schema／UI 未接線」保留為該 commit 的歷史階段，由本節限定取代；不是全 route／附件／canonical transcript 或外部服務完成。

@@ -4226,6 +4226,11 @@ final class AppModel: ObservableObject {
             let attachmentInventory = try await attachmentStore.inventory()
             let attachmentSizes = attachmentInventory.active.merging(attachmentInventory.quarantined) { max($0, $1) }
             records += attachmentSizes.map { StorageQuotaRecord(scope: "attachment-blob", key: $0.key, byteCount: $0.value, generation: 1) }
+            let channelInventory = try await channelAttachmentStore.inventory()
+            records += channelInventory.active.map { StorageQuotaRecord(scope: "channel-attachment-blob", key: $0.key, byteCount: $0.value, generation: 1) }
+            // A retained quarantine copy and a new active copy occupy separate
+            // bytes even when their content hash is identical.
+            records += channelInventory.quarantined.map { StorageQuotaRecord(scope: "channel-quarantined-attachment-blob", key: $0.key, byteCount: $0.value, generation: 1) }
             let imageInventory = try await agentImageStore.storageInventory()
             let imageSizes = imageInventory.active.merging(imageInventory.quarantined) { max($0, $1) }
             records += imageSizes.map { StorageQuotaRecord(scope: "agent-image-blob", key: $0.key, byteCount: $0.value, generation: 1) }
@@ -5163,10 +5168,41 @@ final class AppModel: ObservableObject {
         generation: UInt64) -> AgentMessagingSession.ChannelPublisherFactory? {
         guard let channelService, let audience = groups.first(where: { $0.id == originID }) else { return nil }
         let account = settings.accountScope ?? "local"
+        let downloader = remoteAttachmentDownloader
+        let attachmentsAvailable = quotaWriter != nil
         return { [weak self] sender, lifetime in
             guard let self else { throw CancellationError() }
             try await self.checkGroupFileScope(senderID: sender.id, audience: audience,
                 generation: generation, originID: originID, dispatchID: nil)
+            let prepare: AgentChannelPublicationTransaction.Prepare?
+            let install: AgentChannelPublicationTransaction.Install?
+            if attachmentsAvailable {
+                prepare = { [weak self] source, isImage, call, context in
+                    guard let self else { throw CancellationError() }
+                    let reader = AgentChannelAttachmentSource(prepareLocal: { [weak self] url, call, context in
+                        guard let self else { throw CancellationError() }
+                        return try await self.prepareGroupPublicationFile(sender: sender, url: url, call: call,
+                            context: context, audience: audience, generation: generation, originID: originID, dispatchID: nil)
+                    }, downloader: downloader, validateScope: { [weak self] in
+                        try lifetime.check()
+                        guard let self else { throw CancellationError() }
+                        try await self.checkGroupFileScope(senderID: sender.id, audience: audience,
+                            generation: generation, originID: originID, dispatchID: nil)
+                        try lifetime.check()
+                    }, authorizeDownload: { [weak self] reference, redirectSource, call, context in
+                        guard let self else { throw CancellationError() }
+                        try await self.authorizeGroupChannelSourceDownload(reference, redirectSource: redirectSource,
+                            sender: sender, audience: audience, call: call, context: context, account: account,
+                            generation: generation)
+                    })
+                    return try await reader.prepare(source, isImage: isImage, call: call, context: context)
+                }
+                install = { [weak self] attachment in
+                    guard let self else { throw CancellationError() }
+                    return try await self.installGroupChannelAttachment(attachment, sender: sender, audience: audience,
+                        generation: generation, lifetime: lifetime)
+                }
+            } else { prepare = nil; install = nil }
             return AgentChannelPublicationTransaction(conversationID: originID, senderID: sender.id,
                 agentID: sender.id, accountID: account, channels: channelService, lifetime: lifetime,
                 validateScope: { [weak self] in
@@ -5179,8 +5215,61 @@ final class AppModel: ObservableObject {
                     guard let self else { throw CancellationError() }
                     try await self.authorizeGroupChannelPublication(review, sender: sender, audience: audience,
                         call: call, context: context, account: account, generation: generation)
-                })
+                }, prepare: prepare, install: install, supportsRemoteSources: attachmentsAvailable)
         }
+    }
+
+    private func authorizeGroupChannelSourceDownload(_ reference: RemoteAttachmentReference,
+        redirectSource: RemoteAttachmentReference?, sender: AgentProfile, audience: AgentGroup,
+        call: NormalizedToolCall, context: ToolContext, account: String, generation: UInt64) async throws {
+        try checkGroupFileScope(senderID: sender.id, audience: audience, generation: generation,
+            originID: audience.id, dispatchID: nil)
+        guard context.conversationID == audience.id, (settings.accountScope ?? "local") == account else {
+            throw AgentMessagingError.scopeMismatch
+        }
+        let fence = ApprovalFence(accountID: account, agentID: audience.id.uuidString.lowercased(),
+            runID: context.runID, generation: generation)
+        await autoReviewBroker.activate(fence)
+        let details = l10n(redirectSource == nil ? "Download this attachment source?" : "Confirm download redirect")
+            + (redirectSource.map { "\n\(l10n("Source address")): \($0.url)" } ?? "")
+            + "\n\(l10n("Download from this address")): \(reference.url)"
+            + "\n\n" + l10n("Downloading does not authorize sending the file to a channel.")
+        let action = AutoReviewAction(summary: "\(sender.name) → \(l10n("Download from this address"))",
+            target: .resource(kind: "remote-attachment-source", identifier: reference.url),
+            risks: [.sensitive, .externalSideEffect], context: .init(fence: fence, conversationID: audience.id,
+                toolCallID: call.id.rawValue, metadata: ["tool": "SendMessage", "agentChannelSourceDownload": "true", "agentMessage": details]))
+        let pending = PendingApproval(action: action, reason: "Approval required", expiresAt: Date().addingTimeInterval(300))
+        // Consent to source I/O is fresh and exact, including each redirect.
+        // A generic auto-review allow rule cannot turn a model URL into a fetch.
+        try await autoReviewBroker.waitForApprovalToExecute(pending) { [weak self] in await self?.registerAutoReviewApproval($0) }
+        try checkGroupFileScope(senderID: sender.id, audience: audience, generation: generation,
+            originID: audience.id, dispatchID: nil)
+    }
+
+    private func installGroupChannelAttachment(_ attachment: PreparedAgentChannelAttachment, sender: AgentProfile,
+        audience: AgentGroup, generation: UInt64, lifetime: ChannelPublicationLifetime) async throws -> ChannelAttachment {
+        try lifetime.check()
+        try checkGroupFileScope(senderID: sender.id, audience: audience, generation: generation,
+            originID: audience.id, dispatchID: nil)
+        guard quotaWriter != nil else { throw AgentChannelPublicationTransaction.Failure.unavailable }
+        let inferred = try AttachmentStore.publicationMetadata(for: attachment.file, createdAt: Date(timeIntervalSince1970: 0))
+        let verifiedImage: String?
+        if inferred.mimeType == attachment.mimeType { verifiedImage = nil }
+        else {
+            guard attachment.mimeType.hasPrefix("image/") else { throw AgentChannelPublicationTransaction.Failure.invalidAttachment }
+            verifiedImage = attachment.mimeType
+        }
+        let stored = try await quotaWrite(scope: "channel-attachment-blob", key: attachment.file.digest,
+            data: attachment.file.bytes) { [weak self] in
+                guard let self else { throw CancellationError() }
+                try lifetime.check()
+                try await self.checkGroupFileScope(senderID: sender.id, audience: audience, generation: generation,
+                    originID: audience.id, dispatchID: nil)
+                try lifetime.check()
+                return try await self.channelAttachmentStore.ingest(prepared: attachment.file, createdAt: Date(),
+                    verifiedImageMIMEType: verifiedImage)
+            }
+        return .init(blobID: stored.id, filename: stored.filename, mimeType: stored.mimeType, byteCount: stored.byteCount)
     }
 
     private func authorizeGroupChannelPublication(_ review: AgentChannelPublicationTransaction.Review,
@@ -5191,18 +5280,32 @@ final class AppModel: ObservableObject {
         guard context.conversationID == audience.id, review.conversationID == audience.id,
               review.senderID == sender.id, review.publication.agentID == sender.id,
               review.publication.ownerAccountID == account, (settings.accountScope ?? "local") == account,
-              review.attachment == nil, review.publication.outbound.attachments.isEmpty else {
+              review.publication.outbound.attachments == (review.attachment.map { [$0.metadata] } ?? []) else {
             throw AgentMessagingError.scopeMismatch
         }
         let fence = ApprovalFence(accountID: account, agentID: audience.id.uuidString.lowercased(),
                                   runID: context.runID, generation: generation)
         await autoReviewBroker.activate(fence)
         let publication = review.publication
-        let details = l10n("Queue this message to an external channel?")
+        var details = l10n("Queue this message to an external channel?")
             + "\n\(l10n("Connection")): \(publication.displayName)"
             + "\n\(l10n("Channel")): \(publication.address.platform):\(publication.address.channelID)"
             + "\n\n" + publication.outbound.text
-            + (review.replyTo.map { "\n\n\(l10n("Local reply only")): \($0.uuidString)" } ?? "")
+        if let attachment = review.attachment {
+            details += "\n\n\(l10n("Attachment")): \(attachment.file.filename)"
+                + "\n\(l10n("Type")): \(attachment.mimeType)"
+                + "\n\(l10n("Size")): \(FiliconLocalization.byteCount(Int64(attachment.file.bytes.count)))"
+                + "\nSHA-256: \(attachment.file.digest)"
+            if let source = review.message.source { details += "\n\(l10n("Source address")): \(Self.channelSourceAddress(source))" }
+        }
+        if review.message.discardedImageCount > 0 {
+            details += "\n\n" + l10n("Only the first image is sent to the channel. The remaining images are not sent.")
+                + "\n\(l10n("Images not sent")):"
+                + review.message.images.dropFirst().map { source in
+                    "\n" + Self.channelSourceAddress(source) + (source.alt.map { " — \($0)" } ?? "")
+                }.joined()
+        }
+        details += (review.replyTo.map { "\n\n\(l10n("Local reply only")): \($0.uuidString)" } ?? "")
             + "\n\n" + l10n("Queued is not delivered. Stop does not recall a queued message.")
         let action = AutoReviewAction(summary: "\(sender.name) → \(publication.address.platform):\(publication.address.channelID)",
             target: .resource(kind: "channel", identifier: publication.connectionID.uuidString),
@@ -5214,6 +5317,14 @@ final class AppModel: ObservableObject {
         try await autoReviewBroker.waitForApprovalToExecute(pending) { [weak self] in await self?.registerAutoReviewApproval($0) }
         try checkGroupFileScope(senderID: sender.id, audience: audience, generation: generation,
             originID: audience.id, dispatchID: nil)
+    }
+
+    private nonisolated static func channelSourceAddress(_ input: AgentMessageImageInput) -> String {
+        switch input.source {
+        case .localFile(let url): url
+        case .remote(let reference): reference.url
+        case .hostImage: ""
+        }
     }
 
     private func makeMailboxRemoteFactory(originID: UUID, generation: UInt64) -> (@Sendable (AgentMessage) -> AgentMailboxRemoteServices?) {
@@ -10053,6 +10164,19 @@ final class AppModel: ObservableObject {
         throw MCPError.invalidConfiguration("Unable to allocate an MCP account runtime identifier.")
     }
 
+    private func captureLocalToolExecutionCheck(_ context: ToolContext) throws -> LocalAppToolExecutor.ExecutionCheck {
+        try Task.checkCancellation()
+        guard let execution = backgroundDirectExecutions[context.conversationID] else {
+            return { try Task.checkCancellation() }
+        }
+        guard execution.runID == context.runID else { throw CancellationError() }
+        // Retain the originally admitted run, not a lookup that could disappear
+        // or capture a new generation while a local confirmation is pending.
+        let lease = execution.lease
+        try lease.check()
+        return { try lease.check() }
+    }
+
     private func installMCPTools() async {
         let approvals = mcpApprovalBroker
         let dispatcher = mcpDispatcher
@@ -10069,7 +10193,11 @@ final class AppModel: ObservableObject {
         executors.append(contentsOf: LocalAppToolExecutor.all(
             runtime: localToolRuntime,
             policy: localToolPermissionPolicy,
-            approvals: localToolApprovalBroker
+            approvals: localToolApprovalBroker,
+            captureExecutionCheck: { [weak self] context in
+                guard let self else { throw CancellationError() }
+                return try await self.captureLocalToolExecutionCheck(context)
+            }
         ))
         var reviewed: [any ToolExecutor] = executors.map { executor in
             let checked = ReviewingToolExecutor(
@@ -12323,6 +12451,9 @@ private struct MCPKeychainTokenReferenceStore: MCPTokenReferenceStore {
 }
 
 struct LocalAppToolExecutor: ToolExecutor {
+    typealias ExecutionCheck = @Sendable () throws -> Void
+    typealias CaptureExecutionCheck = @Sendable (ToolContext) async throws -> ExecutionCheck
+
     enum Kind: String, CaseIterable, Sendable {
         case readFile = "local__read_file"
         case listDirectory = "local__list_directory"
@@ -12337,13 +12468,16 @@ struct LocalAppToolExecutor: ToolExecutor {
     let runtime: LocalToolRuntime
     let policy: ToolPermissionPolicy
     let approvals: ToolApprovalBroker
+    var captureExecutionCheck: CaptureExecutionCheck = { _ in { try Task.checkCancellation() } }
 
     static func all(
         runtime: LocalToolRuntime,
         policy: ToolPermissionPolicy,
-        approvals: ToolApprovalBroker
+        approvals: ToolApprovalBroker,
+        captureExecutionCheck: @escaping CaptureExecutionCheck = { _ in { try Task.checkCancellation() } }
     ) -> [any ToolExecutor] {
-        Kind.allCases.map { Self(kind: $0, runtime: runtime, policy: policy, approvals: approvals) }
+        Kind.allCases.map { Self(kind: $0, runtime: runtime, policy: policy, approvals: approvals,
+            captureExecutionCheck: captureExecutionCheck) }
     }
 
     var descriptor: ToolDescriptor {
@@ -12357,9 +12491,13 @@ struct LocalAppToolExecutor: ToolExecutor {
 
     func execute(_ call: NormalizedToolCall, context: ToolContext) async throws -> NormalizedToolResult {
         do {
+            try Task.checkCancellation()
+            let checkExecution = try await captureExecutionCheck(context)
+            try checkExecution()
             let arguments = try object(call.argumentsJSON)
             let operation = try makeOperation(arguments)
             let target = try await runtime.authorizationTarget(for: operation)
+            try checkExecution()
             let reason = (arguments["reason"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
             let statedReason = reason?.isEmpty == false ? reason! : defaultReason
             let decision = await policy.evaluate(
@@ -12369,12 +12507,14 @@ struct LocalAppToolExecutor: ToolExecutor {
                 title: target,
                 reason: statedReason
             )
+            try checkExecution()
             switch decision {
             case .denied:
                 return errorResult(call, "Permission is set to Never for \(operation.permissionAction.rawValue).")
             case .requiresApproval(let request):
-                guard await approvals.requestApproval(request) else {
-                    try Task.checkCancellation()
+                let allowed = await approvals.requestApproval(request)
+                try checkExecution()
+                guard allowed else {
                     return errorResult(call, "The user denied this local tool operation.")
                 }
             case .allowed:
@@ -12386,7 +12526,8 @@ struct LocalAppToolExecutor: ToolExecutor {
                     conversationID: context.conversationID,
                     agentID: context.conversationID,
                     runID: context.runID,
-                    toolCallID: call.id.rawValue
+                    toolCallID: call.id.rawValue,
+                    validateScope: checkExecution
                 )
             } onCancel: {
                 Task { await runtime.cancel(runID: context.runID) }

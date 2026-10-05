@@ -1820,3 +1820,8 @@
 "Queue this message to an external channel?" = "Queue this message to an external channel?";
 "Local reply only" = "Local reply only";
 "Queued is not delivered. Stop does not recall a queued message." = "Queued is not delivered. Stop does not recall a queued message.";
+"Download this attachment source?" = "Download this attachment source?";
+"Downloading does not authorize sending the file to a channel." = "Downloading does not authorize sending the file to a channel.";
+"Source address" = "Source address";
+"Only the first image is sent to the channel. The remaining images are not sent." = "Only the first image is sent to the channel. The remaining images are not sent.";
+"Images not sent" = "Images not sent";

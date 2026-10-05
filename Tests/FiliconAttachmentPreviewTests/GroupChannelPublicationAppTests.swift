@@ -18,7 +18,10 @@ private actor GroupChannelProbe {
 /// No credentials, HTTP session or platform transport can be reached by this
 /// fixture, even if the App's ordinary delivery observer flushes the queue.
 private struct GroupChannelConnector: ChannelConnector {
-    let descriptor = ChannelConnectorDescriptor(id: "slack", displayName: "Isolated fixture")
+    var supportsAttachments = true
+    var descriptor: ChannelConnectorDescriptor {
+        .init(id: "slack", displayName: "Isolated fixture", supportsAttachments: supportsAttachments)
+    }
     let probe: GroupChannelProbe
     func inbound(connection: ChannelConnection) -> AsyncThrowingStream<ChannelEnvelope, Error> {
         AsyncThrowingStream { $0.finish() }
@@ -129,7 +132,7 @@ private struct GroupChannelProvider: AIProvider {
         let probe = GroupChannelProbe()
         let channels = try ChannelService(storeURL: root.appending(path: "channels.json"))
         let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false,
-            channelService: channels, channelConnectors: [GroupChannelConnector(probe: probe)])
+            channelService: channels, channelConnectors: [GroupChannelConnector(supportsAttachments: mode != "attachment", probe: probe)])
         await model.bootstrap()
         await model.registry.register(GroupChannelProvider(content: "Private result", expectedSuccess: false, attachment: mode == "attachment"))
         let sender = try #require(await model.createAgent(name: "Sender", summary: "", instructions: "",

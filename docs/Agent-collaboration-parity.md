@@ -1,4 +1,18 @@
-# 協作能力核對紀錄（更新至 2026-10-05）
+# 協作能力核對紀錄（更新至 2026-10-06）
+
+## 前景群組的外部附件與獨立下載核准（2026-10-06）
+
+接續 `88aae1c`，真正 saved-group 的 `SendMessage channel` 現在接上 host source reader、HTTPS downloader 和 quota-backed channel CAS；本節只取代下節「native App 只接文字」及該前景入口的附件缺口。reference 仍為 `a9f633e09d49a85829b8236331b9e21f7e612634`；first image／text caption、standalone attachment／alt 契約保留，不把 recovered delivery setter 當作原版 live 服務證據。
+
+先確認自身唯一 enabled connection 及附件能力，才可要求 source access。本機檔案仍需 exact workspace root／local read 核准；HTTPS 原 URL 與每次 redirect 各有新的人類核准，不能用 generic auto-review allow 或送件同意代替下載同意。captured bytes 經 image／metadata 驗證後，第二張送件卡顯示完整 caption、目的地、filename／MIME／localized size／SHA-256／source URL 及不送出的其他圖片。只核准這些精確 bytes，quota 成功後才 install／enqueue，不重新打開 model pathname。
+
+host 每附件 8 MiB、圖片 5 MiB，connector 的 25 MiB 不放寬 host quota；channel active 與 quarantine 實體副本分開計費，即使 digest 相同亦不合併成一份。queue 失敗可能留下 orphan CAS，之後由 inventory 計入；不宣稱跨 stores 原子性、cross-process CAS、exactly-once、Stop 可召回已入列訊息或已開始的 helper／transport。source download 使用既有 bounded HTTPS transport，不宣稱 DNS pinning 或全面 private-IP 封鎖。
+
+完整回歸另抓到 hidden activity confirmation 等待 local approval 時的 Stop 競態；工具現在保留原背景 run／account lease，在 approval 返回和 helper dispatch 前重驗，不等非同步取消傳完才拒絕。新 generation 不復活舊回合，正常核准仍可寫檔；已 admitted helper work 不冒充可召回。
+
+Swift 測試／CustomDump 技能用於固定核心 identity、隔離 stores、受控 transports、quota／SQL 故障及完整值比對；SwiftUI 技能驗證真正七語核准卡，並修正既有韓文 Type／Size／bytes 與日文 Size 標籤。SPM 技能移除前批兩個 test targets 的 redundant transitive dependency，沒有新增 package 或降低最低 OS。有效紅燈、最後 gates、離屏畫面與真人／live／release 邊界見 [完成驗收入口](Parity-completion-audit.md)。
+
+**尚未接線**：direct／mailbox／delegated group／inbound shared runner 的 channel publication，canonical external-publication transcript 及 delivery-failure model follow-up。整體與 AGENT-02 仍 partial，48 分類範圍不變；未 push、啟動或重啟使用者 App／Xcode，未改真實帳號／群組／聊天。原 inbound 一次純文字回覆不變，離線測試不冒充 Slack／Discord／OAuth 真實帳號送件。
 
 ## 外部 SendMessage 接上前景群組文字核准（2026-10-05）
 

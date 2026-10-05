@@ -979,7 +979,7 @@
 "Signing in" = "サインイン中";
 "Signing secret" = "署名シークレット";
 "Simplified Chinese" = "簡体字中国語";
-"Size" = "サイズ:";
+"Size" = "サイズ";
 "Skills" = "スキル";
 "Skills: {0}" = "スキル: {0}";
 "Skip setup" = "セットアップをスキップ";
@@ -1820,3 +1820,8 @@
 "Queue this message to an external channel?" = "このメッセージを外部チャンネルへの送信キューに追加しますか？";
 "Local reply only" = "ローカルメッセージの引用のみ";
 "Queued is not delivered. Stop does not recall a queued message." = "キューへの追加は配信完了ではありません。停止してもキュー内のメッセージは撤回されません。";
+"Download this attachment source?" = "この添付ファイルの取得元からダウンロードしますか？";
+"Downloading does not authorize sending the file to a channel." = "ダウンロードの許可は、ファイルをチャンネルに送信する許可ではありません。";
+"Source address" = "取得元のアドレス";
+"Only the first image is sent to the channel. The remaining images are not sent." = "最初の画像だけがチャンネルに送信されます。残りの画像は送信されません。";
+"Images not sent" = "送信されない画像";

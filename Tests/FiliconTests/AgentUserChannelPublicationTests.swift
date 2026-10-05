@@ -23,7 +23,10 @@ private actor ChannelMessageProbe {
     func send(_ value: ChannelOutbound) { sends.append(value) }
 }
 private struct MessageTestConnector: ChannelConnector {
-    let descriptor = ChannelConnectorDescriptor(id: "slack", displayName: "Offline test")
+    var supportsAttachments = true
+    var descriptor: ChannelConnectorDescriptor {
+        .init(id: "slack", displayName: "Offline test", supportsAttachments: supportsAttachments)
+    }
     let probe: ChannelMessageProbe
     func inbound(connection: ChannelConnection) -> AsyncThrowingStream<ChannelEnvelope, Error> {
         AsyncThrowingStream { $0.finish() }
@@ -124,6 +127,23 @@ struct AgentUserChannelPublicationTests {
         expectNoDifference(events, ["read approved source", "review", "install reviewed bytes"])
         expectNoDifference(deliveries.map(\.outbound), [.init(text: "Report caption", attachments: [prepared.metadata])])
         expectNoDifference(sends, [])
+    }
+
+    @Test func textOnlyDestinationRejectsAttachmentIntentBeforeSourceAccess() async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        await f.channels.register(MessageTestConnector(supportsAttachments: false, probe: f.probe))
+        let prepared = try PreparedAgentChannelAttachment(file: .init(bytes: Data("Private".utf8), filename: "report.txt"), mimeType: "text/plain")
+        let tx = transaction(f, prepare: { _, _, _, _ in
+            await f.probe.record("unexpected source read"); return prepared
+        }, install: { value in
+            await f.probe.record("unexpected install"); return value.metadata
+        })
+        let before = await Snapshot(f)
+        let result = try await tool(f, transaction: tx).execute(call("attachment", #"{"type":"attachment","channel":"slack:C_SAFE","url":"file:///workspace/report.txt"}"#),
+            context: .init(conversationID: origin, runID: channelTestID(5)))
+        #expect(result.isError)
+        let after = await Snapshot(f)
+        expectNoDifference(after, before)
     }
 
     @Test(arguments: [false, true])

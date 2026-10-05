@@ -1820,3 +1820,8 @@
 "Queue this message to an external channel?" = "要将此消息加入外部频道的发送队列吗？";
 "Local reply only" = "仅引用本地消息";
 "Queued is not delivered. Stop does not recall a queued message." = "加入队列不代表已送达。停止不会撤回已加入队列的消息。";
+"Download this attachment source?" = "要下载这个附件来源吗？";
+"Downloading does not authorize sending the file to a channel." = "允许下载不代表允许将文件发送到频道。";
+"Source address" = "来源网址";
+"Only the first image is sent to the channel. The remaining images are not sent." = "只会将第一张图片发送到频道，其余图片不会发送。";
+"Images not sent" = "不会发送的图片";

@@ -341,7 +341,8 @@ public actor ChannelService {
     /// Read-only preparation. No connection ID, credential or peer identity is
     /// accepted from model data; one enabled own-account/own-agent route wins.
     public func proposePublication(
-        agentID: UUID, accountID: String, outbound: ChannelOutbound, to address: ChannelAddress
+        agentID: UUID, accountID: String, outbound: ChannelOutbound, to address: ChannelAddress,
+        requiresAttachments: Bool = false
     ) throws -> ChannelPublication {
         let platform = address.platform.trimmingCharacters(in: .whitespacesAndNewlines)
         guard ["slack", "discord"].contains(platform), !accountID.isEmpty,
@@ -357,6 +358,11 @@ public actor ChannelService {
             throw ChannelPublicationError.unavailable
         }
         guard matches.count == 1 else { throw ChannelPublicationError.ambiguous }
+        // Check the intended capability before a caller requests source access.
+        // A text-only initial proposal must not obscure an attachment intent.
+        guard !requiresAttachments || connector.descriptor.supportsAttachments else {
+            throw ChannelServiceError.unsupportedCapability("attachments")
+        }
         let (outbound, address) = try Self.normalize(outbound, to: address, connection: connection)
         try Self.validateCapabilities(outbound, address: address, descriptor: connector.descriptor)
         return .init(agentID: agentID, connection: connection, address: address, outbound: outbound,

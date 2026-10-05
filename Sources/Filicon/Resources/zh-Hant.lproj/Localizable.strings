@@ -1820,3 +1820,8 @@
 "Queue this message to an external channel?" = "要將此訊息排入外部頻道的送件佇列嗎？";
 "Local reply only" = "僅引用本機訊息";
 "Queued is not delivered. Stop does not recall a queued message." = "排入佇列不代表已送達。停止不會撤回已排入佇列的訊息。";
+"Download this attachment source?" = "要下載這個附件來源嗎？";
+"Downloading does not authorize sending the file to a channel." = "允許下載不代表允許將檔案傳送到頻道。";
+"Source address" = "來源網址";
+"Only the first image is sent to the channel. The remaining images are not sent." = "只會將第一張圖片傳送到頻道，其餘圖片不會傳送。";
+"Images not sent" = "不會傳送的圖片";

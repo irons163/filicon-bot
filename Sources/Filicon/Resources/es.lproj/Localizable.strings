@@ -1820,3 +1820,8 @@
 "Queue this message to an external channel?" = "¿Poner este mensaje en la cola de envío a un canal externo?";
 "Local reply only" = "Solo referencia a un mensaje local";
 "Queued is not delivered. Stop does not recall a queued message." = "En cola no significa entregado. Detener no retira un mensaje ya puesto en cola.";
+"Download this attachment source?" = "¿Descargar este archivo adjunto desde su origen?";
+"Downloading does not authorize sending the file to a channel." = "Autorizar la descarga no autoriza enviar el archivo a un canal.";
+"Source address" = "Dirección de origen";
+"Only the first image is sent to the channel. The remaining images are not sent." = "Solo se envía la primera imagen al canal. Las demás imágenes no se envían.";
+"Images not sent" = "Imágenes que no se enviarán";

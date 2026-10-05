@@ -979,7 +979,7 @@
 "Signing in" = "로그인 중";
 "Signing secret" = "서명 비밀 키";
 "Simplified Chinese" = "중국어 간체";
-"Size" = "크기 (mm)";
+"Size" = "크기";
 "Skills" = "팟캐스트";
 "Skills: {0}" = "기술: {0}";
 "Skip setup" = "설정하기";
@@ -1250,7 +1250,7 @@
 "Try Again" = "다시 시도";
 "Try again" = "다시 시도";
 "Two active agents required" = "활성 에이전트 2개가 필요합니다";
-"Type" = "제품정보";
+"Type" = "유형";
 "Type / after a space to reference an enabled workflow" = "Type / 활성화된 워크플로우를 참조하기 위한 공간 후";
 "Typing" = "뚱 베어";
 "Unavailable" = "이용안내";
@@ -1374,7 +1374,7 @@
 "ask" = "이름 *";
 "attempt" = "뚱 베어";
 "available" = "이용안내";
-"bytes" = "뚱 베어";
+"bytes" = "바이트";
 "canonicalConflict" = "canonicalConflict의 특징";
 "checked" = "제품정보";
 "connector:<uuid>:<kind>" = "connector:<uuid>:<kind>";
@@ -1820,3 +1820,8 @@
 "Queue this message to an external channel?" = "이 메시지를 외부 채널 전송 대기열에 추가할까요?";
 "Local reply only" = "로컬 메시지 인용만";
 "Queued is not delivered. Stop does not recall a queued message." = "대기열에 추가되어도 전달이 완료된 것은 아닙니다. 중지해도 대기열의 메시지는 회수되지 않습니다.";
+"Download this attachment source?" = "이 첨부 파일을 원본 주소에서 다운로드할까요?";
+"Downloading does not authorize sending the file to a channel." = "다운로드를 허용해도 파일을 채널로 전송하도록 허용한 것은 아닙니다.";
+"Source address" = "원본 주소";
+"Only the first image is sent to the channel. The remaining images are not sent." = "첫 번째 이미지만 채널로 전송됩니다. 나머지 이미지는 전송되지 않습니다.";
+"Images not sent" = "전송되지 않는 이미지";

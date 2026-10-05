@@ -4,6 +4,12 @@ enum FiliconLocalization {
     static let preferenceKey = "FiliconPreferredLanguage"
     @TaskLocal static var languageOverride: String?
 
+    static func byteCount(_ count: Int64) -> String {
+        let raw = languageOverride ?? UserDefaults.standard.string(forKey: preferenceKey) ?? AppLanguage.system.rawValue
+        let locale = (AppLanguage(rawValue: raw) ?? .system).locale
+        return ByteCountFormatStyle(style: .file, locale: locale).format(count)
+    }
+
     // NSCache's accessors are thread-safe; cache values are immutable Bundles.
     nonisolated(unsafe) private static let bundles = NSCache<NSString, Bundle>()
 
