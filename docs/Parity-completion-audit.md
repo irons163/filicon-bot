@@ -1,5 +1,21 @@
 # 完成驗收入口（2026-09-27）
 
+## 公開 Mermaid 引擎的離線後端與 SVG 驗證
+
+2026-10-05 接續公開資源批次，新增 `OfflineMermaidRenderer` 與獨立 `MermaidSVG` output gate。這是後端增量，尚未取代真正 transcript／viewer 的三種 native diagram；不能把八類引擎 fixtures 當成新增可見 UI 能力。reference 來源與公開 11.16.0 候選／opaque asset 的界線不變，詳見 [Offline-mermaid.md](Offline-mermaid.md)。
+
+非持久離屏 WebKit 只在 native isolated content world 評估已驗證 engine，page JavaScript 關閉；source 以函式參數傳入，沒有 message handler／host tools／opener。CSP 禁止 script、網路、圖片、frame、worker、form；只有已驗證的 offline math fonts 可使用 data resources。每次重設 strict、明暗主題、deterministic IDs、65,536-byte source／1,000 lines／512 edges，secure config 不讓 frontmatter 覆寫；只 parse／render，不呼叫 `bindFunctions`。navigation／downloads／popups／dialogs 均拒絕。
+
+strict 的實際 output 仍可能包含外部 `img`，因此所有輸出在交給 consumer 前另經 XML／SVG／XHTML／MathML／CSS 白名單、local fragment 與有限 geometry 檢查。scripts／events／images／links／frames／forms／editable elements／SVG animation elements／外部資源／CSS escapes 或 imports／entities 拒絕；2 MiB output、16,384 nodes、128 depth、65,536 bytes per attribute 及有限正 viewBox／numeric geometry／shadow bounds 保留。direct attribute／inline style 的 fragments 必須有 target，resource definition 不允許 recursive references；stylesheet 可有未使用的 local fragment，但不得 external。public engine 的 later duplicate IDs 去除、bare `undefined` inline CSS statements 移除，只保留 first-target semantics 與無效 no-op，不加入新 resource。output 重驗 idempotent；CSS keyframes 仍屬接受子集，不宣稱所有動畫已移除。
+
+單一 FIFO active render、最多 32 requests、source/theme LRU 最多 64 entries／8 MiB（含 source）及 20-second soft client deadline。queued duplicate 可借用已完成快取；invalid／unsafe deterministic result 可 cache，timeout／cancel／transient failure 不 cache。active cancellation、deadline 或 process termination 退休自己的 surface，queued cancellation 不取消其他 request；request ID／surface identity／revision fence 拒絕晚到 callbacks，後續可重建 surface。沒有以 deprecated `WKProcessPool` 偽稱 separate process；public WebKit API 不提供 uncooperative process 的 hard kill 或 hard CPU／memory limit。
+
+最後聚焦 `mermaid-engine-focused-final-v1.log` exit 0：23 tests／4 suites，含既有 resources 與新 SVG／queue／actual WebKit suites。八種 diagram families × 明暗共十六個 actual-engine outputs 均通過 geometry 與 idempotent gate；frontmatter／external image fixture 拒絕、isolated-world config 保留 strict／512 edges／empty theme CSS，獨立查 `.page` 沒有注入執行。實際 cancel／fresh-surface recovery 與 old process callback、FIFO／duplicate/theme isolation／count＋byte eviction／overflow／shutdown／stale deadline／unsafe output／budgets 另有測試。早期 access／async assertion compile failures 不當成產品 baseline；v2 的安全 gate 不接受正常 shadow／selector、fixture mindmap indentation，以及 v3 的 inert engine artifacts／inactive local stylesheet rules 造成的 failures 留存，按真實 output 修正並保留 active-resource 拒絕，沒有直接接受所有 raw SVG。
+
+最後 source 完整串行 `mermaid-engine-full-final-v1.log` exit 0：135 XCTest＋1,976 Swift Testing／234 suites，全部 17 targets 通過（核心 982／108、App 708／89）；兩項 opt-in live Codex tests 略過，不當作外部服務驗收。Ruby 2.6 不支援 `filter_map` 的彙總命令失敗另行修正，沒有改寫原日誌或測試結果；統計含單數 `suite`。七語各 1,805 keys／0 missing、authored diff whitespace check 及 75 個 Mermaid resources verification 通過。`mermaid-engine-native-final-v1.log` BUILD SUCCEEDED；native verify 與 `mermaid-engine-package-final-v1.log` standalone Debug／ad-hoc 封裝均驗證 KaTeX／Mermaid resources、四個 executables、app／XPC entitlements 與 deep strict 簽章。standalone 產物只在 `.build/validation/MermaidEnginePackage/Filicon.app`，未執行列印的 launch smoke，不是 release／公證。既有 CoreData NSXPC 診斷仍保留，不宣稱由本批修復。
+
+本批使用測試／CustomDump 技能檢查完整值、固定商業 IDs 與隔離 fixtures，文件技能區分後端證據和 UI 未完成。未 push、啟動或重啟使用者 App／Xcode、改真實帳號／群組／聊天。async figure、原文 fallback、static SVG surface、viewer 及 actual UI lifecycle 尚未接線；完整語法／opaque geometry／真人／最低 macOS／hard runtime containment／外部／release 仍待驗收，`UI-04` 及整體 partial，48 分類範圍不縮減。下節是前一批 resource-only 的歷史紀錄。
+
 ## 公開 Mermaid 的離線資源與授權告示基礎
 
 2026-10-05 再核對 reference `a9f633e09d49a85829b8236331b9e21f7e612634` 的 `mermaid.tsx`：它以 strict runtime 做 `initialize`／`parse`／`render`，但 opaque `mermaid.core-CYC_FcEu.js` 不在 recovered checkout。根 lockfile 沒有 Mermaid dependency tree；recovered contract 的 `^11.16.0` 只讓公開 11.16.0 成為替代候選，不證明原 shipped version／bytes／layout。

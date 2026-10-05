@@ -1013,10 +1013,11 @@ narrows. Human accessibility/link-gesture acceptance, exact upstream layout and
 the complete diagram runtime remain separate gaps; see
 [offline math and its validation boundaries](docs/Offline-math.md).
 
-The clean public Mermaid 11.16.0 engine and 72 dependency notices are now bundled
-and verified offline. This is preparation for full-engine rendering, not a new
-diagram capability: the current three-kind native renderer remains in use. See
-[public Mermaid resource provenance and remaining integration](docs/Offline-mermaid.md).
+The clean public Mermaid 11.16.0 engine and 72 dependency notices are bundled
+and verified offline. A serialized, cancellable backend now returns independently
+validated SVG, with bounded source, output, queue and cache. It is not yet wired
+to the transcript/viewer: the visible three-kind native renderer remains in use.
+See [offline Mermaid rendering and remaining integration](docs/Offline-mermaid.md).
 
 Group chat uses the same registered local/MCP tools and approval gates as direct
 chat when the selected provider supports tool calling. Execution badges come

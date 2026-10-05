@@ -1,9 +1,10 @@
-# Public offline Mermaid resources
+# Offline Mermaid rendering
 
-Filicon now bundles the clean public **Mermaid 11.16.0** IIFE distribution and
-its dependency notices. This is a resource and verification foundation; it does
-not yet replace the three-kind native diagram parser or its viewer. Full public
-engine rendering and transcript/viewer integration remain required work.
+Filicon bundles the clean public **Mermaid 11.16.0** IIFE distribution and its
+dependency notices. A serialized offline renderer now produces independently
+validated SVG. This backend is not yet connected to the transcript or viewer:
+the visible UI still uses the three-kind native parser. UI integration remains
+required work, not a capability established by backend tests.
 
 ## Reference and provenance
 
@@ -75,13 +76,72 @@ Xcode and standalone packaging include the same SwiftPM resource directory.
 executable, entitlement and deep-signature checks. Final evidence is recorded in
 [the completion audit](Parity-completion-audit.md).
 
+## Engine and output validation
+
+`OfflineMermaidRenderer` uses a lazily created, nonpersistent, offscreen WebKit
+surface. Page JavaScript is disabled; only the verified engine runs in the
+native isolated content world. Source is passed as an argument, never embedded
+in a script or HTML document. The fixed document has no message handlers,
+application tools or opener. Its content security policy denies scripts,
+network requests, images, frames, workers and forms; verified offline math fonts
+are the only permitted data resources. Navigation, downloads, new windows and
+script dialogs are rejected. The service does not create an application window.
+
+Each request initializes strict security, a fixed light/dark theme, deterministic
+IDs, a 65,536-byte source limit and 512-edge limit. The secure configuration
+list prevents frontmatter from replacing those settings or installing arbitrary
+theme CSS. Parsing and rendering use the public engine; `bindFunctions` is never
+called. Strict mode alone is insufficient: the actual engine still emits an
+external image for an adversarial label. Output must therefore pass a separate
+native gate before any consumer receives it.
+
+`MermaidSVG.validated` accepts a bounded SVG shape/style subset, plain XHTML
+labels inside `foreignObject`, and static MathML with plain TeX annotations. It
+rejects scripts, events, links, images, embedded documents, forms, editable
+elements, active SVG animation elements, external resources, CSS escapes/imports
+and entity declarations. Direct attribute and inline-style references must
+resolve to local IDs; resource-definition cycles are rejected. Stylesheets may
+contain unresolved local fragments because the pinned engine emits unused neo
+theme rules, but external references remain forbidden. The output has at most
+2 MiB, 16,384 nodes, 128 levels and 65,536 bytes per attribute. ViewBox dimensions
+must be finite, positive and no greater than 20,000; numeric geometry and shadows
+have separate bounds.
+
+Two inert public-engine artifacts are normalized: later duplicate ID attributes
+are removed while preserving the first target, and bare `undefined` inline CSS
+statements are dropped. No resource, markup capability or network permission is
+added. Validated serialization is idempotent. Unsupported or unsafe output yields
+a typed fallback, not raw engine SVG or raw engine error text. Source CSS
+keyframes remain in the accepted subset; the engine document disables animations
+with host CSS, which is not a proof that every possible SVG animation is absent.
+
+## Queue and cancellation
+
+Requests execute serially, with at most 32 active/queued requests. A source/theme
+cache holds at most 64 entries and 8 MiB including source and validated markup.
+Queued duplicates can reuse a result; malformed or unsafe deterministic results
+are cached, but timeouts, transient errors and cancellation are not. Removing a
+queued request does not cancel another message's render.
+
+The 20-second client deadline, cancellation and WebKit failure retire the owned
+surface. Request IDs, surface identity and revisions reject late bootstrap,
+render and termination callbacks. A following request can create a fresh surface.
+The deadline is a soft client bound: public WebKit APIs do not guarantee killing
+an uncooperative WebContent process or enforcing a hard CPU/memory ceiling. No
+deprecated process-pool setting is presented as a separate-process guarantee.
+
+Focused backend tests cover FIFO, theme/cache isolation, count and byte eviction,
+overflow, shutdown, cancellation, stale deadlines/callbacks, output rejection and
+real WebKit recovery. Eight diagram families render with the actual public engine
+in both themes. These fixtures establish backend behavior, not every supported
+grammar, reference geometry or a completed transcript UI.
+
 ## Remaining boundary
 
-No transcript render, new graph language, full-engine SVG, browser runtime,
-navigation or active content is enabled by this resource-only increment. The
-existing bounded native renderer remains unchanged. Engine isolation, safe SVG
-handling, serialized/cancellable rendering, lifecycle and viewer integration
-must be implemented and verified before calling the UI gap resolved. Neither
-the public archive nor the dependency notices establish opaque-byte or
-pixel-identical parity. `UI-04`, human/minimum-macOS checks and external/release
-acceptance remain partial.
+The existing native transcript renderer remains unchanged in this backend
+increment. Async figure presentation, original-source fallback, safe SVG display,
+viewer integration and their actual UI lifecycle checks are still required.
+Neither the public archive nor dependency notices establish opaque-byte or
+pixel-identical parity. `UI-04`, human/minimum-macOS checks, hard runtime resource
+containment and external/release acceptance remain partial. Final test and build
+evidence is recorded in [the completion audit](Parity-completion-audit.md).
