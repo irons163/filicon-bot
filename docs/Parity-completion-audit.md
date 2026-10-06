@@ -1,5 +1,27 @@
 # 完成驗收入口（2026-09-27）
 
+## 已審閱的背景單獨聊天：外部送件與流程結果
+
+2026-10-06 接續 `ed2053c`，reference HEAD 仍為 `a9f633e09d49a85829b8236331b9e21f7e612634`。main 核對 `source/host/extensions/transcript/turn-runtime.ts`：channel `SendMessage` 不限前景，background publication 也保存原 session 的 transcript。本批只補已有獨立 direct-session consent 的 routine／workflow，涵蓋 manual／scheduled 原生入口；不因目前選取另一聊天而改投。未審閱的 routine 不取得聊天 history／tools，activity acknowledgment／delivery-failure notice 不取得外部送件能力。
+
+背景 task 的 channel proposal 仍須逐次人類核准；generic auto-review、背景 session consent 或 source read consent 都不等於送件同意。HTTPS source／每次 redirect／final send 分開審閱，queue 使用已捕捉 bytes／digest／filename／MIME／caption／目的地，不再次抓取核准後已變更的 source。history 只提供既有文字，不自動讀取或轉送舊附件；不支援附件的 connector 在讀取前拒絕。沿用原 bound agent／account 的唯一 connection，不借用 peer 或其他聊天。
+
+account／dispatch scope、原 repository unique-binding lease 與 publication lifetime 的同步 guards 保留到最後 durable queue save，鎖定順序為 host scope／binding → parent／child publication，避免與 repository publication 顛倒。Stop、帳號／consent／definition／persona／binding／model／reasoning／hidden 的離開再返回、duplicate binding 及 connector／connection 更換，不能用舊核准復活；presence／unread／updatedAt 不當作 persona 變更。另一 repository 改綁的案例由 async canonical validator 拒絕，不把 per-instance lease 說成跨 process fence。已排入的真實 receipt 保留 queued-not-delivered 事實，不假裝取消已送件或自動重送。
+
+失效的背景 source／send 核准卡會退休原 broker waiter，避免 canonical owner 已改綁而卡片保存失敗時一直等待；不為了存卡而復原另一 owner。成功保存的正式外部記錄才列入該 turn 的 explicit outputs，workflow 下一步取得這筆 canonical 結果與 history，不取得模型 private draft。每一步仍需新的核准；refresh／bootstrap repair 不重新發表 output 或送件。terminal queue failure 沿用原 bound member follow-up runner，在原聊天更正，不取得新的外部送件能力。
+
+有效 baseline `background-channel-red-v2.log` 使用 `ed2053c` production，exit 1：4 個 manual／scheduled routine／workflow cases 沒有新核准、channel capability 為 false。`background-channel-expanded-v2.log` 另抓到已排入／已保存的 workflow 結果仍為空字串（4 issues），現改傳實際 saved receipt。前幾版編譯失敗屬 fixture，不當作產品紅燈；durable-rebind waiter 和 workflow output 的實際缺口未用放寬權限或斷言處理。
+
+新增 8 個 test methods／60 個 standalone／parameter cases：核心同步 guards 2／4、真正 App background 6／56。包含原入口、15 類核准撤銷 × 2 種 task、逐次附件／redirect 核准、操作狀態更新、workflow 兩步與重開不重送，以及 actual queue failure 回原成員。採隔離 stores、假 provider／connector／downloader、受控商業時間與完整 CustomDump 值比較；原選取的另一聊天及未公開內容不被寫入或轉送。fixture 現等待下一張真實核准卡，而非把 workflow 兩步間的 idle 空檔當成完成。
+
+`background-channel-integration-v1.log` 保留預設並行跑法的 28 issues，包括既有核准期限／routine 狀態與新 fixture 的步驟空檔；沒有略過失敗 methods 或放寬時間／權限。最後明確 `--no-parallel` 的 `background-channel-integration-v2.log` exit 0：96 tests／7 suites，所有上述 methods、原 foreground source／redirect 核准卡渲染、routine／workflow 舊入口及 failure follow-up 均通過。七語 `background-channel-localization-final-v1.log` 各 1,815 keys／0 missing；沒有新增 UI layout／文字，此 audit 不是全翻譯語意或真人可用性驗收。
+
+最後完整串行 `background-channel-full-final-v1.log` exit 0：17 個 Swift Testing target summaries 合計 2,106 tests／251 suites，另 17 個 XCTest bundles 合計 135 tests／0 failures；App target 為 767 tests／100 suites。兩項 opt-in installed Codex live tests skipped，不算 live 驗收。既有 CoreData NSXPCConnection 診斷仍出現，相關 tests 通過，不宣稱已修好。
+
+`background-channel-native-final-v1.log` 的 `Filicon App`／arm64 Debug BUILD SUCCEEDED，修正 source 實際編譯；`background-channel-native-verify-final-v1.log` 及新 `BackgroundChannelPackage/Filicon.app`／`background-channel-package-final-v1.log` 均 exit 0：四個 executables、app／XPC entitlements、deep strict codesign、KaTeX 0.16.45／20 fonts、Mermaid 11.16.0／72 notices 通過。standalone 是 Debug／ad-hoc gate，不是 Developer ID release／公證，未執行列印的 launch smoke。`git diff --check` 通過；日誌／隔離產物只留於忽略的 `.build/validation/`。Swift Testing／CustomDump／Dependencies 技能驗證受控原入口與完整值，文件技能保留來源、歷史失敗與尚未完成的邊界。
+
+**仍未完成**：mailbox／delegated group／inbound shared runner 的 channel publication、canonical projection 與相應 failure routing；locators 的安全 CAS preview／open；真實 Slack／Discord／OAuth、真人／VoiceOver／最低 macOS、Developer ID release／公證。AGENT-02／整體 partial 和 48 分類（42 個歷史 complete／5 partial／1 NA）不變。本節只取代下方歷史的 reviewed routine／workflow background direct 缺口，不宣稱任意 background runner、跨 process exactly-once 或 queue／chat／CAS 跨 store 原子性。未 push、啟動或重啟使用者 App／Xcode，未改真實帳號／群組／聊天。
+
 ## 外部送件失敗後通知原代理人
 
 2026-10-06 接續 `89e5a35`，reference HEAD 仍為 `a9f633e09d49a85829b8236331b9e21f7e612634`。main 核對 `background-wakes.ts` 的 `runChannelFailureWake`、`session-runtime.ts` 的原 agent background session，以及 `channel-messaging.ts` 的失敗提醒：不是新的人類訊息或權限，須以沒有 channel target 的 `SendMessage` 在 App 更正先前送達說法，不默默重送。本批補原前景 bound direct 的 terminal delivery failure → 原 account／agent／canonical chat → shared direct runner；saved-group 仍保留原生失敗狀態，不因此啟動全群組回合。legacy nil-origin／listener failure 不猜測收件聊天。
@@ -20,7 +42,7 @@ durable `ChannelFailureFollowUp` 在模型執行前保存一次 admission。comp
 
 `channel-failure-wake-native-final-v1.log` 的 `Filicon App`／arm64 Debug BUILD SUCCEEDED，新 notice／record 實際編譯；`channel-failure-wake-native-verify-final-v1.log` 及新 `ChannelFailurePackage/Filicon.app`／`channel-failure-wake-package-final-v1.log` 均 exit 0，四個 executables、app／XPC entitlements、deep strict codesign、KaTeX 0.16.45／20 fonts、Mermaid 11.16.0／72 notices 通過。standalone 為 Debug／ad-hoc，不是 Developer ID release／公證，未執行印出的 launch smoke。`git diff --check` 通過；日誌／隔離產物只留於忽略的 `.build/validation/`。Swift Testing／CustomDump／Dependencies 技能用於受控原入口與完整值斷言；文件技能保留實際接線與驗收界線。
 
-**仍未完成**：background direct／mailbox／delegated group／inbound shared runner 的 channel publication、canonical projection 與相應 failure routing；locators 的安全 CAS preview／open；真實 Slack／Discord／OAuth、真人／VoiceOver／最低 macOS、Developer ID release／公證。AGENT-02／整體 partial 和 48 分類（42 個歷史 complete／5 partial／1 NA）不變。本節只取代下方歷史「前景 bound direct 沒有 delivery-failure model follow-up」的缺口；不保證模型遵循更正文案，也不擴大任何工具 grant。未 push、啟動或重啟使用者 App／Xcode，未改真實帳號／群組／聊天。
+**後續範圍**：本批原列的 reviewed routine／workflow background direct 缺口由上節接續；mailbox／delegated group／inbound shared runner 的 channel publication、canonical projection 與相應 failure routing、locators 的安全 CAS preview／open，以及真實 Slack／Discord／OAuth、真人／VoiceOver／最低 macOS、Developer ID release／公證仍保留。AGENT-02／整體 partial 和 48 分類（42 個歷史 complete／5 partial／1 NA）不變。本節只取代下方歷史「前景 bound direct 沒有 delivery-failure model follow-up」的缺口；不保證模型遵循更正文案，也不擴大任何工具 grant。未 push、啟動或重啟使用者 App／Xcode，未改真實帳號／群組／聊天。
 
 ## 前景外部送件的正式聊天記錄與狀態恢復
 

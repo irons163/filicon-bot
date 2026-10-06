@@ -134,8 +134,12 @@ final class AppModel: ObservableObject {
             // (ABA). An old approval must never revive under a new chat owner.
             for (id, lifetime) in directChannelLifetimes {
                 let before = oldValue.first { $0.id == id }, after = conversations.first { $0.id == id }
+                let uniqueOwner = after?.agentBinding.map { owner in
+                    conversations.filter { $0.agentBinding == owner }.count == 1
+                } ?? false
                 if before?.agentBinding != after?.agentBinding || before?.providerID != after?.providerID
-                    || before?.modelID != after?.modelID || before?.hiddenAt != after?.hiddenAt || after == nil {
+                    || before?.modelID != after?.modelID || before?.reasoningEffort != after?.reasoningEffort
+                    || before?.hiddenAt != after?.hiddenAt || after == nil || !uniqueOwner {
                     lifetime.close()
                 }
             }
@@ -230,6 +234,13 @@ final class AppModel: ObservableObject {
     @Published private(set) var requestedMessageJumpID: UUID?
     @Published var agents: [AgentProfile] = [] {
         didSet {
+            for (id, lifetime) in directChannelLifetimes {
+                guard let owner = conversations.first(where: { $0.id == id })?.agentBinding else { lifetime.close(); continue }
+                if Self.channelSenderIdentity(oldValue.first(where: { $0.id == owner.agentID }), owner: owner)
+                    != Self.channelSenderIdentity(agents.first(where: { $0.id == owner.agentID }), owner: owner) {
+                    lifetime.close()
+                }
+            }
             invalidateChannelFailureFollowUps { id in
                 let owner = preparingChannelFailures[id]?.notice.publication.owner
                     ?? channelFailureTasks.values.first(where: { $0.context.notice.publication.conversationID == id })?.context.notice.publication.owner
@@ -700,6 +711,14 @@ final class AppModel: ObservableObject {
             case .workflow(let request, _): if case .manual = request.origin { true } else { false }
             case .activityAcknowledgment: true
             case .channelFailure: false }
+        }
+        /// A reviewed task may propose a channel publication, but never inherits
+        /// delivery consent. Answer/failure notices cannot silently retry it.
+        var allowsChannelPublication: Bool {
+            switch source {
+            case .routine, .workflow: true
+            case .activityAcknowledgment, .channelFailure: false
+            }
         }
         var activityAcknowledgment: ActivityAcknowledgment? {
             if case .activityAcknowledgment(let value) = source { value } else { nil }
@@ -2192,12 +2211,16 @@ final class AppModel: ObservableObject {
     private func executeTranscriptCardIntent(_ intent: TranscriptCardActionIntent, context: TranscriptCardContext) async {
         let ticket: TranscriptCardActionTicket
         do {
+            try await validateBackgroundChannelReview(context)
             try checkTranscriptCardAcknowledgment(context)
             ticket = try await transcriptCardActionRouter.begin(card: context.card, intent: intent)
         }
         catch is CancellationError { return }
         catch { errorMessage = error.localizedDescription; return }
-        do { try checkTranscriptCardAcknowledgment(context) }
+        do {
+            try await validateBackgroundChannelReview(context)
+            try checkTranscriptCardAcknowledgment(context)
+        }
         catch { await transcriptCardActionRouter.abandon(ticket); return }
 
         var suppliedSecret: String?
@@ -2222,6 +2245,8 @@ final class AppModel: ObservableObject {
         do {
             try await persistTranscriptCardConversation(context.conversationID, execution: context.execution)
         } catch {
+            do { try await validateBackgroundChannelReview(context) }
+            catch { await transcriptCardActionRouter.abandon(ticket); return }
             if (try? checkTranscriptCardAcknowledgment(context)) == nil {
                 await transcriptCardActionRouter.abandon(ticket)
                 return
@@ -2266,6 +2291,27 @@ final class AppModel: ObservableObject {
                 // overwrite that confirmed state with a misleading failure.
                 errorMessage = actionError.localizedDescription
             }
+        }
+    }
+
+    /// A background channel review cannot remain pending after its original
+    /// task/binding has become invalid. In particular, a stale canonical owner
+    /// must not be restored just to persist a clicked approval card.
+    private func validateBackgroundChannelReview(_ context: TranscriptCardContext) async throws {
+        guard let execution = context.execution, execution.allowsChannelPublication,
+              case .autoReview(let card) = context.card.payload,
+              let pending = pendingAutoReviewByID[card.reviewID],
+              pending.action.context.conversationID == context.conversationID,
+              pending.action.context.metadata["agentChannelPublication"] == "true"
+                || pending.action.context.metadata["agentChannelSourceDownload"] == "true" else { return }
+        do { try await validateBackgroundDirectExecution(execution) }
+        catch {
+            directChannelLifetimes[context.conversationID]?.close()
+            pendingAutoReviewByID.removeValue(forKey: pending.id)
+            pendingAutoReviewApprovals = pendingAutoReviewByID.values.sorted { $0.createdAt < $1.createdAt }
+            setAutoReviewCardLifecycle(reviewID: pending.id, conversationID: context.conversationID, lifecycle: .cancelled)
+            await autoReviewBroker.cancel(reviewID: pending.id, fence: pending.fence)
+            throw error
         }
     }
 
@@ -2555,9 +2601,10 @@ final class AppModel: ObservableObject {
         let accountScope = settings.accountScope ?? "local"
         let publicationGeneration = autoReviewAccountGeneration
         let agentBinding = conversations.first(where: { $0.id == id })?.agentBinding
-        // Foreground bound direct turns get their own destination capability;
-        // unbound chats and background routines do not inherit another owner.
-        let channelLifetime: ChannelPublicationLifetime? = routine == nil && agentBinding != nil ? .init() : nil
+        // Reviewed background tasks use the same original bound destination as
+        // foreground turns. Bound notices and unbound chats get no capability.
+        let channelLifetime: ChannelPublicationLifetime? = agentBinding != nil
+            && (routine?.allowsChannelPublication ?? true) ? .init() : nil
         if let channelLifetime {
             directChannelLifetimes[id]?.close()
             directChannelLifetimes[id] = channelLifetime
@@ -2566,8 +2613,10 @@ final class AppModel: ObservableObject {
             var succeeded = false
             var publisher: AgentUserMessageTool?
             var messaging: AgentMessagingSession?
+            var channelBindingLease: ConversationBindingLease?
             defer {
                 channelLifetime?.close()
+                channelBindingLease?.close()
                 if let channelLifetime, directChannelLifetimes[id] === channelLifetime {
                     directChannelLifetimes.removeValue(forKey: id)
                 }
@@ -2660,10 +2709,22 @@ final class AppModel: ObservableObject {
                     } else { secretPublisher = nil }
                     let channelPublication: AgentChannelPublicationTransaction?
                     if let agentIdentity, let agentBinding, let channelLifetime {
+                        let publicationLifetime: ChannelPublicationLifetime
+                        if let routine {
+                            let bindingLease = try await store.leaseUniqueBinding(accountID: accountScope,
+                                agentID: agentIdentity.agentID, conversationID: id)
+                            channelBindingLease = bindingLease
+                            try await validateBackgroundDirectExecution(routine)
+                            guard bindingLease.legacyHiddenAt == nil else { throw CancellationError() }
+                            let executionLease = routine.lease
+                            publicationLifetime = .init(parent: channelLifetime, commitGuard: { operation in
+                                try executionLease.commit { try bindingLease.withValidBinding(operation) }
+                            })
+                        } else { publicationLifetime = channelLifetime }
                         channelPublication = try await makeDirectChannelPublication(conversationID: id,
                             assistantID: assistantID, identity: agentIdentity, binding: agentBinding,
                             providerID: providerID, modelID: requestModelID, account: accountScope,
-                            generation: publicationGeneration, lifetime: channelLifetime)
+                            generation: publicationGeneration, lifetime: publicationLifetime, execution: routine)
                     } else { channelPublication = nil }
                     publisher = AgentUserMessageTool(conversationID: id, availableImages: images, imageStore: nil,
                         hostImageValidator: { [weak self] images in
@@ -4449,6 +4510,13 @@ final class AppModel: ObservableObject {
     @discardableResult
     func updateAgent(_ profile: AgentProfile) async -> Bool {
         guard let agentService else { errorMessage = l10n("Agent storage is unavailable."); return false }
+        // Fence before the actor hop, including semantic edit-and-restore. A
+        // presence/unread update does not change the captured sender identity.
+        for (id, lifetime) in directChannelLifetimes {
+            guard let owner = conversations.first(where: { $0.id == id })?.agentBinding, owner.agentID == profile.id else { continue }
+            if Self.channelSenderIdentity(agents.first(where: { $0.id == profile.id }), owner: owner)
+                != Self.channelSenderIdentity(profile, owner: owner) { lifetime.close() }
+        }
         for value in preparingChannelFailures.values where value.notice.publication.owner.agentID == profile.id {
             value.scope.invalidate()
         }
@@ -5356,18 +5424,25 @@ final class AppModel: ObservableObject {
         }
     }
 
+    private nonisolated static func channelSenderIdentity(_ profile: AgentProfile?, owner: DirectConversationAgentBinding) -> DirectAgentExecutionIdentity? {
+        guard let profile else { return nil }
+        return try? DirectAgentExecutionIdentity.resolve(binding: owner, accountID: owner.accountID, profile: profile,
+            providerID: profile.providerID, modelID: profile.modelID)
+    }
+
     private func makeDirectChannelPublication(conversationID id: UUID, assistantID: UUID,
         identity: DirectAgentExecutionIdentity, binding: DirectConversationAgentBinding,
         providerID: ProviderID, modelID: ModelID, account: String, generation: UInt64,
-        lifetime: ChannelPublicationLifetime) async throws -> AgentChannelPublicationTransaction? {
+        lifetime: ChannelPublicationLifetime, execution: BackgroundDirectExecution? = nil) async throws -> AgentChannelPublicationTransaction? {
         guard channelService != nil else { return nil }
         let validate: @Sendable () async throws -> Void = { [weak self] in
             try lifetime.check()
             guard let self else { throw CancellationError() }
             try await self.checkDirectFileScope(id, assistantID: assistantID, account: account, generation: generation)
+            if let execution { try await self.validateBackgroundDirectExecution(execution) }
             let current = try await self.directTurnAgentIdentity(conversationID: id, binding: binding,
                 accountScope: account, generation: generation, providerID: providerID, modelID: modelID)
-            guard current?.agentID == identity.agentID else { throw AgentMessagingError.scopeMismatch }
+            guard current == identity else { throw AgentMessagingError.scopeMismatch }
             try lifetime.check()
         }
         try await validate()
@@ -5380,7 +5455,12 @@ final class AppModel: ObservableObject {
             validateScope: validate, publishTranscript: { [weak self] publication in
                 try await validate()
                 guard let self else { throw CancellationError() }
-                return try await self.materializeDirectChannelTranscript(publication, generation: generation)
+                let saved = try await self.materializeDirectChannelTranscript(publication, generation: generation)
+                if let saved {
+                    await self.includeDirectChannelPublication(saved, assistantID: assistantID,
+                        account: account, generation: generation)
+                }
+                return saved
             }, prepareLocal: { [weak self] url, call, context in
                 guard let self, context.conversationID == id else { throw AgentMessagingError.scopeMismatch }
                 let reader = await AuthorizedAgentFileReader(runtime: self.localToolRuntime, folders: self.workspaceFolders,
@@ -5401,6 +5481,24 @@ final class AppModel: ObservableObject {
                 return try await AgentPublicationFileSource(reader: reader).prepare(url: url, agentID: identity.agentID,
                     call: call, context: context)
             })
+    }
+
+    /// Only the host's saved receipt belongs to this turn's explicit output.
+    /// Queue recovery must not replay it as new output, and a private model
+    /// draft is never substituted for a missing canonical publication.
+    private func includeDirectChannelPublication(_ message: RoomMessage, assistantID: UUID,
+        account: String, generation: UInt64) {
+        guard !agentMessagingAccountTransition, generation == autoReviewAccountGeneration,
+              (settings.accountScope ?? "local") == account, running.contains(message.groupID),
+              directPublicationIDs[assistantID] != nil,
+              let value = message.externalPublication, value.conversationID == message.groupID,
+              value.owner.accountID == account,
+              conversations.first(where: { $0.id == message.groupID })?.messages.contains(where: {
+                  $0.id == message.id && $0.externalChannelPublication == value
+              }) == true else { return }
+        if directPublicationIDs[assistantID]?.contains(message.id) == false {
+            directPublicationIDs[assistantID]?.append(message.id)
+        }
     }
 
     /// Shared acquisition/review/storage, with an independent route validator

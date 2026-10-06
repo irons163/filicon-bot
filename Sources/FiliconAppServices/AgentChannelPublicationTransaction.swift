@@ -78,7 +78,7 @@ public struct PreparedAgentChannelAttachment: Sendable, Equatable {
 /// One host-bound SendMessage destination capability. Approval covers the exact
 /// queue proposal and captured bytes. It never sends a network request itself.
 public actor AgentChannelPublicationTransaction {
-    /// Host-supplied foreground route, never decoded from model arguments or a
+    /// Host-supplied original route, never decoded from model arguments or a
     /// restored delivery. Absence preserves legacy/non-transcript callers.
     public struct TranscriptSource: Sendable {
         public let route: ChannelDeliveryOrigin.Route

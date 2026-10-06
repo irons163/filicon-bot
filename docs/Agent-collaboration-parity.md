@@ -1,5 +1,15 @@
 # 協作能力核對紀錄（更新至 2026-10-06）
 
+## 已審閱的背景單獨聊天：外部送件與流程結果
+
+2026-10-06 接續 `ed2053c`，reference 的 channel publication／原 session transcript 現接上已審閱的 routine／workflow direct session，包含 manual／scheduled 原生入口。原 account／bound agent／canonical chat 不跟隨目前選取；source／每次 redirect／final send 都是獨立的人類核准，不借用 generic auto-review 或背景 history consent。使用 exact captured bytes 與原成員的唯一 connection，不自動讀取／轉送 history 附件；未審閱 routine 和 activity acknowledgment／failure notice 不因本批取得 channel 能力。
+
+同步 host scope／binding／publication guards 持續到 durable queue save，Stop／帳號／consent／definition／identity 循環及 connection／connector 變更拒絕舊核准，operational presence／unread 不撤銷 persona。canonical owner 失效的 review waiter 會退休，不復原另一 owner 或留 spinner。只有實際已保存的外部記錄列入 workflow outputs，下一步取得正式結果，不取得 private draft；每步新核准，重開不重送。actual terminal failure 沿原 member shared runner 更正，沒有隱含 external retry。
+
+新增 8 methods／60 cases，最後串行聚焦 96 tests／7 suites、完整 135 XCTest＋2,106 Swift Testing／251 suites、七語 1,815 keys／0 missing、原生 Debug 建置及兩種隔離封裝驗證通過；兩項 opt-in installed Codex live tests skipped，不當作外部驗收。有效產品 baseline、workflow 空結果／stale-review 修正、fixture 空檔和並行驗收失敗區分見 [完成驗收入口](Parity-completion-audit.md)。測試技能保留隔離假服務、受控時間與完整值斷言，文件技能保留實際接線邊界；未新增真人／VoiceOver／最低 macOS／release 證據。
+
+**尚未接線**：mailbox／delegated group／inbound publication／projection 與相應 failure routing、安全 CAS preview／open；live／真人／VoiceOver／最低 macOS／release 仍保留。AGENT-02／整體 partial 和 48 分類不變，不把 per-instance lease 說成跨 process fence 或 queue／chat 原子性。未 push、重啟 App／Xcode 或改真實資料。本節只取代下方歷史的 reviewed routine／workflow background direct 缺口。
+
 ## 外部送件失敗後通知原代理人
 
 2026-10-06 接續 `89e5a35`，reference 的 delivery-failure notice 現在接到原前景 bound direct member 的 shared runner。提醒從 authoritative terminal queue 與原 canonical publication 產生，回到原 account／agent／chat，不跟隨選取；busy 先不 claim、off-page 載回 exact owner。原 persona／history 保留，要求以沒有 channel target 的 `SendMessage` 更正；plain assistant draft 保持 private，沒有新的人類 row、memory suggestion／episode／synthesis 或隱含重送權限。raw error／token／outbound text／附件 locators 不進提醒，一般 transport 只說未確認送達。
@@ -8,7 +18,7 @@ admission 先 durable 保存一次，terminal 不 replay，重開的 running 改
 
 22 tests／3 suites、80 個 standalone／parameter cases及完整 135 XCTest＋2,098 Swift Testing／250 suites 通過；原生建置、兩種封裝驗證、七語 1,815 keys／0 missing 通過。有效 baseline、bootstrap／exclusivity 修正、protocol error 與 fixture 失敗區分，以及最後 gate 日誌見 [完成驗收入口](Parity-completion-audit.md)。測試技能採隔離假服務、受控時間與完整值比較；文件技能保留完成範圍。沒有新增真人／VoiceOver 或 live 平台驗收。
 
-**尚未接線**：background direct／mailbox／delegated group／inbound channel publication／projection 及其 failure routing、安全 CAS preview／open；live／真人／最低 macOS／release 驗收仍保留。AGENT-02／整體 partial 和 48 分類不變；不宣稱跨 process exactly-once、queue／chat 原子性或模型一定發表更正。未 push、重啟 App／Xcode 或改真實資料。本節只取代下方歷史的前景 bound direct failure follow-up 缺口。
+**後續範圍**：本批原列的 reviewed routine／workflow background direct 缺口由上節接續；mailbox／delegated group／inbound channel publication／projection 及其 failure routing、安全 CAS preview／open，以及 live／真人／最低 macOS／release 驗收仍保留。AGENT-02／整體 partial 和 48 分類不變；不宣稱跨 process exactly-once、queue／chat 原子性或模型一定發表更正。未 push、重啟 App／Xcode 或改真實資料。本節只取代下方歷史的前景 bound direct failure follow-up 缺口。
 
 ## 前景外部送件的正式聊天記錄與狀態恢復
 

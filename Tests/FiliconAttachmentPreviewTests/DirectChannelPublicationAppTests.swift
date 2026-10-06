@@ -421,7 +421,7 @@ private struct DirectChannelProvider: AIProvider {
         let probe: DirectChannelProbe
     }
 
-    @Test func reviewedBackgroundDirectSessionDoesNotInheritForegroundChannelCapability() async throws {
+    @Test func reviewedBackgroundDirectSessionDoesNotInheritForegroundPublicationConsent() async throws {
         let root = temporaryRoot("background")
         defer { try? FileManager.default.removeItem(at: root) }
         let f = try await fixture(root: root, arguments: JSONEncoder().encode([
@@ -436,9 +436,23 @@ private struct DirectChannelProvider: AIProvider {
             trigger: .cron(expression: "@hourly", timeZoneIdentifier: "UTC"))
         let routine = try #require(f.model.automations.first), edit = try #require(f.model.beginRoutineDirectSessionEdit(routine))
         #expect(await f.model.saveRoutineDirectSession(edit, conversationID: f.id, memoryAccess: .none))
-        await f.model.runAutomationNow(id: routine.id)
+        let work = Task { await f.model.runAutomationNow(id: routine.id) }
+        defer { work.cancel() }
+        // The task has not necessarily entered the runner when it is created.
+        // Observe the fake provider start before treating an idle chat as done.
+        let deadline = ContinuousClock.now + .seconds(10)
+        while await f.probe.channelCapabilities.isEmpty, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        let started = await f.probe.channelCapabilities
+        expectNoDifference(started, [true])
+        let review = try await pending(f)
+        let before = await f.channels.deliveries(), sentBefore = await f.probe.sent
+        expectNoDifference(before, []); expectNoDifference(sentBefore, [])
+        f.model.handleTranscriptCardIntent(.rejectReview(reviewID: review.id))
+        await work.value
         let capabilities = await f.probe.channelCapabilities, queued = await f.channels.deliveries(), sent = await f.probe.sent
-        expectNoDifference(capabilities, [false]); expectNoDifference(queued, []); expectNoDifference(sent, [])
+        expectNoDifference(capabilities, [true]); expectNoDifference(queued, []); expectNoDifference(sent, [])
         #expect(f.model.pendingAutoReviewApprovals.isEmpty && f.model.pendingToolApprovals.isEmpty)
         #expect(!f.model.running.contains(f.id))
     }

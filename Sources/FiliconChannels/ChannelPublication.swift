@@ -78,13 +78,21 @@ public enum ChannelPublicationError: String, LocalizedError, Equatable, Sendable
 /// Closure cannot race the final durable enqueue. Already queued messages are
 /// not recalled; their current status must be read from ChannelService.
 public final class ChannelPublicationLifetime: @unchecked Sendable {
+    /// Host-owned synchronous dispatch/binding fence, not model permission or
+    /// channel consent. Invoke the operation exactly once, without suspension
+    /// or calls back into ChannelService/lifecycle mutation. Parent guards are
+    /// retained by child turns and hold through the atomic queue save.
+    public typealias CommitGuard = @Sendable (_ operation: () throws -> ChannelDelivery) throws -> ChannelDelivery
     private let lock = NSLock()
     private let parent: ChannelPublicationLifetime?
+    private let commitGuard: CommitGuard?
     private var active = true
     private var receipts: [UUID: (ChannelPublication, ChannelDeliveryOrigin?, ChannelDelivery)] = [:]
     /// Child turn closure leaves sibling turns available; request closure fences
     /// every child commit under the same parent-first lock order.
-    public init(parent: ChannelPublicationLifetime? = nil) { self.parent = parent }
+    public init(parent: ChannelPublicationLifetime? = nil, commitGuard: CommitGuard? = nil) {
+        self.parent = parent; self.commitGuard = commitGuard
+    }
     public func close() { lock.withLock { active = false } }
     public func check() throws {
         try parent?.check()
@@ -98,25 +106,41 @@ public final class ChannelPublicationLifetime: @unchecked Sendable {
     }
     func commit(_ proposal: ChannelPublication, origin: ChannelDeliveryOrigin?, idempotencyKey: UUID,
                 operation: () throws -> ChannelDelivery) throws -> ChannelDelivery {
-        try whileActive {
-            if let receipt = receipts[idempotencyKey] {
-                guard receipt.0 == proposal, receipt.1 == origin else { throw ChannelPublicationError.idempotencyConflict }
-                return receipt.2
+        // Host execution/binding guards are outermost, matching repository
+        // writes that already hold those guards before publishing host state.
+        // Never acquire a host scope while holding a publication lock.
+        try withCommitGuards {
+            try whileActive {
+                if let receipt = receipts[idempotencyKey] {
+                    guard receipt.0 == proposal, receipt.1 == origin else { throw ChannelPublicationError.idempotencyConflict }
+                    return receipt.2
+                }
+                let receipt = try operation()
+                receipts[idempotencyKey] = (proposal, origin, receipt)
+                return receipt
             }
-            let receipt = try operation()
-            receipts[idempotencyKey] = (proposal, origin, receipt)
-            return receipt
         }
     }
 
-    private func whileActive<T>(_ operation: () throws -> T) throws -> T {
+    private func withCommitGuards(_ operation: () throws -> ChannelDelivery) throws -> ChannelDelivery {
+        if let parent {
+            return try parent.withCommitGuards {
+                if let commitGuard { return try commitGuard(operation) }
+                return try operation()
+            }
+        }
+        if let commitGuard { return try commitGuard(operation) }
+        return try operation()
+    }
+
+    private func whileActive(_ operation: () throws -> ChannelDelivery) throws -> ChannelDelivery {
         if let parent {
             return try parent.whileActive { try whileLocallyActive(operation) }
         }
         return try whileLocallyActive(operation)
     }
 
-    private func whileLocallyActive<T>(_ operation: () throws -> T) throws -> T {
+    private func whileLocallyActive(_ operation: () throws -> ChannelDelivery) throws -> ChannelDelivery {
         try lock.withLock {
             guard active else { throw CancellationError() }
             try Task.checkCancellation()

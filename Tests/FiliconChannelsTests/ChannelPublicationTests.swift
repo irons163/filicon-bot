@@ -37,6 +37,20 @@ private final class CredentialWriteProbe: @unchecked Sendable {
     var count: Int { lock.withLock { calls } }
     func record() { lock.withLock { calls += 1 } }
 }
+private final class PublicationCommitFence: @unchecked Sendable {
+    private let lock = NSLock()
+    private var active = true
+    private var checks = 0
+    var count: Int { lock.withLock { checks } }
+    func revoke() { lock.withLock { active = false } }
+    func commit(_ operation: () throws -> ChannelDelivery) throws -> ChannelDelivery {
+        try lock.withLock {
+            checks += 1
+            guard active else { throw CancellationError() }
+            return try operation()
+        }
+    }
+}
 private struct PublicationConnector: ChannelConnector {
     var descriptor = ChannelConnectorDescriptor(id: "slack", displayName: "Fixture")
     let probe: PublicationProbe
@@ -146,6 +160,48 @@ struct ChannelPublicationTests {
             outbound: publication.outbound, idempotencyKey: key, nextAttemptAt: date, createdAt: date,
             authorization: .init(ownerAccountID: "local", agentID: owner,
                 configurationRevision: publication.configurationRevision))
+    }
+
+    @Test(arguments: ["dispatch", "binding", "parent"])
+    func capturedHostFencesRemainValidThroughTheFinalQueueSave(revoked: String) async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let dispatch = PublicationCommitFence(), binding = PublicationCommitFence()
+        let parent = ChannelPublicationLifetime(commitGuard: { try dispatch.commit($0) })
+        let child = ChannelPublicationLifetime(parent: parent, commitGuard: { try binding.commit($0) })
+        let publication = try await proposal(f)
+        let before = await Snapshot(f.service), bytes = try Data(contentsOf: f.file)
+        // Revocation after async validation/proposal but before the actor's final
+        // enqueue cannot be defeated by creating a child or refreshing a route.
+        if revoked == "dispatch" { dispatch.revoke() }
+        if revoked == "binding" { binding.revoke() }
+        if revoked == "parent" { parent.close() }
+        await #expect(throws: CancellationError.self) {
+            _ = try await f.service.enqueueApprovedPublication(publication, lifetime: child, idempotencyKey: key, at: date)
+        }
+        let after = await Snapshot(f.service), savedBytes = try Data(contentsOf: f.file)
+        expectNoDifference(after, before)
+        expectNoDifference(savedBytes, bytes)
+        expectNoDifference(child.queuedReceipt(idempotencyKey: key), nil)
+    }
+
+    @Test func childCommitRetainsAllHostGuardsAndKeepsAnAlreadyQueuedReceiptTruthful() async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let dispatch = PublicationCommitFence(), binding = PublicationCommitFence()
+        let parent = ChannelPublicationLifetime(commitGuard: { try dispatch.commit($0) })
+        let child = ChannelPublicationLifetime(parent: parent, commitGuard: { try binding.commit($0) })
+        let publication = try await proposal(f)
+        let receipt = try await f.service.enqueueApprovedPublication(publication, lifetime: child, idempotencyKey: key, at: date)
+        expectNoDifference(receipt, expectedDelivery(publication))
+        expectNoDifference(dispatch.count, 1)
+        expectNoDifference(binding.count, 1)
+        let committed = await Snapshot(f.service)
+        dispatch.revoke(); binding.revoke(); parent.close()
+        expectNoDifference(child.queuedReceipt(idempotencyKey: key), receipt)
+        await #expect(throws: CancellationError.self) {
+            _ = try await f.service.enqueueApprovedPublication(publication, lifetime: child, idempotencyKey: key, at: date)
+        }
+        let after = await Snapshot(f.service)
+        expectNoDifference(after, committed)
     }
 
     @Test(arguments: [false, true])
