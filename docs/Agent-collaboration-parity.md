@@ -1,5 +1,13 @@
 # 協作能力核對紀錄（更新至 2026-10-06）
 
+## 已審閱排程成員附件的來源／送件獨立驗收
+
+2026-10-06 接續 `c206a41`，reference HEAD `a9f633e09d49a85829b8236331b9e21f7e612634` 已再確認，actual recipient／hidden wake／own chat 與 fresh human callback 語義已再讀。本批只有測試／文件變更，沒有產品 source／Package／UI 變更。新增 96 actual App cases：local／HTTPS、manual／scheduled routine、新／既有 peer DM，逐一驗證 source／send 核准、拒絕、origin／target Stop、source persona ABA、source／send revoke/regrant 與 definition ABA。真正保存 routine consent 並從執行／注入 schedule tick 入口進入，generic auto-review allow 不省略人類核准；新的 binding 不復活舊核准。
+
+原 64 attachment cases 與新 96 共用完整 typed canonical history／address／queue／origin／authorization／private context／routine run／重開比對；來源核准前無讀取、修改來源後仍保留 captured bytes，actual peer 用自己的 connection／canonical author／目的地，私有 history 不導入，fake connector 未送件。新 method 96 cases 與原 64 最後聚焦通過；相關串行 core／store 39 methods／2 suites＋App 33 methods／2 suites 通過，mailbox suite 18 methods／460 cases。首輪 8 issues 是新完整 run 預期誤把 local denial／retired lifetime 的 cancelled 寫成 ok，已按既有實作修正預期，不冒充產品 red／fix、不刪斷言；詳見 [完成驗收入口](Parity-completion-audit.md)。
+
+不宣稱本批新全套／native／standalone／七語 gate；產品 source 未變，保留 `c206a41` 的最後完整／兩種 Debug 封裝／七語證據與未確認首次日文附件卡問題。只取代 reviewed routine manual／scheduled single-peer local／HTTPS attachment 的未驗證入口；background question／credential native card／fresh resume、inbound／其他 background host、其餘 failure follow-up、uncaptured source 新核准開啟、unified runtime 及 live／真人／VoiceOver／最低 macOS／release／公證仍未完成。AGENT-02／AGENT-04／UI-04／整體 partial、48 分類不變；未 push／launch／重啟 App 或 Xcode／改真實資料。
+
 ## 已審閱排程群組的收件成員送件
 
 本批最後完整 v2 exit 0：2,153 Swift Testing／257 suites＋135 XCTest／0 failures，App 795 tests／102 suites；arm64 Debug native／native verify、全新 standalone Debug 封裝／簽章通過。首次完整的既有日文附件卡 `agentMessage` nil issue 與單項診斷保留；後續原 14 cases 加強 exact live review 前後比較後通過，但沒有確認首次原因，不宣稱已修復。兩項 opt-in live tests skipped，既有 SDK／CoreData／CG／compiler 診斷保留；Debug／ad-hoc 不是 release／公證。

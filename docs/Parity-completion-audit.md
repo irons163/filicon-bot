@@ -1,5 +1,23 @@
 # 完成驗收入口（2026-09-27）
 
+## 已審閱排程成員附件的獨立來源／送件入口驗收
+
+2026-10-06 接續 `c206a41`；本批只有測試／文件變更，沒有產品執行 source／Package／UI 文案變更。reference HEAD 再確認為 `a9f633e09d49a85829b8236331b9e21f7e612634`；重讀 `agent-messaging.ts`、`agent-to-agent-messaging.ts` 的 actual recipient／hidden wake／own chat 語義，以及 `widget-responses.ts` 的 fresh human callback。只補已審閱 routine group 的附件入口證據，不把共享 factory 或文字送件通過當成附件／問答卡片也完成。
+
+新增 1 method／96 cases：local／HTTPS × manual／scheduled routine × 新／既有 canonical peer DM × 12 modes（approve、deny-source、deny-send、origin source／send Stop、target source／send Stop、persona ABA at source、revoke/regrant at source／send、definition ABA at source／send）。真正建立 canonical routine consent、從 `runAutomationNow`／注入 tick 的 `runAutomationScheduleTick` 進入；來源讀取與 final send 各自使用原 group 的 native human approval，generic auto-review allow 不代替。重新授權會取得不同 binding ID，但不復活舊 source／send review；def disable→enable 也不能復活已撤銷 run lease。target Stop 從 actual peer chat 取消原 routine chain。
+
+新案例與原 64 direct／group／manual attachment cases 共用完整驗證 helper，原 cases／source／queue／CAS／privacy assertions 全數保留。來源核准前不讀檔／下載，核准後修改來源仍送原 captured bytes；拒絕／Stop／ABA 不建立 delivery 或附件 blob。完整 typed canonical chats／address／queue／origin／authorization／保存與重開 stores／private context／routine run histories 均比較；URL／alt／digest／bytes 另核對，actual peer 用自己的 connection／canonical author／目的地，不把 group／routine／其他或既有 DM 私人 history 加到 inference。read-only `existingContext` 斷言不建立 context。生成 UUID／revision／時間取本次隔離 host，日期按 SQL 秒與 ChannelService 毫秒 codec 保留全值比較；fake connector sent 為空，沒有真正外部送件。
+
+本批日誌均 `.build/validation/`，不入版控：
+
+- `reviewed-routine-attachment-focused-v1.log` exit 1：原 64 cases 通過；新 96 中 8 issues 只在完整 `AutomationRun` 預期值。本機 deny-source／persona-ABA-source 從既有 `prepareMailboxFile` 的 local approval／publication lifetime 拋 `CancellationError`，真實結果是 cancelled；HTTPS 在此 fake provider 回傳 tool error 後結束，結果是 ok。原測試錯把兩者都預期 ok；核對實作後修正完整 typed run 的 status／detail，不刪 run／queue／history assertions、不修改產品，這不是新的產品 red 或已修復產品錯誤。
+- `reviewed-routine-attachment-focused-v2.log` exit 0：最後 source，2 methods／1 suite，原 64＋新 96＝160 attachment cases 通過。
+- `reviewed-routine-attachment-regression-final-v1.log` exit 0：最後 source 串行相關回歸，core／store 39 methods／2 suites＋actual App 33 methods／2 suites（App 66.396 秒）；mailbox channel suite 18 methods／460 cases，含所有原 364 與新 96，及原 routine group 15 methods。
+
+沒有新全套／native／standalone／七語／真人 gate；產品執行 source 未變，保留 `c206a41` 的正式最後完整 v2（2,153 Swift Testing／257 suites＋135 XCTest／0 failures）、arm64 Debug native／native verify、全新 standalone Debug 封裝／簽章及七語各 1,817 keys／0 missing 證據。該批首次日文附件卡 nil issue 原因仍未確認、opt-in live tests skipped、既有 SDK／CoreData／CG／compiler 診斷及 Debug／ad-hoc 非 release／公證界線不變。
+
+**仍未完成**：background peer 問答／安全輸入卡片的原生入口與 fresh resume、inbound／其他 background group peer host、其餘 failure follow-up、uncaptured locator 新核准開啟、unified private DM/group runtime，以及 live Slack／Discord／OAuth、真人／VoiceOver／最低 macOS／Developer ID release／公證。本批只取代 reviewed routine manual／scheduled single-peer local／HTTPS attachment 的來源／送件獨立入口未驗證缺口；AGENT-02／AGENT-04／UI-04／整體 partial、48 分類不變。未 push、啟動／重啟 App 或 Xcode、launch smoke 或改真實帳號／群組資料。
+
 ## 已審閱排程群組委派的 actual peer 送件與執行撤銷
 
 2026-10-06 接續 `51cefd3`，reference HEAD 再核對為 `a9f633e09d49a85829b8236331b9e21f7e612634`；重讀 `agent-to-agent-messaging.ts` 的 hidden peer wake／actual recipient session，以及 `agent-messaging.ts` 的 own chat／private persona／peer 不等於人類授權。Filicon 的已審閱 routine group runner 原本有實際 `SendToAgent`，但沒有明確提供收件成員的 channel factory。本批只在已驗證 canonical routine binding／definition／account／membership 且已預留 running group 之後 opt-in，不讓 inbound、未審閱 routine 或單純選取畫面取得 grant。
