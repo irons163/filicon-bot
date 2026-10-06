@@ -1,5 +1,13 @@
 # 協作能力核對紀錄（更新至 2026-10-06）
 
+## 委派送件的核准來源與正式聊天目的地分離
+
+2026-10-06 接續 `8eac57a`：reference inbound wake 使用收件 agent 自己的 background session，channel entry 也保存於實際 run session。本批先讓共用 transaction 區分原人類 approval scope 與 host-selected canonical destination／author。模型不能指定 destination；scope／account／connection 與最終 lifetime／binding fence 不放寬。跨聊天 quote 在 source read／review 前拒絕，實際另一聊天 receipt 的 UUID／short alias 不加入原 reply directory；保存失敗只保留 queued-not-delivered 的真實 queue 事實，exact replay 不重送。
+
+6 個新增 methods／20 cases及原有回歸，串行聚焦 36 tests／3 suites、完整 135 XCTest＋2,112 Swift Testing／252 suites、七語 1,815 keys／0 missing、原生 Debug 建置和兩種隔離封裝驗證通過；兩項 opt-in live tests skipped，不算外部驗收。實際隔離 repository／queue／重開、錯 author／context／foreign quote／ownership ABA、late revocation 和偽造／缺失 receipt 的完整值檢查及 fixture 失敗區分見 [完成驗收入口](Parity-completion-audit.md)。沒有新增 UI 或真人／live 驗收。
+
+**這只是共用底層契約，不是可用的 App mailbox channel 入口。** `AgentMessagingSession.drain`、recipient canonical host scope、原生 approval／failure routing 仍未接線；delegated group／inbound、安全 CAS preview／open、live／真人／VoiceOver／最低 macOS／release／公證亦保留。AGENT-02／整體 partial 和 48 分類不變，未 push、重啟使用者 App／Xcode 或改真實資料。
+
 ## 已審閱的背景單獨聊天：外部送件與流程結果
 
 2026-10-06 接續 `ed2053c`，reference 的 channel publication／原 session transcript 現接上已審閱的 routine／workflow direct session，包含 manual／scheduled 原生入口。原 account／bound agent／canonical chat 不跟隨目前選取；source／每次 redirect／final send 都是獨立的人類核准，不借用 generic auto-review 或背景 history consent。使用 exact captured bytes 與原成員的唯一 connection，不自動讀取／轉送 history 附件；未審閱 routine 和 activity acknowledgment／failure notice 不因本批取得 channel 能力。

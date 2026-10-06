@@ -286,6 +286,29 @@ public actor AgentUserMessageTool: ToolExecutor, ToolRuntimeContextProviding {
             : " This receipt does not resume the paused turn or grant approval.")
     }
 
+    /// A delegated publication can be saved in a different host-selected chat.
+    /// Its receipt describes that chat but never imports its ID or alias into
+    /// this originating tool's local reply directory or changes its author.
+    private func channelReceipt(_ message: RoomMessage?, transaction: AgentChannelPublicationTransaction,
+                                text: String, replyTo: UUID?) -> String {
+        if transaction.destinationConversationID == replyGroupID {
+            return registerReceipt(message, text: text, images: [], replyTo: replyTo,
+                externalPublication: message?.externalPublication)
+        }
+        guard let saved = message, let value = saved.externalPublication,
+              saved.groupID == transaction.destinationConversationID,
+              saved.senderID == transaction.destinationSenderID,
+              value.conversationID == transaction.destinationConversationID,
+              value.senderID == transaction.destinationSenderID, value.owner.agentID == transaction.agentID,
+              value.text == text, replyTo == nil, saved.replyToMessageID == nil,
+              saved.matchesExternalPublication(value) else { return "" }
+        struct Receipt: Encodable { let conversationID: UUID; let messageID: UUID; let shortAddress: String? }
+        let receipt = Receipt(conversationID: saved.groupID, messageID: saved.id, shortAddress: saved.shortAddress)
+        guard let json = try? JSONEncoder().encode(receipt) else { return "" }
+        return "\nPublication saved in another host-selected chat; this ID/alias is NOT a reply target in the originating conversation: "
+            + String(decoding: json, as: UTF8.self)
+    }
+
     private nonisolated static func makeDescriptor(supportsImages: Bool, supportsQuestions: Bool, supportsReplies: Bool, supportsTextReplies: Bool, supportsQuestionReplies: Bool, supportsSecrets: Bool = false, supportsCloudAgents: Bool = false, supportsFiles: Bool = false, supportsRemote: Bool = false, supportsGallery: Bool = false, supportsLocalGallery: Bool = false) -> ToolDescriptor {
         let galleryURLPattern = supportsLocalGallery ? "^(https://|file:///).*" : "^https://.*"
         var imageArrays: [String] = []
@@ -480,8 +503,8 @@ public actor AgentUserMessageTool: ToolExecutor, ToolRuntimeContextProviding {
                 let proof = Proof(deliveryID: receipt.delivery.id, address: receipt.delivery.address, originallyQueuedAt: receipt.delivery.createdAt)
                 let proofText = (try? JSONEncoder().encode(proof)).map { String(decoding: $0, as: UTF8.self) }
                     ?? "deliveryID: \(receipt.delivery.id.uuidString); receipt formatting unavailable"
-                let localReceipt = registerReceipt(receipt.savedMessage, text: message.text, images: [], replyTo: reply,
-                    externalPublication: receipt.savedMessage?.externalPublication)
+                let localReceipt = channelReceipt(receipt.savedMessage, transaction: channelPublication,
+                    text: message.text, replyTo: reply)
                 let result = NormalizedToolResult(callID: call.id, content: [.text("External channel publication durably queued, not confirmed delivered. Do not resend. This is the original queue receipt, not current delivery status: " + proofText + localReceipt)])
                 channelCalls[key] = (message, reply, result)
                 texts.append(message.text.isEmpty ? "Queued attachment: \(receipt.review.attachment?.file.filename ?? "attachment")" : message.text)

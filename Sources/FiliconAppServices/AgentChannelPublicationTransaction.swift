@@ -81,10 +81,21 @@ public actor AgentChannelPublicationTransaction {
     /// Host-supplied original route, never decoded from model arguments or a
     /// restored delivery. Absence preserves legacy/non-transcript callers.
     public struct TranscriptSource: Sendable {
+        /// A host-resolved canonical chat, distinct from the originating human
+        /// approval scope. This value grants neither chat access nor permission:
+        /// validateScope and the final lifetime guard still own that boundary.
+        public struct Destination: Sendable, Equatable {
+            public let conversationID: UUID
+            public let senderID: UUID
+            public init(conversationID: UUID, senderID: UUID) {
+                self.conversationID = conversationID; self.senderID = senderID
+            }
+        }
         public let route: ChannelDeliveryOrigin.Route
         public let senderName: String
-        public init(route: ChannelDeliveryOrigin.Route, senderName: String) {
-            self.route = route; self.senderName = senderName
+        public let destination: Destination?
+        public init(route: ChannelDeliveryOrigin.Route, senderName: String, destination: Destination? = nil) {
+            self.route = route; self.senderName = senderName; self.destination = destination
         }
     }
     public struct Review: Sendable, Equatable {
@@ -119,6 +130,8 @@ public actor AgentChannelPublicationTransaction {
     public nonisolated let conversationID: UUID
     public nonisolated let senderID: UUID
     public nonisolated let agentID: UUID
+    public nonisolated let destinationConversationID: UUID
+    public nonisolated let destinationSenderID: UUID
     public nonisolated let supportsAttachments: Bool
     public nonisolated let supportsRemoteSources: Bool
     private nonisolated let lifetime: ChannelPublicationLifetime
@@ -152,6 +165,8 @@ public actor AgentChannelPublicationTransaction {
                 makeID: @escaping @Sendable () -> UUID = { UUID() },
                 now: @escaping @Sendable () -> Date = { Date() }) {
         self.conversationID = conversationID; self.senderID = senderID; self.agentID = agentID
+        destinationConversationID = transcriptSource?.destination?.conversationID ?? conversationID
+        destinationSenderID = transcriptSource?.destination?.senderID ?? senderID
         self.accountID = accountID; self.channels = channels; self.lifetime = lifetime
         self.validateScope = validateScope; self.authorize = authorize
         supportsAttachments = prepare != nil && install != nil
@@ -178,6 +193,12 @@ public actor AgentChannelPublicationTransaction {
         busy = true
         defer { busy = false }
         try await checkScope()
+        if let transcriptSource {
+            guard destinationSenderID == (transcriptSource.route == .directConversation ? destinationConversationID : agentID),
+                  destinationConversationID == conversationID || replyTo == nil else { throw Failure.unavailable }
+            // A quote from the approval scope is not a reply-directory grant in
+            // a different canonical chat. Reject before any source read/review.
+        }
         // Resolve ownership before source reads. Neither a model address nor a
         // source approval can create a connection or use another agent's token.
         _ = try await channels.proposePublication(agentID: agentID, accountID: accountID,
@@ -243,7 +264,7 @@ public actor AgentChannelPublicationTransaction {
             case .hostImage: throw ChannelPublicationError.invalid
             }
         }
-        return .init(route: transcriptSource.route, conversationID: conversationID, senderID: senderID,
+        return .init(route: transcriptSource.route, conversationID: destinationConversationID, senderID: destinationSenderID,
             senderName: transcriptSource.senderName, runID: context.runID, callID: call.id.rawValue,
             replyToMessageID: replyTo, intent: .init(kind: message.attachment == nil ? .text : .attachment,
                 text: message.text, sources: sources))

@@ -1,5 +1,21 @@
 # 完成驗收入口（2026-09-27）
 
+## 委派送件的核准來源與正式聊天目的地分離
+
+2026-10-06 接續 `8eac57a`，reference HEAD 為 `a9f633e09d49a85829b8236331b9e21f7e612634`。main 核對 `agent-to-agent-messaging.ts` 的 `runAgentInboundWake`：收件 agent 使用自己的 background session，而 `turn-runtime.ts` 的 channel `send-message` 保存在實際 run session transcript。本批先補共用 transaction 的必要契約，不將委派來源群組／聊天誤當成收件人的正式聊天。
+
+host 可明確提供 canonical destination／author；來源 `ToolContext`、人類核准卡、source consent 和實際 connection 的 account／agent ownership 不改投。destination 是 host 資料，不是權限、模型參數或恢復後的新 grant；caller 仍須重驗原 scope，並保留 final lifetime／binding guards。direct author 必須是該 canonical chat ID，group author 必須是實際 owner agent；跨 destination 的 local quote 在 source read／review 之前拒絕。
+
+只有實際成功保存且完整匹配的 canonical publication 才回傳另一聊天的 receipt，並明示其 UUID／short alias 不能當作來源對話的 reply target；不加入原 reply directory、不複製其他聊天 history。queue 已提交而 canonical save 缺失／取消／造假時仍回報 durable queued-not-delivered 事實，沒有假 local receipt 或自動重送；exact call replay 不重新審核、讀 source、排入或保存。
+
+新增 6 個 test methods／20 個 standalone／parameter cases，使用實際隔離 SQLite repository、binding lease 和 durable channel queue，connector／source 由假服務替代，商業時間／IDs 受控，CustomDump 比較完整狀態及最少預期 mutation。涵蓋原 approval scope、實際 recipient chat receipt／重開、來源上下文、foreign quote、錯 author／context、binding ABA／late revocation、模型偽造 destination，以及 canonical callback 失敗後 exact replay。source fixture 驗證獨立 callback 與順序，不冒充 App 原生核准卡或真正本機／HTTPS permission 驗收。`channel-destination-focused-v4.log` exit 0：36 tests／3 suites；七語 `channel-destination-localization-final-v1.log` 各 1,815 keys／0 missing。較早編譯與預期未包含既有訊息短位址／scopeMismatch 的 fixture 失敗保留，不當作有效產品 baseline 紅燈；本缺口由來源／call-site 核對確認。
+
+最後完整串行 `channel-destination-full-final-v1.log` exit 0：17 個 Swift Testing target summaries 合計 2,112 tests／252 suites，另 17 個 XCTest bundles 合計 135 tests／0 failures；App target 為 767 tests／100 suites。兩項 opt-in installed Codex live tests skipped，不算 live 驗收；既有 CoreData NSXPCConnection 診斷仍存在，相關 tests 通過，不宣稱修復。
+
+`channel-destination-native-final-v1.log` 的 `Filicon App`／arm64 Debug BUILD SUCCEEDED；`channel-destination-native-verify-final-v1.log` 與全新 `ChannelDestinationPackage/Filicon.app`／`channel-destination-package-final-v1.log` 均 exit 0：四個 executables、app／XPC entitlements、deep strict codesign、KaTeX 0.16.45／20 fonts、Mermaid 11.16.0／72 notices 通過。standalone 為隔離 Debug／ad-hoc gate，不是 Developer ID release／公證，未執行列印的 launch smoke。`git diff --check` 通過，日誌／隔離產物留於忽略的 `.build/validation/`；測試技能保留受控依賴與完整值驗證，文件技能保留來源與尚未接線的界線。
+
+**App 委派送件入口尚未接線。** 本批沒有替 `AgentMessagingSession.drain` 安裝 mailbox channel publisher，也沒有替 App 建立 recipient canonical scope、原生核准生命週期或該路徑的 failure follow-up。mailbox／delegated group／inbound publication／projection 與相應 failure routing、安全 CAS preview／open、live／真人／VoiceOver／最低 macOS／Developer ID release／公證仍待完成；AGENT-02／整體 partial 和 48 分類（42 個歷史 complete／5 partial／1 NA）不變。沒有新增 UI、持久 schema、真實帳號／聊天權限，未 push、啟動或重啟使用者 App／Xcode、修改真實資料。
+
 ## 已審閱的背景單獨聊天：外部送件與流程結果
 
 2026-10-06 接續 `ed2053c`，reference HEAD 仍為 `a9f633e09d49a85829b8236331b9e21f7e612634`。main 核對 `source/host/extensions/transcript/turn-runtime.ts`：channel `SendMessage` 不限前景，background publication 也保存原 session 的 transcript。本批只補已有獨立 direct-session consent 的 routine／workflow，涵蓋 manual／scheduled 原生入口；不因目前選取另一聊天而改投。未審閱的 routine 不取得聊天 history／tools，activity acknowledgment／delivery-failure notice 不取得外部送件能力。
