@@ -1,5 +1,31 @@
 # 完成驗收入口（2026-09-27）
 
+## 已審閱排程成員問答／安全輸入卡片的原生恢復
+
+2026-10-06 接續 `770b471`。reference HEAD `a9f633e09d49a85829b8236331b9e21f7e612634` 再確認，`widget-responses.ts` 的 actual recipient／fresh human turn／值不進對話契約沿用。這不是全背景 host opt-in：僅已驗證 canonical reviewed routine consent、definition、account、membership 並 admitted 的 group runner 明確提供 saved peer question／credential cards。卡片的完整 canonical publication 只鏡射實際收件成員 own DM；普通 shared group output 保留原 route，模型提示也不誤稱所有輸出都到 own DM。
+
+fresh human answer 另核對原 canonical card、response back-link、唯一 durable owner／未隱藏聊天、既有 origin-private context／retirement、目前 group／account／personas，再取得新的 host。completed routine 的 grant 不被復用；即使舊 consent 撤銷，證據完整的新 human action 也必須另問外部送件核准。secret writer 僅使用 host-resolved destination，account／membership 最終 fence 不省略，值不進模型／聊天，重開 pending secret 仍退休。問答重開可再次完整驗證，唯讀分類／namespace 不建立 publisher。
+
+原 group reservation 延伸至 human mailbox turn：一般新 group send 與另一 reviewed routine 拒絕 busy origin；GroupConversationView 共用 busy／thinking／Stop，Stop 回原 fresh chain。修改設定／成員先停止原接續；Stop／account／group／membership ABA 拒絕晚到核准。account／execution 與 membership 分開捕捉，atomic save 組合原 leases，不在 actor hop 後重新捕捉較新 routine grant，也不巢狀重取同一個 inherited NSLock。這仍是 process-local fence，不是跨 process CAS、跨 stores 原子交易或召回已 admitted I/O。
+
+新增 2 methods／192 cases：question／secret × 新／既有 DM × manual／scheduled routine 的 144 單卡 cases，以及四種連續 question／secret 組合的 48 cases。涵蓋 option／custom／dismiss、send deny、origin／target Stop、account、persona／binding／group／membership ABA、busy、reopen、routine revoke-before、group missing、hidden／foreign／deleted target。原手動 48 單卡＋24 連續卡 assertions 保留；完整 typed canonical histories／addresses／queue／origin／authorization／private context／routine run／reopen stores 比較，fake provider／credential writer／connector 與注入 schedule tick 不改真實資料。生成 host UUID／時間保留，全值按 SQL 秒及 channel 毫秒 codec 比較；secret draft 清空、值不進 request／history、fake connector sent 為空，沒有 external send／flush。
+
+日誌在 `.build/validation/`，不入版控：
+
+- `reviewed-routine-card-red-v1.log` exit 1：sandbox 不允許 compiler cache，未執行有效產品測試；`red-v2.log` exit 1：新 fixture 對 non-Equatable `InferenceRequest` 使用錯誤的 equality helper，改為完整 custom dump 比較，不刪 request 欄位。兩者不當產品 red。
+- `reviewed-routine-card-red-v3.log` exit 1：產品仍為 `770b471`；1 method／112 cases 全部因 actual saved publication 缺失而失敗，屬有效卡片入口 baseline。
+- `reviewed-routine-card-focused-v1.log` exit 143：新完整 private context 預期漏掉實際 external queued-not-delivered receipt，修正完整預期、不刪 context assertions；該輪後續卡住，只停止確切隔離測試程序，未完成 gate，沒有取得堆疊，原因不假稱已定位。
+- `reviewed-routine-card-focused-v2.log` exit 143：compile 通過但 actual routine card SQL commit 卡住。`focused-v2-sample.log` 確認 routine lease commit 巢狀進入同一 inherited account／run 的 membership commit，NSLock 自我等待；主 actor 的 channel observer 也因此等鎖。只停止驗證過的測試 parent／helper，不停止使用者 App／Xcode。修正為 account／run 和獨立 membership 的最終 commit，不關閉安全 fence；不是 Mac 鎖定或缺少 XCTest 模組。
+- `reviewed-routine-card-focused-v3.log` exit 1：2 methods／184 cases，已正常跑完，40 issues；busy／missing origin 的唯讀卡片可見不等於可提交，fixture 原混淆這兩項；group edit 的 canonical publication 與成功 own-DM mirror 也不是同一件事。另實測 deleted routine peer chat 仍顯示可操作，已修正 full projected-owner／group gate。各種可見／可用、完整歷史與狀態斷言均保留，不把 fixture 預期修正冒充產品修復。
+- `reviewed-routine-card-focused-v4.log` exit 1：4 methods／256 cases；單卡 group edit 的 8 個完整 private context 差異保留：合法 canonical report 在 mirror cancellation 前已持久化，既有 receipt-preservation 行為不是一律 rollback。新 human group host 的 UI 設定入口原未明確停止該 turn；現在設定／成員變更沿用現有 running group 的 Stop 規則，並補 membership ABA。原 48 repeated routine cases 與 72 manual cases 通過，不能把全輪算通過。
+- `reviewed-routine-card-focused-v5.log` exit 0：最後產品 source，4 methods／1 suite／264 cases（新 144＋48、原 48＋24），33.585 秒；完整資料與 secret／privacy／queue 斷言全數保留。沒有放寬期限、重播權限、取消檔案保護或修改真實 stores。
+- `reviewed-routine-card-full-final-v1.log` exit 0：最後 source 的完整串行 suite，17 bundles，2,156 Swift Testing／257 suites＋135 XCTest／0 failures；App 798 tests／102 suites，493.210 秒。包括前批 test-only `770b471` 與本批兩個新 methods；兩項 opt-in installed-Codex live tests skipped，不算 live 服務驗收。CoreData／NSXPC／CoreGraphics PDF 診斷保留，未省略失敗案例。
+- `reviewed-routine-card-native-final-v1.log`／`native-verify-final-v1.log` 均 exit 0：arm64 Debug 原生 Xcode `Filicon App` build 與 package verify，隔離 derived data、不啟動 App。AppIntents metadata extraction 的既有 warning 保留；四個 executable、offline KaTeX／Mermaid 資源、app／Debug XPC entitlements 與 deep strict 簽章均確認，不是 Developer ID release／公證。
+- `reviewed-routine-card-package-final-v1.log`／`package-verify-final-v1.log` 均 exit 0：全新且事先確認不存在的 `.build/validation/ReviewedRoutineCardPackage/Filicon.app`，獨立 SPM Debug／ad-hoc 封裝與再次唯讀 verify；四個 executable、KaTeX 0.16.45／20 fonts／MIT、Mermaid 11.16.0／72 notices／MIT、app／XPC entitlements 與 deep strict 簽章通過。原 `String?` coercion／Keychain deprecation warnings 保留；未執行 script 印出的 launch smoke，未覆蓋使用中 App 或修改真實資料。
+- `reviewed-routine-card-localization-final-v1.log` exit 0：七語各 1,817 keys／0 missing；沒有新文案、catalog／Package／native target 變更，busy 判斷沿用現有介面，不等於人工翻譯或 VoiceOver 驗收。
+
+**仍未完成**：inbound／其他 background group peer host、其餘 saved-group／inbound failure follow-up、uncaptured locator 的新核准來源開啟、unified private DM/group runtime，以及 live Slack／Discord／OAuth、真人／VoiceOver／最低 macOS／Developer ID release／公證。本批只取代 reviewed routine manual／scheduled single-peer question／credential native callback／fresh resume 缺口；AGENT-02／AGENT-04／UI-04／整體 partial、48 分類不變。未 push、啟動／重啟 App 或 Xcode、launch smoke 或改真實帳號／群組資料。
+
 ## 已審閱排程成員附件的獨立來源／送件入口驗收
 
 2026-10-06 接續 `c206a41`；本批只有測試／文件變更，沒有產品執行 source／Package／UI 文案變更。reference HEAD 再確認為 `a9f633e09d49a85829b8236331b9e21f7e612634`；重讀 `agent-messaging.ts`、`agent-to-agent-messaging.ts` 的 actual recipient／hidden wake／own chat 語義，以及 `widget-responses.ts` 的 fresh human callback。只補已審閱 routine group 的附件入口證據，不把共享 factory 或文字送件通過當成附件／問答卡片也完成。

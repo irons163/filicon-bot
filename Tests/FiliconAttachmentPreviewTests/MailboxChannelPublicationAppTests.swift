@@ -667,11 +667,49 @@ private struct AppMailboxChannelProvider: InteractiveToolProvider {
            "hidden-before", "foreign-before", "delete-before"])
     func manualSavedInputHasNativeCardAndResumesWithFreshChannelReview(scenario: (String, Bool), mode: String) async throws {
         let (input, existing) = scenario
-        var f = try await fixture(automatic: true, manual: true, existingPeer: existing, savedInput: input)
+        try await assertSavedInputConsent(input: input, existing: existing, mode: mode)
+    }
+
+    @Test(arguments: [("question", false, false), ("question", true, false), ("secret", false, false), ("secret", true, false),
+                      ("question", false, true), ("question", true, true), ("secret", false, true), ("secret", true, true)],
+          ["approve", "custom", "dismiss", "deny", "origin-stop", "target-stop", "account", "persona-ABA", "target-ABA", "group-ABA", "membership-ABA", "busy",
+           "reopen", "revoke-before", "group-missing-before", "hidden-before", "foreign-before", "delete-before"])
+    func reviewedRoutineCardsResumeInTheirOwnChatWithNewHumanConsent(scenario: (String, Bool, Bool), mode: String) async throws {
+        try await assertSavedInputConsent(input: scenario.0, existing: scenario.1, mode: mode, routineScheduled: scenario.2)
+    }
+
+    private func assertSavedInputConsent(input: String, existing: Bool, mode: String,
+                                         routineScheduled: Bool? = nil) async throws {
+        let routine = routineScheduled != nil
+        var f = try await fixture(automatic: true, groupOrigin: routine, manual: !routine,
+            existingPeer: existing, savedInput: input)
         defer { f.model.cancel(); try? FileManager.default.removeItem(at: f.root) }
         let writer = AppMailboxChannelSecretWriter()
         f.model.secretCredentialWriter = writer.write
-        #expect(await f.model.sendAgentMessage(senderID: f.owner.id, recipientID: f.peer.id, text: "EXACT_MANUAL_CARD_TASK"))
+        if let scheduled = routineScheduled {
+            let group = try #require(f.group), automation = try await reviewedRoutine(f)
+            let tick = try #require(automation.nextRunAt)
+            let model = f.model
+            let work = Task {
+                if scheduled { await model.runAutomationScheduleTick(at: tick) }
+                else { await model.runAutomationNow(id: automation.id) }
+            }
+            defer { work.cancel() }
+            try await eventually {
+                if let pending = model.pendingAutoReviewApprovals.first(where: { $0.action.context.metadata["tool"] == "SendToAgent" }) {
+                    await model.resolveGroupApproval(pending, groupID: group.id, approve: true)
+                }
+                return !model.runningGroups.contains(group.id) && model.automationHistory[automation.id]?.first?.finishedAt != nil
+            }
+            await work.value
+            let run = try #require(model.automationHistory[automation.id]?.first)
+            expectNoDifference(model.automationHistory[automation.id], [AutomationRun(id: run.id, automationID: automation.id,
+                trigger: scheduled ? .schedule : .manual, startedAt: scheduled ? tick : run.startedAt,
+                finishedAt: run.finishedAt, status: .ok,
+                detail: "Group run finished. Open the group to review replies, tool results and questions.")])
+        } else {
+            #expect(await f.model.sendAgentMessage(senderID: f.owner.id, recipientID: f.peer.id, text: "EXACT_MANUAL_CARD_TASK"))
+        }
         try await eventually { f.model.runningAgentMessageScopes.isEmpty }
         var incoming = try #require(f.model.agentMessages.first { $0.recipientID == f.peer.id })
         var publication = try #require(incoming.delivery?.publications?.first)
@@ -679,6 +717,22 @@ private struct AppMailboxChannelProvider: InteractiveToolProvider {
         let peer = try #require(f.model.conversations.first { $0.agentBinding?.agentID == f.peer.id })
         let before = try await ConversationStore(fileURL: f.root.appending(path: "conversations.json")).load()
         #expect(peer.messages.contains { $0.id == publication.id })
+        let privateContexts = try AgentConversationStore(url: f.root.appending(path: "agent-conversations.json"))
+        let contextBefore = await privateContexts.existingContext(accountID: "local", originID: scope, agentID: f.peer.id)
+        if routine {
+            let source = try AgentMessageSource(accountID: "local", originConversationID: scope, deliveryID: incoming.id,
+                senderAgentID: f.owner.id, recipientAgentID: f.peer.id, kind: .publication)
+            var expected = f.existingPeer ?? Conversation(id: peer.id, title: f.peer.name,
+                providerID: f.peer.providerID, modelID: f.peer.modelID, updatedAt: publication.createdAt)
+            expected.agentBinding = .init(accountID: "local", agentID: f.peer.id)
+            expected.messages.append(.init(id: publication.id, role: .assistant, text: publication.text,
+                createdAt: publication.createdAt, agentMessageSource: source))
+            expected.updatedAt = max(expected.updatedAt, publication.createdAt)
+            DirectMessageAddressing.assignMissing(in: &expected)
+            expectNoDifference(before, try persistedConversations([expected, f.other]))
+            #expect(f.model.groupMessages[scope]?.allSatisfy { $0.id != publication.id && $0.question == nil && $0.secretRequest == nil } == true)
+            #expect(contextBefore != nil)
+        }
         let queuedBefore = await f.channels.deliveries()
         expectNoDifference(queuedBefore, [])
         if mode == "reopen" {
@@ -704,7 +758,7 @@ private struct AppMailboxChannelProvider: InteractiveToolProvider {
                 expectNoDifference(publication.secretRequest?.state, .retired)
                 #expect(model.mailboxSecretCards[publication.id] == nil)
                 let queue = await f.channels.deliveries(), requests = await f.probe.requests
-                expectNoDifference(queue, []); expectNoDifference(requests.count, 1); expectNoDifference(writer.count, 0)
+                expectNoDifference(queue, []); expectNoDifference(requests.count, routine ? 2 : 1); expectNoDifference(writer.count, 0)
                 let stored = try await ConversationStore(fileURL: f.root.appending(path: "conversations.json")).load()
                 expectNoDifference(stored, before)
                 return
@@ -714,14 +768,20 @@ private struct AppMailboxChannelProvider: InteractiveToolProvider {
         if mode == "hidden-before" { f.model.conversations[peerIndex].hiddenAt = date }
         if mode == "foreign-before" { f.model.conversations[peerIndex].agentBinding = .init(accountID: "foreign", agentID: f.peer.id) }
         if mode == "delete-before" { f.model.deleteConversation(id: peer.id) }
-        let blockedBefore = ["hidden-before", "foreign-before", "delete-before"].contains(mode)
+        if mode == "group-missing-before" { f.model.groups.removeAll { $0.id == scope } }
+        if mode == "revoke-before" { await f.model.revokeRoutineGroupSession(try #require(f.model.automationGroupBindings.first)) }
+        if mode == "busy" { f.model.runningGroups.insert(scope) }
+        let blockedBefore = ["hidden-before", "foreign-before", "delete-before", "group-missing-before", "busy"].contains(mode)
+        // Read-only native card lookup remains visible when the origin is busy
+        // or unavailable. That does not make its human action usable.
+        let visibleCard = !["hidden-before", "foreign-before", "delete-before"].contains(mode)
         let answer: AgentQuestionAnswer = mode == "custom" ? .custom("ONLY_CUSTOM_TASK") : mode == "dismiss" ? .dismissed : .option(0)
         if input == "question" {
-            expectNoDifference(f.model.directPeerQuestion(conversationID: peer.id, messageID: publication.id) != nil, !blockedBefore)
+            expectNoDifference(f.model.directPeerQuestion(conversationID: peer.id, messageID: publication.id) != nil, visibleCard)
             expectNoDifference(f.model.canAnswerMailboxQuestion(incoming, publication: publication), !blockedBefore)
             await f.model.answerMailboxQuestion(incomingID: incoming.id, publicationID: publication.id, answer: answer)
         } else {
-            expectNoDifference(f.model.directPeerSecret(conversationID: peer.id, messageID: publication.id) != nil, !blockedBefore)
+            expectNoDifference(f.model.directPeerSecret(conversationID: peer.id, messageID: publication.id) != nil, visibleCard)
             expectNoDifference(f.model.canUseMailboxSecret(incoming, publication: publication), !blockedBefore)
             let card = try #require(f.model.mailboxSecretCards[publication.id])
             if mode == "dismiss" { await card.dismissButtonTapped() }
@@ -731,8 +791,9 @@ private struct AppMailboxChannelProvider: InteractiveToolProvider {
         if blockedBefore {
             try await eventually { f.model.runningAgentMessageScopes.isEmpty }
             let queue = await f.channels.deliveries(), requests = await f.probe.requests
-            expectNoDifference(queue, []); expectNoDifference(requests.count, 1); expectNoDifference(writer.count, 0)
+            expectNoDifference(queue, []); expectNoDifference(requests.count, routine ? 2 : 1); expectNoDifference(writer.count, 0)
             expectNoDifference(f.model.agentMessages.count, 1)
+            if mode == "busy" { f.model.runningGroups.remove(scope) }
             if mode == "delete-before" {
                 let store = ConversationStore(fileURL: f.root.appending(path: "conversations.json"))
                 try await eventually {
@@ -749,6 +810,18 @@ private struct AppMailboxChannelProvider: InteractiveToolProvider {
         #expect(f.model.isConversationWorking(peer.id))
         let queueAtReview = await f.channels.deliveries()
         expectNoDifference(queueAtReview, [])
+        if routine {
+            #expect(f.model.isConversationWorking(scope))
+            let priorRequests = await f.probe.requests
+            let priorGroupHistory = f.model.groupMessages[scope]
+            await f.model.sendGroupMessage(groupID: scope, text: "MUST_NOT_RACE_HUMAN_CARD")
+            if mode != "revoke-before" { await f.model.runAutomationNow(id: try #require(f.model.automations.first).id) }
+            let afterRequests = await f.probe.requests
+            expectNoDifference(String(customDumping: afterRequests), String(customDumping: priorRequests))
+            expectNoDifference(f.model.groupMessages[scope], priorGroupHistory)
+            #expect(f.model.pendingAutoReviewApprovals.contains { $0.id == review.id })
+        }
+        if mode == "origin-stop" { await f.model.stopGroup(id: scope) }
         if mode == "target-stop" { f.model.selectRoute(.conversation(peer.id)); f.model.cancel() }
         if mode == "account" { await f.model.cancelAutoReviewApprovals(nextAccountID: "other") }
         if mode == "persona-ABA" {
@@ -762,13 +835,25 @@ private struct AppMailboxChannelProvider: InteractiveToolProvider {
             f.model.conversations[peerIndex].agentBinding = nil
             f.model.conversations[peerIndex].agentBinding = binding
         }
+        if mode == "group-ABA" {
+            let group = try #require(f.group)
+            #expect(await f.model.saveGroupSettings(groupID: scope, name: "CHANGED_HUMAN_RESUME_GROUP",
+                summary: group.summary, memberIDs: group.memberIDs))
+            #expect(await f.model.saveGroupSettings(groupID: scope, name: group.name,
+                summary: group.summary, memberIDs: group.memberIDs))
+        }
+        if mode == "membership-ABA" {
+            let group = try #require(f.group)
+            await f.model.updateGroupMembers(groupID: scope, memberIDs: group.memberIDs + [f.peer.id])
+            await f.model.updateGroupMembers(groupID: scope, memberIDs: group.memberIDs)
+        }
         await f.model.resolveGroupApproval(review, groupID: scope, approve: mode != "deny")
         try await eventually { f.model.runningAgentMessageScopes.isEmpty }
         let deliveries = await f.channels.deliveries()
-        let succeeds = ["approve", "custom", "dismiss", "reopen"].contains(mode)
-        // Persona/rebinding ABA permanently retires the captured external review,
-        // not the whole local mailbox turn. Stop/account cancel the turn itself.
-        let revoked = ["target-stop", "account"].contains(mode)
+        let succeeds = ["approve", "custom", "dismiss", "reopen", "revoke-before"].contains(mode)
+        // Persona/rebinding ABA retires the external review, not the whole
+        // local turn. Stop/account or a changed origin group cancels that turn.
+        let revoked = ["origin-stop", "target-stop", "account", "group-ABA", "membership-ABA"].contains(mode)
         let response = try #require(f.model.agentMessages.first { $0.questionResponse != nil || $0.secretResponse != nil })
         let expectedQueue: [ChannelDelivery]
         if succeeds {
@@ -806,12 +891,28 @@ private struct AppMailboxChannelProvider: InteractiveToolProvider {
         let saved = try await ConversationStore(fileURL: f.root.appending(path: "conversations.json")).load()
         expectNoDifference(saved, expectedHistory)
         let requests = await f.probe.requests
-        expectNoDifference(requests.count, 2)
-        expectNoDifference(requests.last?.conversationID, requests.first?.conversationID)
-        #expect(requests.allSatisfy { $0.messages.allSatisfy {
+        expectNoDifference(requests.count, routine ? 3 : 2)
+        expectNoDifference(requests.last?.conversationID, requests[routine ? 1 : 0].conversationID)
+        #expect(requests.dropFirst(routine ? 1 : 0).allSatisfy { $0.messages.allSatisfy {
             !$0.text.contains("FAKE_MANUAL_CARD_SECRET") && !$0.text.contains("EXISTING_PEER_PRIVATE_HISTORY")
-                && !$0.text.contains("UNRELATED_PRIVATE_HISTORY")
+                && !$0.text.contains("UNRELATED_PRIVATE_HISTORY") && !$0.text.contains("ROUTINE_HOST_PRIVATE")
+                && !$0.text.contains("SOURCE_GROUP_PRIVATE") && !$0.text.contains("OWNER_PRIVATE_PERSONA")
         } })
+        let reopenedContexts = try AgentConversationStore(url: f.root.appending(path: "agent-conversations.json"))
+        let contextAfter = await reopenedContexts.existingContext(accountID: "local", originID: scope, agentID: f.peer.id)
+        var expectedContext = try #require(contextBefore)
+        if !revoked {
+            let assistant = try #require(contextAfter?.messages.last)
+            var report = response.delivery?.response ?? ""
+            for queued in expectedQueue {
+                report += "\n\nExternal channel publication \(queued.id.uuidString) saved in recipient chat \(peer.id.uuidString); queue status: queued. This is NOT a local mailbox message or proof of remote delivery.\nEXACT_PEER_EXTERNAL_RESULT"
+            }
+            expectedContext.messages.append(.init(id: response.id, role: .assistant,
+                text: String(try #require(requests.last?.messages.last?.text).prefix(10_000)), createdAt: response.createdAt))
+            expectedContext.messages.append(.init(id: assistant.id, role: .assistant,
+                text: String(report.prefix(8_000)), createdAt: assistant.createdAt))
+        }
+        expectNoDifference(contextAfter, expectedContext)
         expectNoDifference(writer.count, input == "secret" && mode != "dismiss" ? 1 : 0)
         expectNoDifference(f.model.agentMessages.count, 2)
         expectNoDifference(response.senderID, f.owner.id); expectNoDifference(response.recipientID, f.peer.id)
@@ -829,13 +930,53 @@ private struct AppMailboxChannelProvider: InteractiveToolProvider {
                       ("question", "question", true), ("question", "secret", true), ("secret", "question", true), ("secret", "secret", true)],
           ["approve", "deny", "target-stop"])
     func repeatedManualCardsKeepOneOwnChatAndNeverReuseAnExternalApproval(scenario: (String, String, Bool), mode: String) async throws {
+        try await assertRepeatedSavedInputs(scenario: scenario, mode: mode)
+    }
+
+    @Test(arguments: [("question", "question", false, false), ("question", "secret", false, false),
+                      ("secret", "question", false, false), ("secret", "secret", false, false),
+                      ("question", "question", true, false), ("question", "secret", true, false),
+                      ("secret", "question", true, false), ("secret", "secret", true, false),
+                      ("question", "question", false, true), ("question", "secret", false, true),
+                      ("secret", "question", false, true), ("secret", "secret", false, true),
+                      ("question", "question", true, true), ("question", "secret", true, true),
+                      ("secret", "question", true, true), ("secret", "secret", true, true)],
+          ["approve", "deny", "target-stop"])
+    func repeatedRoutineCardsKeepCanonicalHumanBacklinksAndFreshConsent(scenario: (String, String, Bool, Bool), mode: String) async throws {
+        try await assertRepeatedSavedInputs(scenario: (scenario.0, scenario.1, scenario.2), mode: mode, routineScheduled: scenario.3)
+    }
+
+    private func assertRepeatedSavedInputs(scenario: (String, String, Bool), mode: String,
+                                           routineScheduled: Bool? = nil) async throws {
         let inputs = (scenario.0, scenario.1), existing = scenario.2
-        let f = try await fixture(automatic: true, manual: true, existingPeer: existing,
+        let routine = routineScheduled != nil
+        let f = try await fixture(automatic: true, groupOrigin: routine, manual: !routine, existingPeer: existing,
             savedInput: inputs.0, followUpInput: inputs.1)
         defer { f.model.cancel(); try? FileManager.default.removeItem(at: f.root) }
         let writer = AppMailboxChannelSecretWriter()
         f.model.secretCredentialWriter = writer.write
-        #expect(await f.model.sendAgentMessage(senderID: f.owner.id, recipientID: f.peer.id, text: "EXACT_REPEATED_CARD_TASK"))
+        if let scheduled = routineScheduled {
+            let group = try #require(f.group), automation = try await reviewedRoutine(f)
+            let tick = try #require(automation.nextRunAt)
+            let work = Task {
+                if scheduled { await f.model.runAutomationScheduleTick(at: tick) }
+                else { await f.model.runAutomationNow(id: automation.id) }
+            }
+            defer { work.cancel() }
+            try await eventually {
+                if let pending = f.model.pendingAutoReviewApprovals.first(where: { $0.action.context.metadata["tool"] == "SendToAgent" }) {
+                    await f.model.resolveGroupApproval(pending, groupID: group.id, approve: true)
+                }
+                return !f.model.runningGroups.contains(group.id) && f.model.automationHistory[automation.id]?.first?.finishedAt != nil
+            }
+            await work.value
+            let run = try #require(f.model.automationHistory[automation.id]?.first)
+            expectNoDifference(f.model.automationHistory[automation.id], [AutomationRun(id: run.id, automationID: automation.id,
+                trigger: scheduled ? .schedule : .manual, startedAt: scheduled ? tick : run.startedAt, finishedAt: run.finishedAt,
+                status: .ok, detail: "Group run finished. Open the group to review replies, tool results and questions.")])
+        } else {
+            #expect(await f.model.sendAgentMessage(senderID: f.owner.id, recipientID: f.peer.id, text: "EXACT_REPEATED_CARD_TASK"))
+        }
         try await eventually { f.model.runningAgentMessageScopes.isEmpty }
         let original = try #require(f.model.agentMessages.first), scope = try #require(original.delivery?.originConversationID)
         let peer = try #require(f.model.conversations.first { $0.agentBinding?.agentID == f.peer.id })
@@ -869,6 +1010,22 @@ private struct AppMailboxChannelProvider: InteractiveToolProvider {
         let store = ConversationStore(fileURL: f.root.appending(path: "conversations.json"))
         var expected = try await store.load()
         let targetIndex = try #require(expected.firstIndex { $0.id == peer.id })
+        if routine {
+            var initial = f.existingPeer ?? Conversation(id: peer.id, title: f.peer.name,
+                providerID: f.peer.providerID, modelID: f.peer.modelID, updatedAt: original.createdAt)
+            initial.agentBinding = .init(accountID: "local", agentID: f.peer.id)
+            for incoming in f.model.agentMessages {
+                for publication in incoming.delivery?.publications ?? [] {
+                    initial.messages.append(.init(id: publication.id, role: .assistant, text: publication.text,
+                        createdAt: publication.createdAt, agentMessageSource: try .init(accountID: "local",
+                            originConversationID: scope, deliveryID: incoming.id, senderAgentID: f.owner.id,
+                            recipientAgentID: f.peer.id, kind: .publication)))
+                    initial.updatedAt = max(initial.updatedAt, publication.createdAt)
+                }
+            }
+            DirectMessageAddressing.assignMissing(in: &initial)
+            expectNoDifference(expected, try persistedConversations([initial, f.other]))
+        }
         let response = try #require(f.model.agentMessages.last)
         #expect(!expected[targetIndex].messages.contains { $0.id == response.id || $0.agentMessageSource?.deliveryID == response.id })
         if mode == "target-stop" { f.model.selectRoute(.conversation(peer.id)); f.model.cancel() }
@@ -906,10 +1063,12 @@ private struct AppMailboxChannelProvider: InteractiveToolProvider {
         let expectedHistory = try decoder.decode([Conversation].self, from: encoder.encode(expected)), actualHistory = try await store.load()
         expectNoDifference(actualHistory, expectedHistory)
         let requests = await f.probe.requests
-        expectNoDifference(requests.count, 3)
-        #expect(requests.allSatisfy { $0.conversationID == requests.first?.conversationID && $0.messages.allSatisfy {
+        expectNoDifference(requests.count, routine ? 4 : 3)
+        let peerRequests = Array(requests.dropFirst(routine ? 1 : 0))
+        #expect(peerRequests.allSatisfy { $0.conversationID == peerRequests.first?.conversationID && $0.messages.allSatisfy {
             !$0.text.contains("FAKE_REPEATED_CARD_SECRET") && !$0.text.contains("EXISTING_PEER_PRIVATE_HISTORY")
-                && !$0.text.contains("UNRELATED_PRIVATE_HISTORY")
+                && !$0.text.contains("UNRELATED_PRIVATE_HISTORY") && !$0.text.contains("ROUTINE_HOST_PRIVATE")
+                && !$0.text.contains("SOURCE_GROUP_PRIVATE") && !$0.text.contains("OWNER_PRIVATE_PERSONA")
         } })
         expectNoDifference(writer.count, [inputs.0, inputs.1].filter { $0 == "secret" }.count)
         expectNoDifference(f.model.agentMessages.count, 3)

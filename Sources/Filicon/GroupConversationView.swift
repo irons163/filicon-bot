@@ -74,7 +74,7 @@ struct GroupConversationView: View {
     @State private var threadPresentation = GroupThreadPresentationState()
 
     private var messages: [RoomMessage] { model.groupMessages[group.id] ?? [] }
-    private var isRunning: Bool { model.runningGroups.contains(group.id) }
+    private var isRunning: Bool { model.runningGroups.contains(group.id) || model.runningAgentMessageScopes.contains(group.id) }
     private var approvalScopeID: UUID { model.groupApprovalScope(group.id) }
     private var folderRequests: [WorkspaceFolderRequest] {
         model.pendingWorkspaceFolders.filter { $0.conversationID == approvalScopeID }

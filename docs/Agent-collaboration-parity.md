@@ -1,5 +1,15 @@
 # 協作能力核對紀錄（更新至 2026-10-06）
 
+## 已審閱排程成員卡片的原生入口與重新核准
+
+2026-10-06 接續 `770b471`，reference HEAD 再確認為 `a9f633e09d49a85829b8236331b9e21f7e612634`；沿用 `widget-responses.ts` 的 actual agent／fresh human turn／credential 值不進對話語義。只有 admitted reviewed routine group 的 manual／scheduled peer wake 明確提供問答／安全輸入卡片；完整 canonical saved publication 鏡射 actual recipient 的 own DM，不把卡片廣播到群組。普通群組報告保留原 route，並明確分開模型的報告位置提示。
+
+回答時重新核對 canonical card／unique durable owner／existing private context／目前 group、account、personas，另取得 fresh human host，不復用已結束的 routine grant；外部送件仍逐次新問人類。account／execution 與 membership leases 分開保存、在最終同步 commit 組合，避免重複取得同一個鎖。群組在接續時顯示 busy／Stop，拒絕一般新群組訊息及另一 reviewed routine；設定／成員變更先取消原接續。刪除、隱藏或換 owner 的卡片不可操作；origin 忙碌／缺失可保留唯讀卡片但停用提交。問答重開仍須完整證據，pending secret 重開退休，不恢復 writer／grant。撤銷舊 routine consent 不阻止一個證據完整的新 human answer，也不讓它借用舊外部核准。
+
+新增 2 methods／192 actual App cases：144 單卡 lifecycle＋48 連續 question／secret 四種組合，manual／schedule × 新／既有 own DM；原手動 48＋24 cases 保留。依測試技能完整比較 canonical histories／addresses／queue／authorization／private context／routine run／重開 stores，secret draft 清空、值不進 request 或 history，fake connector 未送件。最後聚焦 `reviewed-routine-card-focused-v5.log` exit 0，4 methods／264 cases；最後完整串行 gate exit 0：2,156 Swift Testing／257 suites＋135 XCTest／0 failures，App 798 tests／102 suites。arm64 原生 Debug build／verify、全新 SPM Debug／ad-hoc 封裝／verify、七語各 1,817 keys／0 missing 亦通過；兩項 opt-in live tests skipped，既有 CoreData／NSXPC／CoreGraphics／compiler warnings 保留，Debug 不是 release／公證。有效 baseline、兩次卡住的非通過診斷、完整 gates 及精確界線見 [完成驗收入口](Parity-completion-audit.md)。
+
+只取代 reviewed routine group single-peer question／credential native callback／fresh resume 缺口；inbound／其他 background hosts、其餘 failure follow-up、uncaptured locator 新核准開啟、unified runtime 及 live／真人／VoiceOver／最低 macOS／release／公證仍未完成。AGENT-02／AGENT-04／UI-04／整體 partial、48 分類不變；未 push、啟動／重啟 App 或 Xcode、改真實帳號／群組資料。
+
 ## 已審閱排程成員附件的來源／送件獨立驗收
 
 2026-10-06 接續 `c206a41`，reference HEAD `a9f633e09d49a85829b8236331b9e21f7e612634` 已再確認，actual recipient／hidden wake／own chat 與 fresh human callback 語義已再讀。本批只有測試／文件變更，沒有產品 source／Package／UI 變更。新增 96 actual App cases：local／HTTPS、manual／scheduled routine、新／既有 peer DM，逐一驗證 source／send 核准、拒絕、origin／target Stop、source persona ABA、source／send revoke/regrant 與 definition ABA。真正保存 routine consent 並從執行／注入 schedule tick 入口進入，generic auto-review allow 不省略人類核准；新的 binding 不復活舊核准。
