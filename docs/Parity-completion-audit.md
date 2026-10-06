@@ -1,5 +1,38 @@
 # 完成驗收入口（2026-09-27）
 
+## 手動成員問答／安全輸入卡片的原生入口與 fresh channel host
+
+2026-10-06 接續 `706f508`，reference HEAD `a9f633e09d49a85829b8236331b9e21f7e612634`；再讀 `source/host/extensions/transcript/widget-responses.ts` 的 question／secret callback：人類回答回實際 agent，另起 fresh turn，安全輸入只留目的地，不把 credential value 加進對話。修正 Filicon 前景 manual mailbox 的 nil direct-binding 卡片原先無 native callback，以及回答後新 session 未取得自己的 channel host 兩個缺口。
+
+原生 own-DM 的 publication 必須匹配 canonical mailbox author／account／origin／sender／recipient／ID／text，隱藏、刪除或換 owner 不可操作。已知 manual namespace 的 read-only 分類包含 retired／invalid 記錄，僅用來停用缺失聊天的卡片，不是 publisher grant。fresh human action 另核對完整保存卡片、unique durable account＋agent binding、existing origin-private context、retirement、generation 與目前 personas，才明確建立這次 manual host。問答可在隔離 App 重建後依上述證據回答；pending secret 在重建時仍退休，不能復活 submission／writer／核准。
+
+host-recorded answer／credential acknowledgement 不冒充 peer incoming，也不新增假人類聊天 row。只有實際成員 publication 投影 own chat；private inference ID 不變，不搬移既有 DM 或無關聊天 history。channel factory 以已解析的原卡片為 anchor，保留 existing lifetime／binding／account fences、actual peer connection／canonical author／destination；每次送件重新問人類，generic auto-review 不替代。原成員聊天 Stop 回原 fresh session；persona／binding ABA 永久退休該 external review，但整個本機 mailbox 回合不因此一律取消，恢復原 identity 後的合法 local report 仍可完成。Stop／account 則取消回合本身。
+
+連續 question→question、question→secret、secret→question、secret→secret 都驗證新／既有 DM 與 approve／deny／target Stop。新的唯讀 provenance API 驗證完整 response↔card 連結，逐鏈回到原 peer delivery；拒絕 broken parent／body／account／scope／binding／member／duplicate IDs／雙種 response／retired card／cycle，迭代走訪不使用遞迴堆疊。不恢復任何 permission。metadata short address 使用既有 `addressedReceipt`，不丟欄位。store inspection 不建立 context、不 bind 新 chat、不寫檔，重開與腐敗 namespaces 都有完整值及 byte-for-byte 比較。
+
+本批新增 App 2 methods／72 cases（48 單卡 lifecycle＋24 連續卡）、store 2 methods／9 cases、provenance 2 methods／94 cases。測試技能採假的 credential writer／connector、真正隔離 App callbacks／stores／fresh queue，以及完整 typed history／address／queue／origin／authorization 比較；Secret draft 清空，值不進 request 或 history，connector sent 為空。
+
+保留診斷（均 `.build/validation/`，不入版控）：
+
+- `manual-card-resume-red-v1.log`／`red-v2.log` exit 1：question 重現，但 secret fixture 的 non-UUID Keychain reference 不合法，不把 secret fixture 失敗當成產品 baseline。
+- `manual-card-resume-red-v3.log` exit 1：產品仍為 `706f508`，四個 question／secret × 新／既有聊天 cases、12 issues，都是 native card／fresh channel review 缺失；沒有 fixture credential 失敗。
+- `manual-card-resume-focused-v1.log` exit 0：先通過四個基本恢復 cases。v2 exit 1 是新測試的 optional Bool／non-Equatable card 比較編譯錯誤，未執行測試。
+- `manual-card-resume-focused-v3.log` exit 1：48 cases／20 issues，其中四個缺失聊天仍顯示可用的產品問題已補唯讀分類；其餘是 fixture 誤把 external review 的 ABA retirement 當作整個 mailbox turn cancellation。核准隊列原已為空，最後改為完整核對合法 local report／completed state，不省略 queue／history assertions。
+- `manual-card-resume-focused-v4.log` exit 0：48 cases 與原 direct／mailbox question／secret 回歸共 6 methods／4 suites。
+- `manual-card-resume-focused-v5.log` exit 1：Testing 不支援三個 argument collections 的宣告，未執行測試；改為兩組 collection。
+- `manual-card-resume-focused-v6.log` exit 1：App 7 methods／4 suites 通過；四個 valid provenance cases 的 full-value diff 發現原 short address 未帶回，產品改用 `addressedReceipt`，沒有刪 address assertion。v7 exit 0：core 11 methods／2 suites、App 19 methods／4 suites；原 channel App suite 為 14 methods／284 cases，含全部原 212 cases。最後又增加 10 個完整 response chain／cycle cases，由最後完整 gate 驗證。
+
+最後 source 的正式 gates（以下日誌均不入版控）：
+
+- `manual-card-resume-full-final-v1.log` exit 130：Mac 在 App 測試期間再次鎖定，剛建立的受保護 `agents.json` 回報 NSCocoaError 257／NSPOSIXError 1；同時確認 `IOConsoleLocked = Yes` 與既有 `.completeFileProtectionUnlessOpen` 保存策略。只停止本輪確切測試程序，沒有關閉檔案保護、刪測試、改權限或停止使用者 App／Xcode；此輪不是完整通過。
+- `manual-card-resume-full-final-v2.log` exit 0：偵測重新解鎖後，在相同最後 source 串行重跑，合計 2,150 Swift Testing／257 suites／17 summaries＋135 XCTest／0 failures／17 bundles；App 792 tests／102 suites，383.380 秒。包括最後 10 個完整 human response chain／cycle cases，以及 48 單卡＋24 連續卡 cases。兩項 opt-in installed Codex live tests `installedCodexExecutesAnIsolatedHostTool`／`installedCodexResumesAfterStaleReadOnlyReplyAndRequestsWriteApproval` skipped，不算已執行的外部驗收；既有 CoreData NSXPCConnection／CG 診斷保留，不宣稱修復。
+- `manual-card-resume-native-final-v1.log` exit 0：`Filicon.xcworkspace`／`Filicon App`／arm64 Debug `BUILD SUCCEEDED`，使用隔離 `.build/validation/GroupUnreadFoundationNative` products；既有 no AppIntents.framework dependency metadata extraction skipped warning 保留。
+- `manual-card-resume-native-verify-final-v1.log` exit 0：最後 native app 四個 executables、app／XPC entitlements 與 Support 原檔一致；KaTeX 0.16.45 engine／stylesheet／20 fonts／MIT、public Mermaid 11.16.0 engine／MIT／72 pinned notices 與 deep strict codesign 通過。
+- `manual-card-resume-package-final-v1.log` exit 0：全新 `.build/validation/ManualCardResumePackage/Filicon.app`，standalone SPM Debug／ad-hoc；同樣四個 executables、entitlements、離線資源與 deep strict signature 驗證通過。既有 compiler warnings 保留；沒有執行印出的 launch smoke。Debug／ad-hoc 不等於 Developer ID release／公證或真人啟動驗收。
+- `manual-card-resume-localization-final-v1.log` 與 `manual-card-resume-localization-final-v2.log` exit 0：七語各 1,817 keys／0 missing；沒有 UI／catalog／Package／native target 變更，也不等於人工翻譯／VoiceOver 驗收。
+
+**仍未完成**：inbound／background-group peer host、其餘 saved-group／inbound failure follow-up、uncaptured locator 新核准開啟、unified private DM/group runtime，以及 live Slack／Discord／OAuth、真人／VoiceOver／最低 macOS／Developer ID release／公證。本批只取代 foreground manual question／credential native callback 與 channel resume 缺口；不是全面 cards／協作／外部驗收。AGENT-02／AGENT-04／UI-04／整體 partial、48 分類不變。未 push、啟動／重啟 App／Xcode、launch smoke 或改真實 credentials／群組資料。
+
 ## 手動成員附件的來源／送件分段核准驗收
 
 2026-10-06 接續 `44d8c3d`；本批只有測試／文件變更，沒有產品 source／Package／UI 文案變更。reference HEAD `a9f633e09d49a85829b8236331b9e21f7e612634` 已再核對並重讀 `agent-messaging.ts`；實際 `sendAgentMessage` 的 local／HTTPS 單附件在新／既有 canonical DM，現在有獨立入口驗收，不繼承 direct／group 的通過結論。

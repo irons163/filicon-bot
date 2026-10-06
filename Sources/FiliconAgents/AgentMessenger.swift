@@ -182,6 +182,78 @@ public actor AgentMessenger {
                                humanInputs: state.mailboxHumanInputs))
     }
 
+    /// Canonical anchor for a host-recorded human response. This is read-only
+    /// provenance, not authority to rerun the old delivery or grant any tool.
+    /// The original card and response must point back to each other exactly.
+    public func humanResponseSource(responseID: UUID, accountID: String, originID: UUID,
+                                    directOriginBinding: DirectConversationAgentBinding? = nil) throws -> AgentPeerTranscriptEntry? {
+        guard !accountID.isEmpty, accountID.utf8.count <= 256,
+              directOriginBinding == nil || directOriginBinding?.accountID == accountID else { return nil }
+        let ids = state.messages.flatMap { [$0.id] + ($0.delivery?.publications ?? []).map(\.id)
+            + [$0.delivery?.finalPublication?.id].compactMap { $0 } }
+        let counts = Dictionary(grouping: ids, by: { $0 }).mapValues(\.count)
+        var nextID = responseID, visited: Set<UUID> = []
+        var anchor: AgentPeerTranscriptEntry?
+        // A resumed turn may ask another question. Validate every saved link
+        // back to the original peer delivery without recursive stack growth,
+        // and reject cycles, ambiguous IDs or a broken prior human response.
+        while visited.insert(nextID).inserted {
+            guard let (original, publication, response) = validHumanResponse(nextID, accountID: accountID,
+                originID: originID, directOriginBinding: directOriginBinding, counts: counts) else { return nil }
+            if anchor == nil {
+                anchor = .init(source: try AgentMessageSource(accountID: accountID, originConversationID: originID,
+                    deliveryID: original.id, senderAgentID: response.senderID, recipientAgentID: response.recipientID,
+                    kind: .publication), message: addressedReceipt(publication))
+            }
+            if original.questionResponse == nil, original.secretResponse == nil { return anchor }
+            nextID = original.id
+        }
+        return nil
+    }
+
+    private func validHumanResponse(_ responseID: UUID, accountID: String, originID: UUID,
+        directOriginBinding: DirectConversationAgentBinding?, counts: [UUID: Int]) -> (AgentMessage, RoomMessage, AgentMessage)? {
+        guard let response = state.messages.first(where: { $0.id == responseID }),
+              response.senderID != response.recipientID, response.priority == .normal, (response.images ?? []).isEmpty,
+              response.delivery?.originConversationID == originID,
+              response.delivery?.directOriginBinding == directOriginBinding,
+              (response.questionResponse == nil) != (response.secretResponse == nil) else { return nil }
+        let incomingID = response.questionResponse?.incomingMessageID ?? response.secretResponse?.incomingMessageID
+        let publicationID = response.questionResponse?.publicationID ?? response.secretResponse?.publicationID
+        guard let incomingID, let publicationID,
+              [responseID, incomingID, publicationID].allSatisfy({ counts[$0] == 1 }),
+              let original = state.messages.first(where: { $0.id == incomingID }),
+              original.senderID == response.senderID, original.recipientID == response.recipientID,
+              original.delivery?.originConversationID == originID,
+              original.delivery?.directOriginBinding == directOriginBinding,
+              original.delivery?.state == .completed,
+              let publication = original.delivery?.publications?.first(where: { $0.id == publicationID }),
+              publication.groupID == originID, publication.senderID == response.recipientID,
+              publication.toolActivities.isEmpty, publication.memberOutcome == nil,
+              publication.questionReplyTo == nil, publication.cursorAgent == nil,
+              (publication.images ?? []).isEmpty, (publication.files ?? []).isEmpty,
+              publication.remoteAttachment == nil, publication.remoteImages == nil,
+              publication.imageGalleryLayout == nil, publication.externalPublication == nil else { return nil }
+        if let answer = response.questionResponse {
+            guard publication.secretRequest == nil, let question = publication.question,
+                  answer.accountID == accountID, question.accountID == accountID,
+                  question.memberIDs == [response.senderID, response.recipientID],
+                  question.responseMessageID == responseID, !question.retired,
+                  question.answer == answer.answer, question.question == answer.question,
+                  question.question.prompt == publication.text,
+                  (try? question.question.reply(for: answer.answer)) == response.text else { return nil }
+        } else if let acknowledgement = response.secretResponse {
+            guard publication.question == nil, let secret = publication.secretRequest,
+                  acknowledgement.accountID == accountID, secret.accountID == accountID,
+                  secret.memberIDs == [response.senderID, response.recipientID],
+                  secret.responseMessageID == responseID,
+                  secret.state == (acknowledgement.provided ? .stored : .dismissed),
+                  publication.text == "Requested a credential securely: \(secret.request.label)",
+                  response.text == acknowledgement.acknowledgement else { return nil }
+        }
+        return (original, publication, response)
+    }
+
     /// The mailbox is the canonical publication receipt. Its identity, author,
     /// image capability and atomic persistence are checked in the same actor turn.
     @discardableResult

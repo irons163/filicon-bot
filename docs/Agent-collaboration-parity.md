@@ -1,5 +1,13 @@
 # 協作能力核對紀錄（更新至 2026-10-06）
 
+## 手動成員問答／安全輸入卡片的原生恢復
+
+2026-10-06 接續 `706f508`；reference HEAD `a9f633e09d49a85829b8236331b9e21f7e612634`，`widget-responses.ts` 的 fresh human turn／actual agent／credential value 不進對話語義已核對。foreground manual nil-binding 卡片現在接到真正 own-DM callback，fresh question／secret response 以完整 saved card、unique durable owner、existing private context、account generation／目前 personas 明確重新取得 channel host，而非沿用原送件核准。刪除／隱藏／換 owner 停用卡片；問答重建後仍可經同樣驗證回答，pending secret 重建仍退休，不恢復 writer 或 grant。
+
+人類回答／credential acknowledgement 不新增 fake peer incoming／human chat row。實際成員 publications 留在同一 canonical chat，private inference ID 不變，不導入既有或其他 DM 的私人 history。連續四種 question／secret 組合逐鏈驗證卡片 back-links，拒絕 duplicate／foreign／broken／cycle；read-only namespace／context inspection 不建立 publisher 或寫檔。外部送件每次新核准，actual recipient 使用自己的 connection／canonical author／destination；Stop 回原 fresh chain，account 與 identity／binding review fences 不放寬。ABA 退休 external review 不等於整個 local mailbox turn 一律取消，合法 local report 與 Stop／account cancellation 分別驗證。
+
+新增 72 actual App、9 store、94 provenance cases，採完整 typed histories／addresses／queue／origin／authorization／reopen 與唯讀 bytes 比較。secret 值不進模型／歷史，fake connector 未送件；最後聚焦 core 11 methods／2 suites＋App 19 methods／4 suites 通過。完整 v1 因 Mac 鎖定讀不到受保護 fixture 資料而停止，沒有關閉保護或省略測試；解鎖後相同最後 source 的 v2 exit 0：2,150 Swift Testing／257 suites＋135 XCTest／0 failures，App 792 tests／102 suites，包括最後增加的完整 chain／cycle cases。arm64 Debug native／native verify、全新 standalone Debug 封裝與七語各 1,817 keys／0 missing 亦通過；兩項 opt-in live tests skipped、既有 SDK／CoreData／CG／compiler warnings 保留，Debug／ad-hoc 不是 release／公證。精確日誌見 [完成驗收入口](Parity-completion-audit.md)。本批只取代 foreground manual question／credential native callback 與 channel resume 缺口；inbound／background-group peer host、其餘 failure follow-up、uncaptured source 新核准開啟、unified DM/group runtime，以及 live／真人／VoiceOver／最低 macOS／release／公證仍未完成。AGENT-02／AGENT-04／UI-04／整體 partial、48 分類不變；未 push／launch／重啟 App 或 Xcode／改真實資料。
+
 ## 手動成員附件的來源／送件分段核准驗收
 
 2026-10-06 接續 `44d8c3d`；reference HEAD 仍為 `a9f633e09d49a85829b8236331b9e21f7e612634`，重讀 `agent-messaging.ts`，peer wake／附件不是新增的人類授權。本批沒有改產品 source、Package 或 UI；以真正 `sendAgentMessage` 補驗 `44d8c3d` 共用 publisher 的手動入口，不把其他入口通過當成手動入口證據。

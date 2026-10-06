@@ -1056,10 +1056,10 @@ public actor AgentMessagingSession {
             // Human question/secret answers have a separate receipt flow. Never
             // relabel them as messages authored by another agent.
             let isHumanResponse = inbound.questionResponse != nil || inbound.secretResponse != nil
-            // A direct question/secret answer is human input, but the resulting agent
-            // publication still belongs in that agent's own chat.
-            let peerProjection: PeerMessageHandler? = !isHumanResponse || directOriginBinding != nil
-                ? onPeerMessage : nil
+            // The host explicitly acquired this projection for its fresh turn.
+            // A human answer is never projected as peer-authored input; only
+            // the resulting agent publications go to the actual agent's chat.
+            let peerProjection = onPeerMessage
             let projectPublication: UpdateHandler = { [accountID, originConversationID] publication in
                 guard let peerProjection else { return }
                 let source = try AgentMessageSource(accountID: accountID, originConversationID: originConversationID,

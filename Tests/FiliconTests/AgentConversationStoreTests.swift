@@ -1,11 +1,81 @@
 import Foundation
 import Testing
 import CustomDump
-import FiliconAppServices
+@testable import FiliconAppServices
 import FiliconDomain
 
 @Suite("Durable agent conversation isolation")
 struct AgentConversationStoreTests {
+    @Test func savedCardInspectionNeverCreatesAContextOrPublisherClaim() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "agent-card-inspection-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appending(path: "contexts.json"), sender = UUID(), recipient = UUID(), visible = UUID()
+        let store = try AgentConversationStore(url: url)
+        let missingOrigins = await store.mailboxOriginIDs(accountID: "local")
+        let missingContext = await store.existingContext(accountID: "local", originID: visible, agentID: recipient)
+        expectNoDifference(missingOrigins, []); expectNoDifference(missingContext, nil)
+        #expect(!FileManager.default.fileExists(atPath: url.path))
+        let origin = try await store.mailboxScope(accountID: "local", senderID: sender, recipientID: recipient)
+        let foreign = try await store.mailboxScope(accountID: "foreign", senderID: sender, recipientID: recipient)
+        var expected = try await store.context(accountID: "local", originID: origin, agentID: recipient)
+        expected = try await store.bindProjection(accountID: "local", originID: origin, agentID: recipient,
+            expectedContextID: expected.conversationID, conversationID: visible)
+        let bytes = try Data(contentsOf: url)
+        let reopened = try AgentConversationStore(url: url)
+        for reader in [store, reopened] {
+            let origins = await reader.mailboxOriginIDs(accountID: "local")
+            let participants = await reader.mailboxParticipants(accountID: "local", originID: origin)
+            let context = await reader.existingContext(accountID: "local", originID: origin, agentID: recipient)
+            expectNoDifference(origins, [origin])
+            expectNoDifference(participants, [sender, recipient].sorted { $0.uuidString < $1.uuidString })
+            expectNoDifference(context, expected)
+            let foreignParticipants = await reader.mailboxParticipants(accountID: "local", originID: foreign)
+            let absentContext = await reader.existingContext(accountID: "foreign", originID: origin, agentID: recipient)
+            let senderContext = await reader.existingContext(accountID: "local", originID: origin, agentID: sender)
+            expectNoDifference(foreignParticipants, nil); expectNoDifference(absentContext, nil); expectNoDifference(senderContext, nil)
+        }
+        expectNoDifference(try Data(contentsOf: url), bytes)
+        try await store.retireProjection(conversationID: origin)
+        let retiredBytes = try Data(contentsOf: url)
+        let known = await store.mailboxOriginIDs(accountID: "local")
+        let retired = await store.mailboxParticipants(accountID: "local", originID: origin)
+        expectNoDifference(known, [origin]); expectNoDifference(retired, nil)
+        expectNoDifference(try Data(contentsOf: url), retiredBytes)
+    }
+
+    @Test(arguments: ["duplicate-origin", "foreign-duplicate", "foreign-account", "missing-participant", "duplicate-participant", "unsorted", "retired", "duplicate-context"])
+    func malformedSavedCardNamespacesAreInspectionOnly(mode: String) async throws {
+        struct Mailbox: Codable { let accountID: String; let participants: [UUID]; let conversationID: UUID }
+        struct Record: Codable { let accountID: String; let originID: UUID; let agentID: UUID; let context: AgentConversationStore.Context }
+        struct Envelope: Codable { var records: [Record]; var mailboxes: [Mailbox]; var retiredProjectionIDs: Set<UUID>? }
+        let root = FileManager.default.temporaryDirectory.appending(path: "agent-card-corrupt-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let url = root.appending(path: "contexts.json"), origin = UUID(), sender = UUID(), recipient = UUID()
+        var participants = [sender, recipient].sorted { $0.uuidString < $1.uuidString }
+        if mode == "missing-participant" { participants.removeLast() }
+        if mode == "duplicate-participant" { participants = [sender, sender] }
+        if mode == "unsorted" { participants.reverse() }
+        let mailbox = Mailbox(accountID: mode == "foreign-account" ? "foreign" : "local", participants: participants, conversationID: origin)
+        var envelope = Envelope(records: [], mailboxes: [mailbox], retiredProjectionIDs: mode == "retired" ? [origin] : nil)
+        if mode == "duplicate-origin" { envelope.mailboxes.append(mailbox) }
+        if mode == "foreign-duplicate" { envelope.mailboxes.append(.init(accountID: "foreign", participants: participants, conversationID: origin)) }
+        if mode == "duplicate-context" {
+            let context = AgentConversationStore.Context(conversationID: UUID(), messages: [])
+            let record = Record(accountID: "local", originID: origin, agentID: recipient, context: context)
+            envelope.records = [record, record]
+        }
+        try JSONEncoder().encode(envelope).write(to: url, options: .atomic)
+        let bytes = try Data(contentsOf: url), store = try AgentConversationStore(url: url)
+        let origins = await store.mailboxOriginIDs(accountID: "local")
+        let actualParticipants = await store.mailboxParticipants(accountID: "local", originID: origin)
+        let context = await store.existingContext(accountID: "local", originID: origin, agentID: recipient)
+        expectNoDifference(origins, mode == "foreign-account" ? [] : [origin])
+        expectNoDifference(actualParticipants, mode == "duplicate-context" ? participants : nil)
+        expectNoDifference(context, nil)
+        expectNoDifference(try Data(contentsOf: url), bytes)
+    }
+
     @Test func visibleCanonicalClaimNeverMergesPrivateContextsAndSurvivesReopen() async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "agent-canonical-claim-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }

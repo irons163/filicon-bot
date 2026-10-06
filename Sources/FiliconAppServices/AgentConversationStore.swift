@@ -56,6 +56,30 @@ public actor AgentConversationStore {
         return mailbox.conversationID
     }
 
+    /// Read-only origin evidence for a new human card response. This neither
+    /// creates a mailbox nor grants a publisher or restores a prior approval.
+    public func mailboxParticipants(accountID: String, originID: UUID) -> [UUID]? {
+        let matches = state.mailboxes.filter { $0.conversationID == originID }
+        guard matches.count == 1, let mailbox = matches.first, mailbox.accountID == accountID,
+              mailbox.participants.count == 2, Set(mailbox.participants).count == 2,
+              mailbox.participants == mailbox.participants.sorted(by: { $0.uuidString < $1.uuidString }),
+              !isProjectionRetired(conversationID: originID) else { return nil }
+        return mailbox.participants
+    }
+
+    /// Display classification only, including retired or invalid namespaces.
+    /// It cannot establish ownership, create a context or authorize a response.
+    public func mailboxOriginIDs(accountID: String) -> Set<UUID> {
+        Set(state.mailboxes.filter { $0.accountID == accountID }.map(\.conversationID))
+    }
+
+    /// Unlike context(), inspection must not invent a private thread or claim
+    /// a canonical chat when validating a saved card after reopening.
+    public func existingContext(accountID: String, originID: UUID, agentID: UUID) -> Context? {
+        let matches = state.records.filter { $0.accountID == accountID && $0.originID == originID && $0.agentID == agentID }
+        return matches.count == 1 ? matches.first?.context : nil
+    }
+
     public func context(accountID: String, originID: UUID, agentID: UUID) throws -> Context {
         if let record = state.records.first(where: { $0.accountID == accountID && $0.originID == originID && $0.agentID == agentID }) {
             return record.context
