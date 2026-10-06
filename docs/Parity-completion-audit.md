@@ -1,5 +1,24 @@
 # 完成驗收入口（2026-09-27）
 
+## 手動成員附件的來源／送件分段核准驗收
+
+2026-10-06 接續 `44d8c3d`；本批只有測試／文件變更，沒有產品 source／Package／UI 文案變更。reference HEAD `a9f633e09d49a85829b8236331b9e21f7e612634` 已再核對並重讀 `agent-messaging.ts`；實際 `sendAgentMessage` 的 local／HTTPS 單附件在新／既有 canonical DM，現在有獨立入口驗收，不繼承 direct／group 的通過結論。
+
+共 64 attachment cases（八個 route／source 組合 × approve、deny-source、deny-send、stop-source、stop-send、stop-target-source、stop-target-send、persona-ABA-source）。新增 40：manual local／HTTPS × 新／既有 DM × 八 modes 為 32，direct／group 各 source 另補八個成員聊天 Stop。human source／send 卡與讀檔 receipts 使用原 pair scope，實際送件用 peer 自己的 connection／canonical author／目的地。generic auto-review 不省略核准；拒絕／Stop／persona ABA 不排入 delivery，source 在核准前不讀／不下載，核准後替換 source bytes 不重讀。從真正成員聊天選取／按 Stop 亦取消原來源鏈。
+
+CustomDump 全值核對初始 incoming source／完整 canonical rows、所有 address／metadata、完整預期 queued delivery／origin／authorization、完整保存聊天與重開 queue。生成 UUID／revision／時間取本次真實隔離 host 結果，其餘目的地／作者／status／payload 明確建構；Date 按實際 SQL 秒及 ChannelService 毫秒 codec 比較，不丟欄位或只比文字。原其他聊天完整不變、無假 pair scope 聊天，private inference ID 保持 scoped，不含既有 DM／無關私人 history。captured CAS bytes／metadata 一致；fake connector 的 sent 為空，未做外部送件。
+
+測試日誌均在 `.build/validation/`，不入版控：
+
+- `manual-attachment-consent-focused-v1.log` exit 1：新增 fixture 在同步 `expectNoDifference` autoclosure 直接 await，編譯拒絕；未執行測試，不當產品 red。改為先 await 完整值再比較。
+- `manual-attachment-consent-focused-v2.log` exit 1：48 cases 中 1 個 queue reopen 的 Date 二進位精度 issue，其他完整值一致。新 fixture 原以 live Date 直接比 persisted 毫秒 Date；按 ChannelService 真實 codec 對預期完整值 roundtrip，不刪日期／斷言或修改產品。
+- `manual-attachment-consent-focused-v3.log` exit 0：1 method／1 suite／64 cases；含最後新增 target Stop。
+- `manual-attachment-consent-regression-final-v1.log` exit 0：相關 core／store／actual App 最後串行回歸共 24 methods／3 suites；actual App 12 methods／212 cases，31.024 秒。保留原 172 cases，擴充上述 40 個附件案例；包括手動／group／direct canonical ownership、fresh review／late callback、真實來源／送件／failure follow-up 的既有回歸。
+
+本批沒有宣稱新的全套、native／standalone、七語或真人 gate。產品 source 未變，沿用 `44d8c3d` 的 2,144 Swift Testing／256 suites＋135 XCTest／0 failures、native／native verify／全新 standalone Debug 簽章、七語各 1,817 keys／0 missing 證據；兩項 opt-in live tests 仍未執行、原有 SDK／CoreData／CG／compiler 診斷不宣稱修復，Debug／ad-hoc 不等於 Developer ID release／公證。
+
+**仍未完成**：manual question／credential resume 的可見卡片／恢復後 channel host 驗收，inbound／background-group peer host、其餘 failure follow-up、uncaptured locator 新核准開啟、unified private DM/group runtime，以及 live／真人／VoiceOver／最低 macOS／release／公證。本批只取代 manual 單附件 source／send consent 入口的未驗證缺口；AGENT-02／AGENT-04／UI-04／整體 partial、48 分類不變。未 push、啟動／重啟 App／Xcode、launch smoke 或改真實 credentials／群組。
+
 ## 手動成員訊息的獨立送件核准與既有成員聊天
 
 2026-10-06 接續 `6c12e11`；reference HEAD `a9f633e09d49a85829b8236331b9e21f7e612634`，再次讀取 `source/host/agents/agent-messaging.ts`：single-peer wake 由 actual recipient 處理，自己的聊天顯示結果，不借用選取畫面。前景 `sendAgentMessage` 以 captured account／generation／pair identities 明確 opt-in，manual scope 非假 direct owner／group。human-provided incoming 仍經 messenger 的既有驗證／保留；每次 channel send 問新的核准，原人類入口保留 review／reply directory，connection／formal destination／receipt 屬於 actual sender。

@@ -1,5 +1,15 @@
 # 協作能力核對紀錄（更新至 2026-10-06）
 
+## 手動成員附件的來源／送件分段核准驗收
+
+2026-10-06 接續 `44d8c3d`；reference HEAD 仍為 `a9f633e09d49a85829b8236331b9e21f7e612634`，重讀 `agent-messaging.ts`，peer wake／附件不是新增的人類授權。本批沒有改產品 source、Package 或 UI；以真正 `sendAgentMessage` 補驗 `44d8c3d` 共用 publisher 的手動入口，不把其他入口通過當成手動入口證據。
+
+附件 method 現有 64 cases：本機／HTTPS × direct／group／manual 新聊天／manual 既有聊天 × 八種核准／拒絕／原 scope Stop／成員聊天 Stop／persona ABA。新增 40 cases，其中 32 為 manual；原 direct／group 另補 8 個 target Stop。source 和 final send 分開問人類，generic auto-review allow 不代替；source 拒絕／撤銷不 dispatch，讀取後替換來源仍只保存原 captured bytes。核准留原 pair scope，正式 connection／destination／author／receipt 屬於 actual peer；已有 DM 不重建，私有 inference 不匯入該 DM 或無關聊天歷史。
+
+測試技能要求完整值比較：初始及最後 canonical chat／address／queue／origin／authorization／重開 stores 都保留全部欄位，CAS bytes 與來源 metadata 另核對。queue 的生成 UUID／revision／時間來自本次 host 結果；其餘目的地／作者／狀態／payload 明確建構預期值。重開時按真實 ChannelService 毫秒與 SQL 秒 codec 比較日期，沒有刪日期或放寬為只比文字。最後聚焦 `manual-attachment-consent-focused-v3.log` exit 0，1 method／64 cases；較早新增測試的非同步 autoclosure 編譯失敗與 codec 精度 issue 不是產品 red。最後相關串行回歸 `manual-attachment-consent-regression-final-v1.log` exit 0，24 methods／3 suites，App 12 methods／212 cases，見 [完成驗收入口](Parity-completion-audit.md)。本批不宣稱新的全套／native／standalone gate；產品 source 未變，保留 `44d8c3d` 已通過的全套與兩種 Debug 封裝證據。
+
+只取代歷史 manual 單附件 source／send consent 入口未驗證的缺口。question／credential resume、inbound／background-group peer host、其餘 failure follow-up、uncaptured locator 新核准開啟與 unified private DM/group runtime，以及 live／真人／VoiceOver／最低 macOS／Developer ID release／公證仍未完成；AGENT-02／AGENT-04／UI-04／整體 partial、48 分類不變。未 push、launch smoke、重啟 App／Xcode、操作真實帳號或群組資料。
+
 ## 手動成員訊息的獨立送件核准與既有成員聊天
 
 2026-10-06 接續 `6c12e11`；reference HEAD 再核對為 `a9f633e09d49a85829b8236331b9e21f7e612634`。實際前景 `sendAgentMessage` 現在捕捉 account／generation／發起與收件成員 identity，明確安裝 manual host factory；不是讓所有 mailbox／inbound runner 繼承 grant。人工指定的原始訊息仍由原 messenger 建立，模型收到的是 peer assistant context，不是新的工具權限。每次 external send 另問人類；核准留原 pair mailbox scope，實際 connection／destination／author 屬於送件成員自己。
