@@ -36,6 +36,7 @@ public actor AgentUserMessageTool: ToolExecutor, ToolRuntimeContextProviding {
     private var remotePublication: AgentRemotePublicationTransaction?
     private var galleryPublication: AgentGalleryPublicationTransaction?
     private var channelPublication: AgentChannelPublicationTransaction?
+    private var savedExternalPublications: [RoomMessage] = []
     private var channelCalls: [Key: (AgentChannelMessage, UUID?, NormalizedToolResult)] = [:]
     private var channelAttemptKeys: Set<Key> = []
     private struct GalleryInput: Equatable { let text: String; let images: [AgentMessageImageInput]; let replyTo: UUID? }
@@ -459,6 +460,11 @@ public actor AgentUserMessageTool: ToolExecutor, ToolRuntimeContextProviding {
     }
 
     public var publishedTexts: [String] { texts }
+    /// Only actual canonical saves, not a queue acknowledgment or a private
+    /// draft. A host may use these as the turn's explicit output; foreign
+    /// receipt aliases still never enter this tool's reply directory.
+    public func savedExternalMessages() -> [RoomMessage] { savedExternalPublications }
+
     public func close() async { closed = true; channelPublication?.close(); await filePublication?.close(); await remotePublication?.close(); await galleryPublication?.close() }
 
     public func execute(_ call: NormalizedToolCall, context: ToolContext) async throws -> NormalizedToolResult {
@@ -500,6 +506,9 @@ public actor AgentUserMessageTool: ToolExecutor, ToolRuntimeContextProviding {
                 defer { reserved = false }
                 channelAttemptKeys.insert(key)
                 let receipt = try await channelPublication.publish(message, replyTo: reply, call: call, context: context)
+                if let saved = receipt.savedMessage, !savedExternalPublications.contains(where: { $0.id == saved.id }) {
+                    savedExternalPublications.append(saved)
+                }
                 struct Proof: Encodable { let deliveryID: UUID; let address: FiliconChannels.ChannelAddress; let originallyQueuedAt: Date }
                 let proof = Proof(deliveryID: receipt.delivery.id, address: receipt.delivery.address, originallyQueuedAt: receipt.delivery.createdAt)
                 let proofText = (try? JSONEncoder().encode(proof)).map { String(decoding: $0, as: UTF8.self) }

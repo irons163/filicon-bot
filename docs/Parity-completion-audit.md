@@ -1,5 +1,25 @@
 # 完成驗收入口（2026-09-27）
 
+## 真正單獨聊天委派的收件人成員外部送件
+
+2026-10-06 接續 `af754a9`；reference HEAD 仍為 `a9f633e09d49a85829b8236331b9e21f7e612634`。本批將明確的 mailbox channel factory 接入 App 的 bound direct `SendToAgent` → 真正收件人成員回合，亦涵蓋該成員以已接受的 `SendToAgent` 回覆原發起成員。不是讓 `drain` 借用來源前景或 saved-group publisher；沒有 host factory、durable recipient context、正確 account／chain／owner／destination／author／reply directory 的回合，不取得送件能力。group-origin／manual mailbox 和 inbound shared runner 仍未安裝此 grant。
+
+原人類入口保留 `ToolContext`、每次核准卡、source consent 與 mailbox reply directory；真正收件人成員使用自己的唯一 connection，host 將正式 entry 固定至該成員自己的 canonical direct chat。回到原 bound owner 時正式目的地才是原聊天。原始訊息只在 scheduler 實際 admission 後投影成 recipient incoming row；publisher acquisition 不先建立聊天，也不拷貝原 owner／無關聊天的私人 history。其他聊天的 external receipt aliases 不匯入原目錄，跨 destination 的 local quote 仍先拒絕。
+
+`SendToAgent`、本機讀檔／HTTPS source、final channel send 的核准分開；generic auto-review allow 不能代替新的外部送件核准。完整 ordered intent 與 captured bytes／digest／filename／MIME／caption 保留，不於送件前重讀改寫後的 source。只有實際 canonical save 產生明確的 saved external output；它是含原 delivery ID 的 queued-not-delivered 事實，不是假 local mailbox publication，不投影到來源群組或其他 direct chat，也不把 private provider draft 當完成報告。provider 在實際 save 後失敗仍保留已保存事實；只有 queue 成功但 canonical save 缺失／拋錯／偽造，不宣稱正式 entry 已保存。
+
+來源與收件 chat 的 semantic binding／route、原 account／generation、鏈上相關 personas 及已捕捉的唯一 durable binding leases 一直保留至 queue／SQL commit。來源或目標 Stop、archive／delete、換帳號、persona／binding／route 修改後還原均不能恢復舊 grant；純導航、presence／unread／updatedAt 不改 persona。失效的 channel review 退休 exact broker waiter；本機 read 的 final runtime dispatch 另驗同步 captured scope，舊讀取核准不能呼叫 helper。未宣稱 persona 變更會主動退休所有 local read waiters，也不宣稱跨 process exactly-once、queue／chat／CAS 原子性或召回已 admitted 的 I/O。
+
+新增 core 4 methods（23 parameter cases＋1 standalone failure case）及 actual App 3 methods／48 parameter cases。使用隔離真實 stores、原生核准入口、bookmark／receipt-aware in-process helper、假 provider／HTTPS downloader／connector，以及完整 CustomDump 狀態比較；不碰真實 credentials 或外部傳輸。覆蓋 owner→peer→owner、錯誤或缺少 acquisition、source 與 send 同意、reopen、provider failure after saved receipt、17 種 App lifecycle／connection／navigation 情境和 12 種 local／HTTPS consent 情境。queue 日期預期以該 store 的毫秒 codec 完整 round-trip 比較，不省略 payload 欄位，也不宣稱浮點日期無精度損失。
+
+較早 App 聚焦失敗含 fixture API／存取控制／wire-field 編譯錯誤，首次模型目錄未載入，以及 queue 日期 codec 比對不一致；均修正 fixture／完整預期，沒有降低產品 catalog、MIME、工具協定或權限 guard。`v9` 僅首個 case 的 catalog readiness race 共 2 issues，provider requests 與 mailbox messages 皆未開始；fixture 現等待實際可用 catalog。最後 `mailbox-channel-app-focused-v10.log` exit 0：core 39 tests／3 suites＋App 29 tests／5 suites，合計 68 tests／8 suites，包含前景 direct／delegated group／原 group mailbox 回歸。
+
+舊 `mailbox-channel-core-full-final-v1.log` 不是通過證據：135 XCTest 通過，但 App 與 Agents targets 有失敗，包含隔離的 `agents.json`／`workflows.json`／`runs.json` 出現 Cocoa 257／POSIX 1。保留原檔案保護設定，不繞過 macOS 保護。解鎖後，最後接線 source 的完整串行 `mailbox-channel-app-full-final-v2.log` exit 0：17 個 Swift Testing target summaries 合計 2,124 tests／255 suites，另 17 個 XCTest bundles 合計 135 tests／0 failures；App target 為 775 tests／102 suites。兩項 opt-in installed Codex live tests skipped，不算外部驗收；既有 CoreData NSXPCConnection 診斷仍存在，相關 tests 通過，不宣稱修復。
+
+`mailbox-channel-app-native-final-v2.log` 的 `Filicon App`／arm64 Debug BUILD SUCCEEDED；`mailbox-channel-app-native-verify-final-v2.log` 與全新 standalone `MailboxChannelPackage/Filicon.app`／`mailbox-channel-app-package-final-v2.log` 均 exit 0，四個 executables、app／XPC entitlements 與 deep strict codesign 通過。`mailbox-channel-app-localization-final-v2.log` 七語各 1,815 keys／0 missing。standalone 等同一 `.build` 的完整測試結束後正常完成，沒有新增 UI layout／翻譯，不把文字鍵完整度當全翻譯語意或真人驗收。此為隔離 Debug／ad-hoc gate，不是 Developer ID release／公證；未執行列印的 launch smoke。`git diff --check` 通過，日誌／隔離產物留於忽略的 `.build/validation/`。
+
+**仍未完成**：group-origin／manual mailbox 與 inbound shared runner 的 channel publication／canonical host 接線、其餘路徑的 delivery-failure model follow-up、安全 CAS preview／open，以及 live Slack／Discord／OAuth、真人／VoiceOver／最低 macOS、Developer ID release／公證。direct-peer mailbox 的 failure follow-up 尚待實際路徑驗證，不因共用 direct runner 就宣稱完成。AGENT-02／整體 partial、48 分類（42 個歷史 complete／5 partial／1 NA）不變。本節只取代下方歷史的 bound-direct peer mailbox publication 缺口；未 push、啟動或重啟使用者 App／Xcode，未改真實資料。
+
 ## 已核准委派到其他群組的外部送件
 
 2026-10-06 接續 `fd2ee0f`，reference HEAD 仍為 `a9f633e09d49a85829b8236331b9e21f7e612634`。`agent-to-agent-messaging.ts` 對 group target 使用 `postToGroup`，不是把背景 draft 貼回來源房間；本批在 App 的實際 `runGroupDelegation` → `GroupConversationResponder` → `savedBackgroundGroupPublisher` 安裝 host-bound channel factory。原 mailbox `drain`、inbound runner 不因共享 session 取得此能力。

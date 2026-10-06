@@ -100,6 +100,10 @@ public actor AgentMessagingSession {
     private let mailboxFiles: (@Sendable (AgentMessage) -> AgentMailboxFileServices?)?
     private let mailboxRemote: (@Sendable (AgentMessage) -> AgentMailboxRemoteServices?)?
     private let mailboxGallery: (@Sendable (AgentMessage) -> AgentMailboxGalleryServices?)?
+    /// Explicit host acquisition for this inbound delivery, never the saved
+    /// group's foreground factory or SendToAgent's already-consumed approval.
+    public typealias MailboxChannelPublisherFactory = @Sendable (AgentMessage, AgentProfile, ChannelPublicationLifetime) async throws -> AgentChannelPublicationTransaction?
+    private let mailboxChannelPublisherFactory: MailboxChannelPublisherFactory?
     private let publicationLifetime = AgentPublicationLifetime()
     private let onChange: @Sendable () async -> Void
     private let turnTimeout: Duration
@@ -163,6 +167,7 @@ public actor AgentMessagingSession {
                 mailboxFiles: (@Sendable (AgentMessage) -> AgentMailboxFileServices?)? = nil,
                 mailboxRemote: (@Sendable (AgentMessage) -> AgentMailboxRemoteServices?)? = nil,
                 mailboxGallery: (@Sendable (AgentMessage) -> AgentMailboxGalleryServices?)? = nil,
+                mailboxChannelPublisherFactory: MailboxChannelPublisherFactory? = nil,
                 authorize: @escaping Authorizer = { _, _, _, _, _ in throw AgentMessagingError.approvalRequired },
                 onChange: @escaping @Sendable () async -> Void = {}) {
         self.id = id; self.originConversationID = originConversationID
@@ -192,6 +197,7 @@ public actor AgentMessagingSession {
         self.mailboxFiles = mailboxFiles
         self.mailboxRemote = mailboxRemote
         self.mailboxGallery = mailboxGallery
+        self.mailboxChannelPublisherFactory = mailboxChannelPublisherFactory
     }
 
     public nonisolated func tool(for senderID: UUID, groupUserMessageID: UUID? = nil) -> any ToolExecutor {
@@ -989,6 +995,30 @@ public actor AgentMessagingSession {
         .init(callID: callID, content: [.text("Posted group message \(messageID). Member work is queued, NOT completed; replies appear in that shared room. Stop may cancel queued work without deleting the post. Do not poll or resend.")])
     }
 
+    private func makeMailboxChannelPublication(inbound: AgentMessage, sender: AgentProfile) async throws -> AgentChannelPublicationTransaction? {
+        guard supportsMailboxQuestions, let factory = mailboxChannelPublisherFactory, let conversations else { return nil }
+        try checkOpen()
+        guard sender.id == inbound.recipientID, inbound.delivery?.chainID == id,
+              inbound.delivery?.originConversationID == originConversationID,
+              inbound.delivery?.directOriginBinding == directOriginBinding else { throw AgentMessagingError.scopeMismatch }
+        let ownContext = try await conversations.context(accountID: accountID, originID: originConversationID, agentID: sender.id)
+        let destination = directOriginBinding?.agentID == sender.id ? originConversationID : ownContext.conversationID
+        try checkOpen()
+        let child = ChannelPublicationLifetime(parent: channelPublicationLifetime)
+        var handedOff = false
+        defer { if !handedOff { child.close() } }
+        guard let transaction = try await factory(inbound, sender, child) else { return nil }
+        do {
+            try checkOpen()
+            guard transaction.accountID == accountID, transaction.conversationID == originConversationID, transaction.senderID == sender.id,
+                  transaction.agentID == sender.id, transaction.transcriptRoute == .directConversation,
+                  transaction.destinationConversationID == destination, transaction.destinationSenderID == destination,
+                  transaction.replyDirectoryConversationID == originConversationID else { throw AgentMessagingError.scopeMismatch }
+        } catch { transaction.close(); throw error }
+        handedOff = true
+        return transaction
+    }
+
     public func drain(onAgentChange: @escaping @Sendable (UUID?) async -> Void = { _ in },
                       onUpdate: @escaping UpdateHandler = { _ in },
                       onPeerMessage: PeerMessageHandler? = nil) async throws {
@@ -1084,24 +1114,27 @@ public actor AgentMessagingSession {
             let filePublication = makeMailboxFilePublication(inbound: inbound, sender: agent, output: output)
             let remotePublication = makeMailboxRemotePublication(inbound: inbound, sender: agent, output: output)
             let galleryPublication = makeMailboxGalleryPublication(inbound: inbound, sender: agent, output: output)
-            let publisher = AgentUserMessageTool(conversationID: originConversationID,
-                availableImages: inbound.images ?? [], imageStore: imageStore,
-                authorizeImages: { [self] text, images, call, context in
-                    try await checkOpen()
-                    try await authorizePublication(agent, text, images, call, context)
-                    try await checkOpen()
-                }, publishQuestion: questionPublisher, publishSecret: secretPublisher, publishCursorAgent: cloudPublisher,
-                filePublication: filePublication, remotePublication: remotePublication,
-                galleryPublication: galleryPublication, publishQuestionReply: questionReplyPublisher,
-                replyHistory: replyHistory, receiptSenderID: supportsMailboxQuestions ? agent.id : nil,
-                supportsReferenceNavigation: true, mailboxPresentation: true,
-                publishReceipt: receiptPublisher) { [messenger, onChange, publicationLifetime] text, images in
-                try await output.publish(text, images: images) { publication in
-                    try await messenger.publish(publication, replyingTo: inbound.id, lifetime: publicationLifetime)
-                }
-                await onChange()
-            }
+            var activePublisher: AgentUserMessageTool?
             do {
+                let channelPublication = try await makeMailboxChannelPublication(inbound: inbound, sender: agent)
+                let publisher = AgentUserMessageTool(conversationID: originConversationID,
+                    availableImages: inbound.images ?? [], imageStore: imageStore,
+                    authorizeImages: { [self] text, images, call, context in
+                        try await checkOpen()
+                        try await authorizePublication(agent, text, images, call, context)
+                        try await checkOpen()
+                    }, publishQuestion: questionPublisher, publishSecret: secretPublisher, publishCursorAgent: cloudPublisher,
+                    filePublication: filePublication, remotePublication: remotePublication,
+                    galleryPublication: galleryPublication, channelPublication: channelPublication, publishQuestionReply: questionReplyPublisher,
+                    replyHistory: replyHistory, receiptSenderID: supportsMailboxQuestions ? agent.id : nil,
+                    supportsReferenceNavigation: true, mailboxPresentation: true,
+                    publishReceipt: receiptPublisher) { [messenger, onChange, publicationLifetime] text, images in
+                    try await output.publish(text, images: images) { publication in
+                        try await messenger.publish(publication, replyingTo: inbound.id, lifetime: publicationLifetime)
+                    }
+                    await onChange()
+                }
+                activePublisher = publisher
                 try checkOpen()
                 let stored = try await conversations?.context(accountID: accountID, originID: originConversationID, agentID: agent.id)
                 try checkOpen()
@@ -1180,6 +1213,7 @@ public actor AgentMessagingSession {
                     try checkOpen()
                 }
                 try checkOpen()
+                try await output.recordExternalPublications(publisher.savedExternalMessages())
                 await publisher.close()
                 let text = await output.report
                 if let conversations {
@@ -1199,7 +1233,10 @@ public actor AgentMessagingSession {
                     try await projectPublication(report)
                 }
             } catch {
-                await publisher.close()
+                if let activePublisher {
+                    try? await output.recordExternalPublications(activePublisher.savedExternalMessages())
+                    await activePublisher.close()
+                }
                 let cancelled = closed || Task.isCancelled || error is CancellationError || error is AgentExecutionSuperseded
                 let publishedReport = await output.publishedReport
                 // A secondary room projection must not prevent the canonical
@@ -1298,6 +1335,7 @@ private actor AgentInboundOutput {
     private let onPublication: AgentMessagingSession.UpdateHandler
     private var afterTool = false
     private var publishedTexts: [String] = []
+    private var externalPublicationIDs: Set<UUID> = []
     private var projectionFailure: (any Error)?
     private var explicitPublicationRequired = false
     var publishedReport: String { publishedTexts.joined(separator: "\n\n") }
@@ -1335,6 +1373,19 @@ private actor AgentInboundOutput {
         projection.shortAddress = nil
         do { try await onUpdate(projection) } catch { projectionFailure = error }
         do { try await onPublication(projection) } catch { projectionFailure = error }
+    }
+    /// Canonical external records belong to the recipient's own chat. Keep a
+    /// factual explicit turn result without projecting the row, quote aliases,
+    /// attachments or private draft into the originating room/mailbox.
+    func recordExternalPublications(_ publications: [RoomMessage]) throws {
+        for saved in publications {
+            guard let value = saved.externalPublication, value.route == .directConversation,
+                  value.owner.agentID == message.senderID, saved.matchesExternalPublication(value) else {
+                throw AgentMessagingError.scopeMismatch
+            }
+            guard externalPublicationIDs.insert(saved.id).inserted else { continue }
+            publishedTexts.append("External channel publication \(value.deliveryID.uuidString) saved in recipient chat \(value.conversationID.uuidString); queue status: \(value.delivery.status.rawValue). This is NOT a local mailbox message or proof of remote delivery.\n\(value.text)")
+        }
     }
     func consume(_ event: InferenceEvent) async throws {
         try Task.checkCancellation()

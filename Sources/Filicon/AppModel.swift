@@ -869,6 +869,58 @@ final class AppModel: ObservableObject {
         let lifetime: ChannelPublicationLifetime
     }
     private var delegatedChannelScopes: [UUID: DelegatedChannelScope] = [:]
+    /// A mailbox wake owns its recipient's canonical chat, but retains the
+    /// original human review scope. Captured binding leases supplement (not
+    /// replace) the account/turn fences and are held through queue/SQL saves.
+    private final class MailboxChannelBindings: @unchecked Sendable {
+        private let lock = NSLock()
+        private var active = true
+        private var leases: [ConversationBindingLease]?
+        var installed: Bool { lock.withLock { leases != nil } }
+        func install(_ values: [ConversationBindingLease]) throws {
+            try lock.withLock {
+                guard active else { for lease in values { lease.close() }; throw CancellationError() }
+                if leases != nil { for lease in values { lease.close() } }
+                else { leases = values }
+            }
+        }
+        func withValid<Value>(_ operation: () throws -> Value) throws -> Value {
+            try lock.withLock {
+                guard active, let leases, !leases.isEmpty else { throw CancellationError() }
+                func checked(_ index: Int) throws -> Value {
+                    if index == leases.count { return try operation() }
+                    return try leases[index].withValidBinding { try checked(index + 1) }
+                }
+                return try checked(0)
+            }
+        }
+        func close() { lock.withLock { active = false; for lease in leases ?? [] { lease.close() } } }
+    }
+    private final class MailboxChannelScope {
+        let origin: DelegatedChannelScope.OriginConversation
+        let incoming: AgentMessage
+        let destinationID: UUID
+        var destination: DelegatedChannelScope.OriginConversation?
+        let account: String
+        let generation: UInt64
+        let identities: [UUID: DirectAgentExecutionIdentity]
+        let executionScope: AgentWorkflowExecutionScope
+        let executionLease: AgentWorkflowExecutionScope.Lease
+        let bindings: MailboxChannelBindings
+        let lifetime: ChannelPublicationLifetime
+        init(origin: Conversation, incoming: AgentMessage, destinationID: UUID, destination: Conversation?,
+             account: String, generation: UInt64, identities: [UUID: DirectAgentExecutionIdentity],
+             executionScope: AgentWorkflowExecutionScope, executionLease: AgentWorkflowExecutionScope.Lease,
+             bindings: MailboxChannelBindings, lifetime: ChannelPublicationLifetime) {
+            self.origin = .init(origin); self.incoming = incoming; self.destinationID = destinationID
+            self.destination = destination.map(DelegatedChannelScope.OriginConversation.init)
+            self.account = account; self.generation = generation; self.identities = identities
+            self.executionScope = executionScope; self.executionLease = executionLease
+            self.bindings = bindings; self.lifetime = lifetime
+        }
+        func close() { executionScope.invalidate(); lifetime.close(); bindings.close() }
+    }
+    private var mailboxChannelScopes: [UUID: MailboxChannelScope] = [:]
     private struct ChannelReviewScope {
         let lifetime: ChannelPublicationLifetime
         let validate: @Sendable () async throws -> Void
@@ -2897,6 +2949,8 @@ final class AppModel: ObservableObject {
                         mailboxFiles: makeMailboxFileFactory(originID: id, generation: publicationGeneration),
                         mailboxRemote: makeMailboxRemoteFactory(originID: id, generation: publicationGeneration),
                         mailboxGallery: makeMailboxGalleryFactory(originID: id, generation: publicationGeneration),
+                        mailboxChannelPublisherFactory: makeMailboxChannelPublisherFactory(originID: id,
+                            generation: publicationGeneration, binding: agentBinding),
                         authorize: { [weak self] sender, recipient, text, call, context in
                             guard let self else { throw CancellationError() }
                             try await self.validateDirectDelegation(conversationID: id, binding: agentBinding,
@@ -4588,6 +4642,7 @@ final class AppModel: ObservableObject {
     func archiveAgent(id: UUID) async {
         guard let agentService else { return }
         closeDelegatedChannelScopes { $0.identities[id] != nil }
+        closeMailboxChannelScopes { $0.identities[id] != nil }
         for value in preparingChannelFailures.values where value.notice.publication.owner.agentID == id {
             value.scope.invalidate()
         }
@@ -5161,6 +5216,7 @@ final class AppModel: ObservableObject {
 
     func stopAgentMessages(scopeID: UUID) async {
         closeDelegatedChannelScopes { $0.originID == scopeID }
+        closeMailboxChannelScopes { $0.origin.id == scopeID }
         invalidateMailboxSecrets(scopeID: scopeID)
         guard runningAgentMessageScopes.contains(scopeID) else { return }
         agentMessagingSessions[scopeID]?.revokeProfileChanges()
@@ -5173,6 +5229,7 @@ final class AppModel: ObservableObject {
     }
 
     private func cancelAgentMessageTools(scopeID: UUID) async {
+        closeMailboxChannelScopes { $0.origin.id == scopeID }
         workspaceFolders.cancel(conversationID: scopeID)
         await cancelAutoReviewApprovals(conversationID: scopeID, lifecycle: .cancelled)
         await localToolApprovalBroker.cancel(conversationID: scopeID)
@@ -5386,6 +5443,8 @@ final class AppModel: ObservableObject {
                 mailboxFiles: makeMailboxFileFactory(originID: originID, generation: generation),
                 mailboxRemote: makeMailboxRemoteFactory(originID: originID, generation: generation),
                 mailboxGallery: makeMailboxGalleryFactory(originID: originID, generation: generation),
+                mailboxChannelPublisherFactory: makeMailboxChannelPublisherFactory(originID: originID,
+                    generation: generation, binding: directBinding),
                 authorize: { [weak self] sender, recipient, text, call, context in
                     guard let self else { throw CancellationError() }
                     try await MainActor.run {
@@ -5478,10 +5537,16 @@ final class AppModel: ObservableObject {
     /// save. Rebind/edit-and-restore cannot revive a captured review (ABA).
     private func invalidateDelegatedChannelScopes() {
         closeDelegatedChannelScopes { !delegatedChannelScopeIsCurrent($0) }
+        closeMailboxChannelScopes { !mailboxChannelScopeIsCurrent($0) }
     }
 
     private func invalidateDelegatedChannelProfile(_ profile: AgentProfile) {
         closeDelegatedChannelScopes { scope in
+            guard let captured = scope.identities[profile.id] else { return false }
+            let owner = DirectConversationAgentBinding(accountID: scope.account, agentID: profile.id)
+            return Self.channelSenderIdentity(profile, owner: owner) != captured
+        }
+        closeMailboxChannelScopes { scope in
             guard let captured = scope.identities[profile.id] else { return false }
             let owner = DirectConversationAgentBinding(accountID: scope.account, agentID: profile.id)
             return Self.channelSenderIdentity(profile, owner: owner) != captured
@@ -5492,6 +5557,10 @@ final class AppModel: ObservableObject {
         let lifetimes = delegatedChannelScopes.values.filter(matches).map(\.lifetime)
         guard !lifetimes.isEmpty else { return }
         for lifetime in lifetimes { lifetime.close() }
+        retireChannelReviews(lifetimes: lifetimes)
+    }
+
+    private func retireChannelReviews(lifetimes: [ChannelPublicationLifetime]) {
         // Retire the exact waiters too. Do not persist a stale origin or wait
         // for another human click/expiry to stop an invalid background review.
         for (id, review) in Array(channelReviewScopes) where lifetimes.contains(where: { $0 === review.lifetime }) {
@@ -5516,6 +5585,157 @@ final class AppModel: ObservableObject {
                 return try await self.makeDelegatedGroupChannelPublication(dispatch, sender: sender,
                     originID: originID, account: account, generation: generation, lifetime: lifetime, publish: publish)
             })
+    }
+
+    /// Explicit direct-peer acquisition. Group/manual mailbox and inbound
+    /// runners need their own host-bound destination; they inherit no grant.
+    private func makeMailboxChannelPublisherFactory(originID: UUID, generation: UInt64,
+        binding: DirectConversationAgentBinding?) -> AgentMessagingSession.MailboxChannelPublisherFactory? {
+        guard channelService != nil, let binding else { return nil }
+        return { [weak self] incoming, sender, parent in
+            guard let self else { throw CancellationError() }
+            return try await self.makeMailboxChannelPublication(incoming, sender: sender, originID: originID,
+                generation: generation, binding: binding, parent: parent)
+        }
+    }
+
+    private func makeMailboxChannelPublication(_ incoming: AgentMessage, sender: AgentProfile, originID: UUID,
+        generation: UInt64, binding: DirectConversationAgentBinding,
+        parent: ChannelPublicationLifetime) async throws -> AgentChannelPublicationTransaction? {
+        try parent.check()
+        try checkChannelAccount(binding.accountID, generation: generation)
+        guard sender.id == incoming.recipientID, isAgentMessagingScopeActive(originID),
+              incoming.delivery?.originConversationID == originID,
+              incoming.delivery?.chainID == agentMessagingSessions[originID]?.id,
+              incoming.delivery?.directOriginBinding == binding,
+              directMessagingBindings[originID] == binding,
+              let origin = conversations.first(where: { $0.id == originID && $0.agentBinding == binding }),
+              origin.hiddenAt == nil, let contexts = agentConversations else { throw AgentMessagingError.scopeMismatch }
+        let ownContext = try await contexts.context(accountID: binding.accountID, originID: originID, agentID: sender.id)
+        let destinationID = binding.agentID == sender.id ? originID : ownContext.conversationID
+        let ids = Set([binding.agentID, incoming.senderID, sender.id])
+        var identities: [UUID: DirectAgentExecutionIdentity] = [:]
+        for id in ids {
+            guard let identity = Self.channelSenderIdentity(agents.first { $0.id == id },
+                owner: .init(accountID: binding.accountID, agentID: id)) else { throw CancellationError() }
+            identities[id] = identity
+        }
+        let executionScope = AgentWorkflowExecutionScope()
+        let executionLease = try executionScope.capture(inheriting: workflowExecutionScope.capture())
+        let bindings = MailboxChannelBindings()
+        let lifetime = ChannelPublicationLifetime(parent: parent, commitGuard: { operation in
+            try executionLease.commit { try bindings.withValid(operation) }
+        })
+        let scope = MailboxChannelScope(origin: origin, incoming: incoming, destinationID: destinationID,
+            destination: conversations.first { $0.id == destinationID }, account: binding.accountID,
+            generation: generation, identities: identities, executionScope: executionScope,
+            executionLease: executionLease, bindings: bindings, lifetime: lifetime)
+        guard mailboxChannelScopeIsCurrent(scope) else { scope.close(); throw CancellationError() }
+        guard mailboxChannelScopes[incoming.id] == nil else { scope.close(); throw AgentMessagingError.scopeMismatch }
+        mailboxChannelScopes[incoming.id] = scope
+        let validate: @Sendable () async throws -> Void = { [weak self] in
+            guard let self else { throw CancellationError() }
+            try await self.validateMailboxChannelScope(incoming.id)
+        }
+        return makeAgentChannelPublication(conversationID: originID, senderID: sender.id, agentID: sender.id,
+            senderName: sender.name, route: .directConversation, account: binding.accountID,
+            generation: generation, lifetime: lifetime,
+            transcriptDestination: .init(conversationID: destinationID, senderID: destinationID),
+            replyDirectoryConversationID: originID, validateScope: validate,
+            publishTranscript: { [weak self] publication in
+                try await validate()
+                guard let self, publication.conversationID == destinationID,
+                      publication.owner == DirectConversationAgentBinding(accountID: binding.accountID, agentID: sender.id),
+                      publication.senderID == destinationID else { throw AgentMessagingError.scopeMismatch }
+                return try await self.materializeDirectChannelTranscript(publication, generation: generation,
+                    executionLease: executionLease, bindingGuard: { operation in try bindings.withValid(operation) })
+            }, prepareLocal: { [weak self] url, call, context in
+                guard let self else { throw CancellationError() }
+                return try await self.prepareMailboxFile(incoming, sender: sender, url: url, call: call,
+                    context: context, originID: originID, generation: generation, validatePublication: validate,
+                    validateReadDispatch: {
+                        try executionLease.commit { try bindings.withValid { try lifetime.check() } }
+                    })
+            })
+    }
+
+    private func mailboxChannelScopeIsCurrent(_ scope: MailboxChannelScope) -> Bool {
+        guard scope.account == (settings.accountScope ?? "local"), !agentMessagingAccountTransition,
+              scope.generation == autoReviewAccountGeneration,
+              !deletedConversationIDs.contains(scope.origin.id), !deletedConversationIDs.contains(scope.destinationID),
+              conversations.first(where: { $0.id == scope.origin.id }).map(DelegatedChannelScope.OriginConversation.init) == scope.origin,
+              scope.origin.hiddenAt == nil else { return false }
+        let destination = conversations.first { $0.id == scope.destinationID }
+        if let captured = scope.destination {
+            guard destination.map(DelegatedChannelScope.OriginConversation.init) == captured else { return false }
+        }
+        if let destination {
+            guard destination.agentBinding == .init(accountID: scope.account, agentID: scope.incoming.recipientID),
+                  destination.hiddenAt == nil else { return false }
+        }
+        for (id, identity) in scope.identities {
+            guard Self.channelSenderIdentity(agents.first { $0.id == id },
+                owner: .init(accountID: scope.account, agentID: id)) == identity else { return false }
+        }
+        return true
+    }
+
+    private func closeMailboxChannelScopes(where matches: (MailboxChannelScope) -> Bool) {
+        let retiring = mailboxChannelScopes.filter { matches($0.value) }
+        for (id, scope) in retiring { mailboxChannelScopes.removeValue(forKey: id); scope.close() }
+        retireChannelReviews(lifetimes: retiring.values.map(\.lifetime))
+    }
+
+    private func validateMailboxChannelScope(_ id: UUID) async throws {
+        guard let scope = mailboxChannelScopes[id] else { throw CancellationError() }
+        do {
+            try scope.executionLease.check(); try scope.lifetime.check()
+            guard mailboxChannelScopeIsCurrent(scope) else { throw CancellationError() }
+            try await checkMailboxFileScope(scope.incoming, originID: scope.origin.id, generation: scope.generation)
+            guard let service = agentService, let contexts = agentConversations,
+                  await !contexts.isProjectionRetired(conversationID: scope.origin.id),
+                  await !contexts.isProjectionRetired(conversationID: scope.destinationID) else { throw CancellationError() }
+            for (agentID, identity) in scope.identities {
+                guard Self.channelSenderIdentity(await service.profile(id: agentID),
+                    owner: .init(accountID: scope.account, agentID: agentID)) == identity else { throw CancellationError() }
+            }
+            // The scheduler's actual onStart projects the incoming message.
+            // Acquisition above must not create a recipient chat while queued.
+            guard let destination = conversations.first(where: { $0.id == scope.destinationID }),
+                  mailboxChannelScopeIsCurrent(scope) else { throw CancellationError() }
+            if scope.destination == nil {
+                guard destination.messages.contains(where: {
+                    $0.agentMessageSource?.deliveryID == scope.incoming.id
+                        && $0.agentMessageSource?.recipientAgentID == scope.incoming.recipientID
+                        && $0.agentMessageSource?.kind == .incoming
+                }) else { throw AgentMessagingError.scopeMismatch }
+                scope.destination = .init(destination)
+            }
+            if !scope.bindings.installed {
+                var leases: [ConversationBindingLease] = []
+                do {
+                    guard let originOwner = scope.origin.binding else { throw AgentMessagingError.scopeMismatch }
+                    for (conversationID, owner) in [(scope.origin.id, originOwner),
+                        (scope.destinationID, DirectConversationAgentBinding(accountID: scope.account, agentID: scope.incoming.recipientID))]
+                        where !leases.contains(where: { $0.conversationID == conversationID }) {
+                        let lease = try await store.leaseUniqueBinding(accountID: owner.accountID,
+                            agentID: owner.agentID, conversationID: conversationID)
+                        guard lease.legacyHiddenAt == nil else { lease.close(); throw CancellationError() }
+                        leases.append(lease)
+                    }
+                    guard mailboxChannelScopeIsCurrent(scope), mailboxChannelScopes[id] === scope else { throw CancellationError() }
+                    try scope.executionLease.check()
+                    try scope.bindings.install(leases)
+                } catch { for lease in leases { lease.close() }; throw error }
+            }
+            guard try await store.conversation(id: scope.origin.id).map(DelegatedChannelScope.OriginConversation.init) == scope.origin,
+                  try await store.conversation(id: scope.destinationID).map(DelegatedChannelScope.OriginConversation.init) == scope.destination,
+                  mailboxChannelScopeIsCurrent(scope), mailboxChannelScopes[id] === scope else { throw CancellationError() }
+            try scope.executionLease.commit { try scope.bindings.withValid { try scope.lifetime.check() } }
+        } catch {
+            closeMailboxChannelScopes { $0 === scope }
+            throw error
+        }
     }
 
     private func makeDelegatedGroupChannelPublication(_ dispatch: AgentGroupDispatch, sender: AgentProfile,
@@ -5983,12 +6203,15 @@ final class AppModel: ObservableObject {
     }
 
     private func prepareMailboxFile(_ incoming: AgentMessage, sender: AgentProfile, url: String,
-        call: NormalizedToolCall, context: ToolContext, originID: UUID, generation: UInt64) async throws -> PreparedAgentPublicationFile {
+        call: NormalizedToolCall, context: ToolContext, originID: UUID, generation: UInt64,
+        validatePublication: @escaping @Sendable () async throws -> Void = {},
+        validateReadDispatch: @escaping @Sendable () throws -> Void = {}) async throws -> PreparedAgentPublicationFile {
         guard context.conversationID == originID, sender.id == incoming.recipientID else { throw AgentMessagingError.scopeMismatch }
         let reader = AuthorizedAgentFileReader(runtime: localToolRuntime, folders: workspaceFolders,
             policy: localToolPermissionPolicy, validateScope: { [weak self] in
                 guard let self else { throw CancellationError() }
                 try await self.checkMailboxFileScope(incoming, originID: originID, generation: generation)
+                try await validatePublication()
             }, authorizeRead: { [weak self] operation, context, callID in
                 guard let self else { throw CancellationError() }
                 let target = try await self.localToolRuntime.authorizationTarget(for: operation)
@@ -6000,7 +6223,7 @@ final class AppModel: ObservableObject {
                     guard await self.localToolApprovalBroker.requestApproval(request) else { throw CancellationError() }
                 case .allowed: break
                 }
-            })
+            }, validateReadDispatch: validateReadDispatch)
         return try await AgentPublicationFileSource(reader: reader).prepare(url: url, agentID: sender.id, call: call, context: context)
     }
 
@@ -7370,6 +7593,7 @@ final class AppModel: ObservableObject {
 
     private func cancelDirectMessaging(conversationID: UUID) {
         closeDelegatedChannelScopes { $0.originID == conversationID }
+        closeMailboxChannelScopes { $0.origin.id == conversationID || $0.destinationID == conversationID }
         directChannelLifetimes[conversationID]?.close()
         invalidateBackgroundMemorySynthesis(originID: conversationID)
         guard directMessagingScopes.contains(conversationID) else { return }
@@ -8503,11 +8727,13 @@ final class AppModel: ObservableObject {
     }
 
     private func materializeDirectChannelTranscript(_ value: ExternalChannelTranscriptPublication,
-        generation: UInt64) async throws -> RoomMessage? {
+        generation: UInt64, executionLease: AgentWorkflowExecutionScope.Lease? = nil,
+        bindingGuard: @escaping ConversationCommitGuard = { try $0() }) async throws -> RoomMessage? {
         try checkChannelAccount(value.owner.accountID, generation: generation)
         guard value.route == .directConversation, !deletedConversationIDs.contains(value.conversationID),
               agents.contains(where: { $0.id == value.owner.agentID && $0.archivedAt == nil }) else { throw CancellationError() }
-        let accountLease = try workflowExecutionScope.capture()
+        let captured = try workflowExecutionScope.capture()
+        let accountLease = try executionLease.map { try captured.inheriting($0) } ?? captured
         let lease = try await store.leaseUniqueBinding(accountID: value.owner.accountID,
             agentID: value.owner.agentID, conversationID: value.conversationID)
         defer { lease.close() }
@@ -8523,7 +8749,7 @@ final class AppModel: ObservableObject {
         let store = self.store
         let operation: @Sendable () async throws -> Conversation = {
             try await store.publishExternalChannel(value, expectedHiddenAt: lease.legacyHiddenAt, activityAt: value.queuedAt,
-                commit: { write in try accountLease.commit { try lease.withValidBinding(write) } })
+                commit: { write in try accountLease.commit { try bindingGuard { try lease.withValidBinding(write) } } })
         }
         let saved: Conversation
         if estimate == canonical { saved = try await operation() }
@@ -11208,6 +11434,7 @@ final class AppModel: ObservableObject {
 
     func cancelAutoReviewApprovals(nextAccountID: String) async {
         closeDelegatedChannelScopes { _ in true }
+        closeMailboxChannelScopes { _ in true }
         for lifetime in directChannelLifetimes.values { lifetime.close() }
         for lease in sidebarSettingsLeases.values { lease.close() }
         for lifetime in manualSidebarChanges.values { lifetime.close() }

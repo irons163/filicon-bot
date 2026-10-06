@@ -1,5 +1,19 @@
 # 協作能力核對紀錄（更新至 2026-10-06）
 
+## 真正單獨聊天委派的收件人成員外部送件
+
+2026-10-06 接續 `af754a9`，App 的 bound direct `SendToAgent` 已明確安裝 per-incoming mailbox channel factory。原 owner→peer 及真正已接受的 peer→owner 回覆，使用實際回覆成員自己的 connection；人類核准／source consent 留原入口，正式 entry 存入真正收件人成員的 canonical chat，回到原 owner 才用原聊天。沒有 factory／durable context 或 scope 不符先拒絕；group-origin／manual mailbox／inbound 不能借用前景群組的 grant。
+
+只分享明確的 incoming message，不複製原 owner 或無關聊天的私人 history。正式 external row 不是假 local mailbox publication，也不把 private draft 當報告；實際 saved receipt 只產生含 queue ID 的 queued-not-delivered 事實，provider 隨後失敗仍保留該事實。foreign aliases 不匯入原 reply directory。委派、讀 source／HTTPS 和 send 分開核准；捕捉 bytes 後不重讀，generic auto-review 不略過 final send。
+
+原 account／chain／來源與目標 semantic chat／personas 及唯一 durable binding leases 保留至 queue／SQL commit。來源或目標 Stop、archive／delete、persona／binding／route ABA 或換帳號使舊 grant 失效；導航／presence／unread 不改 persona。exact channel review waiter 退休，late local read 在 helper dispatch 前再次驗證 captured scope；不宣稱所有 local waiters 都主動退休、跨 stores 原子性或可召回已 admitted 的 I/O。
+
+測試技能採真實隔離 App 原生入口、stores、bookmark／receipt-aware helper、假服務及完整值比較。新增 core 4 methods（23 parameter cases＋1 standalone failure case）及 App 3 methods／48 cases；最後 `mailbox-channel-app-focused-v10.log` exit 0：68 tests／8 suites。較早 fixture catalog readiness、codec 浮點精度／編譯失敗與受 macOS 檔案保護影響的非通過 full gate 分開保留，詳見 [完成驗收入口](Parity-completion-audit.md)。
+
+最後完整串行 `mailbox-channel-app-full-final-v2.log` exit 0：135 XCTest＋2,124 Swift Testing／255 suites，App target 為 775 tests／102 suites。原生 arm64 Debug 建置、兩種隔離封裝／簽章驗證及七語各 1,815 keys／0 missing 均通過；兩項 opt-in installed Codex live tests skipped，不算外部驗收。沒有新增 UI 文案或 layout，不宣稱真人／全翻譯語意、Developer ID release／公證驗收；未執行列印的 launch smoke，未重啟 App／Xcode、push 或改真實資料。
+
+**仍未接線／驗證**：group-origin／manual mailbox、inbound shared runner 的 channel publication／canonical host、direct-peer 等剩餘 delivery-failure model follow-up、安全 CAS preview／open。live／真人／VoiceOver／最低 macOS／release／公證保留；AGENT-02／整體 partial 與 48 分類不變，本節只取代歷史 bound-direct peer mailbox publication 缺口。
+
 ## 已核准委派到其他群組的外部送件
 
 2026-10-06 接續 `fd2ee0f`，App 現為真正 `SendToAgent` → 其他 saved group 的背景回合建立獨立 channel publisher，不繼承來源前景的送件核准。核准卡仍回來源群組／bound direct chat，實際回覆成員使用自己的 account／唯一 enabled connection；正式 queue origin、作者、receipt 與 local quote 都屬於目標群組。host 明確綁定目標的既有 reply directory，不帶入來源或無關聊天的私人 history／附件。

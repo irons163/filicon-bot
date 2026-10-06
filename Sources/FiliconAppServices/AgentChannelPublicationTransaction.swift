@@ -138,10 +138,11 @@ public actor AgentChannelPublicationTransaction {
     public nonisolated let destinationConversationID: UUID
     public nonisolated let destinationSenderID: UUID
     public nonisolated let replyDirectoryConversationID: UUID
+    public nonisolated let transcriptRoute: ChannelDeliveryOrigin.Route?
     public nonisolated let supportsAttachments: Bool
     public nonisolated let supportsRemoteSources: Bool
     private nonisolated let lifetime: ChannelPublicationLifetime
-    private let accountID: String
+    public nonisolated let accountID: String
     private let channels: ChannelService
     private let validateScope: @Sendable () async throws -> Void
     private let prepare: Prepare?
@@ -174,6 +175,7 @@ public actor AgentChannelPublicationTransaction {
         destinationConversationID = transcriptSource?.destination?.conversationID ?? conversationID
         destinationSenderID = transcriptSource?.destination?.senderID ?? senderID
         replyDirectoryConversationID = transcriptSource?.replyDirectoryConversationID ?? conversationID
+        transcriptRoute = transcriptSource?.route
         self.accountID = accountID; self.channels = channels; self.lifetime = lifetime
         self.validateScope = validateScope; self.authorize = authorize
         supportsAttachments = prepare != nil && install != nil
