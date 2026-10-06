@@ -17,15 +17,33 @@ private actor AppMailboxChannelProbe {
     var sent: [ChannelOutbound] = []
     var downloads: [RemoteAttachmentReference] = []
     var reads: [LocalToolWireRequest] = []
+    var failureAttempts = 0
+    var protocolRejections: [ToolLoopError] = []
     var bytes = Data("EXACT_CAPTURED_PEER_FILE".utf8)
     func request(_ value: InferenceRequest) { requests.append(value) }
     func result(_ value: NormalizedToolResult) { results.append(value) }
     func send(_ value: ChannelOutbound) { sent.append(value) }
     func read(_ value: LocalToolWireRequest) { reads.append(value) }
+    func attemptedFailurePublication() { failureAttempts += 1 }
+    func rejected(_ value: ToolLoopError) { protocolRejections.append(value) }
     func replaceBytes() { bytes = Data("UNREVIEWED_REPLACEMENT".utf8) }
     func download(_ reference: RemoteAttachmentReference) -> RemoteAttachmentDownload {
         downloads.append(reference)
         return .init(reference: reference, data: bytes, declaredMIMEType: "text/plain")
+    }
+}
+
+private actor AppMailboxChannelFailureGate {
+    private var opened = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+    var isWaiting: Bool { !waiters.isEmpty }
+    func wait() async {
+        if !opened { await withCheckedContinuation { waiters.append($0) } }
+    }
+    func open() {
+        opened = true
+        let values = waiters; waiters.removeAll()
+        for value in values { value.resume() }
     }
 }
 
@@ -48,11 +66,15 @@ private struct AppMailboxChannelLocalHelper: LocalToolHelperProtocol {
 private struct AppMailboxChannelConnector: ChannelConnector {
     let descriptor = ChannelConnectorDescriptor(id: "slack", displayName: "Offline peer channel", supportsAttachments: true)
     let probe: AppMailboxChannelProbe
+    var fails = false
     func inbound(connection: ChannelConnection) -> AsyncThrowingStream<ChannelEnvelope, Error> {
         AsyncThrowingStream { $0.finish() }
     }
     func send(_ message: ChannelOutbound, to address: ChannelAddress,
-              connection: ChannelConnection, idempotencyKey: UUID) async throws { await probe.send(message) }
+              connection: ChannelConnection, idempotencyKey: UUID) async throws {
+        await probe.send(message)
+        if fails { throw ChannelServiceError.authExpired("PRIVATE_PEER_CONNECTOR_TOKEN") }
+    }
 }
 
 private struct AppMailboxChannelProvider: InteractiveToolProvider {
@@ -61,6 +83,8 @@ private struct AppMailboxChannelProvider: InteractiveToolProvider {
     let peerID: UUID
     let channelArguments: [String: String]
     var returnToOwnerID: UUID? = nil
+    var failureGate: AppMailboxChannelFailureGate? = nil
+    var triesExternalFailureRetry = false
     func models() async throws -> [AIModel] { [.init(id: "fixture")] }
     func stream(_ request: InferenceRequest) -> AsyncThrowingStream<InferenceEvent, Error> {
         AsyncThrowingStream { $0.finish(throwing: ProviderError.invalidResponse) }
@@ -71,6 +95,20 @@ private struct AppMailboxChannelProvider: InteractiveToolProvider {
             let task = Task {
                 do {
                     await probe.request(request)
+                    if request.messages.contains(where: { $0.role == .system && $0.text == ChannelFailureFollowUpNotice.instructions }) {
+                        // Deliberately permit a late callback after Stop. The
+                        // actual shared host must fence it, not this provider.
+                        await failureGate?.wait()
+                        await probe.attemptedFailurePublication()
+                        var arguments = ["type": "text", "content": "The reviewed peer channel message was not delivered; a new send needs a new human request and approval."]
+                        if triesExternalFailureRetry { arguments["channel"] = "slack:C_PEER" }
+                        let result = try await executeTool(.init(id: "peer-failure-correction", name: "SendMessage",
+                            argumentsJSON: JSONEncoder().encode(arguments)))
+                        await probe.result(result)
+                        continuation.yield(.textDelta("PRIVATE_FAILURE_DRAFT"))
+                        continuation.yield(.completed(.stop)); continuation.finish()
+                        return
+                    }
                     let incoming = request.messages.last?.text.hasPrefix("Incoming peer message") == true
                     let returning = incoming && returnToOwnerID != nil && request.messages.contains {
                         $0.role == .system && $0.text.contains("agent:\(peerID.uuidString)")
@@ -86,7 +124,10 @@ private struct AppMailboxChannelProvider: InteractiveToolProvider {
                     await probe.result(result)
                     continuation.yield(.textDelta(incoming ? "PRIVATE_PEER_DRAFT" : "Owner dispatched the reviewed peer task"))
                     continuation.yield(.completed(.stop)); continuation.finish()
-                } catch { continuation.finish(throwing: error) }
+                } catch {
+                    if let error = error as? ToolLoopError { await probe.rejected(error) }
+                    continuation.finish(throwing: error)
+                }
             }
             continuation.onTermination = { _ in task.cancel() }
         }
@@ -111,7 +152,8 @@ private struct AppMailboxChannelProvider: InteractiveToolProvider {
         let localSource: URL?
     }
     private func fixture(automatic: Bool, arguments: [String: String]? = nil, localFile: Bool = false,
-                         returnToOwner: Bool = false) async throws -> Fixture {
+                         returnToOwner: Bool = false, failsDelivery: Bool = false,
+                         failureGate: AppMailboxChannelFailureGate? = nil, triesExternalFailureRetry: Bool = false) async throws -> Fixture {
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-app-mailbox-channel-\(UUID())")
         let profiles = try AgentService(storeURL: root.appending(path: "agents.json"))
         let owner = try await profiles.create(name: "Origin owner", instructions: "OWNER_PRIVATE_PERSONA",
@@ -148,12 +190,13 @@ private struct AppMailboxChannelProvider: InteractiveToolProvider {
             source = file
         } else { runtime = nil; source = nil }
         let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false, localToolRuntime: runtime,
-            channelService: channels, channelConnectors: [AppMailboxChannelConnector(probe: probe)])
+            channelService: channels, channelConnectors: [AppMailboxChannelConnector(probe: probe, fails: failsDelivery)])
         model.remoteAttachmentDownloader = AppMailboxChannelDownloader(probe: probe)
         await model.registry.register(AppMailboxChannelProvider(probe: probe, peerID: peer.id,
             channelArguments: source.map { ["type": "attachment", "channel": "slack:C_PEER", "url": $0.absoluteString, "alt": "Reviewed peer file"] }
                 ?? arguments ?? ["type": "text", "channel": "slack:C_PEER", "content": "EXACT_PEER_EXTERNAL_RESULT"],
-            returnToOwnerID: returnToOwner ? owner.id : nil))
+            returnToOwnerID: returnToOwner ? owner.id : nil, failureGate: failureGate,
+            triesExternalFailureRetry: triesExternalFailureRetry))
         await model.bootstrap()
         await model.setAutomationRuntimeActive(false); model.setWorkflowRuntimeActive(false)
         await model.setAutoReviewEnabled(automatic)
@@ -312,6 +355,163 @@ private struct AppMailboxChannelProvider: InteractiveToolProvider {
         expectNoDifference(incoming.map(\.recipientID), [f.peer.id, f.owner.id])
         #expect(incoming.allSatisfy { $0.delivery?.state == .completed && $0.delivery?.publications?.isEmpty != false })
         expectNoDifference(sent, [])
+    }
+
+    private func reviewedPeerDelivery(_ f: Fixture) async throws -> ChannelDelivery {
+        f.model.send()
+        let review = try await channelReview(f)
+        f.model.handleTranscriptCardIntent(.approveReview(reviewID: review.id))
+        try await eventually { !f.model.running.contains(originID) }
+        return try #require(await f.channels.deliveries().first)
+    }
+
+    private func failureRequests(_ f: Fixture) async -> [InferenceRequest] {
+        await f.probe.requests.filter { request in
+            request.messages.contains { $0.role == .system && $0.text == ChannelFailureFollowUpNotice.instructions }
+        }
+    }
+
+    private func failAndReconcile(_ f: Fixture, delivery: ChannelDelivery) async {
+        await f.channels.flush(now: delivery.createdAt.addingTimeInterval(1))
+        await f.model.reconcileChannelPublications()
+        await f.model.reconcileChannelFailureFollowUps()
+    }
+
+    @Test(arguments: [(false, "available"), (false, "busy"), (false, "off-page"),
+                       (true, "available"), (true, "busy"), (true, "off-page")], [false, true])
+    func actualPeerDeliveryFailureUsesItsCanonicalOwnerWithoutResending(scenario: (Bool, String), automatic: Bool) async throws {
+        let (ownerRecipient, mode) = scenario
+        let f = try await fixture(automatic: automatic, returnToOwner: ownerRecipient, failsDelivery: true)
+        defer { f.model.cancel(); try? FileManager.default.removeItem(at: f.root) }
+        let queued = try await reviewedPeerDelivery(f)
+        let target = try #require(queued.origin?.conversationID)
+        defer { f.model.selectRoute(.conversation(target)); f.model.cancel() }
+        let actual = ownerRecipient ? f.owner : f.peer
+        let store = ConversationStore(fileURL: f.root.appending(path: "conversations.json"))
+        var untouched: [Conversation] = []
+        for id in [originID, otherID] where id != target {
+            untouched.append(try #require(try await store.conversation(id: id)))
+        }
+        let mailbox = f.model.agentMessages
+        f.model.selectRoute(.conversation(otherID))
+        if mode == "busy" { f.model.running.insert(target) }
+        if mode == "off-page" { f.model.conversations.removeAll { $0.id == target } }
+        await failAndReconcile(f, delivery: queued)
+        if mode == "busy" {
+            let before = await f.channels.failureFollowUps(), requests = await failureRequests(f)
+            expectNoDifference(before, []); #expect(diff(requests, [InferenceRequest]()) == nil)
+            f.model.running.remove(target)
+            await f.model.reconcileChannelFailureFollowUps()
+        }
+        try await eventually {
+            let values = await f.channels.failureFollowUps()
+            return values.count == 1 && values[0].status != .running && !f.model.isConversationWorking(target)
+        }
+        let requests = await failureRequests(f), followUps = await f.channels.failureFollowUps()
+        expectNoDifference(requests.count, 1)
+        let request = try #require(requests.first), claim = try #require(followUps.first)
+        expectNoDifference(request.conversationID, target)
+        expectNoDifference(claim.deliveryID, queued.id); expectNoDifference(claim.connectionID, queued.connectionID)
+        expectNoDifference(claim.accountID, "local"); expectNoDifference(claim.agentID, actual.id)
+        expectNoDifference(claim.conversationID, target); expectNoDifference(claim.status, .completed)
+        #expect(request.messages.contains { $0.role == .system && $0.text.contains(actual.instructions) })
+        #expect(!request.messages.contains { $0.text.contains("UNRELATED_PRIVATE_HISTORY") || $0.text.contains("PRIVATE_PEER_CONNECTOR_TOKEN") })
+        if !ownerRecipient { #expect(!request.messages.contains { $0.text.contains("OWNER_PRIVATE_HISTORY") }) }
+        #expect(request.messages.last?.text.contains(ChannelFailureReason.authorizationExpired.descriptionForModel) == true)
+        let terminal = try #require(await f.channels.delivery(id: queued.id))
+        expectNoDifference(terminal.status, .deadLetter)
+        let saved = try #require(try await store.conversation(id: target))
+        expectNoDifference(saved.messages.compactMap(\.externalChannelPublication), [try #require(ChannelTranscriptProjection.publication(for: terminal))])
+        expectNoDifference(saved.messages.filter { $0.text.hasPrefix("The reviewed peer channel message") }.map(\.text),
+            ["The reviewed peer channel message was not delivered; a new send needs a new human request and approval."])
+        #expect(!saved.messages.contains { $0.text == "PRIVATE_FAILURE_DRAFT" || ($0.role == .user && $0.text.contains("Host failure facts")) })
+        let sends = await f.probe.sent, deliveries = await f.channels.deliveries()
+        expectNoDifference(sends, [queued.outbound]); expectNoDifference(deliveries, [terminal])
+        expectNoDifference(f.model.agentMessages, mailbox); expectNoDifference(f.model.selection, otherID)
+        for before in untouched {
+            let after = try await store.conversation(id: before.id)
+            expectNoDifference(after, before)
+        }
+        for _ in 0..<3 { await f.model.reconcileChannelFailureFollowUps() }
+        let finalRequests = await failureRequests(f), finalSends = await f.probe.sent
+        #expect(diff(requests, finalRequests) == nil); expectNoDifference(finalSends, sends)
+        let reopened = ConversationStore(fileURL: f.root.appending(path: "conversations.json"))
+        let restored = try await reopened.conversation(id: target)
+        expectNoDifference(restored, saved)
+        let restoredChannels = try ChannelService(storeURL: f.root.appending(path: "channels.json"))
+        let restarted = AppModel(applicationSupportRoot: f.root, bootstrapImmediately: false,
+            channelService: restoredChannels, channelConnectors: [AppMailboxChannelConnector(probe: f.probe, fails: true)])
+        defer { restarted.selectRoute(.conversation(target)); restarted.cancel() }
+        await restarted.registry.register(AppMailboxChannelProvider(probe: f.probe, peerID: f.peer.id,
+            channelArguments: ["type": "text", "channel": "slack:C_PEER", "content": "FORBIDDEN_REOPEN_SEND"],
+            returnToOwnerID: ownerRecipient ? f.owner.id : nil))
+        await restarted.bootstrap(); await restarted.setAutomationRuntimeActive(false); restarted.setWorkflowRuntimeActive(false)
+        await restarted.reconcileChannelFailureFollowUps()
+        let afterReopenRequests = await failureRequests(f), afterReopenSends = await f.probe.sent
+        #expect(diff(requests, afterReopenRequests) == nil); expectNoDifference(afterReopenSends, sends)
+        let afterReopenClaims = await restoredChannels.failureFollowUps()
+        let encoder = JSONEncoder(), decoder = JSONDecoder()
+        encoder.dateEncodingStrategy = .millisecondsSince1970; decoder.dateDecodingStrategy = .millisecondsSince1970
+        expectNoDifference(afterReopenClaims, try decoder.decode([ChannelFailureFollowUp].self, from: encoder.encode(followUps)))
+    }
+
+    @Test(arguments: [false, true], ["stop", "persona-ABA", "account-ABA"])
+    func revokedActualPeerFailureRejectsLateCorrection(ownerRecipient: Bool, mode: String) async throws {
+        let gate = AppMailboxChannelFailureGate()
+        defer { Task { await gate.open() } }
+        let f = try await fixture(automatic: true, returnToOwner: ownerRecipient, failsDelivery: true, failureGate: gate)
+        defer { f.model.cancel(); try? FileManager.default.removeItem(at: f.root) }
+        let queued = try await reviewedPeerDelivery(f), target = try #require(queued.origin?.conversationID)
+        defer { f.model.selectRoute(.conversation(target)); f.model.cancel() }
+        let actual = ownerRecipient ? f.owner : f.peer
+        await failAndReconcile(f, delivery: queued)
+        try await eventually { await gate.isWaiting }
+        if mode == "stop" { f.model.selectRoute(.conversation(target)); f.model.cancel() }
+        if mode == "persona-ABA" {
+            var changed = actual; changed.instructions = "CHANGED_FAILURE_PERSONA"
+            #expect(await f.model.updateAgent(changed)); #expect(await f.model.updateAgent(actual))
+        }
+        if mode == "account-ABA" {
+            await f.model.cancelAutoReviewApprovals(nextAccountID: "other"); f.model.settings.accountScope = "other"
+            await f.model.cancelAutoReviewApprovals(nextAccountID: "local"); f.model.settings.accountScope = "local"
+        }
+        await gate.open()
+        try await eventually {
+            let values = await f.channels.failureFollowUps(), attempts = await f.probe.failureAttempts
+            return values.count == 1 && values[0].status != .running && attempts == 1 && !f.model.isConversationWorking(target)
+        }
+        let claims = await f.channels.failureFollowUps(), requests = await failureRequests(f)
+        expectNoDifference(claims.first?.status, .cancelled); expectNoDifference(requests.count, 1)
+        let saved = try #require(try await ConversationStore(fileURL: f.root.appending(path: "conversations.json")).conversation(id: target))
+        #expect(!saved.messages.contains { $0.text.hasPrefix("The reviewed peer channel message") || $0.text == "PRIVATE_FAILURE_DRAFT" })
+        let terminal = try #require(await f.channels.delivery(id: queued.id))
+        expectNoDifference(saved.messages.compactMap(\.externalChannelPublication), [try #require(ChannelTranscriptProjection.publication(for: terminal))])
+        for _ in 0..<3 { await f.model.reconcileChannelFailureFollowUps() }
+        let finalRequests = await failureRequests(f), sends = await f.probe.sent, deliveries = await f.channels.deliveries()
+        #expect(diff(requests, finalRequests) == nil); expectNoDifference(sends, [queued.outbound])
+        expectNoDifference(deliveries, [terminal])
+    }
+
+    @Test(arguments: [false, true])
+    func actualPeerFailureCannotAcquireAnExternalRetry(ownerRecipient: Bool) async throws {
+        let f = try await fixture(automatic: true, returnToOwner: ownerRecipient, failsDelivery: true, triesExternalFailureRetry: true)
+        defer { f.model.cancel(); try? FileManager.default.removeItem(at: f.root) }
+        let queued = try await reviewedPeerDelivery(f), target = try #require(queued.origin?.conversationID)
+        defer { f.model.selectRoute(.conversation(target)); f.model.cancel() }
+        await failAndReconcile(f, delivery: queued)
+        try await eventually {
+            let values = await f.channels.failureFollowUps()
+            return values.count == 1 && values[0].status != .running && !f.model.isConversationWorking(target)
+        }
+        let claims = await f.channels.failureFollowUps(), requests = await failureRequests(f)
+        expectNoDifference(claims.first?.status, .failed); expectNoDifference(requests.count, 1)
+        let rejections = await f.probe.protocolRejections
+        expectNoDifference(rejections, [.schemaMismatch(callID: "peer-failure-correction", detail: "unknown property 'channel'")])
+        let saved = try #require(try await ConversationStore(fileURL: f.root.appending(path: "conversations.json")).conversation(id: target))
+        #expect(!saved.messages.contains { $0.text.hasPrefix("The reviewed peer channel message") || $0.text == "PRIVATE_FAILURE_DRAFT" })
+        let sends = await f.probe.sent, deliveries = await f.channels.deliveries()
+        expectNoDifference(sends, [queued.outbound]); expectNoDifference(deliveries.count, 1)
+        #expect(f.model.pendingAutoReviewApprovals.isEmpty && f.model.pendingToolApprovals.isEmpty)
     }
 
     @Test(arguments: [false, true], ["approve", "deny-source", "deny-send", "stop-source", "stop-send", "persona-ABA-source"])

@@ -1,5 +1,21 @@
 # 完成驗收入口（2026-09-27）
 
+## 真正成員委派送件的 terminal failure 回原收件人聊天
+
+2026-10-06 接續 `c366d13`。本批以真正 App 的 human bound direct → 已核准 `SendToAgent` → 收件人成員 channel 核准 → queue／canonical save → 假 connector 的 terminal failure 驗證完整路徑；也涵蓋真正 peer 回覆原 owner 後由 owner 送件。不是直接 seed 一筆理想化 failure row。正確的 canonical destination／actual owner 已讓既有 `ChannelFailureFollowUpNotice` 與 shared direct runner 接通，無須新增產品 grant 或另改 runner。
+
+真正送件成員的 canonical chat 收到一個沒有 channel target 的 `SendMessage` 更正；原人類入口或目前選取的無關聊天不變。原成員 busy 時先不 claim，解除 busy 才處理；不在 sidebar page 時只恢復該精確 canonical owner。typed terminal receipt／wake／claim 的 delivery ID、connection、account、agent、chat 一致。模型只取得 allow-listed failure reason，fake raw connector token 不進 prompt；peer 不取得 owner／無關聊天的私人 history。沒有假 user instruction row、fake mailbox publication 或 private failure draft；queued-not-delivered 舊事實不被改成 remote delivery success。
+
+已完成的 wake 在同 instance 重查及隔離 AppModel／stores 重建後不 replay、不 resend，原選取仍保留；這是原持久 admission 契約，不宣稱跨 process exactly-once。真正 failure runner 等待 provider 時，target Stop、persona 修改後還原、account 循環仍拒絕刻意晚到的更正。failure wake 想帶 `channel` 時由既有 schema 在 executor 前拒絕，不能借到 mailbox 的新能力；該回合 failed，沒有假成功更正、新 queue、source consent 或額外外部 send。
+
+新增 actual App 3 methods／20 parameter cases：12 個 owner／peer × available／busy／off-page × generic auto-review 開關，6 個 owner／peer × Stop／persona ABA／account ABA，以及 2 個 owner／peer external retry 拒絕。使用隔離真實 stores、原生 human review、假 provider／connector、完整 request mirror diff／typed canonical、queue、mailbox 與 reopened claims 比較。刻意 non-cooperative provider 不能自行承擔產品撤銷保證；拒絕由 host 證明。只有測試與核對文件變更，沒有新增 UI、schema、權限或降低既有驗證。
+
+`mailbox-channel-failure-focused-v1.log` 的失敗停在新 fixture 的三組 Cartesian API 宣告與非 Equatable request 比較，未進入產品回合；改為兩組合法 arguments、完整 CustomDump mirror diff，不省略 request 欄位。`focused-v2` exit 0；補上重建隔離 AppModel 與精確 target cleanup 後，最後 `mailbox-channel-failure-focused-v3.log` exit 0：core 4 tests／1 suite＋App 19 tests／3 suites，合計 23 tests／4 suites，包含原 direct failure／reviewed background direct／mailbox channel 回歸。最後完整串行 `mailbox-channel-failure-full-final-v1.log` exit 0：17 個 Swift Testing target summaries 合計 2,127 tests／255 suites，另 17 個 XCTest bundles 合計 135 tests／0 failures；App target 為 778 tests／102 suites。兩項 opt-in installed Codex live tests skipped，不算外部驗收；既有 CoreData NSXPCConnection 診斷仍存在，相關 tests 通過，不宣稱修復。
+
+產品 source 與 `c366d13` 完全相同，沿用下一節記錄的 arm64 Debug native／fresh standalone 四個 executables、app／XPC entitlements、deep strict signature 及七語各 1,815 keys／0 missing 的證據，不假稱本批又產生一個新的 native product gate。未啟動 App 或執行 launch smoke；Debug／ad-hoc 不等於 Developer ID release／公證。`git diff --check` 通過；日誌留於忽略的 `.build/validation/`。
+
+**仍未完成**：group-origin／manual mailbox 與 inbound shared runner 的 channel publication／canonical host、group／inbound 等其餘 delivery-failure model follow-up、安全 CAS preview／open，以及 live Slack／Discord／OAuth、真人／VoiceOver／最低 macOS、Developer ID release／公證。AGENT-02／整體 partial 和 48 分類（42 個歷史 complete／5 partial／1 NA）不變。本節只取代歷史 direct-peer mailbox failure follow-up「未驗證」的缺口；未 push、重啟使用者 App／Xcode 或改真實資料。
+
 ## 真正單獨聊天委派的收件人成員外部送件
 
 2026-10-06 接續 `af754a9`；reference HEAD 仍為 `a9f633e09d49a85829b8236331b9e21f7e612634`。本批將明確的 mailbox channel factory 接入 App 的 bound direct `SendToAgent` → 真正收件人成員回合，亦涵蓋該成員以已接受的 `SendToAgent` 回覆原發起成員。不是讓 `drain` 借用來源前景或 saved-group publisher；沒有 host factory、durable recipient context、正確 account／chain／owner／destination／author／reply directory 的回合，不取得送件能力。group-origin／manual mailbox 和 inbound shared runner 仍未安裝此 grant。

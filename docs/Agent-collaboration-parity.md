@@ -1,5 +1,15 @@
 # 協作能力核對紀錄（更新至 2026-10-06）
 
+## 真正成員委派送件的 terminal failure 回原收件人聊天
+
+2026-10-06 接續 `c366d13`，真正 bound direct → 人類核准 `SendToAgent` → 收件人／回覆原 owner 的 reviewed channel send → terminal queue failure 已由實際 App 測試接通，不是 seed 理想化 queue。canonical actual owner 讓既有 shared direct failure runner 在該精確聊天以無 channel 的 `SendMessage` 更正；原入口、無關聊天與原 mailbox 記錄不變，不借用選取或另一位成員。
+
+busy 先不 claim，off-page 恢復精確 owner；實際 receipt／wake／claim 的 delivery、connection、account、agent、chat 保留。只傳 allow-listed failure reason，不洩漏 raw connector token／其他人的私人 history。沒有 fake human row／mailbox publication／private failure draft；同 instance 與隔離模型／stores 重建不 replay／resend。Stop、persona／account ABA 拒絕晚到更正；failure wake 的外部 retry 由原 schema 拒絕，不取得新核准或 mailbox grant。
+
+測試技能使用完整 request mirror diff、typed canonical／queue／mailbox／reopened claims 比較及刻意 non-cooperative provider。新增 3 methods／20 cases，最後 `mailbox-channel-failure-focused-v3.log` exit 0：23 tests／4 suites；早期 fixture 編譯宣告與真實產品回合分開保留，見 [完成驗收入口](Parity-completion-audit.md)。最後完整串行 `mailbox-channel-failure-full-final-v1.log` exit 0：2,127 Swift Testing tests／255 suites＋135 XCTest／0 failures，兩項 opt-in live tests skipped；既有 CoreData NSXPCConnection 診斷仍存在，不宣稱修復。產品 source 未變，沿用 `c366d13` 已通過的 native／standalone Debug／簽章與七語 gate，不宣稱新 native build 或外部驗收。
+
+**仍未完成**：group-origin／manual mailbox／inbound publication／canonical host、group／inbound 等其他 failure follow-up、安全 CAS preview／open，以及 live／真人／VoiceOver／最低 macOS／Developer ID release／公證。AGENT-02／整體 partial 與 48 分類不變；本節只取代歷史 direct-peer mailbox failure follow-up 未驗證的缺口。未 push、重啟 App／Xcode 或改真實資料。
+
 ## 真正單獨聊天委派的收件人成員外部送件
 
 2026-10-06 接續 `af754a9`，App 的 bound direct `SendToAgent` 已明確安裝 per-incoming mailbox channel factory。原 owner→peer 及真正已接受的 peer→owner 回覆，使用實際回覆成員自己的 connection；人類核准／source consent 留原入口，正式 entry 存入真正收件人成員的 canonical chat，回到原 owner 才用原聊天。沒有 factory／durable context 或 scope 不符先拒絕；group-origin／manual mailbox／inbound 不能借用前景群組的 grant。
