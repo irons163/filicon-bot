@@ -125,7 +125,7 @@ struct MailboxChannelPublicationTests {
     }
 
     private func fixture(direct: Bool = true, ownerRecipient: Bool = false, attachment: Bool = false,
-                         failAfterPublication: Bool = false) async throws -> Fixture {
+                         failAfterPublication: Bool = false, canonicalProjection: Bool = false) async throws -> Fixture {
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-mailbox-channel-\(UUID())")
         let profiles = try AgentService(storeURL: root.appending(path: "agents.json"))
         let engineer = try await profiles.create(name: "Engineer", instructions: "ENGINEER_PRIVATE_PERSONA",
@@ -140,7 +140,7 @@ struct MailboxChannelPublicationTests {
             incoming: .init(id: mailboxChannelID(4), role: .assistant, text: "RECIPIENT_CONTEXT_ONLY", createdAt: date), response: "RECIPIENT_OWN_REPLY")
         try await contexts.appendExchange(accountID: "local", originID: otherID, agentID: recipient.id,
             incoming: .init(id: mailboxChannelID(5), role: .assistant, text: "UNRELATED_CONTEXT_PRIVATE", createdAt: date), response: "UNRELATED_REPLY_PRIVATE")
-        let destination = direct && ownerRecipient ? origin : own.conversationID
+        let destination = direct && ownerRecipient ? origin : canonicalProjection ? mailboxChannelID(15) : own.conversationID
         let repository = try ConversationRepository(databaseURL: root.appending(path: "canonical.sqlite"))
         var target = Conversation(id: destination, title: "Actual recipient", messages: [
             .init(id: mailboxChannelID(6), role: .user, text: "CANONICAL_RECIPIENT_HISTORY_NOT_IN_INFERENCE", createdAt: date)
@@ -178,6 +178,12 @@ struct MailboxChannelPublicationTests {
             guard sender.id == f.recipient.id else { return nil }
             await f.probe.event("mailbox factory")
             expectNoDifference(incoming.recipientID, sender.id)
+            if mode == "canonical-projection" {
+                let context = try await f.contexts.context(accountID: "local", originID: origin, agentID: sender.id)
+                _ = try await f.contexts.bindProjection(accountID: "local", originID: origin, agentID: sender.id,
+                    expectedContextID: context.conversationID, conversationID: f.destination,
+                    commit: { try f.lease.withValidBinding($0) })
+            }
             let guarded = ChannelPublicationLifetime(parent: lifetime, commitGuard: { write in try f.lease.withValidBinding(write) })
             let prepare: AgentChannelPublicationTransaction.Prepare?
             if attachment {
@@ -250,6 +256,7 @@ struct MailboxChannelPublicationTests {
         let direct: Bool
         let ownerRecipient: Bool
         let localReceipts: Bool
+        var canonicalProjection = false
     }
     @Test(arguments: [
         ExplicitHostCase(direct: false, ownerRecipient: false, localReceipts: true),
@@ -257,13 +264,15 @@ struct MailboxChannelPublicationTests {
         ExplicitHostCase(direct: true, ownerRecipient: false, localReceipts: true),
         ExplicitHostCase(direct: true, ownerRecipient: true, localReceipts: true),
         ExplicitHostCase(direct: false, ownerRecipient: false, localReceipts: false),
-        ExplicitHostCase(direct: false, ownerRecipient: true, localReceipts: false)
+        ExplicitHostCase(direct: false, ownerRecipient: true, localReceipts: false),
+        ExplicitHostCase(direct: false, ownerRecipient: false, localReceipts: true, canonicalProjection: true),
+        ExplicitHostCase(direct: true, ownerRecipient: false, localReceipts: true, canonicalProjection: true)
     ])
     private func explicitSavedOutputBelongsOnlyToTheActualRecipient(test: ExplicitHostCase) async throws {
         let direct = test.direct, ownerRecipient = test.ownerRecipient
-        let f = try await fixture(direct: direct, ownerRecipient: ownerRecipient)
+        let f = try await fixture(direct: direct, ownerRecipient: ownerRecipient, canonicalProjection: test.canonicalProjection)
         defer { f.lease.close(); try? FileManager.default.removeItem(at: f.root) }
-        let session = session(f, mode: test.localReceipts ? "approve" : "no-receipts")
+        let session = session(f, mode: test.canonicalProjection ? "canonical-projection" : test.localReceipts ? "approve" : "no-receipts")
         try await enqueue(f, session)
         try await drain(f, session)
         let reviews = await f.probe.reviews, contexts = await f.probe.reviewContexts
@@ -310,6 +319,11 @@ struct MailboxChannelPublicationTests {
         expectNoDifference(events, ["delegation review", "mailbox factory", "send review", "canonical save"])
         let sent = await f.probe.sent; expectNoDifference(sent, [])
         let own = try await f.contexts.context(accountID: "local", originID: origin, agentID: f.recipient.id)
+        expectNoDifference(request.conversationID, own.conversationID)
+        if test.canonicalProjection {
+            expectNoDifference(own.transcriptConversationID, f.destination)
+            #expect(own.conversationID != f.destination)
+        }
         #expect(own.messages.last?.text.contains("queue status: queued") == true)
         let reopened = try ConversationRepository(databaseURL: f.root.appending(path: "canonical.sqlite"))
         let saved = try await reopened.load(); expectNoDifference(saved, chats)

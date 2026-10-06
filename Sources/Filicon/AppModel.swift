@@ -489,6 +489,12 @@ final class AppModel: ObservableObject {
     private var agentMessagingSessions: [UUID: AgentMessagingSession] = [:]
     private var directMessagingScopes: Set<UUID> = []
     private var directMessagingBindings: [UUID: DirectConversationAgentBinding] = [:]
+    private struct ManualMailboxOrigin: Equatable, Sendable {
+        let account: String
+        let generation: UInt64
+        let identities: [UUID: DirectAgentExecutionIdentity]
+    }
+    private var manualMailboxOrigins: [UUID: ManualMailboxOrigin] = [:]
     private struct DirectPeerExecution {
         let originID: UUID
         let sessionID: UUID
@@ -911,11 +917,12 @@ final class AppModel: ObservableObject {
         let originID: UUID
         let origin: DelegatedChannelScope.OriginConversation?
         let originGroup: AgentGroup?
+        let manualOrigin: ManualMailboxOrigin?
         let membership: GroupReadStateLease?
         let incoming: AgentMessage
         let destinationID: UUID
         var destination: DelegatedChannelScope.OriginConversation?
-        var groupIncomingProjected = false
+        var incomingProjected = false
         let account: String
         let generation: UInt64
         let identities: [UUID: DirectAgentExecutionIdentity]
@@ -923,13 +930,14 @@ final class AppModel: ObservableObject {
         let executionLease: AgentWorkflowExecutionScope.Lease
         let bindings: MailboxChannelBindings
         let lifetime: ChannelPublicationLifetime
-        init(originID: UUID, origin: Conversation?, originGroup: AgentGroup?, membership: GroupReadStateLease?,
+        init(originID: UUID, origin: Conversation?, originGroup: AgentGroup?, manualOrigin: ManualMailboxOrigin?, membership: GroupReadStateLease?,
              incoming: AgentMessage, destinationID: UUID, destination: Conversation?,
              account: String, generation: UInt64, identities: [UUID: DirectAgentExecutionIdentity],
              executionScope: AgentWorkflowExecutionScope, executionLease: AgentWorkflowExecutionScope.Lease,
              bindings: MailboxChannelBindings, lifetime: ChannelPublicationLifetime) {
             self.originID = originID; self.origin = origin.map(DelegatedChannelScope.OriginConversation.init)
             self.originGroup = originGroup; self.membership = membership
+            self.manualOrigin = manualOrigin
             self.incoming = incoming; self.destinationID = destinationID
             self.destination = destination.map(DelegatedChannelScope.OriginConversation.init)
             self.account = account; self.generation = generation; self.identities = identities
@@ -3209,9 +3217,14 @@ final class AppModel: ObservableObject {
         }
         backgroundDirectExecutions[selection]?.scope.invalidate()
         if runningAgentMessageScopes.contains(selection) {
+            let sessionID = agentMessagingSessions[selection]?.id
             agentMessagingSessions[selection]?.revokeProfileChanges()
             agentMessageTasks[selection]?.cancel()
-            Task { await stopAgentMessages(scopeID: selection) }
+            Task { [weak self] in
+                guard let self, let sessionID,
+                      self.agentMessagingSessions[selection]?.id == sessionID else { return }
+                await self.stopAgentMessages(scopeID: selection)
+            }
         }
         invalidateDirectSecrets(conversationID: selection)
         cancelDirectMessaging(conversationID: selection)
@@ -4918,13 +4931,19 @@ final class AppModel: ObservableObject {
         }
         do {
             let scopeID = try await agentConversations.mailboxScope(accountID: accountID, senderID: sender.id, recipientID: recipient.id)
+            guard let senderIdentity = Self.channelSenderIdentity(sender, owner: .init(accountID: accountID, agentID: sender.id)),
+                  let recipientIdentity = Self.channelSenderIdentity(recipient, owner: .init(accountID: accountID, agentID: recipient.id)) else { return false }
+            let manualOrigin = ManualMailboxOrigin(account: accountID, generation: generation,
+                identities: [sender.id: senderIdentity, recipient.id: recipientIdentity])
             guard generation == autoReviewAccountGeneration,
                   accountID == (settings.accountScope ?? "local"), !Task.isCancelled,
                   !runningAgentMessageScopes.contains(scopeID),
-                  let session = makeAgentMessagingSession(originID: scopeID, supportsMailboxQuestions: true) else { return false }
+                  let session = makeAgentMessagingSession(originID: scopeID, supportsMailboxQuestions: true,
+                    manualOrigin: manualOrigin) else { return false }
             // Reserve before enqueue's first suspension. One conversation owns
             // its context and approval cards until its entire reply chain ends.
             runningAgentMessageScopes.insert(scopeID)
+            manualMailboxOrigins[scopeID] = manualOrigin
             invalidateMailboxSecrets(scopeID: scopeID)
             agentMessagingSessions[scopeID] = session
             workspaceFolders.beginTurn(conversationID: scopeID)
@@ -4936,6 +4955,7 @@ final class AppModel: ObservableObject {
                 try? await session.close()
                 agentMessagingSessions[scopeID] = nil
                 runningAgentMessageScopes.remove(scopeID)
+                manualMailboxOrigins[scopeID] = nil
                 throw error
             }
             agentMessageTasks[scopeID] = Task { [weak self] in
@@ -5324,7 +5344,7 @@ final class AppModel: ObservableObject {
         let generation = autoReviewAccountGeneration
         let isDirect = directMessagingBindings[scopeID] != nil
         let projection: AgentMessagingSession.PeerMessageHandler?
-        if isDirect {
+        if isDirect || manualMailboxOrigins[scopeID] != nil {
             projection = { [weak self] source, message in
                 guard let self else { throw CancellationError() }
                 try await self.projectDirectPeerMessage(source, message: message, sessionID: session.id, generation: generation)
@@ -5340,6 +5360,7 @@ final class AppModel: ObservableObject {
         agentMessagingSessions[scopeID] = nil
         agentMessageTasks[scopeID] = nil
         runningAgentMessageScopes.remove(scopeID)
+        manualMailboxOrigins[scopeID] = nil
         clearDirectPeerExecutions(originID: scopeID, sessionID: session.id)
         directMessagingScopes.remove(scopeID)
         directMessagingBindings[scopeID] = nil
@@ -5564,7 +5585,8 @@ final class AppModel: ObservableObject {
                                            allowsSavedMemory: Bool = true,
                                            savedMemoryAudience: Set<UUID>? = nil,
                                            collectMemoryEvidence: Bool = true,
-                                           allowsGroupMailboxChannels: Bool = false) -> AgentMessagingSession? {
+                                           allowsGroupMailboxChannels: Bool = false,
+                                           manualOrigin: ManualMailboxOrigin? = nil) -> AgentMessagingSession? {
         guard let agentService, let agentMessenger, let agentConversations else { return nil }
         let generation = autoReviewAccountGeneration
         let management = makeAgentManagementSession(originID: originID, allowsSavedMemory: allowsSavedMemory,
@@ -5674,8 +5696,8 @@ final class AppModel: ObservableObject {
             mailboxFiles: makeMailboxFileFactory(originID: originID, generation: generation),
             mailboxRemote: makeMailboxRemoteFactory(originID: originID, generation: generation),
             mailboxGallery: makeMailboxGalleryFactory(originID: originID, generation: generation),
-            mailboxChannelPublisherFactory: allowsGroupMailboxChannels ? makeMailboxChannelPublisherFactory(originID: originID,
-                generation: generation, binding: nil) : nil,
+            mailboxChannelPublisherFactory: (allowsGroupMailboxChannels || manualOrigin != nil) ? makeMailboxChannelPublisherFactory(originID: originID,
+                generation: generation, binding: nil, manualOrigin: manualOrigin) : nil,
             authorize: { [weak self] sender, recipient, text, call, context in
                 guard let self else { throw CancellationError() }
                 try await self.authorizeAgentDelegation(sender: sender, recipient: recipient, text: text, call: call, context: context)
@@ -5760,22 +5782,22 @@ final class AppModel: ObservableObject {
             })
     }
 
-    /// Each actual direct/group-origin peer wake acquires its own canonical
-    /// destination. Manual mailbox/inbound runners still inherit no grant.
+    /// Each explicitly hosted direct/group/manual peer wake acquires its own
+    /// destination. Inbound/background runners still inherit no grant.
     private func makeMailboxChannelPublisherFactory(originID: UUID, generation: UInt64,
-        binding: DirectConversationAgentBinding?) -> AgentMessagingSession.MailboxChannelPublisherFactory? {
+        binding: DirectConversationAgentBinding?, manualOrigin: ManualMailboxOrigin? = nil) -> AgentMessagingSession.MailboxChannelPublisherFactory? {
         guard channelService != nil else { return nil }
-        let originGroup = binding == nil ? groups.first { $0.id == originID } : nil
-        guard binding != nil || originGroup != nil else { return nil }
+        let originGroup = binding == nil && manualOrigin == nil ? groups.first { $0.id == originID } : nil
+        guard binding != nil || originGroup != nil || manualOrigin != nil else { return nil }
         return { [weak self] incoming, sender, parent in
             guard let self else { throw CancellationError() }
             return try await self.makeMailboxChannelPublication(incoming, sender: sender, originID: originID,
-                generation: generation, binding: binding, originGroup: originGroup, parent: parent)
+                generation: generation, binding: binding, originGroup: originGroup, manualOrigin: manualOrigin, parent: parent)
         }
     }
 
     private func makeMailboxChannelPublication(_ incoming: AgentMessage, sender: AgentProfile, originID: UUID,
-        generation: UInt64, binding: DirectConversationAgentBinding?, originGroup: AgentGroup?,
+        generation: UInt64, binding: DirectConversationAgentBinding?, originGroup: AgentGroup?, manualOrigin: ManualMailboxOrigin?,
         parent: ChannelPublicationLifetime) async throws -> AgentChannelPublicationTransaction? {
         try parent.check()
         let account = binding?.accountID ?? (settings.accountScope ?? "local")
@@ -5784,7 +5806,7 @@ final class AppModel: ObservableObject {
               incoming.delivery?.originConversationID == originID,
               incoming.delivery?.chainID == agentMessagingSessions[originID]?.id,
               incoming.delivery?.directOriginBinding == binding,
-              let contexts = agentConversations else { throw AgentMessagingError.scopeMismatch }
+              agentConversations != nil else { throw AgentMessagingError.scopeMismatch }
         let origin: Conversation?
         let membership: GroupReadStateLease?
         if let binding {
@@ -5792,6 +5814,12 @@ final class AppModel: ObservableObject {
                   let value = conversations.first(where: { $0.id == originID && $0.agentBinding == binding }),
                   value.hiddenAt == nil else { throw AgentMessagingError.scopeMismatch }
             origin = value; membership = nil
+        } else if let manualOrigin {
+            guard originGroup == nil, manualMailboxOriginIsCurrent(manualOrigin, originID: originID),
+                  runningAgentMessageScopes.contains(originID), directMessagingBindings[originID] == nil else {
+                throw AgentMessagingError.scopeMismatch
+            }
+            origin = nil; membership = nil
         } else {
             guard let originGroup, let groupService,
                   runningGroups.contains(originID), originGroup.id == originID,
@@ -5805,9 +5833,16 @@ final class AppModel: ObservableObject {
         }
         var handedOff = false
         defer { if !handedOff { membership?.close() } }
-        let ownContext = try await contexts.context(accountID: account, originID: originID, agentID: sender.id)
-        let destinationID = binding?.agentID == sender.id ? originID : ownContext.conversationID
-        let ids = Set((originGroup?.memberIDs ?? []) + [incoming.senderID, sender.id] + (binding.map { [$0.agentID] } ?? []))
+        let ownContext = try await canonicalPeerContext(account: account, originID: originID, agentID: sender.id,
+            resolveBinding: binding?.agentID != sender.id, checkScope: {
+                try parent.check(); try self.checkChannelAccount(account, generation: generation)
+                guard self.isAgentMessagingScopeActive(originID) else { throw CancellationError() }
+            })
+        let destinationID = binding?.agentID == sender.id ? originID : ownContext.transcriptConversationID
+        var ids = Set(originGroup?.memberIDs ?? [])
+        ids.formUnion(manualOrigin.map { Array($0.identities.keys) } ?? [])
+        ids.formUnion([incoming.senderID, sender.id])
+        if let binding { ids.insert(binding.agentID) }
         var identities: [UUID: DirectAgentExecutionIdentity] = [:]
         for id in ids {
             guard let identity = Self.channelSenderIdentity(agents.first { $0.id == id },
@@ -5827,7 +5862,7 @@ final class AppModel: ObservableObject {
                 return try bindings.withValid(operation)
             }
         })
-        let scope = MailboxChannelScope(originID: originID, origin: origin, originGroup: originGroup, membership: membership,
+        let scope = MailboxChannelScope(originID: originID, origin: origin, originGroup: originGroup, manualOrigin: manualOrigin, membership: membership,
             incoming: incoming, destinationID: destinationID,
             destination: conversations.first { $0.id == destinationID }, account: account,
             generation: generation, identities: identities, executionScope: executionScope,
@@ -5869,6 +5904,8 @@ final class AppModel: ObservableObject {
         if let origin = scope.origin {
             guard conversations.first(where: { $0.id == scope.originID }).map(DelegatedChannelScope.OriginConversation.init) == origin,
                   origin.hiddenAt == nil else { return false }
+        } else if let manual = scope.manualOrigin {
+            guard manualMailboxOriginIsCurrent(manual, originID: scope.originID) else { return false }
         } else {
             guard let group = scope.originGroup, scope.membership?.isActive == true,
                   Self.sameChannelAudience(groups.first { $0.id == scope.originID }, group) else { return false }
@@ -5886,6 +5923,44 @@ final class AppModel: ObservableObject {
                 owner: .init(accountID: scope.account, agentID: id)) == identity else { return false }
         }
         return true
+    }
+
+    private func manualMailboxOriginIsCurrent(_ captured: ManualMailboxOrigin, originID: UUID) -> Bool {
+        guard captured.account == (settings.accountScope ?? "local"), captured.generation == autoReviewAccountGeneration,
+              !agentMessagingAccountTransition, manualMailboxOrigins[originID] == captured else { return false }
+        return captured.identities.allSatisfy { id, identity in
+            Self.channelSenderIdentity(agents.first { $0.id == id }, owner: .init(accountID: captured.account, agentID: id)) == identity
+        }
+    }
+
+    /// Canonical display ownership is separate from origin-private inference.
+    /// Resolve all durable histories, never the selected chat or display name.
+    private func canonicalPeerContext(account: String, originID: UUID, agentID: UUID,
+        resolveBinding: Bool = true, checkScope: () throws -> Void) async throws -> AgentConversationStore.Context {
+        try checkScope()
+        guard let contexts = agentConversations else { throw AgentMessagingError.scopeMismatch }
+        let context = try await contexts.context(accountID: account, originID: originID, agentID: agentID)
+        try checkScope()
+        guard resolveBinding else { return context }
+        guard let existing = try await store.uniqueBoundConversation(accountID: account, agentID: agentID) else {
+            guard context.projectionConversationID == nil else { throw CancellationError() }
+            return context
+        }
+        try checkScope()
+        guard existing.hiddenAt == nil, !deletedConversationIDs.contains(existing.id),
+              context.projectionConversationID == nil || context.projectionConversationID == existing.id,
+              await !contexts.isProjectionRetired(conversationID: context.conversationID),
+              await !contexts.isProjectionRetired(conversationID: existing.id) else { throw CancellationError() }
+        if existing.id == context.conversationID { return context }
+        let lease = try await store.leaseUniqueBinding(accountID: account, agentID: agentID, conversationID: existing.id)
+        defer { lease.close() }
+        try checkScope()
+        guard lease.legacyHiddenAt == nil else { throw CancellationError() }
+        let result = try await contexts.bindProjection(accountID: account, originID: originID, agentID: agentID,
+            expectedContextID: context.conversationID, conversationID: existing.id,
+            commit: { try lease.withValidBinding($0) })
+        try checkScope()
+        return result
     }
 
     private func closeMailboxChannelScopes(where matches: (MailboxChannelScope) -> Bool) {
@@ -5911,9 +5986,11 @@ final class AppModel: ObservableObject {
                 guard let groupService, Self.sameChannelAudience(await groupService.list().first { $0.id == group.id }, group) else {
                     throw CancellationError()
                 }
+            }
+            if scope.originGroup != nil || scope.manualOrigin != nil {
                 // Only a running, verified delivery may acquire its chat. The
                 // factory does not create a chat while the wake is still queued.
-                if !scope.groupIncomingProjected {
+                if !scope.incomingProjected {
                     let incoming = scope.incoming
                     guard incoming.questionResponse == nil, incoming.secretResponse == nil else { throw AgentMessagingError.scopeMismatch }
                     let executionLease = scope.executionLease, membership = scope.membership
@@ -5928,14 +6005,14 @@ final class AppModel: ObservableObject {
                                   self.mailboxChannelScopes[id] === scope else { throw CancellationError() }
                         }, commit: { operation in
                             try executionLease.commit {
-                                guard let membership else { throw CancellationError() }
-                                return try membership.withValidMembership(operation)
+                                if let membership { return try membership.withValidMembership(operation) }
+                                return try operation()
                             }
                         })
-                    scope.groupIncomingProjected = true
+                    scope.incomingProjected = true
                 }
             }
-            // A direct onStart or a verified group-origin running wake above
+            // A direct/manual onStart or a verified group running wake above
             // supplies the exact incoming receipt, never a guessed owner chat.
             guard let destination = conversations.first(where: { $0.id == scope.destinationID }),
                   mailboxChannelScopeIsCurrent(scope) else { throw CancellationError() }
@@ -7564,8 +7641,9 @@ final class AppModel: ObservableObject {
     }
 
     /// Mirrors only committed peer data; never picks a chat by display name or
-    /// borrows another bound chat's private history. Recipient contexts are
-    /// stable per origin/account/agent, while a reply to the owner uses origin.
+    /// borrows another bound chat's private history. Private inference contexts
+    /// stay origin-scoped; the visible chat uses the exact unique agent binding.
+    /// A reply to the actual direct owner still uses the origin chat.
     private func projectDirectPeerMessage(_ source: AgentMessageSource, message: RoomMessage,
                                           sessionID: UUID, generation: UInt64) async throws {
         let origin = source.originConversationID
@@ -7573,16 +7651,17 @@ final class AppModel: ObservableObject {
             try Task.checkCancellation()
             guard generation == autoReviewAccountGeneration,
                   source.accountID == (settings.accountScope ?? "local"),
-                  directMessagingScopes.contains(origin), isAgentMessagingScopeActive(origin),
+                  (directMessagingScopes.contains(origin) || manualMailboxOrigins[origin].map({ manualMailboxOriginIsCurrent($0, originID: origin) }) == true),
+                  isAgentMessagingScopeActive(origin),
                   agentMessagingSessions[origin]?.id == sessionID else { throw CancellationError() }
         }
         try checkScope()
         guard let messenger = agentMessenger,
-              let owner = directMessagingBindings[origin],
+              (directMessagingBindings[origin] != nil || manualMailboxOrigins[origin] != nil),
               let canonical = await messenger.allMessages().first(where: { $0.id == source.deliveryID }),
               let delivery = canonical.delivery,
               delivery.chainID == sessionID, delivery.originConversationID == origin,
-              delivery.directOriginBinding == owner,
+              delivery.directOriginBinding == directMessagingBindings[origin],
               canonical.senderID == source.senderAgentID, canonical.recipientID == source.recipientAgentID,
               message.groupID == origin, message.senderID == source.authorAgentID else { throw AgentMessagingError.scopeMismatch }
         switch source.kind {
@@ -7603,7 +7682,7 @@ final class AppModel: ObservableObject {
                       delivery.finalPublication == message else { throw AgentMessagingError.scopeMismatch }
             }
         }
-        try await saveDirectPeerMessage(source, message: message, owner: owner,
+        try await saveDirectPeerMessage(source, message: message, owner: directMessagingBindings[origin],
             sessionID: sessionID, checkScope: checkScope)
     }
 
@@ -7668,8 +7747,8 @@ final class AppModel: ObservableObject {
         let destination: UUID
         if owner?.agentID == source.recipientAgentID { destination = origin }
         else {
-            destination = try await contexts.context(accountID: source.accountID, originID: origin,
-                agentID: source.recipientAgentID).conversationID
+            destination = try await canonicalPeerContext(account: source.accountID, originID: origin,
+                agentID: source.recipientAgentID, checkScope: checkScope).transcriptConversationID
         }
         try checkScope()
         guard await !contexts.isProjectionRetired(conversationID: origin) else { throw CancellationError() }

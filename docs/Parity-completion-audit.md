@@ -1,5 +1,30 @@
 # 完成驗收入口（2026-09-27）
 
+## 手動成員訊息的獨立送件核准與既有成員聊天
+
+2026-10-06 接續 `6c12e11`；reference HEAD `a9f633e09d49a85829b8236331b9e21f7e612634`，再次讀取 `source/host/agents/agent-messaging.ts`：single-peer wake 由 actual recipient 處理，自己的聊天顯示結果，不借用選取畫面。前景 `sendAgentMessage` 以 captured account／generation／pair identities 明確 opt-in，manual scope 非假 direct owner／group。human-provided incoming 仍經 messenger 的既有驗證／保留；每次 channel send 問新的核准，原人類入口保留 review／reply directory，connection／formal destination／receipt 屬於 actual sender。
+
+canonical host 先查全部 durable metadata 的唯一 account＋agent binding，不猜標題或只靠 paged UI。若已有 DM，透過有效 binding lease 保存 optional `projectionConversationID`，不替換 scoped `conversationID`、搬移 messages、合併 private histories 或復活退休 chat。store 以 expected context ID、account／origin／agent 與退休／先前 claim 驗證，失效 commit／磁碟保存失敗不改 state；idempotent claim 不重寫，重開保留所有欄位。core 在明確 host factory 完成後重新取得該 mapping，再核對完整 transaction account／origin／sender／agent／route／destination／author／reply directory。這不是模型可選目的地、權限 store、跨 stores atomic commit 或跨 process CAS。
+
+actual running incoming／已保存 publication 才能投影 own chat，不複製來源群組、人類原話、其他群組或 canonical DM 私人 history。既有完整聊天／queue row 保留；原 account generation／personas／semantic destination／unique binding leases 維持到 queue／SQL commit。Stop mapped to original manual chain；延後 Stop task 核對 captured session ID，舊 review／non-cooperative callback 不能影響新同 pair session。純導航不改 destination；account／persona／binding／hidden ABA、刪除或停用 connection 拒絕送件。
+
+本批測試／診斷（全部 `.build/validation/`，日誌不入版控）：
+
+- `manual-mailbox-channel-red-v1.log` exit 1，1 method／2 cases／4 issues：source 尚為 `6c12e11`，實際前景 manual entry 在新／既有 DM 均無 channel review；這是有效產品 baseline。第一次權限審查服務 capacity failure 沒有執行命令，正常重試審查後才執行，沒有繞過。
+- `manual-mailbox-channel-focused-v1.log` exit 0：先驗證 2 個實際 manual cases 與核心／原 store 回歸。
+- `manual-mailbox-channel-focused-v2.log` exit 1：新 late callback fixture 誤以為 stream 已 unwind 後仍應拒絕 fresh send；2 target cases 4 issues。v3 的 4 cases 4 issues 含等待未 unwind 的原 scope；v4 的 4 cases 4 issues 是新合法回合也套用相同 non-cooperative provider gate、需要另一個新 review，非舊 grant 重用。v5 的 1 case 2 issues 是 await profile lookups 期間自然 unwind 的 TOCTOU busy 假設。保留全部失敗，不當成產品 red／final pass。
+- `manual-mailbox-channel-focused-v6.log` exit 0：24 methods／3 suites；App 12 methods／172 cases。新增 App 3 methods／30 cases（24 lifecycle＋2 group→manual＋4 original／target Stop×新／既有 DM）、store 3 methods／11 cases，core 增加 2 個 host-acquired canonical mapping 正向 cases。完整 core wrong factory／無 factory／無 store 回歸仍通過，private request ID 保持 scoped，canonical rows／messages／address reservations／queued payload／reopened stores 全值比較。
+- `manual-mailbox-channel-localization-final-v1.log` exit 0：七語各 1,817 keys／0 missing；沒有新 UI 字串／layout，不等於人工翻譯／VoiceOver 驗收。
+
+本批最後正式 gates（最後產品 source；上述聚焦 gate 後只有註解澄清及本驗收紀錄更新）：
+
+- `manual-mailbox-channel-full-final-v1.log` exit 0：串行合計 2,144 Swift Testing／256 suites／17 summaries＋135 XCTest／0 failures／17 bundles；App 790 tests／102 suites，404.588 秒。兩項 opt-in installed Codex live tests `installedCodexExecutesAnIsolatedHostTool`／`installedCodexResumesAfterStaleReadOnlyReplyAndRequestsWriteApproval` skipped，不算已執行的外部驗收。既有 CoreData NSXPCConnection 與 CG colorspace／components -1 診斷保留，沒有相關 test failure，不宣稱已修復。
+- `manual-mailbox-channel-native-final-v1.log` exit 0：`Filicon.xcworkspace`／`Filicon App`／arm64 Debug `BUILD SUCCEEDED`，使用隔離 `.build/validation/GroupUnreadFoundationNative` products；既有 no AppIntents.framework dependency metadata extraction skipped warning 保留。
+- `manual-mailbox-channel-native-verify-final-v1.log` exit 0：最後 native app 的四個 executables、app／XPC entitlements 與 Support 原檔一致；KaTeX 0.16.45 engine／stylesheet／20 fonts／MIT、public Mermaid 11.16.0 engine／MIT／72 pinned notices 與 deep strict codesign 通過。
+- `manual-mailbox-channel-package-final-v1.log` exit 0：全新 `.build/validation/ManualMailboxChannelPackage/Filicon.app`，standalone SPM Debug／ad-hoc；四個 executables、app／XPC entitlements、上述離線資源與 deep strict signature 均驗證通過。既有 compiler warnings 保留，沒有略過驗證；印出的 launch smoke 沒有執行。這不是 Developer ID release／公證或真人啟動驗收。
+
+**仍未完成**：manual 附件 source／send consent、question／credential resume 的入口驗收，inbound／background-group peer channel host、其餘 saved-group／inbound failure follow-up、uncaptured locator 新核准開啟，unified private DM/group context／runtime，以及 live Slack／Discord／OAuth、真人／VoiceOver／最低 macOS／Developer ID release／公證。AGENT-02／AGENT-04／UI-04／整體 partial 與 48 分類不變，只取代歷史前景 manual text host 未接線及重複 canonical ownership 缺口。未 push、launch smoke、重啟使用者 App／Xcode 或改真實 credentials／群組資料。
+
 ## 前景群組委派的實際收件人成員外部送件
 
 2026-10-06 接續 `ff38b50`；reference HEAD 再核對為 `a9f633e09d49a85829b8236331b9e21f7e612634`。`source/host/agents/agent-messaging.ts` 的 single-peer wake 是另一位成員自己的回合，不是新的使用者權限；`source/host/extensions/transcript/turn-runtime.ts` 的 channel delivery／transcript 使用實際 `runSession`，不借用目前前景聊天。本批在原生前景 saved-group → 已核准 `SendToAgent` → 真正 single-peer wake 安裝明確 host channel factory，亦驗證 peer 回覆原群組成員後，由該成員自己的 canonical direct chat 送件。

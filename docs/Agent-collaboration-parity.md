@@ -1,5 +1,19 @@
 # 協作能力核對紀錄（更新至 2026-10-06）
 
+## 手動成員訊息的獨立送件核准與既有成員聊天
+
+2026-10-06 接續 `6c12e11`；reference HEAD 再核對為 `a9f633e09d49a85829b8236331b9e21f7e612634`。實際前景 `sendAgentMessage` 現在捕捉 account／generation／發起與收件成員 identity，明確安裝 manual host factory；不是讓所有 mailbox／inbound runner 繼承 grant。人工指定的原始訊息仍由原 messenger 建立，模型收到的是 peer assistant context，不是新的工具權限。每次 external send 另問人類；核准留原 pair mailbox scope，實際 connection／destination／author 屬於送件成員自己。
+
+唯一 durable agent binding 現在決定可見成員聊天；已有聊天就沿用，不按選取、名稱或 origin 再建立第二個 bound chat。origin-scoped `Context.conversationID`／私有 messages 保持不變，新增 optional `projectionConversationID` 只保存 host-verified UI 目的地。新欄位相容舊 records；不同來源不合併歷史或 provider thread。原、目標或 context 已退休、隱藏／刪除、歧義 binding、舊 claim 換目標與失效 lease 拒絕使用，不重建或重授權。queue／SQL 的既有 lifetime／unique binding commit fences 不放寬；這不是跨 stores 原子性或跨 process CAS。
+
+完整 actual incoming／committed output 在成員聊天投影，保留舊聊天所有欄位與 external rows，Stop 回原手動 session。延後的 Stop 清理另外核對原 session ID；舊 callback／舊 review 不能寫入或核准新的同 pair 回合。persona、account、binding、hidden 修改後還原仍使舊 grant 失效，導航不改目的地。真人送件、真實 credentials／群組／App／Xcode 均未操作。
+
+測試技能以 complete-value context／canonical／queue／reopened store 比較驗證。有效 baseline `manual-mailbox-channel-red-v1.log` 為 1 method／2 cases／4 issues：原 source 沒有 manual publisher。最後聚焦 `manual-mailbox-channel-focused-v6.log` exit 0：24 methods／3 suites，App 12 methods／172 cases；新增 App 3 methods／30 cases、store 3 methods／11 cases、core 2 canonical-projection cases。涵蓋新／既有聊天、拒絕、Stop、ABA、account、connection、navigation、真實 group→manual 同 canonical／不同 private inference，以及 non-cooperative 舊 callback／fresh review。早期 fixture 的忙碌時序與重複 late gate 假設不當作產品紅燈；細節及最後完整 gates 見 [完成驗收入口](Parity-completion-audit.md)。
+
+最後完整串行 `manual-mailbox-channel-full-final-v1.log` exit 0：2,144 Swift Testing／256 suites＋135 XCTest／0 failures；App 790 tests／102 suites。兩項 opt-in installed Codex live tests skipped，既有 CoreData NSXPCConnection／CG colorspace 診斷保留，不宣稱修復或外部驗收。最後 arm64 Debug native build／native verify／全新 standalone Debug 封裝均 exit 0，四個 executables、app／XPC entitlements、離線 KaTeX／Mermaid resources 與 deep strict signature 通過。未執行印出的 launch smoke；既有 AppIntents／compiler warnings 保留，Debug／ad-hoc 不等於 Developer ID release／公證。
+
+**仍未完成**：manual 附件 source／send consent、question／credential resume 的入口驗收，inbound／background-group peer publication host、其餘 failure follow-up、uncaptured locator 的新核准開啟，以及 unified private DM/group context／live／真人／VoiceOver／最低 macOS／Developer ID release／公證。本批只補前景 manual text 入口及 canonical ownership，不把 AGENT-02／AGENT-04／UI-04 或整體 partial 關閉，48 分類不變。未 push、重啟 App／Xcode 或改真實資料。
+
 ## 前景群組委派的實際收件人成員外部送件
 
 2026-10-06 接續 `ff38b50`，reference HEAD 再核對為 `a9f633e09d49a85829b8236331b9e21f7e612634`；`agent-messaging.ts` 的 peer wake 不是新的人類權限，`turn-runtime.ts` 的外部 delivery／transcript 以 actual session 為來源。前景 saved-group → reviewed `SendToAgent` → actual single-peer wake 現在明確取得自己的 channel publisher；peer 回覆原群組成員也回該成員自己的 canonical direct chat。原核准／source consent scope 留來源群組，連線／正式 entry／receipt 使用 actual agent，不複製群組原話／私人 summary 或其他聊天。

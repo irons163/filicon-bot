@@ -1003,14 +1003,18 @@ public actor AgentMessagingSession {
         guard sender.id == inbound.recipientID, inbound.delivery?.chainID == id,
               inbound.delivery?.originConversationID == originConversationID,
               inbound.delivery?.directOriginBinding == directOriginBinding else { throw AgentMessagingError.scopeMismatch }
-        let ownContext = try await conversations.context(accountID: accountID, originID: originConversationID, agentID: sender.id)
-        let destination = directOriginBinding?.agentID == sender.id ? originConversationID : ownContext.conversationID
         try checkOpen()
         let child = ChannelPublicationLifetime(parent: channelPublicationLifetime)
         var handedOff = false
         defer { if !handedOff { child.close() } }
         guard let transaction = try await factory(inbound, sender, child) else { return nil }
         do {
+            try checkOpen()
+            // A trusted host may bind the visible transcript to an already
+            // existing uniquely-owned DM. It never changes this origin's
+            // private inference ID/history; model arguments cannot choose it.
+            let ownContext = try await conversations.context(accountID: accountID, originID: originConversationID, agentID: sender.id)
+            let destination = directOriginBinding?.agentID == sender.id ? originConversationID : ownContext.transcriptConversationID
             try checkOpen()
             guard transaction.accountID == accountID, transaction.conversationID == originConversationID, transaction.senderID == sender.id,
                   transaction.agentID == sender.id, transaction.transcriptRoute == .directConversation,

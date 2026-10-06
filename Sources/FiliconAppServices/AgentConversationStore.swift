@@ -1,5 +1,6 @@
 import Foundation
 import FiliconDomain
+import FiliconPersistence
 
 /// Durable peer context, not a permission store. Histories are isolated by
 /// account, originating conversation, and agent; reopening a mailbox must never
@@ -8,6 +9,10 @@ public actor AgentConversationStore {
     public struct Context: Codable, Equatable, Sendable {
         public let conversationID: UUID
         public var messages: [ChatMessage]
+        /// Host-verified visible chat only. The inference/thread ID and private
+        /// history remain isolated by origin, even when the agent already has a DM.
+        public var projectionConversationID: UUID? = nil
+        public var transcriptConversationID: UUID { projectionConversationID ?? conversationID }
     }
 
     private struct Record: Codable {
@@ -64,6 +69,29 @@ public actor AgentConversationStore {
 
     public func isProjectionRetired(conversationID: UUID) -> Bool {
         state.retiredProjectionIDs?.contains(conversationID) == true
+    }
+
+    /// Called only after the host resolves and leases the unique durable agent
+    /// binding. A stale context, retired chat or different prior claim fails
+    /// closed; no history is imported and no prior claim is silently replaced.
+    public func bindProjection(accountID: String, originID: UUID, agentID: UUID,
+                               expectedContextID: UUID, conversationID: UUID,
+                               commit: ConversationCommitGuard = { try $0() }) throws -> Context {
+        guard let index = state.records.firstIndex(where: {
+            $0.accountID == accountID && $0.originID == originID && $0.agentID == agentID
+        }), state.records[index].context.conversationID == expectedContextID,
+            !isProjectionRetired(conversationID: originID),
+            !isProjectionRetired(conversationID: expectedContextID),
+            !isProjectionRetired(conversationID: conversationID) else { throw CancellationError() }
+        let current = state.records[index].context
+        guard current.projectionConversationID == nil || current.projectionConversationID == conversationID else {
+            throw CancellationError()
+        }
+        if current.projectionConversationID == conversationID { try commit {}; return current }
+        var next = state
+        next.records[index].context.projectionConversationID = conversationID
+        try commit { try save(next) }
+        return state.records[index].context
     }
 
     /// Persist before deleting a bound chat. Canonical mailbox/context history
