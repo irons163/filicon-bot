@@ -14,6 +14,7 @@ public struct GroupConversationResponder: GroupAgentResponder {
     private let backgroundFileServices: AgentBackgroundGroupFileServices?
     private let backgroundRemoteServices: AgentBackgroundGroupRemoteServices?
     private let backgroundGalleryServices: AgentBackgroundGroupGalleryServices?
+    private let backgroundChannelServices: AgentBackgroundGroupChannelServices?
     private let toolScopeID: UUID
     private let userMessageID: UUID?
     private let userImages: [InferenceAttachment]
@@ -28,6 +29,7 @@ public struct GroupConversationResponder: GroupAgentResponder {
                 backgroundFileServices: AgentBackgroundGroupFileServices? = nil,
                 backgroundRemoteServices: AgentBackgroundGroupRemoteServices? = nil,
                 backgroundGalleryServices: AgentBackgroundGroupGalleryServices? = nil,
+                backgroundChannelServices: AgentBackgroundGroupChannelServices? = nil,
                 userMessageID: UUID? = nil, userImages: [InferenceAttachment] = [], imageRecipientIDs: Set<UUID> = [],
                 questionAccountID: String? = nil, questionLifetime: AgentPublicationLifetime? = nil,
                 agentLane: AgentExecutionLane? = nil,
@@ -38,6 +40,7 @@ public struct GroupConversationResponder: GroupAgentResponder {
         self.backgroundFileServices = backgroundFileServices
         self.backgroundRemoteServices = backgroundRemoteServices
         self.backgroundGalleryServices = backgroundGalleryServices
+        self.backgroundChannelServices = backgroundChannelServices
         self.userMessageID = userMessageID; self.userImages = userImages
         self.imageRecipientIDs = imageRecipientIDs
         self.questionAccountID = questionAccountID; self.questionLifetime = questionLifetime
@@ -193,7 +196,7 @@ public struct GroupConversationResponder: GroupAgentResponder {
             publisher = try await messaging.savedBackgroundGroupPublisher(for: agent.id, groupID: groupID,
                 memberIDs: roomContext.group.memberIDs, replyHistory: replyHistory,
                 fileServices: backgroundFileServices, remoteServices: backgroundRemoteServices,
-                galleryServices: backgroundGalleryServices, publish: onSavedPublication)
+                galleryServices: backgroundGalleryServices, channelServices: backgroundChannelServices, publish: onSavedPublication)
         } else if delegatedMessage == nil, let onSavedPublication, let roomContext, let questionLifetime {
             if let messaging, let publicationRequestID = latestUser?.id {
                 // File publication can start from a text-only request. Image

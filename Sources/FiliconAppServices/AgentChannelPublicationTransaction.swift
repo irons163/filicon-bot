@@ -94,8 +94,13 @@ public actor AgentChannelPublicationTransaction {
         public let route: ChannelDeliveryOrigin.Route
         public let senderName: String
         public let destination: Destination?
-        public init(route: ChannelDeliveryOrigin.Route, senderName: String, destination: Destination? = nil) {
+        /// The host's already bounded reply directory. A different canonical
+        /// destination never inherits origin quotes merely by being selected.
+        public let replyDirectoryConversationID: UUID?
+        public init(route: ChannelDeliveryOrigin.Route, senderName: String, destination: Destination? = nil,
+                    replyDirectoryConversationID: UUID? = nil) {
             self.route = route; self.senderName = senderName; self.destination = destination
+            self.replyDirectoryConversationID = replyDirectoryConversationID
         }
     }
     public struct Review: Sendable, Equatable {
@@ -132,6 +137,7 @@ public actor AgentChannelPublicationTransaction {
     public nonisolated let agentID: UUID
     public nonisolated let destinationConversationID: UUID
     public nonisolated let destinationSenderID: UUID
+    public nonisolated let replyDirectoryConversationID: UUID
     public nonisolated let supportsAttachments: Bool
     public nonisolated let supportsRemoteSources: Bool
     private nonisolated let lifetime: ChannelPublicationLifetime
@@ -167,6 +173,7 @@ public actor AgentChannelPublicationTransaction {
         self.conversationID = conversationID; self.senderID = senderID; self.agentID = agentID
         destinationConversationID = transcriptSource?.destination?.conversationID ?? conversationID
         destinationSenderID = transcriptSource?.destination?.senderID ?? senderID
+        replyDirectoryConversationID = transcriptSource?.replyDirectoryConversationID ?? conversationID
         self.accountID = accountID; self.channels = channels; self.lifetime = lifetime
         self.validateScope = validateScope; self.authorize = authorize
         supportsAttachments = prepare != nil && install != nil
@@ -195,9 +202,9 @@ public actor AgentChannelPublicationTransaction {
         try await checkScope()
         if let transcriptSource {
             guard destinationSenderID == (transcriptSource.route == .directConversation ? destinationConversationID : agentID),
-                  destinationConversationID == conversationID || replyTo == nil else { throw Failure.unavailable }
-            // A quote from the approval scope is not a reply-directory grant in
-            // a different canonical chat. Reject before any source read/review.
+                  destinationConversationID == replyDirectoryConversationID || replyTo == nil else { throw Failure.unavailable }
+            // A quote from another scope is not a reply-directory grant in
+            // this canonical chat. Reject before any source read/review.
         }
         // Resolve ownership before source reads. Neither a model address nor a
         // source approval can create a connection or use another agent's token.

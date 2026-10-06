@@ -36,6 +36,16 @@ struct AuthorizedAgentFileReader: Sendable {
     let policy: ToolPermissionPolicy
     let validateScope: @Sendable () async throws -> Void
     let authorizeRead: @Sendable (LocalOperation, ToolContext, ToolCallID) async throws -> Void
+    private let validateReadDispatch: @Sendable () throws -> Void
+
+    init(runtime: LocalToolRuntime, folders: WorkspaceFolderCoordinator, policy: ToolPermissionPolicy,
+         validateScope: @escaping @Sendable () async throws -> Void,
+         authorizeRead: @escaping @Sendable (LocalOperation, ToolContext, ToolCallID) async throws -> Void,
+         validateReadDispatch: @escaping @Sendable () throws -> Void = {}) {
+        self.runtime = runtime; self.folders = folders; self.policy = policy
+        self.validateScope = validateScope; self.authorizeRead = authorizeRead
+        self.validateReadDispatch = validateReadDispatch
+    }
 
     func read(path: String, agentID: UUID, call: NormalizedToolCall, context: ToolContext,
               receiptPrefix: String, maximumBytes: Int) async throws -> Data {
@@ -71,7 +81,8 @@ struct AuthorizedAgentFileReader: Sendable {
         try await checkScopeAndPolicy()
         try await validateGrant(grant)
         let result = try await runtime.perform(operation: operation, conversationID: context.conversationID,
-            agentID: agentID, runID: context.runID, toolCallID: "\(receiptPrefix):\(call.id.rawValue)")
+            agentID: agentID, runID: context.runID, toolCallID: "\(receiptPrefix):\(call.id.rawValue)",
+            validateScope: validateReadDispatch)
         try await checkScopeAndPolicy()
         try await validateGrant(grant)
         guard case .file(let bytes) = result else { throw LocalToolError.permissionMismatch }
@@ -83,7 +94,9 @@ struct AuthorizedAgentFileReader: Sendable {
 
     private func checkScopeAndPolicy() async throws {
         try Task.checkCancellation()
+        try validateReadDispatch()
         try await validateScope()
+        try validateReadDispatch()
         guard await policy.effectivePermission(for: .readFile) != .never else {
             throw LocalToolError.permissionMismatch
         }

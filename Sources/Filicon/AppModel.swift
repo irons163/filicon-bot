@@ -119,6 +119,7 @@ struct GroupReadContext: Sendable {
 final class AppModel: ObservableObject {
     @Published var conversations: [Conversation] = [] {
         didSet {
+            invalidateDelegatedChannelScopes()
             invalidateChannelFailureFollowUps { id in
                 let before = oldValue.first { $0.id == id }, after = conversations.first { $0.id == id }
                 guard let after else { return true }
@@ -234,6 +235,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var requestedMessageJumpID: UUID?
     @Published var agents: [AgentProfile] = [] {
         didSet {
+            invalidateDelegatedChannelScopes()
             for (id, lifetime) in directChannelLifetimes {
                 guard let owner = conversations.first(where: { $0.id == id })?.agentBinding else { lifetime.close(); continue }
                 if Self.channelSenderIdentity(oldValue.first(where: { $0.id == owner.agentID }), owner: owner)
@@ -279,6 +281,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var notificationTrays: [InAppNotificationTray] = []
     @Published var groups: [AgentGroup] = [] {
         didSet {
+            invalidateDelegatedChannelScopes()
             groupReadOwnersChanged(from: oldValue)
             for id in groups.map(\.id) { Task { [weak self] in await self?.reloadGroupUnreadState(id: id) } }
         }
@@ -844,6 +847,33 @@ final class AppModel: ObservableObject {
     private var turnTasks: [UUID: Task<Void, Never>] = [:]
     private var directPublicationIDs: [UUID: [UUID]] = [:]
     private var directChannelLifetimes: [UUID: ChannelPublicationLifetime] = [:]
+    private struct DelegatedChannelScope {
+        struct OriginConversation: Equatable {
+            let id: UUID
+            let binding: DirectConversationAgentBinding?
+            let providerID: ProviderID
+            let modelID: ModelID
+            let reasoningEffort: ReasoningEffort
+            let hiddenAt: Date?
+            init(_ value: Conversation) {
+                id = value.id; binding = value.agentBinding; providerID = value.providerID
+                modelID = value.modelID; reasoningEffort = value.reasoningEffort; hiddenAt = value.hiddenAt
+            }
+        }
+        let originID: UUID
+        let group: AgentGroup
+        let originGroup: AgentGroup?
+        let originConversation: OriginConversation?
+        let account: String
+        let identities: [UUID: DirectAgentExecutionIdentity]
+        let lifetime: ChannelPublicationLifetime
+    }
+    private var delegatedChannelScopes: [UUID: DelegatedChannelScope] = [:]
+    private struct ChannelReviewScope {
+        let lifetime: ChannelPublicationLifetime
+        let validate: @Sendable () async throws -> Void
+    }
+    private var channelReviewScopes: [String: ChannelReviewScope] = [:]
     private var draftSaveTask: Task<Void, Never>?
     private var navigationSaveTask: Task<Void, Never>?
     private var draftLoadGeneration = 0
@@ -2298,18 +2328,38 @@ final class AppModel: ObservableObject {
     /// task/binding has become invalid. In particular, a stale canonical owner
     /// must not be restored just to persist a clicked approval card.
     private func validateBackgroundChannelReview(_ context: TranscriptCardContext) async throws {
-        guard let execution = context.execution, execution.allowsChannelPublication,
-              case .autoReview(let card) = context.card.payload,
+        guard case .autoReview(let card) = context.card.payload,
               let pending = pendingAutoReviewByID[card.reviewID],
               pending.action.context.conversationID == context.conversationID,
               pending.action.context.metadata["agentChannelPublication"] == "true"
                 || pending.action.context.metadata["agentChannelSourceDownload"] == "true" else { return }
-        do { try await validateBackgroundDirectExecution(execution) }
+        do {
+            try await validatePendingChannelReview(pending)
+            if let execution = context.execution, execution.allowsChannelPublication {
+                try await validateBackgroundDirectExecution(execution)
+            }
+        }
         catch {
             directChannelLifetimes[context.conversationID]?.close()
             pendingAutoReviewByID.removeValue(forKey: pending.id)
             pendingAutoReviewApprovals = pendingAutoReviewByID.values.sorted { $0.createdAt < $1.createdAt }
             setAutoReviewCardLifecycle(reviewID: pending.id, conversationID: context.conversationID, lifecycle: .cancelled)
+            await autoReviewBroker.cancel(reviewID: pending.id, fence: pending.fence)
+            throw error
+        }
+    }
+
+    private func validatePendingChannelReview(_ pending: PendingApproval) async throws {
+        guard let scope = channelReviewScopes[pending.id] else { return }
+        do {
+            try scope.lifetime.check()
+            try await scope.validate()
+            try scope.lifetime.check()
+        } catch {
+            scope.lifetime.close()
+            pendingAutoReviewByID.removeValue(forKey: pending.id)
+            pendingAutoReviewApprovals = pendingAutoReviewByID.values.sorted { $0.createdAt < $1.createdAt }
+            setAutoReviewCardLifecycle(reviewID: pending.id, conversationID: pending.action.context.conversationID, lifecycle: .cancelled)
             await autoReviewBroker.cancel(reviewID: pending.id, fence: pending.fence)
             throw error
         }
@@ -4510,6 +4560,7 @@ final class AppModel: ObservableObject {
     @discardableResult
     func updateAgent(_ profile: AgentProfile) async -> Bool {
         guard let agentService else { errorMessage = l10n("Agent storage is unavailable."); return false }
+        invalidateDelegatedChannelProfile(profile)
         // Fence before the actor hop, including semantic edit-and-restore. A
         // presence/unread update does not change the captured sender identity.
         for (id, lifetime) in directChannelLifetimes {
@@ -4536,6 +4587,7 @@ final class AppModel: ObservableObject {
 
     func archiveAgent(id: UUID) async {
         guard let agentService else { return }
+        closeDelegatedChannelScopes { $0.identities[id] != nil }
         for value in preparingChannelFailures.values where value.notice.publication.owner.agentID == id {
             value.scope.invalidate()
         }
@@ -5108,6 +5160,7 @@ final class AppModel: ObservableObject {
     }
 
     func stopAgentMessages(scopeID: UUID) async {
+        closeDelegatedChannelScopes { $0.originID == scopeID }
         invalidateMailboxSecrets(scopeID: scopeID)
         guard runningAgentMessageScopes.contains(scopeID) else { return }
         agentMessagingSessions[scopeID]?.revokeProfileChanges()
@@ -5400,6 +5453,122 @@ final class AppModel: ObservableObject {
 
     func groupApprovalScope(_ groupID: UUID) -> UUID { delegatedGroupOrigins[groupID] ?? groupID }
 
+    private nonisolated static func sameChannelAudience(_ current: AgentGroup?, _ captured: AgentGroup) -> Bool {
+        current?.id == captured.id && current?.name == captured.name && current?.summary == captured.summary
+            && current?.memberIDs == captured.memberIDs
+    }
+
+    private func delegatedChannelScopeIsCurrent(_ scope: DelegatedChannelScope) -> Bool {
+        guard scope.account == (settings.accountScope ?? "local"), !agentMessagingAccountTransition,
+              Self.sameChannelAudience(groups.first { $0.id == scope.group.id }, scope.group) else { return false }
+        if let group = scope.originGroup,
+           !Self.sameChannelAudience(groups.first { $0.id == group.id }, group) { return false }
+        if let original = scope.originConversation {
+            guard !deletedConversationIDs.contains(original.id),
+                  conversations.first(where: { $0.id == original.id }).map(DelegatedChannelScope.OriginConversation.init) == original else { return false }
+        }
+        for (id, identity) in scope.identities {
+            let owner = DirectConversationAgentBinding(accountID: scope.account, agentID: id)
+            guard Self.channelSenderIdentity(agents.first { $0.id == id }, owner: owner) == identity else { return false }
+        }
+        return true
+    }
+
+    /// These locks are also held through ChannelService's synchronous queue
+    /// save. Rebind/edit-and-restore cannot revive a captured review (ABA).
+    private func invalidateDelegatedChannelScopes() {
+        closeDelegatedChannelScopes { !delegatedChannelScopeIsCurrent($0) }
+    }
+
+    private func invalidateDelegatedChannelProfile(_ profile: AgentProfile) {
+        closeDelegatedChannelScopes { scope in
+            guard let captured = scope.identities[profile.id] else { return false }
+            let owner = DirectConversationAgentBinding(accountID: scope.account, agentID: profile.id)
+            return Self.channelSenderIdentity(profile, owner: owner) != captured
+        }
+    }
+
+    private func closeDelegatedChannelScopes(where matches: (DelegatedChannelScope) -> Bool) {
+        let lifetimes = delegatedChannelScopes.values.filter(matches).map(\.lifetime)
+        guard !lifetimes.isEmpty else { return }
+        for lifetime in lifetimes { lifetime.close() }
+        // Retire the exact waiters too. Do not persist a stale origin or wait
+        // for another human click/expiry to stop an invalid background review.
+        for (id, review) in Array(channelReviewScopes) where lifetimes.contains(where: { $0 === review.lifetime }) {
+            guard let pending = pendingAutoReviewByID.removeValue(forKey: id) else { continue }
+            setAutoReviewCardLifecycle(reviewID: id, conversationID: pending.action.context.conversationID, lifecycle: .cancelled)
+            channelReviewScopes.removeValue(forKey: id)
+            Task { [autoReviewBroker] in await autoReviewBroker.cancel(reviewID: id, fence: pending.fence) }
+        }
+        pendingAutoReviewApprovals = pendingAutoReviewByID.values.sorted { $0.createdAt < $1.createdAt }
+    }
+
+    private func makeBackgroundGroupChannelServices(_ dispatch: AgentGroupDispatch, originID: UUID,
+        generation: UInt64) -> AgentBackgroundGroupChannelServices? {
+        guard channelService != nil else { return nil }
+        let account = settings.accountScope ?? "local"
+        return .init(originID: originID, groupID: dispatch.audience.id,
+            validate: { [weak self] in
+                guard let self else { throw CancellationError() }
+                try await self.validateBackgroundFileDispatch(dispatch, originID: originID, generation: generation)
+            }, factory: { [weak self] sender, lifetime, publish in
+                guard let self else { throw CancellationError() }
+                return try await self.makeDelegatedGroupChannelPublication(dispatch, sender: sender,
+                    originID: originID, account: account, generation: generation, lifetime: lifetime, publish: publish)
+            })
+    }
+
+    private func makeDelegatedGroupChannelPublication(_ dispatch: AgentGroupDispatch, sender: AgentProfile,
+        originID: UUID, account: String, generation: UInt64, lifetime: ChannelPublicationLifetime,
+        publish: @escaping AgentChannelPublicationTransaction.PublishTranscript) throws -> AgentChannelPublicationTransaction? {
+        try lifetime.check()
+        try checkChannelAccount(account, generation: generation)
+        try validateBackgroundFileDispatch(dispatch, originID: originID, generation: generation)
+        guard let audience = groups.first(where: { $0.id == dispatch.audience.id }), audience.memberIDs.contains(sender.id) else {
+            throw AgentGroupPostError.changed
+        }
+        let originGroup = groups.first { $0.id == originID }
+        let originConversation = conversations.first { $0.id == originID }.map(DelegatedChannelScope.OriginConversation.init)
+        var profileIDs = Set(audience.memberIDs + (originGroup?.memberIDs ?? []))
+        if let id = originConversation?.binding?.agentID { profileIDs.insert(id) }
+        var identities: [UUID: DirectAgentExecutionIdentity] = [:]
+        for id in profileIDs {
+            guard let identity = Self.channelSenderIdentity(agents.first { $0.id == id },
+                owner: .init(accountID: account, agentID: id)) else { throw CancellationError() }
+            identities[id] = identity
+        }
+        guard identities[sender.id] == Self.channelSenderIdentity(sender, owner: .init(accountID: account, agentID: sender.id)) else {
+            throw CancellationError()
+        }
+        let scopeID = UUID()
+        let scope = DelegatedChannelScope(originID: originID, group: audience, originGroup: originGroup,
+            originConversation: originConversation, account: account, identities: identities, lifetime: lifetime)
+        guard delegatedChannelScopeIsCurrent(scope) else { throw CancellationError() }
+        delegatedChannelScopes[scopeID] = scope
+        let validate: @Sendable () async throws -> Void = { [weak self] in
+            try lifetime.check()
+            guard let self else { throw CancellationError() }
+            try await self.validateDelegatedChannelScope(scopeID, dispatch: dispatch, generation: generation)
+            try lifetime.check()
+        }
+        return makeAgentChannelPublication(conversationID: originID, senderID: sender.id, agentID: sender.id,
+            senderName: sender.name, route: .groupConversation, account: account, generation: generation, lifetime: lifetime,
+            transcriptDestination: .init(conversationID: audience.id, senderID: sender.id), replyDirectoryConversationID: audience.id,
+            validateScope: validate, publishTranscript: publish, prepareLocal: { [weak self] url, call, context in
+                guard let self else { throw CancellationError() }
+                return try await self.prepareGroupPublicationFile(sender: sender, url: url, call: call, context: context,
+                    audience: audience, generation: generation, originID: originID, dispatchID: dispatch.message.id,
+                    channelLifetime: lifetime)
+            })
+    }
+
+    private func validateDelegatedChannelScope(_ id: UUID, dispatch: AgentGroupDispatch, generation: UInt64) throws {
+        guard let scope = delegatedChannelScopes[id], delegatedChannelScopeIsCurrent(scope) else { throw CancellationError() }
+        try scope.lifetime.check()
+        try checkChannelAccount(scope.account, generation: generation)
+        try validateBackgroundFileDispatch(dispatch, originID: scope.originID, generation: generation)
+    }
+
     /// Foreground saved group publishers only. Direct turns bind separately;
     /// mailbox/inbound/delegated-group runners do not inherit this capability.
     private func makeGroupChannelPublisherFactory(originID: UUID,
@@ -5505,6 +5674,8 @@ final class AppModel: ObservableObject {
     /// supplied by the host. Neither arguments nor the selected chat grant it.
     private func makeAgentChannelPublication(conversationID id: UUID, senderID: UUID, agentID: UUID,
         senderName: String, route: ChannelDeliveryOrigin.Route, account: String, generation: UInt64, lifetime: ChannelPublicationLifetime,
+        transcriptDestination: AgentChannelPublicationTransaction.TranscriptSource.Destination? = nil,
+        replyDirectoryConversationID: UUID? = nil,
         validateScope: @escaping @Sendable () async throws -> Void,
         publishTranscript: @escaping AgentChannelPublicationTransaction.PublishTranscript,
         prepareLocal: @escaping AgentChannelAttachmentSource.PrepareLocal) -> AgentChannelPublicationTransaction? {
@@ -5545,7 +5716,8 @@ final class AppModel: ObservableObject {
                     agentID: agentID, senderName: senderName, call: call, context: context, account: account,
                     generation: generation, lifetime: lifetime, validateScope: check)
             }, prepare: prepare, install: install, supportsRemoteSources: attachmentsAvailable,
-            transcriptSource: .init(route: route, senderName: senderName), publishTranscript: publishTranscript)
+            transcriptSource: .init(route: route, senderName: senderName, destination: transcriptDestination,
+                replyDirectoryConversationID: replyDirectoryConversationID), publishTranscript: publishTranscript)
     }
 
     private func checkChannelAccount(_ account: String, generation: UInt64) throws {
@@ -5554,7 +5726,8 @@ final class AppModel: ObservableObject {
               (settings.accountScope ?? "local") == account else { throw CancellationError() }
     }
 
-    private func registerChannelApproval(_ pending: PendingApproval, lifetime: ChannelPublicationLifetime) async {
+    private func registerChannelApproval(_ pending: PendingApproval, lifetime: ChannelPublicationLifetime,
+        validateScope: @escaping @Sendable () async throws -> Void) async {
         do {
             try lifetime.check()
             try checkChannelAccount(pending.fence.accountID, generation: pending.fence.generation)
@@ -5562,6 +5735,7 @@ final class AppModel: ObservableObject {
             await autoReviewBroker.cancel(reviewID: pending.id, fence: pending.fence)
             return
         }
+        channelReviewScopes[pending.id] = .init(lifetime: lifetime, validate: validateScope)
         await registerAutoReviewApproval(pending)
     }
 
@@ -5586,11 +5760,12 @@ final class AppModel: ObservableObject {
         let pending = PendingApproval(action: action, reason: "Approval required", expiresAt: Date().addingTimeInterval(300))
         // Fresh source/redirect consent, separate from publication and never
         // substituted by a generic allow rule or model-supplied authority.
+        defer { channelReviewScopes.removeValue(forKey: pending.id) }
         try await autoReviewBroker.waitForApprovalToExecute(pending) { [weak self] pending in
             guard let self else { return }
             do {
                 try await validateScope()
-                await self.registerChannelApproval(pending, lifetime: lifetime)
+                await self.registerChannelApproval(pending, lifetime: lifetime, validateScope: validateScope)
             } catch { await self.autoReviewBroker.cancel(reviewID: pending.id, fence: pending.fence) }
         }
         try await validateScope()
@@ -5663,11 +5838,12 @@ final class AppModel: ObservableObject {
                 metadata: ["tool": "SendMessage", "agentChannelPublication": "true", "agentMessage": details]))
         let pending = PendingApproval(action: action, reason: "Approval required", expiresAt: Date().addingTimeInterval(300))
         // No generic auto-allow rule can substitute for this publication review.
+        defer { channelReviewScopes.removeValue(forKey: pending.id) }
         try await autoReviewBroker.waitForApprovalToExecute(pending) { [weak self] pending in
             guard let self else { return }
             do {
                 try await validateScope()
-                await self.registerChannelApproval(pending, lifetime: lifetime)
+                await self.registerChannelApproval(pending, lifetime: lifetime, validateScope: validateScope)
             } catch { await self.autoReviewBroker.cancel(reviewID: pending.id, fence: pending.fence) }
         }
         try await validateScope()
@@ -6021,7 +6197,8 @@ final class AppModel: ObservableObject {
     }
 
     private func prepareGroupPublicationFile(sender: AgentProfile, url: String, call: NormalizedToolCall,
-        context: ToolContext, audience: AgentGroup, generation: UInt64, originID: UUID, dispatchID: UUID?) async throws -> PreparedAgentPublicationFile {
+        context: ToolContext, audience: AgentGroup, generation: UInt64, originID: UUID, dispatchID: UUID?,
+        channelLifetime: ChannelPublicationLifetime? = nil) async throws -> PreparedAgentPublicationFile {
         guard context.conversationID == originID else { throw AgentMessagingError.scopeMismatch }
         let reader = AuthorizedAgentFileReader(runtime: localToolRuntime, folders: workspaceFolders,
             policy: localToolPermissionPolicy, validateScope: { [weak self] in
@@ -6039,7 +6216,7 @@ final class AppModel: ObservableObject {
                     guard await self.localToolApprovalBroker.requestApproval(request) else { throw CancellationError() }
                 case .allowed: break
                 }
-            })
+            }, validateReadDispatch: { try channelLifetime?.check() })
         return try await AgentPublicationFileSource(reader: reader).prepare(url: url, agentID: sender.id, call: call, context: context)
     }
 
@@ -6178,7 +6355,8 @@ final class AppModel: ObservableObject {
             responder: GroupConversationResponder(groupID: groupID, registry: registry, coordinator: coordinator,
                 messaging: session, delegatedMessage: dispatch.message, toolScopeID: originID,
                 backgroundFileServices: backgroundFiles, backgroundRemoteServices: backgroundRemote,
-                backgroundGalleryServices: backgroundGallery),
+                backgroundGalleryServices: backgroundGallery,
+                backgroundChannelServices: makeBackgroundGroupChannelServices(dispatch, originID: originID, generation: generation)),
             delegatedAudience: dispatch.audience, delegatedSenderID: dispatch.message.senderID,
             onAgentChange: { [weak self] agentID in
                 await MainActor.run { self?.thinkingGroupMembers[groupID] = agentID }
@@ -6207,6 +6385,8 @@ final class AppModel: ObservableObject {
 
     private func finishGroupDelegation(groupID: UUID, originID: UUID, failed: Bool) async {
         guard delegatedGroupOrigins[groupID] == originID else { return }
+        let channelScopeIDs = delegatedChannelScopes.filter { $0.value.originID == originID && $0.value.group.id == groupID }.map(\.key)
+        for id in channelScopeIDs { delegatedChannelScopes.removeValue(forKey: id)?.lifetime.close() }
         if failed, let dispatch = delegatedGroupPosts[groupID], let groupService {
             let notice = RoomMessage(groupID: groupID, senderID: dispatch.message.senderID,
                 text: l10n("Group reply stopped or failed. The posted message was kept."), memberOutcome: .failed)
@@ -6227,6 +6407,7 @@ final class AppModel: ObservableObject {
             id: change.targetID, name: change.name, instructions: change.description,
             providerID: change.providerID, modelID: change.modelID)
         proposed.name = change.name; proposed.summary = change.description
+        invalidateDelegatedChannelProfile(proposed)
         let payload = try JSONEncoder().encode(proposed)
         let profile: AgentProfile
         do {
@@ -7188,6 +7369,7 @@ final class AppModel: ObservableObject {
     }
 
     private func cancelDirectMessaging(conversationID: UUID) {
+        closeDelegatedChannelScopes { $0.originID == conversationID }
         directChannelLifetimes[conversationID]?.close()
         invalidateBackgroundMemorySynthesis(originID: conversationID)
         guard directMessagingScopes.contains(conversationID) else { return }
@@ -7749,6 +7931,7 @@ final class AppModel: ObservableObject {
     }
 
     func stopGroup(id: UUID) async {
+        closeDelegatedChannelScopes { $0.originID == id || $0.group.id == id }
         for execution in routineGroupExecutions.values where execution.groupID == id { execution.scope.invalidate() }
         invalidateBackgroundMemorySynthesis(originID: id)
         if let originID = delegatedGroupOrigins[id] {
@@ -10996,6 +11179,7 @@ final class AppModel: ObservableObject {
               isAgentMessagingScopeActive(groupID) else { return }
         guard !approve || canApproveAvatarChange(pending) else { return }
         do {
+            try await validatePendingChannelReview(pending)
             try await autoReviewBroker.resolve(reviewID: pending.id, resolution: approve ? .approve : .deny, fence: pending.fence)
         } catch { errorMessage = error.localizedDescription }
         pendingAutoReviewByID.removeValue(forKey: pending.id)
@@ -11023,6 +11207,7 @@ final class AppModel: ObservableObject {
     }
 
     func cancelAutoReviewApprovals(nextAccountID: String) async {
+        closeDelegatedChannelScopes { _ in true }
         for lifetime in directChannelLifetimes.values { lifetime.close() }
         for lease in sidebarSettingsLeases.values { lease.close() }
         for lifetime in manualSidebarChanges.values { lifetime.close() }

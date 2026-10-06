@@ -205,7 +205,8 @@ public actor AgentUserMessageTool: ToolExecutor, ToolRuntimeContextProviding {
         supportsReferenceNavigation = true
         self.senderID = senderID
         self.channelPublication = channelPublication.flatMap {
-            $0.conversationID == conversationID && $0.senderID == senderID ? $0 : nil
+            $0.conversationID == conversationID && $0.senderID == senderID
+                && $0.replyDirectoryConversationID == groupID ? $0 : nil
         }
         self.defaultReplyToMessageID = defaultReplyToMessageID
         self.availableImages = availableImages; self.imageStore = imageStore; self.authorizeImages = authorizeImages

@@ -1,5 +1,17 @@
 # 協作能力核對紀錄（更新至 2026-10-06）
 
+## 已核准委派到其他群組的外部送件
+
+2026-10-06 接續 `fd2ee0f`，App 現為真正 `SendToAgent` → 其他 saved group 的背景回合建立獨立 channel publisher，不繼承來源前景的送件核准。核准卡仍回來源群組／bound direct chat，實際回覆成員使用自己的 account／唯一 enabled connection；正式 queue origin、作者、receipt 與 local quote 都屬於目標群組。host 明確綁定目標的既有 reply directory，不帶入來源或無關聊天的私人 history／附件。
+
+委派、source read、每次 HTTPS redirect 和 final send 分開核准，generic auto-review 不代替。核准後只安裝／排入捕捉的 bytes；來源檔案被改寫不重新讀取。Stop、帳號切換、來源 binding／route、來源或目標 group／persona 的修改後還原，都不能復活舊能力；presence／unread 和切換選取不當作身份修改。失效的 channel review waiter 主動退休，原生 direct 卡不為保存核准而復原舊 owner。同步 lifetime 也傳到本機 reader／runtime dispatch，拒絕失效後才按下的舊讀檔核准。
+
+新增 5 methods／38 cases，測試技能使用真正隔離 App 入口、stores、bookmark／receipt-aware in-process helper、假 provider／downloader／connector，以及完整內容／狀態比較；群組與 direct 來源均驗證。最後聚焦 `delegated-group-channel-focused-v6.log` exit 0：74 tests／9 suites。較早受限系統服務、fixture MIME 映射與有效本機 read revocation 紅燈分開保留，見 [完成驗收入口](Parity-completion-audit.md)。文件技能保留接線與外部驗收邊界。
+
+最後完整 135 XCTest＋2,117 Swift Testing／253 suites、七語各 1,815 keys／0 missing、原生 arm64 Debug 建置及兩種隔離封裝驗證通過；App target 為 772 tests／101 suites。兩項 opt-in live tests skipped，不當作外部驗收。封裝只檢查四個 executables、資源／entitlements／deep strict signature，未執行 launch smoke，不是 Developer ID release／公證。
+
+**仍未接線**：mailbox／inbound shared runner 的 channel publication／canonical projection、group 等其餘路徑的 delivery-failure model follow-up、安全 CAS preview／open。live／真人／VoiceOver／最低 macOS／Developer ID release／公證仍保留；AGENT-02／整體 partial 和 48 分類不變。本節只取代下方歷史的 delegated-group publication 缺口，不宣稱 queue／chat 原子性、跨 process exactly-once 或可召回已送件。未 push、重啟使用者 App／Xcode 或改真實資料。
+
 ## 委派送件的核准來源與正式聊天目的地分離
 
 2026-10-06 接續 `8eac57a`：reference inbound wake 使用收件 agent 自己的 background session，channel entry 也保存於實際 run session。本批先讓共用 transaction 區分原人類 approval scope 與 host-selected canonical destination／author。模型不能指定 destination；scope／account／connection 與最終 lifetime／binding fence 不放寬。跨聊天 quote 在 source read／review 前拒絕，實際另一聊天 receipt 的 UUID／short alias 不加入原 reply directory；保存失敗只保留 queued-not-delivered 的真實 queue 事實，exact replay 不重送。

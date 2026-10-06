@@ -10,6 +10,18 @@ public struct AgentGroupDispatch: Sendable {
     public init(audience: AgentGroupAudience, message: RoomMessage) { self.audience = audience; self.message = message }
 }
 
+/// One host dispatch, not a model-selected route or inherited foreground grant.
+public struct AgentBackgroundGroupChannelServices: Sendable {
+    public let originID: UUID
+    public let groupID: UUID
+    public let validate: @Sendable () async throws -> Void
+    public let factory: AgentMessagingSession.ChannelPublisherFactory
+    public init(originID: UUID, groupID: UUID, validate: @escaping @Sendable () async throws -> Void,
+                factory: @escaping AgentMessagingSession.ChannelPublisherFactory) {
+        self.originID = originID; self.groupID = groupID; self.validate = validate; self.factory = factory
+    }
+}
+
 public enum AgentMessagingError: LocalizedError, Equatable, Sendable {
     case invalidRecipient, emptyMessage, scopeMismatch, approvalRequired, duplicateMessage, limitReached, closed, groupPriorityUnsupported
 
@@ -495,11 +507,37 @@ public actor AgentMessagingSession {
                                               fileServices: AgentBackgroundGroupFileServices? = nil,
                                               remoteServices: AgentBackgroundGroupRemoteServices? = nil,
                                               galleryServices: AgentBackgroundGroupGalleryServices? = nil,
+                                              channelServices: AgentBackgroundGroupChannelServices? = nil,
                                               publish: @escaping @Sendable (GroupAgentPublication) async throws -> RoomMessage?) async throws -> AgentUserMessageTool {
         guard let sender = await agents.profile(id: senderID), sender.archivedAt == nil else {
             throw AgentMessagingError.invalidRecipient
         }
         try checkOpen()
+        let channelPublication: AgentChannelPublicationTransaction?
+        if let channelServices {
+            guard channelServices.originID == originConversationID, channelServices.groupID == groupID else {
+                throw AgentMessagingError.scopeMismatch
+            }
+            try await channelServices.validate()
+            guard let groups, let current = await groups.list().first(where: { $0.id == groupID }),
+                  current.memberIDs == memberIDs, memberIDs.contains(senderID) else { throw AgentGroupPostError.changed }
+            try checkOpen()
+            channelPublication = try await channelServices.factory(sender, .init(parent: channelPublicationLifetime), { [publicationLifetime] value in
+                try await publish(.init(text: value.text, lifetime: publicationLifetime,
+                    replyToMessageID: value.replyToMessageID, externalPublication: value))
+            })
+            if let channelPublication {
+                guard channelPublication.conversationID == originConversationID, channelPublication.senderID == senderID,
+                      channelPublication.agentID == senderID, channelPublication.destinationConversationID == groupID,
+                      channelPublication.destinationSenderID == senderID,
+                      channelPublication.replyDirectoryConversationID == groupID else {
+                    channelPublication.close()
+                    throw AgentMessagingError.scopeMismatch
+                }
+            }
+            try await channelServices.validate()
+            try checkOpen()
+        } else { channelPublication = nil }
         let filePublication: AgentFilePublicationTransaction?
         if let fileServices {
             guard fileServices.originID == originConversationID, fileServices.groupID == groupID else {
@@ -569,7 +607,7 @@ public actor AgentMessagingSession {
                 return try await publish(.init(text: reference.summary, lifetime: publicationLifetime,
                     replyToMessageID: replyID, cursorAgent: reference))
             }, filePublication: filePublication, remotePublication: remotePublication,
-            galleryPublication: galleryPublication) { [self] text, images, replyID, question in
+            galleryPublication: galleryPublication, channelPublication: channelPublication) { [self] text, images, replyID, question in
             guard images.isEmpty else { throw AgentImageError.unavailable }
             try await checkOpen()
             let card = question.map { GroupQuestion(question: $0, accountID: accountID, memberIDs: memberIDs) }

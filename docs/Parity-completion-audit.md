@@ -1,5 +1,27 @@
 # 完成驗收入口（2026-09-27）
 
+## 已核准委派到其他群組的外部送件
+
+2026-10-06 接續 `fd2ee0f`，reference HEAD 仍為 `a9f633e09d49a85829b8236331b9e21f7e612634`。`agent-to-agent-messaging.ts` 對 group target 使用 `postToGroup`，不是把背景 draft 貼回來源房間；本批在 App 的實際 `runGroupDelegation` → `GroupConversationResponder` → `savedBackgroundGroupPublisher` 安裝 host-bound channel factory。原 mailbox `drain`、inbound runner 不因共享 session 取得此能力。
+
+源頭的 `ToolContext`／獨立核准卡／source consent 維持原群組或 bound direct conversation；connection 與 queue owner 使用真正回覆成員，不借用原發起者的 credentials。canonical destination／author 是 host 固定的目標 group／actual agent，不是模型可選參數。reply directory 必須與實際目標群組一致，才能保留該群組內有效 local quote；缺省的跨聊天拒絕仍保留，沒有把來源 quote 或另一聊天 receipt alias 自動匯入目錄。
+
+`SendToAgent` 核准不代替 source read、每次 redirect 或 external send 核准；即使 generic auto-review allow 也要顯示新的完整送件核准。source 與 queue 使用 captured bytes／digest／filename／MIME／caption，不重讀已變更的 source。正式群組 entry 來自實際 queue ID、保留 actual author／quote／完整 intent，同回合 exact call replay 不重送；存檔後可重開，不將 private draft、外部 entry 或未分享的來源 history 寫入無關 direct chat。
+
+App 同步 capture 原 account／dispatch／來源 binding、route 與來源／目標 group 的 semantic identity；相關 persona／membership／group metadata 修改後還原、Stop／account transition 會關閉原 lifetime，final durable queue save 仍持有既有同步 guard。presence／unread／updatedAt、speaker offset 和純粹導航不撤銷 persona。失效的 channel review 會取消 exact broker waiter，不須另按核准或等五分鐘 expiry；native direct review 先驗 scope 才可保存，不恢復 stale owner。已 queued 的訊息不宣稱可召回，queue／chat／CAS 不是跨 stores 原子交易。
+
+新增本機 read 測試抓到有效產品缺口：`delegated-group-channel-local-red-v1.log` exit 1，group／direct 兩個 persona-ABA cases 共 4 issues，舊讀取核准雖最終沒有入列，仍已呼叫 helper。現將 channel lifetime 傳入 `AuthorizedAgentFileReader` 的 read checks 及 `LocalToolRuntime.perform` dispatch validator，在 workspace bookmark／permission await 後、helper dispatch 前拒絕，不降低原 bookmark／policy／receipt 防護或假裝撤回已 admitted 的讀取。
+
+新增 5 test methods／38 parameter cases，以隔離 AppModel、durable stores、真實 security-scoped bookmark、receipt-aware in-process helper、假 provider／connector／HTTPS downloader 與完整 CustomDump 值比對驗證。包含 direct／group 來源、delegation 和 send 分開、actual recipient connection／目標 group quote／canonical reopen、原 history 不洩漏、12 種 scope／config changes、native stale card、8 種 HTTPS／redirect 情境和 12 種 local read／send／revocation 情境。附件核准後替換 source 的 bytes，必須仍安裝原 bytes；拒絕 read、unsupported connector、Stop 及 persona-ABA read 不 dispatch、不留下 channel CAS 或 queue。
+
+較早 `focused-v1` 是 cache permission 編譯失敗，`v2` 是 fixture 存取控制編譯失敗；`v3`／`v4` 遇到受限 macOS type／ScopedBookmarksAgent／離屏渲染服務，不當作產品紅燈。相同既有測試在必要系統存取下的 `v5` 通過；該輪僅新 fixture 的 `.bin` 被 macOS 映射為 `application/macbinary` 而受既有 MIME allow-list 拒絕（4 timeout issues）。沒有放寬產品檔案類型或跳過測試；fixture 改用必須保持 inert 的 `.html`，獨立預期 `application/octet-stream`。最後完整聚焦 `delegated-group-channel-focused-v6.log` exit 0：74 tests／9 suites，包含所有前景／reviewed background direct／group channel source 和 App 卡片回歸。七語 `delegated-group-channel-localization-final-v2.log` 各 1,815 keys／0 missing；沒有新增 UI layout／文字，不當作全翻譯語意或真人驗收。
+
+最後完整串行 `delegated-group-channel-full-final-v1.log` exit 0：17 個 Swift Testing target summaries 合計 2,117 tests／253 suites，另 17 個 XCTest bundles 合計 135 tests／0 failures；App target 為 772 tests／101 suites。兩項 opt-in installed Codex live tests skipped，不算 live 驗收；既有 CoreData NSXPCConnection 診斷仍存在，相關 tests 通過，不宣稱修復。
+
+`delegated-group-channel-native-final-v1.log` 的 `Filicon App`／arm64 Debug BUILD SUCCEEDED；`delegated-group-channel-native-verify-final-v1.log` 與全新 `DelegatedGroupChannelPackage/Filicon.app`／`delegated-group-channel-package-final-v1.log` 均 exit 0：四個 executables、app／XPC entitlements、deep strict codesign、KaTeX 0.16.45／20 fonts、Mermaid 11.16.0／72 notices 通過。standalone 封裝等待同一 `.build` 的完整測試結束後正常完成，沒有另啟 App；此為隔離 Debug／ad-hoc gate，不是 Developer ID release／公證，未執行列印的 launch smoke。`git diff --check` 通過，日誌／隔離產物留於忽略的 `.build/validation/`。
+
+**仍未完成**：mailbox／inbound shared runner 的 channel publication／canonical projection，以及 group 等其餘路徑的 delivery-failure model follow-up；安全 CAS preview／open；live Slack／Discord／OAuth、真人／VoiceOver／最低 macOS、Developer ID release／公證。AGENT-02／整體 partial 和 48 分類（42 個歷史 complete／5 partial／1 NA）不變。本節只取代下方歷史的 delegated-group publication 缺口，沒有新增 schema 或真實帳號／聊天權限；未 push、啟動或重啟使用者 App／Xcode，未改真實資料。
+
 ## 委派送件的核准來源與正式聊天目的地分離
 
 2026-10-06 接續 `8eac57a`，reference HEAD 為 `a9f633e09d49a85829b8236331b9e21f7e612634`。main 核對 `agent-to-agent-messaging.ts` 的 `runAgentInboundWake`：收件 agent 使用自己的 background session，而 `turn-runtime.ts` 的 channel `send-message` 保存在實際 run session transcript。本批先補共用 transaction 的必要契約，不將委派來源群組／聊天誤當成收件人的正式聊天。
