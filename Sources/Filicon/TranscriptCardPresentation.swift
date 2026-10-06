@@ -194,6 +194,7 @@ enum TranscriptCardPresenter {
 struct TranscriptCardRow: View {
     @Environment(\.locale) private var uiLocale
     let card: TranscriptCard
+    var onPreviewExternalAttachment: ((ExternalChannelTranscriptPublication.File) -> Void)? = nil
     let onAction: (TranscriptCardActionIntent) -> Void
     private var presentation: TranscriptCardPresentation { TranscriptCardPresenter.presentation(for: card) }
 
@@ -202,7 +203,7 @@ struct TranscriptCardRow: View {
         if let reference = card.externalCursorReference {
             CursorAgentReferenceCard(reference: reference)
         } else if case .widget(let widget) = card.payload, let publication = widget.externalPublication {
-            ExternalChannelPublicationCard(publication: publication)
+            ExternalChannelPublicationCard(publication: publication, onPreview: onPreviewExternalAttachment)
         } else {
             standardCard
         }
@@ -279,11 +280,13 @@ struct TranscriptCardRow: View {
     }
 }
 
-/// Inert delivery evidence, shared by direct and group transcripts. Locators
-/// stay verbatim text: rendering is not approval to fetch or open them.
+/// Delivery evidence, shared by direct and group transcripts. Locators stay
+/// verbatim text. The optional native action can only preview captured bytes;
+/// this decoded card never grants a source read, retry or external send.
 struct ExternalChannelPublicationCard: View {
     @Environment(\.locale) private var uiLocale
     let publication: ExternalChannelTranscriptPublication
+    var onPreview: ((ExternalChannelTranscriptPublication.File) -> Void)? = nil
     var status: String {
         switch publication.delivery.status {
         case .queued: l10n("Queued")
@@ -305,6 +308,18 @@ struct ExternalChannelPublicationCard: View {
                 ForEach(Array(publication.files.enumerated()), id: \.offset) { _, file in
                     Text(file.filename + " · " + file.mimeType + " · " + ByteCountFormatter.string(fromByteCount: file.byteCount, countStyle: .file))
                         .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                    Button { onPreview?(file) } label: {
+                        Label {
+                            Text(l10n("Preview attachment"))
+                                .lineLimit(nil)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .multilineTextAlignment(.leading)
+                        } icon: {
+                            Image(systemName: "eye")
+                        }
+                    }
+                        .disabled(onPreview == nil)
+                        .accessibilityIdentifier("external-channel-file-\(publication.deliveryID)-\(file.digest)")
                 }
                 ForEach(Array(publication.sources.enumerated()), id: \.offset) { _, source in
                     Text(source.url).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)

@@ -106,6 +106,114 @@ private struct AttachmentFixtureProvider: AIProvider {
 
 @Suite("Foreground channel attachment publication", .timeLimit(.minutes(1)))
 @MainActor struct GroupChannelAttachmentAppTests {
+    @Test(arguments: ["open", "members-ABA", "account-ABA", "navigation-ABA", "receipt-ABA", "owner-archive-ABA", "delivery-progress", "name-change"])
+    func capturedGroupChannelPreviewRetainsExactMembershipAndDoesNotDownloadOrResend(mode: String) async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "filicon-group-captured-preview-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let bytes = Data("Exact captured group attachment".utf8), url = "https://source.example/group-report.txt?signature=original"
+        let probe = ChannelAttachmentProbe(), channels = try ChannelService(storeURL: root.appending(path: "channels.json"))
+        let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false,
+            channelService: channels, channelConnectors: [AttachmentFixtureConnector(probe: probe)])
+        defer { model.dismissAttachmentPreview() }
+        model.remoteAttachmentDownloader = AttachmentFixtureDownloader(probe: probe)
+        await model.bootstrap(); await probe.replacePayload(bytes)
+        await model.registry.register(AttachmentFixtureProvider(arguments: try JSONEncoder().encode([
+            "type": "attachment", "url": url, "alt": "Original group report", "channel": "slack:C_FILES"
+        ]), expectedSuccess: true))
+        let sender = try #require(await model.createAgent(name: "Sender", summary: "", instructions: "",
+            providerID: "channel-attachment-fixture", modelID: "fixture"))
+        #expect(await model.createGroup(name: "Preview", summary: "", memberIDs: [sender.id]))
+        let group = try #require(model.groups.first)
+        model.selectGroup(id: group.id)
+        try await channels.saveConnection(.init(connectorID: "slack", displayName: "Offline group preview",
+            secretReference: "keychain://channels/TEST-only-never-read", agentID: sender.id, ownerAccountID: "local"))
+        var finished = false
+        let run = Task { await model.sendGroupMessage(groupID: group.id, text: "Share this original report"); finished = true }
+        defer { run.cancel() }
+        try await eventually { !model.pendingAutoReviewApprovals.isEmpty || finished }
+        let source = try #require(model.pendingAutoReviewApprovals.first)
+        await model.resolveGroupApproval(source, groupID: group.id, approve: true)
+        try await eventually { !model.pendingAutoReviewApprovals.isEmpty || finished }
+        let send = try #require(model.pendingAutoReviewApprovals.first)
+        await model.resolveGroupApproval(send, groupID: group.id, approve: true)
+        await run.value
+        await model.reconcileChannelPublications()
+        let row = try #require(model.groupMessages[group.id]?.first { $0.externalPublication != nil })
+        let publication = try #require(row.externalPublication), file = try #require(publication.files.first)
+        let location = ExternalChannelAttachmentLocation.group(groupID: group.id, messageID: row.id)
+        let context = try #require(model.externalChannelAttachmentPreviewContext(for: publication, at: location))
+        let action = try #require(model.externalChannelAttachmentPreviewAction(for: publication, at: location))
+        #expect(model.externalChannelAttachmentPreviewAction(for: publication,
+            at: .direct(conversationID: group.id, messageID: row.id)) == nil)
+        let gate = CapturedChannelPreviewReadGate(), cas = AttachmentStore(rootURL: root.appending(path: "channel-attachments"))
+        defer { Task { await gate.open() } }
+        let delayed = mode != "open"
+        if delayed { model.channelAttachmentPreviewReader = { try await gate.read($0, store: cas) } }
+        var expectedQueue = await channels.deliveries()
+        await probe.replacePayload(Data("Unapproved replacement".utf8))
+        action(file)
+        if delayed {
+            try await gate.waitUntilRequested()
+            if mode == "members-ABA" {
+                await model.updateGroupMembers(groupID: group.id, memberIDs: [])
+                await model.updateGroupMembers(groupID: group.id, memberIDs: [sender.id])
+            }
+            if mode == "account-ABA" {
+                await model.cancelAutoReviewApprovals(nextAccountID: "other")
+                await model.cancelAutoReviewApprovals(nextAccountID: "local")
+                #expect(model.externalAttachmentPreviewContexts.isEmpty)
+            }
+            if mode == "navigation-ABA" { model.selectRoute(.agents); model.selectGroup(id: group.id) }
+            if mode == "receipt-ABA", let index = model.groupMessages[group.id]?.firstIndex(where: { $0.id == row.id }) {
+                model.groupMessages[group.id]?[index].text = "Not the canonical publication"
+                model.groupMessages[group.id]?[index] = row
+            }
+            if mode == "owner-archive-ABA", let index = model.agents.firstIndex(where: { $0.id == sender.id }) {
+                model.agents[index].archivedAt = Date(timeIntervalSince1970: 100)
+                model.agents[index].archivedAt = nil
+            }
+            if mode == "name-change" {
+                #expect(await model.saveGroupSettings(groupID: group.id, name: "Changed display name", summary: "Unrelated display edit", memberIDs: [sender.id]))
+            }
+            if mode == "delivery-progress" {
+                await channels.flush(); await model.reconcileChannelPublications()
+                expectedQueue = await channels.deliveries()
+            }
+            await gate.open(); try await gate.waitUntilCompleted()
+        }
+        let shouldOpen = ["open", "delivery-progress", "name-change"].contains(mode)
+        if shouldOpen {
+            try await eventually { model.attachmentPreview != nil || model.errorMessage != nil }
+            let item = try #require(model.attachmentPreview), opened = try #require(item.files.first)
+            expectNoDifference(opened.metadata, try context.metadata(for: file))
+            expectNoDifference(opened.isCapturedChannelFile, true)
+            expectNoDifference(try AttachmentFileIntegrity().verifiedData(for: opened), bytes)
+            let copy = item.fileURL
+            model.dismissAttachmentPreview()
+            #expect(!FileManager.default.fileExists(atPath: copy.path))
+        } else {
+            for _ in 0..<50 { await Task.yield() }
+            #expect(model.attachmentPreview == nil && model.errorMessage == nil)
+            action(file)
+            for _ in 0..<50 { await Task.yield() }
+            #expect(model.attachmentPreview == nil)
+            let requests = await gate.requests
+            expectNoDifference(requests, [try context.metadata(for: file)])
+            if mode != "navigation-ABA" { #expect(!context.isActive) }
+        }
+        let queue = await channels.deliveries(), downloads = await probe.downloads, sent = await probe.sent
+        expectNoDifference(queue, expectedQueue)
+        expectNoDifference(downloads, [try RemoteAttachmentReference(url: url, alt: "Original group report")])
+        expectNoDifference(sent, mode == "delivery-progress" ? expectedQueue.map(\.outbound) : [])
+        let agents = try AgentService(storeURL: root.appending(path: "agents.json"))
+        let stored = await (try GroupService(agents: agents, storeURL: root.appending(path: "groups.json"))).messages(groupID: group.id)
+        let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .millisecondsSince1970
+        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .millisecondsSince1970
+        let expectedRooms = try decoder.decode([RoomMessage].self, from: encoder.encode(model.groupMessages[group.id, default: []]))
+        expectNoDifference(expectedRooms, stored)
+        #expect(model.pendingAutoReviewApprovals.isEmpty && model.pendingToolApprovals.isEmpty && model.pendingWorkspaceFolders.isEmpty)
+    }
+
     @Test(arguments: ["approve", "read-denied", "deny", "stop", "account", "members", "connection", "connector", "quota-reserve", "quota-commit", "queue-write", "corrupt", "blob-link"], [false, true])
     func capturedLocalAttachmentHasIndependentReadAndSendReviews(mode: String, automaticReviewEnabled: Bool) async throws {
         try await checkLocalAttachment(mode: mode, automaticReviewEnabled: automaticReviewEnabled)

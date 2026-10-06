@@ -421,6 +421,132 @@ private struct DirectChannelProvider: AIProvider {
         let probe: DirectChannelProbe
     }
 
+    @Test(arguments: ["open", "same-digest-other-file", "wrong-location", "forged-card", "canonical-tamper", "blob-corrupt", "navigation-ABA", "binding-ABA", "account-ABA", "archive-ABA", "hide-ABA", "delivery-progress"])
+    func capturedDirectChannelPreviewUsesOriginalCanonicalAuthorityWithoutReadingOrResendingSources(mode: String) async throws {
+        let root = temporaryRoot("captured-preview")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let bytes = Data(#"<script>fetch('https://never-fetch.invalid')</script> Original captured report"#.utf8)
+        let url = "https://source.example/report.html?signature=original"
+        let f = try await fixture(root: root, arguments: JSONEncoder().encode([
+            "type": "attachment", "url": url, "alt": "Original report", "channel": "slack:C_DIRECT"
+        ]))
+        defer { f.model.dismissAttachmentPreview(); f.model.cancel() }
+        await f.probe.replacePayload(bytes)
+        start(f)
+        let source = try await pending(f)
+        f.model.handleTranscriptCardIntent(.approveReview(reviewID: source.id))
+        try await nextBoundary(f, after: source.id)
+        let send = try await pending(f)
+        f.model.handleTranscriptCardIntent(.approveReview(reviewID: send.id))
+        try await eventually { !f.model.running.contains(f.id) }
+        await f.model.reconcileChannelPublications()
+        let row = try #require(f.model.conversations.first { $0.id == f.id }?.messages.first { $0.externalChannelPublication != nil })
+        let publication = try #require(row.externalChannelPublication), file = try #require(publication.files.first)
+        let location = ExternalChannelAttachmentLocation.direct(conversationID: f.id, messageID: row.id)
+        let context = try #require(f.model.externalChannelAttachmentPreviewContext(for: publication, at: location))
+        let action = try #require(f.model.externalChannelAttachmentPreviewAction(for: publication, at: location))
+        var expectedQueue = await f.channels.deliveries()
+        let canonicalStore = ConversationStore(fileURL: root.appending(path: "conversations.json"))
+        var expectedCanonical = try await canonicalStore.conversation(id: f.id)
+        let cas = AttachmentStore(rootURL: root.appending(path: "channel-attachments"))
+        let gate = CapturedChannelPreviewReadGate()
+        defer { Task { await gate.open() } }
+        let delayed = mode.hasSuffix("ABA") || mode == "delivery-progress"
+        if delayed { f.model.channelAttachmentPreviewReader = { try await gate.read($0, store: cas) } }
+        // The source now returns different bytes, but no click may ask for it.
+        await f.probe.replacePayload(Data("Unapproved source replacement".utf8))
+        if mode == "wrong-location" {
+            #expect(f.model.externalChannelAttachmentPreviewAction(for: publication, at: .group(groupID: f.id, messageID: row.id)) == nil)
+            f.model.openExternalChannelAttachment(file, context: context, at: .direct(conversationID: UUID(), messageID: row.id))
+        } else if mode == "same-digest-other-file" {
+            action(.init(digest: file.digest, filename: "renamed.html", mimeType: file.mimeType, byteCount: file.byteCount))
+        } else if mode == "forged-card" {
+            var object = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(publication)) as? [String: Any])
+            object["text"] = "Forged imported card"
+            let forged = try JSONDecoder().decode(ExternalChannelTranscriptPublication.self, from: JSONSerialization.data(withJSONObject: object))
+            #expect(f.model.externalChannelAttachmentPreviewAction(for: forged, at: location) == nil)
+        } else {
+            if mode == "canonical-tamper" {
+                // Normal upsert already rejects rewriting a host receipt.
+                // Corrupt only this isolated SQL row to exercise the preview's
+                // independent durable-canonical revalidation, with UI intact.
+                var handle: OpaquePointer?
+                try #require(sqlite3_open(root.appending(path: "conversations.sqlite3").path, &handle) == SQLITE_OK)
+                defer { sqlite3_close(handle) }
+                try #require(sqlite3_exec(handle,
+                    "UPDATE messages SET text='Changed durable receipt, UI copy still original' WHERE id='\(row.id.uuidString)'",
+                    nil, nil, nil) == SQLITE_OK)
+                expectNoDifference(sqlite3_changes(handle), 1)
+            }
+            if mode == "blob-corrupt" {
+                let path = root.appending(path: "channel-attachments").appending(path: String(file.digest.prefix(2))).appending(path: file.digest)
+                try Data(repeating: 120, count: bytes.count).write(to: path)
+            }
+            action(file)
+        }
+        if delayed {
+            try await gate.waitUntilRequested()
+            if mode == "navigation-ABA" { f.model.selectRoute(.agents); f.model.selectRoute(.conversation(f.id)) }
+            if mode == "binding-ABA" { rebindAndRestore(f) }
+            if mode == "account-ABA" {
+                await f.model.cancelAutoReviewApprovals(nextAccountID: "other")
+                await f.model.cancelAutoReviewApprovals(nextAccountID: "local")
+                #expect(f.model.externalAttachmentPreviewContexts.isEmpty)
+            }
+            if mode == "archive-ABA", let index = f.model.agents.firstIndex(where: { $0.id == f.sender.id }) {
+                f.model.agents[index].archivedAt = Date(timeIntervalSince1970: 100)
+                f.model.agents[index].archivedAt = nil
+            }
+            if mode == "hide-ABA", let index = f.model.conversations.firstIndex(where: { $0.id == f.id }) {
+                f.model.conversations[index].hiddenAt = Date(timeIntervalSince1970: 100)
+                f.model.conversations[index].hiddenAt = nil
+            }
+            if mode == "delivery-progress" {
+                await f.channels.flush(); await f.model.reconcileChannelPublications()
+                expectedQueue = await f.channels.deliveries()
+                expectedCanonical = try await canonicalStore.conversation(id: f.id)
+            }
+            await gate.open(); try await gate.waitUntilCompleted()
+        }
+        let shouldOpen = mode == "open" || mode == "delivery-progress"
+        if shouldOpen {
+            try await eventually { f.model.attachmentPreview != nil || f.model.errorMessage != nil }
+            let preview = try #require(f.model.attachmentPreview), opened = try #require(preview.files.first)
+            expectNoDifference(opened.metadata, try context.metadata(for: file))
+            expectNoDifference(opened.isCapturedChannelFile, true)
+            expectNoDifference(AttachmentViewerKind.classify(opened), .plainText)
+            expectNoDifference(try AttachmentFileIntegrity().verifiedData(for: opened), bytes)
+            let path = preview.fileURL
+            f.model.dismissAttachmentPreview()
+            #expect(!FileManager.default.fileExists(atPath: path.path))
+        } else {
+            for _ in 0..<50 { await Task.yield() }
+            if mode == "blob-corrupt" { try await eventually { f.model.errorMessage != nil } }
+            #expect(f.model.attachmentPreview == nil)
+            if mode != "blob-corrupt" { #expect(f.model.errorMessage == nil) }
+            if mode.hasSuffix("ABA") {
+                action(file) // A queued old callback cannot reacquire a restored grant.
+                for _ in 0..<50 { await Task.yield() }
+                #expect(f.model.attachmentPreview == nil)
+                let requests = await gate.requests
+                expectNoDifference(requests, [try context.metadata(for: file)])
+            }
+            if mode.hasSuffix("ABA") && mode != "navigation-ABA" { #expect(!context.isActive) }
+        }
+        let downloads = await f.probe.downloads, sends = await f.probe.sent, queue = await f.channels.deliveries()
+        expectNoDifference(queue, expectedQueue)
+        expectNoDifference(downloads, [try RemoteAttachmentReference(url: url, alt: "Original report")])
+        expectNoDifference(queue.count, 1)
+        expectNoDifference(queue.first?.outbound, .init(text: "Original report", attachments: [
+            .init(blobID: file.digest, filename: file.filename, mimeType: file.mimeType, byteCount: file.byteCount)]))
+        expectNoDifference(sends, mode == "delivery-progress" ? expectedQueue.map(\.outbound) : [])
+        if ["open", "same-digest-other-file", "wrong-location", "forged-card", "blob-corrupt", "delivery-progress"].contains(mode) {
+            let canonical = try await canonicalStore.conversation(id: f.id)
+            expectNoDifference(canonical, expectedCanonical)
+        }
+        #expect(f.model.pendingAutoReviewApprovals.isEmpty && f.model.pendingToolApprovals.isEmpty && f.model.pendingWorkspaceFolders.isEmpty)
+    }
+
     @Test func reviewedBackgroundDirectSessionDoesNotInheritForegroundPublicationConsent() async throws {
         let root = temporaryRoot("background")
         defer { try? FileManager.default.removeItem(at: root) }

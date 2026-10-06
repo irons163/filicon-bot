@@ -1,5 +1,29 @@
 # 完成驗收入口（2026-09-27）
 
+## 正式外部送件附件的原生 captured-byte 預覽
+
+2026-10-06 接續 `a1b5214`；reference HEAD 再核對為 `a9f633e09d49a85829b8236331b9e21f7e612634`。參考 `source/shared/media/attachment-preview.ts` 的文字副檔名及 8 KiB／0.3 binary sniff 契約：原版有附件預覽，不只是來源 URL。Filicon 本批將正式 channel transcript 的實際 captured files 接到原生預覽；direct／group 的 callback 必須由 native AppModel 先解析並捕捉原 canonical host，解碼或偽造的 widget payload 本身不能取得讀取、retry 或 send 能力。
+
+預覽只讀已保存的 channel CAS bytes，不重新下載 HTTPS、不重讀本機來源、不對未送出的第二張圖片提供來源 action。完整 publication／file metadata、actual outbox evidence 與正式 direct／group message 一致才接受；same digest 的其他 filename／MIME／length 不能替代原 file。direct 保留原唯一 binding、account generation、未隱藏聊天與未封存 owner；group 保留原 exact membership/account lease。原生 callback 在排入 Task 之前捕捉 context／導航 epoch，切換後再回來、換帳號後還原、換綁定／群組成員／隱藏／封存／UI receipt 後還原，不復活舊 click 或刻意晚到的預覽。真正 delivery progress 與群組 name-only 修改不撤銷相同 publication。讀取前後重驗 canonical stores，materialize 的同步 commit 仍在原 lease 內；不是改用後來選取的 owner。
+
+新增 descriptor-relative CAS reader：root／shard／blob 以 `O_NOFOLLOW` 開啟，blob 使用 `O_NONBLOCK` 並要求 regular file／exact byte count／SHA-256；拒絕 root／shard／blob symlinks、FIFO、directory、missing、錯誤 digest／size／identifier／filename／超限。只 pin 這三層 descriptor，不宣稱已 pin root 的所有祖先、跨 process 原子性或召回已 admitted I/O。既有一般附件 reader／native media parser 的所有權與 TOCTOU 邊界沒有因此全部重寫。
+
+captured HTML／script／code／其他 unknown 格式不交給 Quick Look 或 browser 執行，只顯示 verified UTF-8 原文；以 8 KiB sniff 排除 binary／高控制字元比例，最多 256 KiB，UTF-8 邊界不切壞字元。binary／invalid UTF-8 明確提示沒有安全文字預覽。已支援的 image／PDF／table／audio-video 沿用原生 viewer 與既有 integrity gate。儲存副本／以其他 App 開啟仍是既有明確人類按鈕，本批未操作；不新增任意來源、remote fetch 或模型工具 grant。
+
+新增 core 2 methods／15 cases＋App 6 methods／46 cases，合計 8 methods／61 cases：實際 source／send review→queue→canonical save→native click；non-cooperative delayed reader 的 original-owner／ABA fences、損壞原始 SQL row／CAS bytes、delivery progress、重建群組 store 的完整 codec-roundtrip data 比較、literal text／known viewer／binary boundary 及七語 280／680 pt 明暗 28 張實際離屏畫面。完整 queue／sent／download／canonical arrays 以 CustomDump 比較；不是只比較 IDs 或假 callback。所有資料／provider／HTTP／connector 均隔離，不碰真實帳號或送件。
+
+早期 `channel-captured-preview-focused-v1.log` 的新增 viewer enum exhaustiveness 編譯錯誤已修；`v2` filter 意外選到全 App target，雖 core 13／1＋App 778／102 通過，source 後續仍有修改，不冒充本批最後全套 gate。`v3`／`v4` 停在新 fixture 的 async equality autoclosure／巢狀 `#require` 展開，改為先 await／分開 require，未略過 assertions。`v5` 的七項問題包括儲存層已拒絕 forged canonical row、群組 reopen Date codec 精度；以隔離 SQL tamper 及完整 JSON codec roundtrip 修正 fixture，沒有放寬產品檢查。`v6` tests 全通過，但人工檢視抓到西班牙文窄版按鈕截斷；產品改為完整 label 換行並加獨立 OCR suffix 檢查。最後 `channel-captured-preview-focused-v7.log` exit 0：core 2 tests／1 suite＋App 6 tests／4 suites；實際查看西班牙文／法文／韓文窄版明暗輸出，完整文字可見。這是 native offscreen 驗證，不取代真人焦點／VoiceOver。
+
+原生 Xcode app 使用明確 sources membership；新增 context 同步加入 checked-in `project.pbxproj` 的四筆 references，讀取 project 另驗全部 65 個 Swift files 與 `Sources/Filicon/*.swift` 一致。既有 generator 的完整候選重編大量 UUID，未保留該無關 churn；以原 baseline 補精確新檔，scheme／原 targets／signing settings 不變。沒有新增 package dependency 或重複連結 module。使用者從既有 `Filicon.xcworkspace` 的 `Filicon App` scheme 建置，不需啟動 generator 或另選裸 SwiftPM executable。
+
+最後完整串行 `channel-captured-preview-full-final-v1.log` exit 0：17 個 Swift Testing summaries 合計 2,135 tests／256 suites，另 17 個 XCTest bundles 合計 135 tests／0 failures；App target 為 784 tests／102 suites。兩項 opt-in installed Codex live tests skipped，不算外部驗收；既有 CoreData NSXPCConnection 診斷仍存在，相關 tests 通過，不宣稱修復。七語最後 `channel-captured-preview-localization-final-v2.log` exit 0，各 1,817 keys／0 missing；這是 key／placeholder／literals gate，不是全 catalog 語意驗收。
+
+`channel-captured-preview-native-final-v1.log` exit 0／`BUILD SUCCEEDED`，原生 arm64 Debug 建置使用隔離 `.build/validation/GroupUnreadFoundationNative`，未 launch／restart 使用者 App 或 Xcode。`channel-captured-preview-native-verify-final-v1.log` exit 0：四個 executables、app／XPC entitlements、offline math／diagram 資源及 deep strict code signature 通過。Xcode Debug／ad-hoc 的 helper hardened-runtime 診斷仍保留，不冒充 Developer ID release／公證。
+
+`channel-captured-preview-package-final-v1.log` exit 0：先確認明確新路徑 `.build/validation/ChannelCapturedPreviewPackage/Filicon.app` 不存在且沒有 symlink，再以 standalone Debug／ad-hoc 建立；四個 executables、app／XPC entitlements、offline math／diagram 資源及 deep strict signature 全數通過。未覆寫 real App／`dist` 或執行印出的 launch smoke；沒有 production update feed／key 注入。既有 Keychain deprecated API compiler warning 保留，不宣稱修復。最後 `git diff --check` 通過；日誌及 28 張 native render 位於忽略的 `.build/validation/`。SwiftUI／測試技能促成完整 label 換行及 original-authority／完整 data assertions；SPM 技能核對既有 workspace 的 sources 接線，沒有新增 library dependency。
+
+**本節只補上正式 captured-file 原生預覽接線**；group-origin／manual mailbox／inbound publication／canonical host、group／inbound 等其餘 failure follow-up、remote／uncaptured locators 的新核准來源開啟、live Slack／Discord／OAuth、真人／VoiceOver／最低 macOS、Developer ID release／公證仍保留。AGENT-02／UI-04／整體 partial 及 48 分類（42 個歷史 complete／5 partial／1 NA）不變。未 push、啟動或重啟使用者 App／Xcode，未改真實資料。本節的最後完整回歸、原生及新封裝 gates 均使用本批 source，不沿用前批建置證據。
+
 ## 真正成員委派送件的 terminal failure 回原收件人聊天
 
 2026-10-06 接續 `c366d13`。本批以真正 App 的 human bound direct → 已核准 `SendToAgent` → 收件人成員 channel 核准 → queue／canonical save → 假 connector 的 terminal failure 驗證完整路徑；也涵蓋真正 peer 回覆原 owner 後由 owner 送件。不是直接 seed 一筆理想化 failure row。正確的 canonical destination／actual owner 已讓既有 `ChannelFailureFollowUpNotice` 與 shared direct runner 接通，無須新增產品 grant 或另改 runner。

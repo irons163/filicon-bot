@@ -758,6 +758,8 @@
 "Port (0 chooses an available port)" = "Port (0 choisit un port disponible)";
 "Port {0}" = "Port {0}";
 "Preview attachment" = "Aperçu de la pièce jointe";
+"This attachment has no safe text preview. Save a copy to open it in another app." = "Cette pièce jointe ne permet pas un aperçu texte sûr. Enregistrez une copie pour l’ouvrir dans une autre application.";
+"This preview shows only the first {0} bytes. Save a copy to view the full file." = "Cet aperçu affiche uniquement les {0} premiers octets. Enregistrez une copie pour consulter le fichier complet.";
 "Previous match" = "Correspondance précédente";
 "Primary IDs, comma-separated (optional)" = "Identifications primaires séparées par des virgules (facultatif)";
 "Priority" = "Priorité";

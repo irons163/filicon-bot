@@ -1604,7 +1604,9 @@ struct TranscriptMessageView: View {
                             .padding(14).frame(maxWidth: .infinity, alignment: .leading)
                             .background(FiliconTheme.input, in: RoundedRectangle(cornerRadius: 12))
                     }
-                    TranscriptCardRow(card: card) { model.handleTranscriptCardIntent($0) }
+                    TranscriptCardRow(card: card, onPreviewExternalAttachment: message.externalChannelPublication.flatMap {
+                        model.externalChannelAttachmentPreviewAction(for: $0, at: .direct(conversationID: conversation.id, messageID: message.id))
+                    }) { model.handleTranscriptCardIntent($0) }
                 }
             }
             if let reference = message.remoteAttachment {

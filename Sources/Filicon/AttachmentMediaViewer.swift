@@ -15,6 +15,12 @@ enum AttachmentViewerKind: Equatable {
     case pdf
     case spreadsheet
     case quickLook
+    case plainText
+
+    static func classify(_ file: AttachmentPreviewFile) -> Self {
+        let kind = classify(filename: file.filename, mimeType: file.metadata?.mimeType)
+        return file.isCapturedChannelFile && kind == .quickLook ? .plainText : kind
+    }
 
     static func classify(filename: String, mimeType: String?) -> Self {
         let ext = URL(fileURLWithPath: filename).pathExtension.lowercased()
@@ -117,10 +123,10 @@ struct AttachmentPreviewSnapshot: Sendable {
     nonisolated static func verified(for file: AttachmentPreviewFile) throws -> Self {
         try Task.checkCancellation()
         let data = try AttachmentFileIntegrity().verifiedData(for: file)
-        let kind = AttachmentViewerKind.classify(filename: file.filename, mimeType: file.metadata?.mimeType)
+        let kind = AttachmentViewerKind.classify(file)
         let image = kind == .image ? try AttachmentImageSnapshot.prepare(data, filename: file.filename) : nil
         try Task.checkCancellation()
-        return Self(data: [.image, .pdf, .spreadsheet].contains(kind) ? data : nil, image: image)
+        return Self(data: [.image, .pdf, .spreadsheet, .plainText].contains(kind) ? data : nil, image: image)
     }
 }
 
@@ -202,12 +208,13 @@ struct AttachmentMediaViewerSheet: View {
 
     @ViewBuilder private func viewer(for file: AttachmentPreviewFile) -> some View {
         AttachmentIntegrityGate(file: file) { snapshot in
-            switch AttachmentViewerKind.classify(filename: file.filename, mimeType: file.metadata?.mimeType) {
+            switch AttachmentViewerKind.classify(file) {
             case .image: AttachmentImageView(snapshot: snapshot.image)
             case .audiovisual: AttachmentAVPlayerView(fileURL: file.fileURL)
             case .pdf: AttachmentPDFView(file: file, verifiedData: snapshot.data)
             case .spreadsheet: AttachmentSpreadsheetView(file: file, verifiedData: snapshot.data)
             case .quickLook: AttachmentQuickLookView(fileURL: file.fileURL)
+            case .plainText: CapturedChannelTextPreview(data: snapshot.data)
             }
         }
     }
@@ -257,6 +264,50 @@ struct AttachmentMediaViewerSheet: View {
                 throw CocoaError(.fileNoSuchFile)
             }
         } catch { actionError = error.localizedDescription }
+    }
+}
+
+struct CapturedChannelTextSnapshot: Equatable {
+    static let byteLimit = 256 * 1_024
+    let text: String
+    let truncated: Bool
+
+    init?(data: Data) {
+        let sample = data.prefix(8 * 1_024)
+        let controls = sample.filter { $0 < 32 && !(9...13).contains($0) }.count
+        guard !sample.contains(0), sample.isEmpty || Double(controls) / Double(sample.count) <= 0.3 else { return nil }
+        var prefix = Data(data.prefix(Self.byteLimit))
+        var decoded = String(data: prefix, encoding: .utf8)
+        if decoded == nil && data.count > Self.byteLimit {
+            // A UTF-8 character may straddle the bounded preview boundary.
+            for _ in 0..<3 where decoded == nil && !prefix.isEmpty {
+                prefix.removeLast(); decoded = String(data: prefix, encoding: .utf8)
+            }
+        }
+        guard let decoded else { return nil }
+        text = decoded; truncated = data.count > prefix.count
+    }
+}
+
+private struct CapturedChannelTextPreview: View {
+    let data: Data?
+    var body: some View {
+        if let data, let snapshot = CapturedChannelTextSnapshot(data: data) {
+            VStack(alignment: .leading, spacing: 8) {
+                if snapshot.truncated {
+                    Text(l10n("This preview shows only the first \(CapturedChannelTextSnapshot.byteLimit) bytes. Save a copy to view the full file."))
+                        .font(.caption).padding(12)
+                }
+                ScrollView([.horizontal, .vertical]) {
+                    Text(verbatim: snapshot.text).font(.system(.body, design: .monospaced))
+                        .textSelection(.enabled).padding(16).frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            .accessibilityIdentifier("captured-channel-text-preview")
+        } else {
+            Text(l10n("This attachment has no safe text preview. Save a copy to open it in another app."))
+                .padding(20).frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
     }
 }
 
@@ -391,12 +442,12 @@ struct AttachmentThumbnail: View {
     }
 
     private var icon: String {
-        switch AttachmentViewerKind.classify(filename: file.filename, mimeType: file.metadata?.mimeType) {
+        switch AttachmentViewerKind.classify(file) {
         case .image: "photo"
         case .audiovisual: "play.rectangle"
         case .pdf: "doc.richtext"
         case .spreadsheet: "tablecells"
-        case .quickLook: "doc"
+        case .quickLook, .plainText: "doc"
         }
     }
 }

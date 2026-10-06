@@ -172,6 +172,7 @@ final class AppModel: ObservableObject {
                 cancelVisibleConversationRead()
             }
             invalidateConversationReadContexts()
+            invalidateExternalAttachmentPreviewContexts()
             for id in Array(conversationUnreadStates.keys) {
                 if !conversations.contains(where: { $0.id == id })
                     || oldValue.first(where: { $0.id == id })?.agentBinding
@@ -186,7 +187,7 @@ final class AppModel: ObservableObject {
     private var conversationReadContexts: [UUID: ConversationReadContext] = [:]
     private var conversationUnreadLoadEpochs: [UUID: UInt64] = [:]
     @Published var selection: UUID? {
-        didSet { if selection != oldValue { cancelVisibleConversationRead() } }
+        didSet { if selection != oldValue { cancelVisibleConversationRead(); cancelExternalAttachmentPreview() } }
     }
     @Published var descriptors: [ProviderDescriptor] = []
     @Published var availableModels: [AIModel] = []
@@ -217,7 +218,7 @@ final class AppModel: ObservableObject {
     }
     @Published var route: WorkspaceRoute? = .search {
         didSet {
-            if route != oldValue { cancelVisibleConversationRead(); cancelVisibleGroupRead() }
+            if route != oldValue { cancelVisibleConversationRead(); cancelVisibleGroupRead(); cancelExternalAttachmentPreview() }
         }
     }
     @Published private(set) var navigationHistory = WorkspaceNavigationHistory()
@@ -251,6 +252,7 @@ final class AppModel: ObservableObject {
                     != ChannelFailureContext.identity(agents.first(where: { $0.id == owner.agentID }), owner: owner)
             }
             invalidateConversationReadContexts()
+            invalidateExternalAttachmentPreviewContexts()
             invalidateConversationSpendGuardPresentations { id in
                 guard let owner = conversations.first(where: { $0.id == id })?.agentBinding?.agentID else { return true }
                 let before = oldValue.first { $0.id == owner }, after = agents.first { $0.id == owner }
@@ -261,6 +263,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var agentSidebarVisibility: [AgentSidebarVisibility] = [] {
         didSet {
             if oldValue != agentSidebarVisibility {
+                invalidateExternalAttachmentPreviewContexts()
                 invalidateConversationSpendGuardPresentations { _ in true }
                 invalidateChannelFailureFollowUps { id in
                     conversations.first(where: { $0.id == id }).map(isConversationHidden) ?? true
@@ -283,15 +286,17 @@ final class AppModel: ObservableObject {
         didSet {
             invalidateDelegatedChannelScopes()
             groupReadOwnersChanged(from: oldValue)
+            invalidateExternalAttachmentPreviewContexts()
             for id in groups.map(\.id) { Task { [weak self] in await self?.reloadGroupUnreadState(id: id) } }
         }
     }
     @Published var selectedGroupID: UUID? {
-        didSet { if selectedGroupID != oldValue { cancelVisibleGroupRead() } }
+        didSet { if selectedGroupID != oldValue { cancelVisibleGroupRead(); cancelExternalAttachmentPreview() } }
     }
     @Published var groupMessages: [UUID: [RoomMessage]] = [:] {
         didSet {
             invalidateGroupReadContexts()
+            invalidateExternalAttachmentPreviewContexts()
             for id in Set(oldValue.keys).union(groupMessages.keys) where oldValue[id] != groupMessages[id] {
                 Task { [weak self] in await self?.reloadGroupUnreadState(id: id) }
             }
@@ -346,6 +351,12 @@ final class AppModel: ObservableObject {
     @Published var pendingAttachments: [AttachmentMetadata] = []
     @Published var isImportingAttachments = false
     @Published private(set) var attachmentPreview: AttachmentPreviewItem?
+    @Published private(set) var externalAttachmentPreviewContexts: [UUID: ExternalChannelAttachmentPreviewContext] = [:]
+    private var activeExternalAttachmentPreview: ExternalChannelAttachmentPreviewContext?
+    private var externalAttachmentPreviewNavigationGeneration: UInt64 = 0
+    /// Host-injected reader for isolated drivers. No source URL is passed;
+    /// canonical ownership and materialized digest checks remain mandatory.
+    var channelAttachmentPreviewReader: (@Sendable (AttachmentMetadata) async throws -> Data)?
     @Published var replyingToMessageID: UUID?
     @Published var localToolPermissions: [LocalToolAction: LocalToolPermission] = [:]
     @Published var workspaceAuthorizations: [WorkspaceAuthorization] = []
@@ -3932,10 +3943,140 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func externalChannelAttachmentPreviewContext(for publication: ExternalChannelTranscriptPublication,
+        at location: ExternalChannelAttachmentLocation) -> ExternalChannelAttachmentPreviewContext? {
+        guard location.matches(publication), let context = externalAttachmentPreviewContexts[publication.deliveryID],
+              context.publication.samePublication(as: publication), acceptsExternalAttachmentPreview(context) else { return nil }
+        return context
+    }
+
+    func externalChannelAttachmentPreviewAction(for publication: ExternalChannelTranscriptPublication,
+        at location: ExternalChannelAttachmentLocation) -> ((ExternalChannelTranscriptPublication.File) -> Void)? {
+        guard let context = externalChannelAttachmentPreviewContext(for: publication, at: location) else { return nil }
+        let navigation = externalAttachmentPreviewNavigationGeneration
+        return { [weak self] file in
+            guard let self, navigation == externalAttachmentPreviewNavigationGeneration else { return }
+            openExternalChannelAttachment(file, context: context, at: location)
+        }
+    }
+
+    private func acceptsExternalAttachmentPreview(_ context: ExternalChannelAttachmentPreviewContext) -> Bool {
+        let value = context.publication
+        guard context.isActive, context.generation == autoReviewAccountGeneration, !agentMessagingAccountTransition,
+              value.owner.accountID == (settings.accountScope ?? "local"),
+              agents.contains(where: { $0.id == value.owner.agentID && $0.archivedAt == nil }) else { return false }
+        switch value.route {
+        case .directConversation:
+            guard let chat = conversations.first(where: { $0.id == value.conversationID }),
+                  chat.agentBinding == value.owner, !isConversationHidden(chat), chat.hiddenAt == nil,
+                  conversations.filter({ $0.agentBinding == value.owner }).count == 1,
+                  let message = chat.messages.first(where: { $0.id == value.deliveryID }),
+                  let stored = message.externalChannelPublication else { return false }
+            return stored.samePublication(as: value) && message.matchesExternalPublication(stored)
+        case .groupConversation:
+            guard let group = groups.first(where: { $0.id == value.conversationID }),
+                  context.group?.memberIDs == group.memberIDs, group.memberIDs.contains(value.owner.agentID),
+                  let message = groupMessages[group.id]?.first(where: { $0.id == value.deliveryID }),
+                  let stored = message.externalPublication else { return false }
+            return stored.samePublication(as: value) && message.matchesExternalPublication(stored)
+        }
+    }
+
+    private func invalidateExternalAttachmentPreviewContexts() {
+        for (id, context) in externalAttachmentPreviewContexts where !acceptsExternalAttachmentPreview(context) {
+            context.close(); externalAttachmentPreviewContexts.removeValue(forKey: id)
+            if activeExternalAttachmentPreview === context { cancelExternalAttachmentPreview() }
+        }
+    }
+
+    private func cancelExternalAttachmentPreview() {
+        externalAttachmentPreviewNavigationGeneration &+= 1
+        guard activeExternalAttachmentPreview != nil else { return }
+        dismissAttachmentPreview()
+    }
+
+    private func prepareExternalAttachmentPreviewContext(_ publication: ExternalChannelTranscriptPublication,
+        generation: UInt64, accountLease: AgentWorkflowExecutionScope.Lease) async throws {
+        guard !publication.files.isEmpty else { return }
+        if let existing = externalAttachmentPreviewContexts[publication.deliveryID],
+           existing.publication.samePublication(as: publication), acceptsExternalAttachmentPreview(existing) { return }
+        let context: ExternalChannelAttachmentPreviewContext
+        switch publication.route {
+        case .directConversation:
+            let binding = try await store.leaseUniqueBinding(accountID: publication.owner.accountID,
+                agentID: publication.owner.agentID, conversationID: publication.conversationID)
+            do { context = try .init(publication: publication, generation: generation, accountLease: accountLease, binding: binding) }
+            catch { binding.close(); throw error }
+        case .groupConversation:
+            guard let groupService else { throw CancellationError() }
+            let group = try await groupService.leaseReadState(groupID: publication.conversationID)
+            do { context = try .init(publication: publication, generation: generation, accountLease: accountLease, group: group) }
+            catch { group.close(); throw error }
+        }
+        do { try await validateExternalAttachmentPreview(context) }
+        catch { context.close(); throw error }
+        externalAttachmentPreviewContexts[publication.deliveryID]?.close()
+        externalAttachmentPreviewContexts[publication.deliveryID] = context
+    }
+
+    private func validateExternalAttachmentPreview(_ context: ExternalChannelAttachmentPreviewContext) async throws {
+        guard acceptsExternalAttachmentPreview(context), let channelService,
+              let delivery = await channelService.delivery(id: context.publication.deliveryID),
+              let authority = ChannelTranscriptProjection.publication(for: delivery),
+              authority.samePublication(as: context.publication) else { throw CancellationError() }
+        switch authority.route {
+        case .directConversation:
+            guard let chat = try await store.conversation(id: authority.conversationID), chat.agentBinding == authority.owner,
+                  chat.hiddenAt == nil, let message = chat.messages.first(where: { $0.id == authority.deliveryID }),
+                  let stored = message.externalChannelPublication, stored.samePublication(as: authority),
+                  message.matchesExternalPublication(stored) else { throw CancellationError() }
+        case .groupConversation:
+            guard let messages = await groupService?.messages(groupID: authority.conversationID),
+                  let message = messages.first(where: { $0.id == authority.deliveryID }),
+                  let stored = message.externalPublication, stored.samePublication(as: authority),
+                  message.matchesExternalPublication(stored) else { throw CancellationError() }
+        }
+        guard acceptsExternalAttachmentPreview(context) else { throw CancellationError() }
+    }
+
+    func openExternalChannelAttachment(_ file: ExternalChannelTranscriptPublication.File,
+        context: ExternalChannelAttachmentPreviewContext, at location: ExternalChannelAttachmentLocation) {
+        guard location.matches(context.publication), acceptsExternalAttachmentPreview(context),
+              externalAttachmentPreviewContexts[context.publication.deliveryID] === context,
+              context.publication.files.contains(file) else { return }
+        let visible = context.publication.route == .directConversation
+            ? route == .conversation(context.publication.conversationID) && selection == context.publication.conversationID
+            : visibleGroupID == context.publication.conversationID
+        guard visible else { return }
+        dismissAttachmentPreview()
+        activeExternalAttachmentPreview = context
+        let generation = attachmentPreviewGeneration
+        Task {
+            do {
+                try await validateExternalAttachmentPreview(context)
+                let metadata = try context.metadata(for: file)
+                let data: Data
+                if let reader = channelAttachmentPreviewReader { data = try await reader(metadata) }
+                else { data = try await channelAttachmentStore.channelPublicationData(for: metadata) }
+                try await validateExternalAttachmentPreview(context)
+                guard generation == attachmentPreviewGeneration, activeExternalAttachmentPreview === context else { return }
+                let item = try context.commit { try attachmentPreviewMaterializer.materialize(data: data, metadata: metadata) }
+                var files = item.files
+                for index in files.indices { files[index].isCapturedChannelFile = true }
+                attachmentPreview = .init(id: item.id, files: files, initialFileID: item.initialFileID)
+            } catch is CancellationError { return }
+            catch {
+                guard generation == attachmentPreviewGeneration, activeExternalAttachmentPreview === context else { return }
+                errorMessage = FiliconLocalization.message(error.localizedDescription)
+            }
+        }
+    }
+
     private func openAttachmentGallery(_ metadata: AttachmentMetadata, gallery: [AttachmentMetadata],
                                        maximumFiles: Int? = 50, selectedIndex: Int? = nil,
                                        load: @escaping @MainActor (AttachmentMetadata) async throws -> Data) {
         let selection = selectedIndex ?? gallery.firstIndex(where: { $0.id == metadata.id })
+        activeExternalAttachmentPreview = nil
         attachmentPreviewGeneration += 1
         let generation = attachmentPreviewGeneration
         Task {
@@ -4046,6 +4187,7 @@ final class AppModel: ObservableObject {
         let generation: Int?
         if inline { generation = nil }
         else {
+            activeExternalAttachmentPreview = nil
             attachmentPreviewGeneration += 1
             generation = attachmentPreviewGeneration
         }
@@ -4092,6 +4234,7 @@ final class AppModel: ObservableObject {
 
     func dismissAttachmentPreview() {
         attachmentPreviewGeneration += 1
+        activeExternalAttachmentPreview = nil
         guard let item = attachmentPreview else { return }
         attachmentPreview = nil
         attachmentPreviewMaterializer.remove(item)
@@ -8587,6 +8730,7 @@ final class AppModel: ObservableObject {
                     } else { groupMessages[value.conversationID, default: []].append(saved) }
                     await reloadGroupUnreadStates()
                 }
+                try await prepareExternalAttachmentPreviewContext(value, generation: generation, accountLease: accountLease)
             } catch {
                 // Keep the durable outbox row for later repair. Never turn a
                 // projection error into an external resend or new identity.
@@ -11435,6 +11579,8 @@ final class AppModel: ObservableObject {
     func cancelAutoReviewApprovals(nextAccountID: String) async {
         closeDelegatedChannelScopes { _ in true }
         closeMailboxChannelScopes { _ in true }
+        for context in externalAttachmentPreviewContexts.values { context.close() }
+        externalAttachmentPreviewContexts.removeAll()
         for lifetime in directChannelLifetimes.values { lifetime.close() }
         for lease in sidebarSettingsLeases.values { lease.close() }
         for lifetime in manualSidebarChanges.values { lifetime.close() }

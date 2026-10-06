@@ -757,7 +757,9 @@
 "Policy v{0} · {1}" = "정책 v{0} · {1}";
 "Port (0 chooses an available port)" = "포트 (0은 유효한 항구를 선택합니다)";
 "Port {0}" = "항구 {0}";
-"Preview attachment" = "미리보기 첨부";
+"Preview attachment" = "첨부 파일 미리 보기";
+"This attachment has no safe text preview. Save a copy to open it in another app." = "이 첨부 파일은 안전한 텍스트 미리 보기를 제공하지 않습니다. 사본을 저장하여 다른 앱에서 여세요.";
+"This preview shows only the first {0} bytes. Save a copy to view the full file." = "이 미리 보기는 처음 {0}바이트만 표시합니다. 전체 파일을 보려면 사본을 저장하세요.";
 "Previous match" = "이전 경기";
 "Primary IDs, comma-separated (optional)" = "기본 ID, comma-separated (선택 사항)";
 "Priority" = "우선순위";

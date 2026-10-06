@@ -1,5 +1,17 @@
 # 協作能力核對紀錄（更新至 2026-10-06）
 
+## 正式外部送件附件的 captured-byte 原生預覽
+
+2026-10-06 接續 `a1b5214`，reference HEAD 再核對為 `a9f633e09d49a85829b8236331b9e21f7e612634`；原版 `source/shared/media/attachment-preview.ts` 確實有文字預覽與 binary sniff。正式 direct／group channel transcript 現在可預覽實際已保存的 captured files，不重新下載 HTTPS、不重讀本機來源、不替未送出的其他圖片開啟來源。原 canonical queue／message／完整 file metadata 與 native-only captured context 一致才提供 callback；generic widget actions 仍不取得 retry／send／讀取權限。
+
+原 binding／account generation／exact group membership 與未隱藏／未封存 owner 延續至 read 前後及 materialize 的同步 lease commit。callback 先捕捉導航 epoch，導航／帳號／binding／成員／receipt／archive／hide ABA 不復活舊 click 或晚到結果。真正 delivery progress／name-only 修改可維持同一 publication。CAS descriptor reader 拒絕 symlink、FIFO、directory、損壞 digest／size 等；未知 HTML／script 格式只顯示 verified bounded UTF-8 原文，已支援 native media 沿用既有 viewer。儲存副本與外部開啟仍是明確人類操作，本批未執行，不授權模型來源讀取或重送。
+
+新增 8 methods／61 cases，最後 `channel-captured-preview-focused-v7.log` exit 0：8 tests／5 suites，包含實際 human review→queue→canonical→native click、故意晚到 reader、完整 stores／sent／download 比較、binary／UTF-8 邊界及七語 28 張窄寬版明暗畫面。人工檢視抓到且修正西班牙文 label 截斷，再以獨立 OCR 檢查末尾文字；既有日文／韓文 Preview attachment 誤譯也修正。早期 compiler／fixture failures、descriptor 邊界與最後完整 gates 見 [完成驗收入口](Parity-completion-audit.md)。
+
+本批最後完整串行 `channel-captured-preview-full-final-v1.log` exit 0：2,135 Swift Testing／256 suites＋135 XCTest／0 failures，App 784／102；兩項 opt-in live tests skipped、既有 CoreData 診斷保留。arm64 Debug native build／native verify／全新 standalone Debug package 的四執行檔、app／XPC entitlements、offline resources、deep strict signature 通過；未執行 launch smoke。七語最後各 1,817 keys／0 missing。Xcode project 僅補四筆新檔 references，65 個 native app sources membership 一致、既有 scheme／targets 不變；Debug／ad-hoc 不等於 Developer ID release／公證。
+
+**仍未完成**：group-origin／manual mailbox／inbound publication／canonical host、group／inbound 等其餘 failure follow-up、uncaptured locators 的新核准來源開啟，以及 live／真人／VoiceOver／最低 macOS／Developer ID release／公證。AGENT-02／UI-04／整體 partial 與 48 分類不變；只取代下方歷史「captured-file CAS preview 未接線」的部分，不上調全附件／全協作驗收。未 push、啟動或重啟 App／Xcode，未改真實資料。
+
 ## 真正成員委派送件的 terminal failure 回原收件人聊天
 
 2026-10-06 接續 `c366d13`，真正 bound direct → 人類核准 `SendToAgent` → 收件人／回覆原 owner 的 reviewed channel send → terminal queue failure 已由實際 App 測試接通，不是 seed 理想化 queue。canonical actual owner 讓既有 shared direct failure runner 在該精確聊天以無 channel 的 `SendMessage` 更正；原入口、無關聊天與原 mailbox 記錄不變，不借用選取或另一位成員。

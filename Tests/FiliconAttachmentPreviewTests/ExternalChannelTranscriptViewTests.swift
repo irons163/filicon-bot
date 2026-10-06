@@ -89,4 +89,51 @@ import FiliconDomain
         let legacy = try JSONDecoder().decode(WidgetTranscriptCard.self, from: Data(#"{"title":"Old widget","body":"Readable","widgetKind":"summary","facts":{}}"#.utf8))
         #expect(legacy.externalPublication == nil)
     }
+
+    @Test(arguments: ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"], [280.0, 680.0])
+    func nativeCapturedFilePreviewButtonFitsSevenLanguagesWithoutLinkingUnsentSources(language: String, width: Double) async throws {
+        let expected = try #require([
+            "en": "Preview attachment", "zh-Hant": "預覽附件", "zh-Hans": "预览附件",
+            "fr": "Aperçu de la pièce jointe", "es": "Vista previa del archivo adjunto",
+            "ja": "添付ファイルをプレビュー", "ko": "첨부 파일 미리 보기"
+        ][language])
+        for dark in [false, true] {
+            try await withUIRenderTurn(language: language) {
+                expectNoDifference(l10n("Preview attachment"), expected)
+                let original = value(status: .queued)
+                expectNoDifference(original.files.count, 1)
+                expectNoDifference(original.sources.count, 2)
+                expectNoDifference(original.transcriptCard.rendererActions, [])
+                let host = NSHostingView(rootView: TranscriptCardRow(card: original.transcriptCard,
+                    onPreviewExternalAttachment: { _ in Issue.record("Rendering must not perform a preview read") }) { _ in
+                        Issue.record("A captured preview button never grants retry or send authority")
+                    }.padding(16).frame(width: width).background(FiliconTheme.canvas)
+                    .environment(\.locale, Locale(identifier: language)).environment(\.colorScheme, dark ? .dark : .light))
+                host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+                let size = host.fittingSize
+                #expect(abs(size.width - width) < 0.5 && size.height > 120 && size.height < 1400)
+                host.frame = .init(origin: .zero, size: size)
+                let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+                window.appearance = host.appearance; window.contentView = host
+                defer { window.contentView = nil }
+                host.layoutSubtreeIfNeeded(); host.displayIfNeeded()
+                let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                host.appearance?.performAsCurrentDrawingAppearance { host.cacheDisplay(in: host.bounds, to: bitmap) }
+                let request = VNRecognizeTextRequest(); request.recognitionLevel = .accurate; request.recognitionLanguages = ["en-US"]
+                try VNImageRequestHandler(cgImage: try #require(bitmap.cgImage)).perform([request])
+                let visible = request.results?.compactMap { $0.topCandidates(1).first?.string }.joined().filter { !$0.isWhitespace } ?? ""
+                #expect(visible.contains("ENDORIGINALDESCRIPTION"), "All source metadata must remain visible: \(visible)")
+                if language == "en" { #expect(visible.lowercased().contains("previewattachment")) }
+                if language == "es" {
+                    #expect(visible.lowercased().contains("archivoadjunto"), "The full Spanish preview label must fit: \(visible)")
+                }
+                if let path = ProcessInfo.processInfo.environment["FILICON_UI_REVIEW_OUTPUT"] {
+                    let directory = URL(fileURLWithPath: path)
+                    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                    try #require(bitmap.representation(using: .png, properties: [:])).write(to:
+                        directory.appending(path: "captured-channel-button-\(language)-\(Int(width))-\(dark ? "dark" : "light").png"))
+                }
+            }
+        }
+    }
 }

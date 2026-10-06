@@ -110,6 +110,13 @@ public final class GroupReadStateLease: Sendable {
     }
 
     public func close() { scope.invalidate() }
+
+    /// Native read consumers may materialize an already verified local copy
+    /// under this exact membership/account fence. Do not call the group actor
+    /// or another lifecycle operation from the synchronous closure.
+    public func withValidMembership<Value>(_ operation: () throws -> Value) throws -> Value {
+        try lease.commit(operation)
+    }
 }
 
 extension RoomMessage {

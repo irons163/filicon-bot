@@ -757,7 +757,9 @@
 "Policy v{0} · {1}" = "ポリシー v{0} · {1}";
 "Port (0 chooses an available port)" = "港(0は利用できる港を選びます)";
 "Port {0}" = "港 {0}";
-"Preview attachment" = "プレビューアタッチメント";
+"Preview attachment" = "添付ファイルをプレビュー";
+"This attachment has no safe text preview. Save a copy to open it in another app." = "この添付ファイルは安全にテキスト表示できません。コピーを保存して別のアプリで開いてください。";
+"This preview shows only the first {0} bytes. Save a copy to view the full file." = "このプレビューは最初の {0} バイトのみを表示しています。ファイル全体を見るにはコピーを保存してください。";
 "Previous match" = "前の試合";
 "Primary IDs, comma-separated (optional)" = "プライマリID、コンマ区切り(オプション)";
 "Priority" = "優先";

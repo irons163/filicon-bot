@@ -758,6 +758,8 @@
 "Port (0 chooses an available port)" = "连接埠（0 表示自动选择可用连接埠）";
 "Port {0}" = "端口{0}";
 "Preview attachment" = "预览附件";
+"This attachment has no safe text preview. Save a copy to open it in another app." = "此附件无法安全地预览为纯文本。请保存副本，再用其他 App 打开。";
+"This preview shows only the first {0} bytes. Save a copy to view the full file." = "此预览仅显示前 {0} 字节。请保存副本以查看完整文件。";
 "Previous match" = "上一个匹配";
 "Primary IDs, comma-separated (optional)" = "以逗号分隔的初级身份证(可选)";
 "Priority" = "优先";

@@ -757,7 +757,9 @@
 "Policy v{0} · {1}" = "Política v{0} · {1}";
 "Port (0 chooses an available port)" = "Puerto (0 elige un puerto disponible)";
 "Port {0}" = "Puerto {0}";
-"Preview attachment" = "Previsualizar el accesorio";
+"Preview attachment" = "Vista previa del archivo adjunto";
+"This attachment has no safe text preview. Save a copy to open it in another app." = "Este archivo adjunto no tiene una vista previa de texto segura. Guarda una copia para abrirlo en otra aplicación.";
+"This preview shows only the first {0} bytes. Save a copy to view the full file." = "Esta vista previa solo muestra los primeros {0} bytes. Guarda una copia para ver el archivo completo.";
 "Previous match" = "Previa coincidencia";
 "Primary IDs, comma-separated (optional)" = "Identificación primaria, separada por coma (opcional)";
 "Priority" = "Prioridad";

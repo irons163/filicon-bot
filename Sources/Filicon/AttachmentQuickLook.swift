@@ -55,6 +55,8 @@ struct AttachmentPreviewFile: Identifiable, Equatable, Sendable {
     let filename: String
     let fileURL: URL
     let metadata: AttachmentMetadata?
+    /// Captured outbound documents never invoke an active HTML/script preview.
+    var isCapturedChannelFile = false
 
     init(id: UUID = UUID(), filename: String, fileURL: URL, metadata: AttachmentMetadata? = nil) {
         self.id = id

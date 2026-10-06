@@ -13,6 +13,54 @@ import FiliconDomain
 
 @Suite("Native attachment viewers")
 struct AttachmentViewerTests {
+    @Test(arguments: ["report.html", "app.js", "script.sh", "note.md", "data.json", "opaque.bin"])
+    func capturedOutboundUnknownFormatsUseLiteralTextInsteadOfQuickLook(filename: String) throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "captured-text-viewer-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let bytes = Data(#"<script>fetch('https://never-fetch.invalid')</script>"#.utf8)
+        let metadata = AttachmentMetadata(id: SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined(),
+            filename: filename, mimeType: "text/html", byteCount: Int64(bytes.count), kind: .document,
+            createdAt: Date(timeIntervalSince1970: 100))
+        let fileURL = root.appending(path: filename)
+        try bytes.write(to: fileURL)
+        var file = AttachmentPreviewFile(filename: filename, fileURL: fileURL, metadata: metadata)
+        expectNoDifference(AttachmentViewerKind.classify(file), .quickLook)
+        file.isCapturedChannelFile = true
+        expectNoDifference(AttachmentViewerKind.classify(file), .plainText)
+        let snapshot = try AttachmentPreviewSnapshot.verified(for: file)
+        expectNoDifference(snapshot.data, bytes)
+        let verified = try #require(snapshot.data)
+        let text = try #require(CapturedChannelTextSnapshot(data: verified))
+        expectNoDifference(text.text, String(decoding: bytes, as: UTF8.self))
+        expectNoDifference(text.truncated, false)
+        try Data("tampered".utf8).write(to: fileURL, options: .atomic)
+        #expect(throws: AttachmentFileIntegrityError.changed) { try AttachmentPreviewSnapshot.verified(for: file) }
+    }
+
+    @Test(arguments: ["photo.png", "report.pdf", "table.csv", "table.xlsx", "clip.mp4"])
+    func capturedKnownFormatsKeepTheirExistingNativeDecoder(filename: String) {
+        var file = AttachmentPreviewFile(filename: filename, fileURL: URL(fileURLWithPath: "/never-open/" + filename))
+        let original = AttachmentViewerKind.classify(file)
+        file.isCapturedChannelFile = true
+        expectNoDifference(AttachmentViewerKind.classify(file), original)
+        #expect(original != .quickLook && original != .plainText)
+    }
+
+    @Test func capturedLiteralTextRejectsBinaryAndBoundsUnicodeWithoutSplittingCharacters() throws {
+        for bytes in [Data([0]), Data([0xff]), Data(repeating: 1, count: 10), Data([65, 0, 66])] {
+            #expect(CapturedChannelTextSnapshot(data: bytes) == nil)
+        }
+        let empty = try #require(CapturedChannelTextSnapshot(data: Data()))
+        expectNoDifference(empty.text, ""); expectNoDifference(empty.truncated, false)
+        let prefix = String(repeating: "A", count: CapturedChannelTextSnapshot.byteLimit - 1)
+        let snapshot = try #require(CapturedChannelTextSnapshot(data: Data((prefix + "繁" + "TRAILER").utf8)))
+        expectNoDifference(snapshot.text, prefix); expectNoDifference(snapshot.truncated, true)
+        let exact = try #require(CapturedChannelTextSnapshot(data: Data(repeating: 65, count: CapturedChannelTextSnapshot.byteLimit)))
+        expectNoDifference(exact.text, String(repeating: "A", count: CapturedChannelTextSnapshot.byteLimit))
+        expectNoDifference(exact.truncated, false)
+    }
+
     @Test(arguments: ["csv", "tsv"])
     func tableSnapshotDoesNotReopenReplacedOriginal(extension suffix: String) throws {
         let sandbox = FileManager.default.temporaryDirectory.appending(path: "table-snapshot-\(UUID())", directoryHint: .isDirectory)

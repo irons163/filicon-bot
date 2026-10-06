@@ -762,6 +762,8 @@
 "Port (0 chooses an available port)" = "Port (0 chooses an available port)";
 "Port {0}" = "Port {0}";
 "Preview attachment" = "Preview attachment";
+"This attachment has no safe text preview. Save a copy to open it in another app." = "This attachment has no safe text preview. Save a copy to open it in another app.";
+"This preview shows only the first {0} bytes. Save a copy to view the full file." = "This preview shows only the first {0} bytes. Save a copy to view the full file.";
 "Previous match" = "Previous match";
 "Primary IDs, comma-separated (optional)" = "Primary IDs, comma-separated (optional)";
 "Priority" = "Priority";

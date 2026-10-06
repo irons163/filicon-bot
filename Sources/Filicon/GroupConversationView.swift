@@ -221,6 +221,9 @@ struct GroupConversationView: View {
             onShowReply: { threadPresentation.reveal($0, in: threads) },
             onReply: threads.canReply(to: message.id) ? { beginReply(to: message.id) } : nil,
             onOpenFile: { model.openGroupMessageFile($0, messageID: message.id, groupID: group.id) },
+            onPreviewExternalAttachment: message.externalPublication.flatMap {
+                model.externalChannelAttachmentPreviewAction(for: $0, at: .group(groupID: group.id, messageID: message.id))
+            },
             onPreviewRemote: { reference, review in try await model.previewRemoteAttachment(reference, at: .group(group.id, message.id), approveRedirect: review) },
             onThumbnail: { reference, review in try await model.remoteGalleryPreview(reference, at: .group(group.id, message.id), approveRedirect: review) },
             onReaction: { Task { await model.toggleGroupReaction(groupID: group.id, messageID: message.id, emoji: "👍") } }
@@ -566,6 +569,7 @@ struct GroupMessageBubble: View {
     var onShowReply: ((UUID) -> Void)?
     var onReply: (() -> Void)?
     var onOpenFile: ((AttachmentMetadata) -> Void)?
+    var onPreviewExternalAttachment: ((ExternalChannelTranscriptPublication.File) -> Void)? = nil
     var onPreviewRemote: ((RemoteAttachmentReference, @escaping RemoteRedirectReview) async throws -> Void)?
     var onThumbnail: ((RemoteAttachmentReference, @escaping RemoteRedirectReview) async throws -> RemoteGalleryPreview)?
     let onReaction: () -> Void
@@ -650,7 +654,7 @@ struct GroupMessageBubble: View {
                     .help(file.altText ?? file.filename)
                 }
                 if let publication = message.externalPublication {
-                    ExternalChannelPublicationCard(publication: publication)
+                    ExternalChannelPublicationCard(publication: publication, onPreview: onPreviewExternalAttachment)
                 }
                 ForEach(message.toolActivities) { tool in
                     let waitingForFolder = tool.status == .pending && waitingForFolderCallIDs.contains(tool.id)

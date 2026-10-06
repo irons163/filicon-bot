@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		93C2A12E95CAC664B7F74C3D099FF394 /* ExternalChannelAttachmentPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17847BDCA03E20EEDBCD1F45275CC941 /* ExternalChannelAttachmentPreview.swift */; };
 		CAFDE57372FB3AEA67170E53995C76C0 /* AgentPublicationFileSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBC5029479EEB32218E8FD369D6EB440 /* AgentPublicationFileSource.swift */; };
 		004C5F6A717FE0B25C7A878B5E83AC37 /* AgentAvatarSourceReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDD4117D0531835C5E1561DDBE51E9DF /* AgentAvatarSourceReader.swift */; };
 		00AFA8675B81DA922D261CF12D456CD0 /* FiliconDomain in Frameworks */ = {isa = PBXBuildFile; productRef = 889DB3448F887D3A6CE11FE077D1E910 /* FiliconDomain */; };
@@ -167,6 +168,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		17847BDCA03E20EEDBCD1F45275CC941 /* ExternalChannelAttachmentPreview.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ExternalChannelAttachmentPreview.swift; sourceTree = "<group>"; };
 		FBC5029479EEB32218E8FD369D6EB440 /* AgentPublicationFileSource.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AgentPublicationFileSource.swift; sourceTree = "<group>"; };
 		052C4C896FED416ABDF0BEA4265EA2C1 /* FiliconLocalToolService.xpc */ = {isa = PBXFileReference; includeInIndex = 0; path = FiliconLocalToolService.xpc; sourceTree = BUILT_PRODUCTS_DIR; };
 		0578528F9374AE3D4F122F6EF7873AF1 /* PrivateSkillsView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PrivateSkillsView.swift; sourceTree = "<group>"; };
@@ -416,6 +418,7 @@
 				C89894E48962169E7CF115D1DBBCD4A5 /* ConversationOutlineView.swift */,
 				A8DF63A7E8912AF0D092B112A6DF1558 /* ConversationPaginationState.swift */,
 				302E6F2D2268D08A214832B4D3C9C46E /* CursorAgentReferenceCard.swift */,
+				17847BDCA03E20EEDBCD1F45275CC941 /* ExternalChannelAttachmentPreview.swift */,
 				A70100000000000000000002 /* RemoteAttachmentCard.swift */,
 				A5E843102734C11AF7A63B8739D7BCF3 /* FiliconApp.swift */,
 				773E5C8BF82838BECD4F9E253A73D846 /* FiliconLocalization.swift */,
@@ -754,6 +757,7 @@
 				45C4C113C9E72BA4852EBBBFD7A993A9 /* ConversationOutlineView.swift in Sources */,
 				FDDF31956462C9F707066FBC6CE1C9F7 /* ConversationPaginationState.swift in Sources */,
 				36A8ED7DAE2920944BFDBE4D83626364 /* CursorAgentReferenceCard.swift in Sources */,
+				93C2A12E95CAC664B7F74C3D099FF394 /* ExternalChannelAttachmentPreview.swift in Sources */,
 				A70100000000000000000001 /* RemoteAttachmentCard.swift in Sources */,
 				7E461F86A9B012E0CFCA39DDA4C2F5EE /* FiliconApp.swift in Sources */,
 				7C8992662DE294352CB709EAE3111315 /* FiliconLocalization.swift in Sources */,

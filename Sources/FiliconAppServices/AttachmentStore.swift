@@ -184,6 +184,37 @@ public actor AttachmentStore {
         return data
     }
 
+    /// Reads a captured channel payload by identity, never by its source URL.
+    /// Pin the root/shard/blob descriptors so replacing a path with a symlink
+    /// between validation and read cannot redirect this operation.
+    public func channelPublicationData(for metadata: AttachmentMetadata) throws -> Data {
+        try validateIdentifier(metadata.id)
+        guard Self.isSafeFilename(metadata.filename), metadata.byteCount >= 0,
+              metadata.byteCount <= min(25 * 1_024 * 1_024,
+                AttachmentLimits.byteLimit(filename: metadata.filename, mimeType: metadata.mimeType)) else {
+            throw AttachmentStoreError.corrupt(metadata.id)
+        }
+        let root = open(rootURL.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard root >= 0 else { throw AttachmentStoreError.missing(metadata.id) }
+        defer { close(root) }
+        let directory = openat(root, String(metadata.id.prefix(2)), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard directory >= 0 else { throw AttachmentStoreError.corrupt(metadata.id) }
+        defer { close(directory) }
+        let descriptor = openat(directory, metadata.id, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+        guard descriptor >= 0 else { throw AttachmentStoreError.missing(metadata.id) }
+        let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+        defer { try? handle.close() }
+        var info = stat()
+        guard fstat(descriptor, &info) == 0, (info.st_mode & S_IFMT) == S_IFREG,
+              info.st_size == metadata.byteCount else { throw AttachmentStoreError.corrupt(metadata.id) }
+        let data = try handle.read(upToCount: Int(metadata.byteCount) + 1) ?? Data()
+        let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        guard Int64(data.count) == metadata.byteCount, digest == metadata.id else {
+            throw AttachmentStoreError.corrupt(metadata.id)
+        }
+        return data
+    }
+
     /// Installs the exact reviewed snapshot. Descriptor-relative creation never
     /// follows a shard/blob symlink and never overwrites an existing CAS entry.
     /// The caller must reserve quota before entering this synchronous operation.
