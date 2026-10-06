@@ -1,5 +1,15 @@
 # 協作能力核對紀錄（更新至 2026-10-06）
 
+## 跨群組投遞尊重卡片回答的忙碌狀態
+
+2026-10-06 接續 `c405438`。既有 `SendToAgent` busy-group 契約仍適用於新的 human mailbox turn：`authorizeGroupDelegation` 在顯示投遞核准前檢查 target 的 running／stopping／human mailbox reservation，`postGroupDelegation` 在核准後、持久化前重新檢查。不只一般新 group send／reviewed routine，其他來源的跨群組 broadcast 也不能插入目前卡片接續；不新增 grant，不中止原回答，不借外部送件核准。
+
+新增 1 method／8 actual App cases：manual／scheduled routine × 新／既有 own DM × 來源核准前已 busy／來源核准後才 busy。用實際多成員 target、canonical saved question、fresh human answer 與未決外部送件 review，不手動偽造 private reservation。完整比較 UI／durable group／own DM／mailbox／private context／原 pending review 與非來源 inference requests，確認只有合法來源回合可完成，target 不被寫入或喚醒、沒有 channel queue／fake send；idle target 的既有核准投遞回歸保留。fixture／有效產品 baseline、gates 及限制見 [完成驗收入口](Parity-completion-audit.md)。
+
+最後聚焦 28 methods／2 suites、完整串行 2,157 Swift Testing／257 suites＋135 XCTest／0 failures（App 799／102 suites）、arm64 原生 Debug build／verify、全新 SPM Debug／ad-hoc 封裝／verify、七語各 1,817 keys／0 missing 均通過。兩項 opt-in live tests skipped；原 SDK／CoreData／NSXPC／CoreGraphics／compiler 診斷保留，Debug／ad-hoc 不當 Developer ID release／公證或真人驗收。
+
+只補卡片接續與跨群組投遞的入場競態，不是 inbound／其他 background host 的 publication opt-in、其餘 failure follow-up、uncaptured locator 新核准開啟、unified runtime 或 live／真人／VoiceOver／最低 macOS／release／公證驗收。AGENT-02／AGENT-04／UI-04／整體 partial、48 分類不變；未 push、launch、重啟 App／Xcode 或改真實資料。
+
 ## 已審閱排程成員卡片的原生入口與重新核准
 
 2026-10-06 接續 `770b471`，reference HEAD 再確認為 `a9f633e09d49a85829b8236331b9e21f7e612634`；沿用 `widget-responses.ts` 的 actual agent／fresh human turn／credential 值不進對話語義。只有 admitted reviewed routine group 的 manual／scheduled peer wake 明確提供問答／安全輸入卡片；完整 canonical saved publication 鏡射 actual recipient 的 own DM，不把卡片廣播到群組。普通群組報告保留原 route，並明確分開模型的報告位置提示。

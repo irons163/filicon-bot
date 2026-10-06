@@ -7020,7 +7020,8 @@ final class AppModel: ObservableObject {
     private func authorizeGroupDelegation(sender: AgentProfile, audience: AgentGroupAudience, text: String,
                                           call: NormalizedToolCall, context: ToolContext) async throws {
         guard isAgentMessagingScopeActive(context.conversationID) else { throw CancellationError() }
-        guard !runningGroups.contains(audience.id) else { throw AgentGroupPostError.busy }
+        guard !runningGroups.contains(audience.id), !stoppingGroups.contains(audience.id),
+              !runningAgentMessageScopes.contains(audience.id) else { throw AgentGroupPostError.busy }
         let generation = autoReviewAccountGeneration
         let fence = ApprovalFence(accountID: settings.accountScope ?? "local", agentID: context.conversationID.uuidString.lowercased(),
                                   runID: context.runID, generation: generation)
@@ -7040,7 +7041,8 @@ final class AppModel: ObservableObject {
                                      originID: UUID, generation: UInt64) async throws {
         let groupID = dispatch.audience.id
         guard let groupService, generation == autoReviewAccountGeneration, isAgentMessagingScopeActive(originID) else { throw CancellationError() }
-        guard !runningGroups.contains(groupID), !stoppingGroups.contains(groupID) else { throw AgentGroupPostError.busy }
+        guard !runningGroups.contains(groupID), !stoppingGroups.contains(groupID),
+              !runningAgentMessageScopes.contains(groupID) else { throw AgentGroupPostError.busy }
         // Reserve before hopping to persistence; foreground sends cannot race
         // an approved shared-room wake or replace its conversation scope.
         runningGroups.insert(groupID); delegatedGroupOrigins[groupID] = originID

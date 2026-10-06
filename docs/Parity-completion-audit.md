@@ -1,5 +1,24 @@
 # 完成驗收入口（2026-09-27）
 
+## 跨群組投遞與卡片回答的入場競態
+
+2026-10-06 接續 `c405438`。`runningAgentMessageScopes` 的 fresh human group host 不只是 UI busy／Stop，也必須保護既有 `SendToAgent` cross-group target admission。原 `authorizeGroupDelegation`／`postGroupDelegation` 只看 `runningGroups`，可能在另一個成員卡片回答期間仍詢問來源投遞核准、寫入 target 並喚醒成員。現在核准前、核准後持久化前都檢查 running group／stopping group／human mailbox scope；不廣泛停用 idle target 的合法投遞、不取消原人類回答或其他 scopes。
+
+新增 1 method／8 cases：manual／scheduled routine × 新／既有 own DM × before-review／after-review。使用真實 App 入口建立 reviewed routine、saved question、回答、未決 external SendMessage review、另一 source group 及有效多成員 target；原人類接續確實有 scheduler／session／canonical card，不手動修改 private reservation。完整 typed tool result、UI 與重開 durable group／chat／mailbox／origin-private context／pending approval／工作狀態／queue 比較；非來源 inference request 比較保留每個欄位，明確排除這次獲准執行的 source request，不刪 target request 欄位或只比 ID。fake connector 無送件。
+
+日誌在 `.build/validation/`，不入版控：
+
+- `human-card-group-broadcast-red-v1.log` exit 1：新 fixture 在同步 CustomDump autoclosure 中讀 async actor；改為先 await 全值、再比對，未刪斷言。未執行有效產品測試。
+- `human-card-group-broadcast-red-v2.log` exit 1：新 fixture 的 target 只有一位成員，`SendToAgent` 正確拒絕為 invalid audience；8 cases／8 issues 不當 busy-admission baseline。改為合法多成員 target，新增假模型的 silent persona，但所有 request 仍先完整記錄，不能隱藏意外 target wake。
+- `human-card-group-broadcast-red-v3.log` exit 1：產品仍為 `c405438`；1 method／8 cases／44 issues，2.486 秒。實際來源 review 不應出現卻出現、normalized acknowledgement 說 durable posted、UI 與重開 store 的 target 新增該 post、target inference 亦有差異，屬有效產品 race baseline。
+- `human-card-group-broadcast-focused-v1.log` exit 0：最後 source，完整 mailbox cards／channel publication 與既有 group broadcast App suites，28 methods／2 suites，77.770 秒。8 個新 actual human race cases 全部通過，原 192 routine cards／72 manual cards 與 idle-target 投遞／核准／Stop 等回歸均保留。
+- `human-card-group-broadcast-full-final-v1.log` exit 0：最後 source 完整串行 suite，17 bundles，2,157 Swift Testing／257 suites＋135 XCTest／0 failures；App 799 tests／102 suites，431.531 秒。8 個新 actual admission cases 通過；兩項 opt-in installed-Codex live tests skipped，不算 live 服務驗收。既有 CoreData／NSXPC／CoreGraphics PDF 診斷保留。
+- `human-card-group-broadcast-native-final-v1.log`／`native-verify-final-v1.log` 均 exit 0：隔離 derived data 的 arm64 Debug `Filicon App` 原生建置與唯讀 package verify；四個 executable、offline KaTeX／Mermaid 資源、app／Debug XPC entitlements 與 deep strict 簽章通過。AppIntents metadata extraction 既有 warning 保留，不啟動 App。
+- `human-card-group-broadcast-package-final-v1.log`／`package-verify-final-v1.log` 均 exit 0：全新且事先確認不存在的 `.build/validation/HumanCardBroadcastPackage/Filicon.app`，獨立 SPM Debug／ad-hoc 封裝及再次唯讀 verify；四個 executable、KaTeX 0.16.45／20 fonts／MIT、Mermaid 11.16.0／72 notices／MIT、app／XPC entitlements 與 deep strict 簽章通過。既有 optional coercion／Keychain deprecation warnings 保留；未執行印出的 launch smoke，未覆蓋使用中版本；Debug／ad-hoc 不是 Developer ID release／公證。
+- `human-card-group-broadcast-localization-final-v1.log` exit 0：七語各 1,817 keys／0 missing；沒有新 UI 字串，不當人工翻譯或 VoiceOver 證據。
+
+**仍未完成**：inbound／其他 background group peer host、其餘 saved-group／inbound failure follow-up、uncaptured locator 新核准開啟、unified private DM/group runtime，以及 live／真人／VoiceOver／最低 macOS／Developer ID release／公證。本批只是既有卡片接續的入場 race 修正；AGENT-02／AGENT-04／UI-04／整體 partial、48 分類不變。未 push、launch、重啟使用者 App／Xcode、external send／flush 或改真實資料。
+
 ## 已審閱排程成員問答／安全輸入卡片的原生恢復
 
 2026-10-06 接續 `770b471`。reference HEAD `a9f633e09d49a85829b8236331b9e21f7e612634` 再確認，`widget-responses.ts` 的 actual recipient／fresh human turn／值不進對話契約沿用。這不是全背景 host opt-in：僅已驗證 canonical reviewed routine consent、definition、account、membership 並 admitted 的 group runner 明確提供 saved peer question／credential cards。卡片的完整 canonical publication 只鏡射實際收件成員 own DM；普通 shared group output 保留原 route，模型提示也不誤稱所有輸出都到 own DM。

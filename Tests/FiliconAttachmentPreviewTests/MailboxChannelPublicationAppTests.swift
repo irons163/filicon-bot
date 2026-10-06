@@ -112,6 +112,9 @@ private struct AppMailboxChannelProvider: InteractiveToolProvider {
     var savedInput: String? = nil
     var followUpInput: String? = nil
     var plainResponse: String? = nil
+    var broadcastOrigin: UUID? = nil
+    var broadcastTarget: UUID? = nil
+    var silentPersona: String? = nil
     func models() async throws -> [AIModel] { [.init(id: "fixture")] }
     func stream(_ request: InferenceRequest) -> AsyncThrowingStream<InferenceEvent, Error> {
         guard let plainResponse else { return AsyncThrowingStream { $0.finish(throwing: ProviderError.invalidResponse) } }
@@ -129,6 +132,28 @@ private struct AppMailboxChannelProvider: InteractiveToolProvider {
             let task = Task {
                 do {
                     await probe.request(request)
+                    if let silentPersona, request.messages.first?.text.contains(silentPersona) == true {
+                        continuation.yield(.textDelta("PASS"))
+                        continuation.yield(.completed(.stop)); continuation.finish()
+                        return
+                    }
+                    if let broadcastOrigin, let broadcastTarget {
+                        if request.conversationID == broadcastOrigin {
+                            let result = try await executeTool(.init(id: "busy-group-broadcast", name: "SendToAgent",
+                                argumentsJSON: JSONEncoder().encode(["recipientID": broadcastTarget.uuidString,
+                                    "message": "UNRELATED_BROADCAST_MUST_NOT_REPLACE_HUMAN_TURN"])))
+                            await probe.result(result)
+                            continuation.yield(.textDelta("Unrelated broadcast finished"))
+                            continuation.yield(.completed(.stop)); continuation.finish()
+                            return
+                        }
+                        if request.conversationID == broadcastTarget,
+                           request.messages.last?.text.hasPrefix("Incoming group message") == true {
+                            continuation.yield(.textDelta("PASS"))
+                            continuation.yield(.completed(.stop)); continuation.finish()
+                            return
+                        }
+                    }
                     if request.messages.contains(where: { $0.role == .system && $0.text == ChannelFailureFollowUpNotice.instructions }) {
                         // Deliberately permit a late callback after Stop. The
                         // actual shared host must fence it, not this provider.
@@ -676,6 +701,128 @@ private struct AppMailboxChannelProvider: InteractiveToolProvider {
            "reopen", "revoke-before", "group-missing-before", "hidden-before", "foreign-before", "delete-before"])
     func reviewedRoutineCardsResumeInTheirOwnChatWithNewHumanConsent(scenario: (String, Bool, Bool), mode: String) async throws {
         try await assertSavedInputConsent(input: scenario.0, existing: scenario.1, mode: mode, routineScheduled: scenario.2)
+    }
+
+    @Test(arguments: [(false, false), (true, false), (false, true), (true, true)], ["before-review", "after-review"])
+    func unrelatedGroupBroadcastCannotReplaceAReservedHumanMailboxTurn(scenario: (Bool, Bool), phase: String) async throws {
+        let f = try await fixture(automatic: true, groupOrigin: true, existingPeer: scenario.0, savedInput: "question")
+        defer { f.model.cancel(); try? FileManager.default.removeItem(at: f.root) }
+        let target = try #require(f.group)
+        let silent = "SILENT_BROADCAST_MEMBER"
+        let sibling = try #require(await f.model.createAgent(name: "Room member", summary: "Silent fixture member",
+            instructions: silent, providerID: f.owner.providerID, modelID: f.owner.modelID))
+        await f.model.updateGroupMembers(groupID: target.id, memberIDs: [f.owner.id, sibling.id])
+        await f.model.registry.register(AppMailboxChannelProvider(probe: f.probe, peerID: f.peer.id,
+            channelArguments: ["type": "text", "channel": "slack:C_PEER", "content": "EXACT_PEER_EXTERNAL_RESULT"],
+            savedInput: "question", silentPersona: silent))
+        let automation = try await reviewedRoutine(f)
+        let tick = try #require(automation.nextRunAt)
+        let routine = Task {
+            if scenario.1 { await f.model.runAutomationScheduleTick(at: tick) }
+            else { await f.model.runAutomationNow(id: automation.id) }
+        }
+        defer { routine.cancel() }
+        try await eventually {
+            if let pending = f.model.pendingAutoReviewApprovals.first(where: { $0.action.context.metadata["tool"] == "SendToAgent" }) {
+                await f.model.resolveGroupApproval(pending, groupID: target.id, approve: true)
+            }
+            return !f.model.runningGroups.contains(target.id) && f.model.automationHistory[automation.id]?.first?.finishedAt != nil
+        }
+        await routine.value
+        let run = try #require(f.model.automationHistory[automation.id]?.first)
+        expectNoDifference(f.model.automationHistory[automation.id], [AutomationRun(id: run.id, automationID: automation.id,
+            trigger: scenario.1 ? .schedule : .manual, startedAt: scenario.1 ? tick : run.startedAt,
+            finishedAt: run.finishedAt, status: .ok,
+            detail: "Group run finished. Open the group to review replies, tool results and questions.")])
+        let incoming = try #require(f.model.agentMessages.first { $0.recipientID == f.peer.id })
+        let card = try #require(incoming.delivery?.publications?.first)
+        #expect(card.question?.isPending == true)
+        #expect(await f.model.createGroup(name: "Unrelated broadcast origin", summary: "UNRELATED_GROUP_PRIVATE", memberIDs: [f.owner.id]))
+        let source = try #require(f.model.groups.first { $0.name == "Unrelated broadcast origin" })
+        await f.model.registry.register(AppMailboxChannelProvider(probe: f.probe, peerID: f.peer.id,
+            channelArguments: ["type": "text", "channel": "slack:C_PEER", "content": "EXACT_PEER_EXTERNAL_RESULT"],
+            savedInput: "question", broadcastOrigin: source.id, broadcastTarget: target.id, silentPersona: silent))
+        var broadcast: Task<Void, Never>?
+        defer { broadcast?.cancel() }
+        var reviewedBroadcast: PendingApproval?
+        if phase == "after-review" {
+            broadcast = Task { await f.model.sendGroupMessage(groupID: source.id, text: "Ask the other group to review") }
+            try await eventually { f.model.pendingAutoReviewApprovals.contains { $0.action.context.conversationID == source.id } }
+            reviewedBroadcast = try #require(f.model.pendingAutoReviewApprovals.first { $0.action.context.conversationID == source.id })
+            expectNoDifference(reviewedBroadcast?.action.target, .resource(kind: "group", identifier: target.id.uuidString))
+            expectNoDifference(reviewedBroadcast?.action.context.metadata["agentMessage"], "UNRELATED_BROADCAST_MUST_NOT_REPLACE_HUMAN_TURN")
+        }
+        await f.model.answerMailboxQuestion(incomingID: incoming.id, publicationID: card.id, answer: .option(0))
+        // Do not use the general helper here: it intentionally approves root
+        // delegation, but this test must hold that review across the new turn.
+        try await eventually { f.model.pendingAutoReviewApprovals.contains { $0.action.context.metadata["agentChannelPublication"] == "true" } }
+        let humanReview = try #require(f.model.pendingAutoReviewApprovals.first { $0.action.context.metadata["agentChannelPublication"] == "true" })
+        expectNoDifference(humanReview.action.context.conversationID, target.id)
+        expectNoDifference(f.model.runningAgentMessageScopes, [target.id])
+        #expect(f.model.isConversationWorking(target.id))
+        let peer = try #require(f.model.conversations.first { $0.agentBinding?.agentID == f.peer.id })
+        #expect(f.model.isConversationWorking(peer.id))
+        let priorMessages = f.model.groupMessages[target.id]
+        let priorGroup = f.model.groups.first { $0.id == target.id }
+        let priorMailbox = f.model.agentMessages
+        let conversations = ConversationStore(fileURL: f.root.appending(path: "conversations.json"))
+        let priorChats = try await conversations.load()
+        let priorContexts = try AgentConversationStore(url: f.root.appending(path: "agent-conversations.json"))
+        let priorContext = try #require(await priorContexts.existingContext(accountID: "local", originID: target.id, agentID: f.peer.id))
+        let priorGroups = try GroupService(agents: AgentService(storeURL: f.root.appending(path: "agents.json")),
+            storeURL: f.root.appending(path: "groups.json"))
+        let priorDurableGroup = try #require(await priorGroups.list().first { $0.id == target.id })
+        let priorDurableMessages = await priorGroups.messages(groupID: target.id)
+        let beforeRequests = await f.probe.requests
+        if phase == "before-review" {
+            broadcast = Task { await f.model.sendGroupMessage(groupID: source.id, text: "Ask the other group to review") }
+            try await eventually {
+                if f.model.pendingAutoReviewApprovals.contains(where: { $0.action.context.conversationID == source.id }) { return true }
+                let requests = await f.probe.requests
+                return requests.contains { $0.conversationID == source.id } && !f.model.runningGroups.contains(source.id)
+            }
+            let unwantedReview = f.model.pendingAutoReviewApprovals.first { $0.action.context.conversationID == source.id }
+            #expect(unwantedReview == nil)
+            // Finish an incorrect baseline review so all durable-state
+            // assertions run; do not hide the admission failure behind timeout.
+            if let unwantedReview { await f.model.resolveGroupApproval(unwantedReview, groupID: source.id, approve: true) }
+        } else {
+            await f.model.resolveGroupApproval(try #require(reviewedBroadcast), groupID: source.id, approve: true)
+        }
+        await broadcast?.value
+        let results = await f.probe.results
+        let result = try #require(results.first { $0.callID == "busy-group-broadcast" })
+        expectNoDifference(result, .init(callID: "busy-group-broadcast", content: [.text(AgentGroupPostError.busy.localizedDescription)], isError: true))
+        expectNoDifference(f.model.groupMessages[target.id], priorMessages)
+        expectNoDifference(f.model.groups.first { $0.id == target.id }, priorGroup)
+        expectNoDifference(f.model.agentMessages, priorMailbox)
+        let actualChats = try await conversations.load()
+        expectNoDifference(actualChats, priorChats)
+        let afterContexts = try AgentConversationStore(url: f.root.appending(path: "agent-conversations.json"))
+        let actualContext = await afterContexts.existingContext(accountID: "local", originID: target.id, agentID: f.peer.id)
+        expectNoDifference(actualContext, priorContext)
+        let afterGroups = try GroupService(agents: AgentService(storeURL: f.root.appending(path: "agents.json")),
+            storeURL: f.root.appending(path: "groups.json"))
+        let actualDurableGroup = await afterGroups.list().first { $0.id == target.id }
+        let actualDurableMessages = await afterGroups.messages(groupID: target.id)
+        expectNoDifference(actualDurableGroup, priorDurableGroup)
+        expectNoDifference(actualDurableMessages, priorDurableMessages)
+        let requests = await f.probe.requests
+        expectNoDifference(String(customDumping: requests.filter { $0.conversationID != source.id }),
+            String(customDumping: beforeRequests.filter { $0.conversationID != source.id }))
+        expectNoDifference(f.model.pendingAutoReviewApprovals, [humanReview])
+        expectNoDifference(f.model.runningAgentMessageScopes, [target.id])
+        expectNoDifference(f.model.runningGroups, [])
+        expectNoDifference(f.model.groupApprovalScope(target.id), target.id)
+        let queued = await f.channels.deliveries(), sent = await f.probe.sent
+        expectNoDifference(queued, [])
+        expectNoDifference(sent, [])
+        await f.model.resolveGroupApproval(humanReview, groupID: target.id, approve: false)
+        try await eventually { f.model.runningAgentMessageScopes.isEmpty }
+        expectNoDifference(f.model.pendingAutoReviewApprovals, [])
+        let finalQueue = await f.channels.deliveries(), finalSent = await f.probe.sent
+        expectNoDifference(finalQueue, [])
+        expectNoDifference(finalSent, [])
     }
 
     private func assertSavedInputConsent(input: String, existing: Bool, mode: String,
