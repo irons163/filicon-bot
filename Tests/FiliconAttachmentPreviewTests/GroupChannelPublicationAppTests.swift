@@ -4,21 +4,26 @@ import SwiftUI
 import Vision
 import Testing
 import CustomDump
+import FiliconAppServices
 import FiliconAutoReview
 import FiliconChannels
 import FiliconDomain
 import FiliconProviderKit
+@testable import FiliconAgents
 @testable import Filicon
 
 private actor GroupChannelProbe {
     var sent: [ChannelOutbound] = []
+    var requests: [InferenceRequest] = []
     func record(_ message: ChannelOutbound) { sent.append(message) }
+    func request(_ value: InferenceRequest) { requests.append(value) }
 }
 
 /// No credentials, HTTP session or platform transport can be reached by this
 /// fixture, even if the App's ordinary delivery observer flushes the queue.
 private struct GroupChannelConnector: ChannelConnector {
     var supportsAttachments = true
+    var fails = false
     var descriptor: ChannelConnectorDescriptor {
         .init(id: "slack", displayName: "Isolated fixture", supportsAttachments: supportsAttachments)
     }
@@ -29,6 +34,7 @@ private struct GroupChannelConnector: ChannelConnector {
     func send(_ message: ChannelOutbound, to address: ChannelAddress,
               connection: ChannelConnection, idempotencyKey: UUID) async throws {
         await probe.record(message)
+        if fails { throw ChannelServiceError.authExpired("PRIVATE_GROUP_FAILURE_TOKEN must not become a model instruction") }
     }
 }
 
@@ -66,8 +72,132 @@ private struct GroupChannelProvider: AIProvider {
     }
 }
 
+/// Records complete requests around the existing offline tool-loop fixture.
+/// It cannot conceal an unintended background wake or retry after failure.
+private struct RecordedGroupChannelProvider: AIProvider {
+    let base: GroupChannelProvider
+    let probe: GroupChannelProbe
+    var descriptor: ProviderDescriptor { base.descriptor }
+    func models() async throws -> [AIModel] { try await base.models() }
+    func stream(_ request: InferenceRequest) -> AsyncThrowingStream<InferenceEvent, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                await probe.request(request)
+                do {
+                    for try await event in base.stream(request) { continuation.yield(event) }
+                    continuation.finish()
+                } catch { continuation.finish(throwing: error) }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+}
+
 @Suite("Foreground group channel publication", .timeLimit(.minutes(1)))
 @MainActor struct GroupChannelPublicationAppTests {
+    @Test(arguments: [false, true])
+    func terminalSavedGroupFailureKeepsItsReceiptWithoutWakingTheGroupOrResending(automaticReviewEnabled: Bool) async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "filicon-group-failure-contract-\(UUID())")
+        let probe = GroupChannelProbe(), connector = GroupChannelConnector(fails: true, probe: probe)
+        let channels = try ChannelService(storeURL: root.appending(path: "channels.json"))
+        let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false,
+            channelService: channels, channelConnectors: [connector])
+        defer { model.cancel(); try? FileManager.default.removeItem(at: root) }
+        await model.registry.register(RecordedGroupChannelProvider(
+            base: GroupChannelProvider(content: "EXACT_REVIEWED_GROUP_OUTBOUND", expectedSuccess: true), probe: probe))
+        await model.bootstrap()
+        await model.setAutomationRuntimeActive(false); model.setWorkflowRuntimeActive(false)
+        let sender = try #require(await model.createAgent(name: "Original sender", summary: "",
+            instructions: "ORIGINAL_GROUP_MEMBER_PERSONA", providerID: "group-channel-fixture", modelID: "fixture"))
+        #expect(await model.createGroup(name: "Saved group failure", summary: "PRIVATE_SAVED_GROUP_CONTEXT", memberIDs: [sender.id]))
+        let group = try #require(model.groups.first)
+        let connection = ChannelConnection(connectorID: "slack", displayName: "Offline original connection",
+            secretReference: "keychain://channels/TEST-group-failure-never-read", agentID: sender.id, ownerAccountID: "local")
+        try await channels.saveConnection(connection)
+        await model.setAutoReviewEnabled(automaticReviewEnabled)
+        let run = Task { await model.sendGroupMessage(groupID: group.id, text: "Publish only the reviewed group result") }
+        defer { run.cancel() }
+        let review = try await pending(model)
+        expectNoDifference(review.action.context.conversationID, group.id)
+        expectNoDifference(review.action.context.metadata["agentChannelPublication"], "true")
+        let queueBeforeReview = await channels.deliveries(), sendsBeforeReview = await probe.sent
+        expectNoDifference(queueBeforeReview, []); expectNoDifference(sendsBeforeReview, [])
+        await model.resolveGroupApproval(review, groupID: group.id, approve: true)
+        await run.value
+        let queued = try #require(await channels.deliveries().first)
+        expectNoDifference(queued.origin?.route, .groupConversation)
+        expectNoDifference(queued.origin?.conversationID, group.id)
+        expectNoDifference(queued.origin?.senderID, sender.id)
+        expectNoDifference(queued.status, .queued)
+        let requestsBefore = await probe.requests
+        expectNoDifference(requestsBefore.count, 2)
+        let chats = ConversationStore(fileURL: root.appending(path: "conversations.json"))
+        let chatsBefore = try await chats.load(), messagesBefore = model.groupMessages[group.id] ?? []
+        let groupsBefore = model.groups, mailboxBefore = model.agentMessages
+        let publicationIndex = try #require(messagesBefore.firstIndex { $0.id == queued.id })
+        let publication = try #require(messagesBefore[publicationIndex].externalPublication)
+        let failedAt = queued.createdAt.addingTimeInterval(1)
+        var expectedDelivery = queued
+        expectedDelivery.status = .deadLetter; expectedDelivery.attemptCount = 1
+        expectedDelivery.lastError = ChannelServiceError.authExpired(
+            "PRIVATE_GROUP_FAILURE_TOKEN must not become a model instruction").localizedDescription
+        var expectedMessages = messagesBefore
+        expectedMessages[publicationIndex].externalPublication?.delivery = .init(status: .deadLetter, attemptCount: 1, deliveredAt: nil)
+        for _ in 0..<3 {
+            await channels.flush(now: failedAt)
+            await model.reconcileChannelPublications()
+            await model.reconcileChannelFailureFollowUps()
+        }
+        let queue = await channels.deliveries(), requests = await probe.requests, sends = await probe.sent
+        let followUps = await channels.failureFollowUps(), wakes = await channels.failureWakes()
+        expectNoDifference(queue, [expectedDelivery]); expectNoDifference(sends, [queued.outbound])
+        expectNoDifference(String(customDumping: requests), String(customDumping: requestsBefore))
+        expectNoDifference(followUps, [])
+        let wake = try #require(wakes.first)
+        expectNoDifference(wakes, [ChannelFailureWake(id: wake.id, connectionID: queued.connectionID,
+            deliveryID: queued.id, error: try #require(expectedDelivery.lastError), createdAt: failedAt, reason: .authorizationExpired)])
+        expectNoDifference(model.groupMessages[group.id], expectedMessages)
+        expectNoDifference(model.groups, groupsBefore); expectNoDifference(model.agentMessages, mailboxBefore)
+        expectNoDifference(model.runningGroups, []); expectNoDifference(model.runningAgentMessageScopes, [])
+        expectNoDifference(model.pendingAutoReviewApprovals, []); expectNoDifference(model.pendingToolApprovals, [])
+        let chatsAfter = try await chats.load()
+        expectNoDifference(chatsAfter, chatsBefore)
+        var expectedPublication = publication
+        expectedPublication.delivery = .init(status: .deadLetter, attemptCount: 1, deliveredAt: nil)
+        expectNoDifference(expectedMessages[publicationIndex].externalPublication, expectedPublication)
+
+        // The complete persisted values use the real JSON millisecond codec;
+        // keep generated IDs, authors, aliases, timestamps and every payload.
+        let encoder = JSONEncoder(), decoder = JSONDecoder()
+        encoder.dateEncodingStrategy = .millisecondsSince1970; decoder.dateDecodingStrategy = .millisecondsSince1970
+        let reopenedGroups = try GroupService(agents: AgentService(storeURL: root.appending(path: "agents.json")),
+            storeURL: root.appending(path: "groups.json"))
+        let durableMessages = await reopenedGroups.messages(groupID: group.id), durableGroups = await reopenedGroups.list()
+        expectNoDifference(durableMessages, try decoder.decode([RoomMessage].self, from: encoder.encode(expectedMessages)))
+        expectNoDifference(durableGroups, try decoder.decode([AgentGroup].self, from: encoder.encode(groupsBefore)))
+        let restoredChannels = try ChannelService(storeURL: root.appending(path: "channels.json"))
+        let reopened = AppModel(applicationSupportRoot: root, bootstrapImmediately: false,
+            channelService: restoredChannels, channelConnectors: [connector])
+        defer { reopened.cancel() }
+        await reopened.registry.register(RecordedGroupChannelProvider(
+            base: GroupChannelProvider(content: "FORBIDDEN_REOPEN_RETRY", expectedSuccess: true), probe: probe))
+        await reopened.bootstrap()
+        await reopened.setAutomationRuntimeActive(false); reopened.setWorkflowRuntimeActive(false)
+        await reopened.reconcileChannelPublications(); await reopened.reconcileChannelFailureFollowUps()
+        let reopenedQueue = await restoredChannels.deliveries(), reopenedWakes = await restoredChannels.failureWakes()
+        let reopenedFollowUps = await restoredChannels.failureFollowUps(), reopenedRequests = await probe.requests, reopenedSends = await probe.sent
+        expectNoDifference(reopenedQueue, try decoder.decode([ChannelDelivery].self, from: encoder.encode([expectedDelivery])))
+        expectNoDifference(reopenedWakes, try decoder.decode([ChannelFailureWake].self, from: encoder.encode(wakes)))
+        expectNoDifference(reopenedFollowUps, [])
+        expectNoDifference(String(customDumping: reopenedRequests), String(customDumping: requestsBefore))
+        expectNoDifference(reopenedSends, [queued.outbound])
+        let finalChats = try await chats.load()
+        expectNoDifference(finalChats, chatsBefore)
+        expectNoDifference(reopened.groupMessages[group.id], durableMessages)
+        expectNoDifference(reopened.groups, durableGroups)
+        expectNoDifference(reopened.runningGroups, []); expectNoDifference(reopened.pendingAutoReviewApprovals, [])
+    }
+
     @Test(arguments: ["approve", "deny", "stop", "account", "members", "connection", "connector"], [false, true])
     func completeOutgoingTextRequiresFreshHumanReview(mode: String, automaticReviewEnabled: Bool) async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-channel-host-\(UUID())")

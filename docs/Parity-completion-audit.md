@@ -1,5 +1,23 @@
 # 完成驗收入口（2026-09-27）
 
+## 原版群組送件失敗的略過契約
+
+2026-10-06 接續 `608c116`，本批只有測試／文件變更，沒有產品執行 source／UI／catalog／Package 變更。main 再核對 reference HEAD `a9f633e09d49a85829b8236331b9e21f7e612634` 的 `source/host/extensions/transcript/background-wakes.ts`：`deliverToChannel` 保存原 session ID 並建立 failure notice；`runChannelFailureWake` 解析該 agent 的 background session 後，若 `isGroupSession(session)` 便直接 return，不啟動群組輪次。`source/shared/channel-messaging.ts` 的 failure prompt 要求以沒有 channel target 的 `SendMessage` 更正，並禁止默默重送。
+
+因此「saved-group session 的送件失敗再次啟動群組推論」不是原版已有而 Filicon 漏做的功能，不應繼續列為已確認 parity 缺口。Filicon 保留原群組的 typed terminal 狀態、不啟動全群組，符合這項控制流程契約。group-origin 的 actual peer 送件若已保存於該成員 own DM，則是 direct canonical owner 的失敗通知，不與 group-session 的略過混為一談；inbound／其他 publisher 入口及 unified runtime 仍是另外的未完成範圍。
+
+新增 1 method／2 actual App cases：generic automatic review 關／開都從真正 saved group、原 member、own connection、native send approval、durable queue 及會失敗的假 connector 走到 terminal，再重開 AppModel／group／channel stores。完整比對 queue／failure wake／UI 與重開 group messages／group metadata／direct chats／mailbox／pending reviews／工作狀態；外部 publication 只更新 delivery 欄位，不刪作者、UUID、短位址、時間或 payload。原送件前後所有 `InferenceRequest` 逐欄完整比較，既有 tool-loop request 沒有被裁成 IDs；假 connector 僅收到一次原核准 outbound，反覆 refresh／flush 與重開均不重送。沒有碰真實服務／憑證／stores。
+
+日誌在 `.build/validation/`，不入版控：
+
+- `saved-group-failure-contract-focused-v1.log` exit 1：新測試檔漏了現有 `FiliconAppServices` 的型別匯入，未執行有效產品案例。補匯入，不新增 target link／dependency 或刪斷言；不當產品 red／修復證據。
+- `saved-group-failure-contract-focused-v2.log` exit 0：1 method／2 cases，0.451 秒；完整保存／重開及不喚醒／不重送契約通過。這是現有 `608c116` 的驗收，不宣稱修復了未存在的群組 failure wake 功能。
+- `saved-group-failure-contract-regression-final-v1.log` exit 1：core 15 methods／2 suites 通過；App 43 methods／5 suites，142.700 秒、98 issues，不能算整輪回歸通過。新 group failure 2 cases 通過，第一個異常出現在既有 repeated routine 的第二張 secret card 未鏡射，之後部分新 fixture 的 messaging storage 不可用。沒有移除失敗案例或放寬斷言；現有日誌不能確定原因，不宣稱是 Mac 鎖定、磁碟或產品競態。
+- `saved-group-failure-mailbox-investigation-v1.log` exit 0：未改產品或 fixture，單獨重跑上述 repeated routine 48 cases 與 manual mailbox 24 cases，2 methods／1 suite／72 cases，8.756 秒通過。這只證明該次未重現，不是已定位／修復原因，也不取代原失敗紀錄。
+- `saved-group-failure-contract-regression-final-v2.log` exit 0：未改產品／fixture、未縮減原 filter，完整相關 core 15 methods／2 suites＋App 43 methods／5 suites（124.811 秒）通過；新 2 cases、既有 manual／routine cards、direct／delegated／background channel publication、failure notice／follow-up 與附件回歸均保留。mailbox suite 80.615 秒通過；原 v1 的間歇性異常未重現，原因仍未定位，不能把重跑綠燈稱為修復。
+
+沒有新全套／native／standalone／七語／真人 gate；保留 `608c116` 的最後完整 2,157 Swift Testing／257 suites＋135 XCTest／0 failures、arm64 Debug 原生／兩種封裝 verify 與七語各 1,817 keys／0 missing 證據，以及 opt-in live skipped／原 compiler 與 SDK 診斷／Debug 非 release 或公證的限制。AGENT-02／AGENT-04／UI-04／整體仍 partial、48 分類不變；未 push、launch、重啟使用者 App／Xcode 或改真實帳號／群組資料。
+
 ## 跨群組投遞與卡片回答的入場競態
 
 2026-10-06 接續 `c405438`。`runningAgentMessageScopes` 的 fresh human group host 不只是 UI busy／Stop，也必須保護既有 `SendToAgent` cross-group target admission。原 `authorizeGroupDelegation`／`postGroupDelegation` 只看 `runningGroups`，可能在另一個成員卡片回答期間仍詢問來源投遞核准、寫入 target 並喚醒成員。現在核准前、核准後持久化前都檢查 running group／stopping group／human mailbox scope；不廣泛停用 idle target 的合法投遞、不取消原人類回答或其他 scopes。

@@ -1,5 +1,15 @@
 # 協作能力核對紀錄（更新至 2026-10-06）
 
+## saved-group failure wake 的原始略過契約
+
+2026-10-06 接續 `608c116`，reference HEAD `a9f633e09d49a85829b8236331b9e21f7e612634` 再核對。`background-wakes.ts` 的 `runChannelFailureWake` 在解析到 group session 時直接略過，不因一筆外部送件失敗啟動全群組；`channel-messaging.ts` 的 notice 亦不是重送權限。Filicon 原群組保留 typed terminal receipt 而不重跑，符合此契約。「saved-group failure 再喚醒整群組」不應算作原版已確認而漏做的功能；actual peer 已投影至 own DM 的 direct-owner failure routing 是另一條既有路徑，不與此略過混淆。
+
+本批只有測試／文件變更，沒有產品 runtime／UI／依賴變更。新增真正 group → native approval → fake terminal failure → reopen 的 1 method／2 cases（generic automatic review 開／關），完整 queue／wake／group metadata／messages／direct chats／mailbox／pending／全部 inference requests 比對，只有一次原核准 fake send，沒有重跑、重送或 fallback 到選取聊天。聚焦通過；首輪新 fixture 缺匯入的 compile failure、相關 gates 與精確邊界見 [完成驗收入口](Parity-completion-audit.md)。相關回歸 v1 的既有 mailbox 案例出現 98 issues，整輪不算通過；相同 source／fixture 的 72 個相關案例單獨重跑通過，但原因未確認，原失敗紀錄保留，不稱已修復。沿用 `608c116` 的最後成功完整／原生 Debug／封裝／七語產品 gates，不冒充新的全套或 live 驗收。
+
+同一原 filter、未改產品／fixture 的相關回歸 v2 exit 0：core 15 methods／2 suites＋App 43 methods／5 suites（124.811 秒）通過，原卡片／附件／各 channel publication 與 failure follow-up 全保留。v1 間歇性異常未重現、原因仍未定位；這是本批相關回歸，不是新的全專案 suite 或真人 gate。
+
+本節只校正 group-session failure 略過的已確認契約，不關閉 inbound／其他 background publisher、其他 failure routing、uncaptured locator 新核准開啟、unified private DM/group runtime 或 live／真人／VoiceOver／最低 macOS／release／公證缺口。AGENT-02／AGENT-04／UI-04／整體 partial、48 分類不變；未 push、launch、重啟 App／Xcode 或改真實資料。
+
 ## 跨群組投遞尊重卡片回答的忙碌狀態
 
 2026-10-06 接續 `c405438`。既有 `SendToAgent` busy-group 契約仍適用於新的 human mailbox turn：`authorizeGroupDelegation` 在顯示投遞核准前檢查 target 的 running／stopping／human mailbox reservation，`postGroupDelegation` 在核准後、持久化前重新檢查。不只一般新 group send／reviewed routine，其他來源的跨群組 broadcast 也不能插入目前卡片接續；不新增 grant，不中止原回答，不借外部送件核准。
