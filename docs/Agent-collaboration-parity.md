@@ -1,5 +1,21 @@
 # 協作能力核對紀錄（更新至 2026-10-06）
 
+## 前景群組委派的實際收件人成員外部送件
+
+2026-10-06 接續 `ff38b50`，reference HEAD 再核對為 `a9f633e09d49a85829b8236331b9e21f7e612634`；`agent-messaging.ts` 的 peer wake 不是新的人類權限，`turn-runtime.ts` 的外部 delivery／transcript 以 actual session 為來源。前景 saved-group → reviewed `SendToAgent` → actual single-peer wake 現在明確取得自己的 channel publisher；peer 回覆原群組成員也回該成員自己的 canonical direct chat。原核准／source consent scope 留來源群組，連線／正式 entry／receipt 使用 actual agent，不複製群組原話／私人 summary 或其他聊天。
+
+只有實際 running 的完整 host-verified incoming 才在每個 wake 的首次 channel dispatch 投影 recipient chat，不在 queued factory acquisition 提前建立；聊天已存在也保存本次 incoming，保留完整舊聊天／送件並綁定目前 Stop。question／local-receipt 開關不再替代 explicit channel grant；缺 factory／durable context／正確 transaction 仍拒絕。只有 foreground group 呼叫明確 opt-in，manual mailbox、inbound、background-group peer 不繼承；其他檔案／gallery／question 能力與既有核准不放寬。
+
+account／原 group semantic identity／exact membership lease／相關 personas／canonical binding 持續至 queue／SQL commit，ABA 不復活，source 與 send 分別核准且用 captured bytes。recipient chat Stop 同步關閉原群組鏈，queued sibling 與 non-cooperative late callback 不執行；導航不改投。真正 group-origin peer terminal failure 的 canonical direct runner 已驗證 busy／off-page、reopen 不 replay／resend、Stop／persona／account ABA、無 channel 更正與 external retry 拒絕；source group／無關聊天／mailbox 不變。不是 saved-group route failure wake 完成，也不宣稱跨 process CAS、跨 store 原子性或召回已 admitted I/O。
+
+新增 App 3 methods／74 additional cases，core 增加兩個 explicit factory／no-local-receipts 正向 case；最後 `group-mailbox-channel-focused-v11.log` exit 0：13 tests／2 suites（App 142 parameter cases）。有效 baseline／existing-chat 漏記紅燈、早期 compiler／fixture／Date codec 與 ad-hoc signing internal failure 各自保留；沒有略過 assertions 或關閉簽章。七語各 1,817 keys／0 missing，沒有 UI／catalog 變更。精確邊界及完整最後 gates 見 [完成驗收入口](Parity-completion-audit.md)。
+
+最後完整串行 2,138 Swift Testing／256 suites＋135 XCTest／0 failures 通過，App 為 787 tests／102 suites。此 gate 使用最後 existing-chat／Stop 修正版；兩項 opt-in live tests skipped，既有 CoreData 診斷仍在，不算外部驗收或已修復。
+
+最後 arm64 Debug native／native verify 及全新 standalone Debug 封裝皆 exit 0，四個 executables、app／XPC entitlements、offline resources 與 deep strict signature 通過；沒有啟動 App 或執行印出的 launch smoke。舊 `v1` products 不當最後 source 證據；Debug／ad-hoc 不等於 Developer ID release／公證。詳細 log／既有 warnings 與完整界線見 [完成驗收入口](Parity-completion-audit.md)。
+
+**仍未完成**：manual mailbox／inbound／background-group peer channel publication／canonical host、saved-group route／inbound 等其餘 failure follow-up、uncaptured locators 的新核准來源開啟，以及 live／真人／VoiceOver／最低 macOS／Developer ID release／公證。AGENT-02／UI-04／整體 partial 與 48 分類不變；只取代下方歷史 foreground group-origin single-peer 缺口。未 push、啟動或重啟 App／Xcode，未改真實資料。
+
 ## 正式外部送件附件的 captured-byte 原生預覽
 
 2026-10-06 接續 `a1b5214`，reference HEAD 再核對為 `a9f633e09d49a85829b8236331b9e21f7e612634`；原版 `source/shared/media/attachment-preview.ts` 確實有文字預覽與 binary sniff。正式 direct／group channel transcript 現在可預覽實際已保存的 captured files，不重新下載 HTTPS、不重讀本機來源、不替未送出的其他圖片開啟來源。原 canonical queue／message／完整 file metadata 與 native-only captured context 一致才提供 callback；generic widget actions 仍不取得 retry／send／讀取權限。

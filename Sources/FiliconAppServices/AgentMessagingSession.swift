@@ -996,7 +996,9 @@ public actor AgentMessagingSession {
     }
 
     private func makeMailboxChannelPublication(inbound: AgentMessage, sender: AgentProfile) async throws -> AgentChannelPublicationTransaction? {
-        guard supportsMailboxQuestions, let factory = mailboxChannelPublisherFactory, let conversations else { return nil }
+        // A host's explicitly acquired channel publisher is independent of
+        // mailbox question/local-receipt support. No factory still means no grant.
+        guard let factory = mailboxChannelPublisherFactory, let conversations else { return nil }
         try checkOpen()
         guard sender.id == inbound.recipientID, inbound.delivery?.chainID == id,
               inbound.delivery?.originConversationID == originConversationID,
@@ -1126,7 +1128,7 @@ public actor AgentMessagingSession {
                     }, publishQuestion: questionPublisher, publishSecret: secretPublisher, publishCursorAgent: cloudPublisher,
                     filePublication: filePublication, remotePublication: remotePublication,
                     galleryPublication: galleryPublication, channelPublication: channelPublication, publishQuestionReply: questionReplyPublisher,
-                    replyHistory: replyHistory, receiptSenderID: supportsMailboxQuestions ? agent.id : nil,
+                    replyHistory: replyHistory, receiptSenderID: supportsMailboxQuestions || channelPublication != nil ? agent.id : nil,
                     supportsReferenceNavigation: true, mailboxPresentation: true,
                     publishReceipt: receiptPublisher) { [messenger, onChange, publicationLifetime] text, images in
                     try await output.publish(text, images: images) { publication in

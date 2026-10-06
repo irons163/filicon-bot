@@ -18,6 +18,7 @@ private actor AppMailboxChannelProbe {
     var downloads: [RemoteAttachmentReference] = []
     var reads: [LocalToolWireRequest] = []
     var failureAttempts = 0
+    var latePeerAttempts = 0
     var protocolRejections: [ToolLoopError] = []
     var bytes = Data("EXACT_CAPTURED_PEER_FILE".utf8)
     func request(_ value: InferenceRequest) { requests.append(value) }
@@ -25,6 +26,7 @@ private actor AppMailboxChannelProbe {
     func send(_ value: ChannelOutbound) { sent.append(value) }
     func read(_ value: LocalToolWireRequest) { reads.append(value) }
     func attemptedFailurePublication() { failureAttempts += 1 }
+    func attemptedLatePeerPublication() { latePeerAttempts += 1 }
     func rejected(_ value: ToolLoopError) { protocolRejections.append(value) }
     func replaceBytes() { bytes = Data("UNREVIEWED_REPLACEMENT".utf8) }
     func download(_ reference: RemoteAttachmentReference) -> RemoteAttachmentDownload {
@@ -85,6 +87,8 @@ private struct AppMailboxChannelProvider: InteractiveToolProvider {
     var returnToOwnerID: UUID? = nil
     var failureGate: AppMailboxChannelFailureGate? = nil
     var triesExternalFailureRetry = false
+    var queuesSibling = false
+    var latePeerGate: AppMailboxChannelFailureGate? = nil
     func models() async throws -> [AIModel] { [.init(id: "fixture")] }
     func stream(_ request: InferenceRequest) -> AsyncThrowingStream<InferenceEvent, Error> {
         AsyncThrowingStream { $0.finish(throwing: ProviderError.invalidResponse) }
@@ -120,8 +124,23 @@ private struct AppMailboxChannelProvider: InteractiveToolProvider {
                             "recipientID": recipient.uuidString,
                             "message": returning ? "EXACT_RETURNED_TASK" : "EXACT_SHARED_TASK"
                         ]))
-                    let result = try await executeTool(call)
-                    await probe.result(result)
+                    if incoming && !returning, let latePeerGate {
+                        // The provider deliberately ignores cancellation after
+                        // the reviewed call unwinds and tries a late callback.
+                        do { await probe.result(try await executeTool(call)) }
+                        catch { if let error = error as? ToolLoopError { await probe.rejected(error) } }
+                        await latePeerGate.wait()
+                        await probe.attemptedLatePeerPublication()
+                        do {
+                            await probe.result(try await executeTool(.init(id: "late-peer-channel", name: "SendMessage",
+                                argumentsJSON: JSONEncoder().encode(channelArguments))))
+                        } catch { if let error = error as? ToolLoopError { await probe.rejected(error) } }
+                    } else { await probe.result(try await executeTool(call)) }
+                    if !incoming && queuesSibling {
+                        await probe.result(try await executeTool(.init(id: "queued-sibling", name: "SendToAgent",
+                            argumentsJSON: JSONEncoder().encode(["recipientID": peerID.uuidString,
+                                "message": "EXACT_QUEUED_SIBLING_TASK"]))))
+                    }
                     continuation.yield(.textDelta(incoming ? "PRIVATE_PEER_DRAFT" : "Owner dispatched the reviewed peer task"))
                     continuation.yield(.completed(.stop)); continuation.finish()
                 } catch {
@@ -134,7 +153,7 @@ private struct AppMailboxChannelProvider: InteractiveToolProvider {
     }
 }
 
-@Suite("Actual App direct-peer channel publication", .serialized, .timeLimit(.minutes(1)))
+@Suite("Actual App direct/group-origin peer channel publication", .serialized, .timeLimit(.minutes(1)))
 @MainActor struct MailboxChannelPublicationAppTests {
     private let originID = UUID(uuidString: "39000000-0000-0000-0000-000000000001")!
     private let otherID = UUID(uuidString: "39000000-0000-0000-0000-000000000002")!
@@ -150,10 +169,13 @@ private struct AppMailboxChannelProvider: InteractiveToolProvider {
         let peerConnection: ChannelConnection
         let other: Conversation
         let localSource: URL?
+        let group: AgentGroup?
     }
     private func fixture(automatic: Bool, arguments: [String: String]? = nil, localFile: Bool = false,
                          returnToOwner: Bool = false, failsDelivery: Bool = false,
-                         failureGate: AppMailboxChannelFailureGate? = nil, triesExternalFailureRetry: Bool = false) async throws -> Fixture {
+                         failureGate: AppMailboxChannelFailureGate? = nil, triesExternalFailureRetry: Bool = false,
+                         groupOrigin: Bool = false, queuesSibling: Bool = false,
+                         latePeerGate: AppMailboxChannelFailureGate? = nil) async throws -> Fixture {
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-app-mailbox-channel-\(UUID())")
         let profiles = try AgentService(storeURL: root.appending(path: "agents.json"))
         let owner = try await profiles.create(name: "Origin owner", instructions: "OWNER_PRIVATE_PERSONA",
@@ -166,7 +188,12 @@ private struct AppMailboxChannelProvider: InteractiveToolProvider {
         let other = Conversation(id: otherID, title: "Unrelated", messages: [
             .init(role: .user, text: "UNRELATED_PRIVATE_HISTORY", createdAt: date)
         ], updatedAt: date)
-        try await ConversationStore(fileURL: root.appending(path: "conversations.json")).save([origin, other])
+        try await ConversationStore(fileURL: root.appending(path: "conversations.json")).save(groupOrigin ? [other] : [origin, other])
+        let group: AgentGroup?
+        if groupOrigin {
+            let groups = try GroupService(agents: profiles, storeURL: root.appending(path: "groups.json"))
+            group = try await groups.create(name: "Actual source group", summary: "SOURCE_GROUP_PRIVATE", memberIDs: [owner.id])
+        } else { group = nil }
         let channels = try ChannelService(storeURL: root.appending(path: "channels.json")), probe = AppMailboxChannelProbe()
         let ownerConnection = ChannelConnection(connectorID: "slack", displayName: "Owner connection must not be borrowed",
             secretReference: "keychain://channels/TEST-owner-never-read", agentID: owner.id, ownerAccountID: "local")
@@ -196,18 +223,21 @@ private struct AppMailboxChannelProvider: InteractiveToolProvider {
             channelArguments: source.map { ["type": "attachment", "channel": "slack:C_PEER", "url": $0.absoluteString, "alt": "Reviewed peer file"] }
                 ?? arguments ?? ["type": "text", "channel": "slack:C_PEER", "content": "EXACT_PEER_EXTERNAL_RESULT"],
             returnToOwnerID: returnToOwner ? owner.id : nil, failureGate: failureGate,
-            triesExternalFailureRetry: triesExternalFailureRetry))
+            triesExternalFailureRetry: triesExternalFailureRetry, queuesSibling: queuesSibling, latePeerGate: latePeerGate))
         await model.bootstrap()
         await model.setAutomationRuntimeActive(false); model.setWorkflowRuntimeActive(false)
         await model.setAutoReviewEnabled(automatic)
         await model.setAutoReviewRules(allow: ["SendToAgent", "SendMessage"], ask: [])
-        try await model.loadAllMessages(for: originID)
-        model.selectRoute(.conversation(originID)); await model.refreshModels()
-        try await eventually { !model.isLoadingModels && model.modelCatalogConversationID == originID
-            && model.modelCatalogProviderID == owner.providerID && model.availableModels.contains { $0.id == owner.modelID } }
+        if let group { model.selectGroup(id: group.id) }
+        else {
+            try await model.loadAllMessages(for: originID)
+            model.selectRoute(.conversation(originID)); await model.refreshModels()
+            try await eventually { !model.isLoadingModels && model.modelCatalogConversationID == originID
+                && model.modelCatalogProviderID == owner.providerID && model.availableModels.contains { $0.id == owner.modelID } }
+        }
         model.draft = "Ask the peer to publish the shared result"
         return .init(root: root, model: model, channels: channels, probe: probe, owner: owner, peer: peer,
-            ownerConnection: ownerConnection, peerConnection: peerConnection, other: other, localSource: source)
+            ownerConnection: ownerConnection, peerConnection: peerConnection, other: other, localSource: source, group: group)
     }
     private func eventually(_ condition: () async -> Bool) async throws {
         for _ in 0..<1_000 {
@@ -217,14 +247,15 @@ private struct AppMailboxChannelProvider: InteractiveToolProvider {
         throw PendingApprovalError.stale("The isolated peer channel did not reach its expected boundary")
     }
     private func channelReview(_ f: Fixture, sourceDownload: Bool = false) async throws -> PendingApproval {
+        let origin = f.group?.id ?? originID
         for _ in 0..<1_000 {
             if let pending = f.model.pendingAutoReviewApprovals.first(where: {
                 $0.action.context.metadata[sourceDownload ? "agentChannelSourceDownload" : "agentChannelPublication"] == "true"
             }) { return pending }
             if let pending = f.model.pendingAutoReviewApprovals.first(where: { $0.action.context.metadata["tool"] == "SendToAgent" }) {
-                await f.model.resolveGroupApproval(pending, groupID: originID, approve: true)
+                await f.model.resolveGroupApproval(pending, groupID: origin, approve: true)
             }
-            if !f.model.running.contains(originID) { break }
+            if !f.model.running.contains(origin) && !f.model.runningGroups.contains(origin) { break }
             try await Task.sleep(for: .milliseconds(5))
         }
         let requests = await f.probe.requests, results = await f.probe.results
@@ -233,6 +264,172 @@ private struct AppMailboxChannelProvider: InteractiveToolProvider {
             requests.map { ($0.conversationID, $0.messages.last?.text, $0.tools.map(\.name)) }, results), to: &diagnostic)
         Issue.record(Comment(rawValue: diagnostic))
         throw PendingApprovalError.stale("The peer must expose its own reviewed channel capability")
+    }
+
+    @Test(arguments: ["approve", "deny", "stop", "account", "membership-ABA", "actual-membership-ABA",
+                      "group-summary-ABA", "owner-persona-ABA", "peer-persona-ABA", "target-ABA",
+                      "target-hidden-ABA", "target-delete", "target-stop", "connection", "navigation"], [false, true])
+    func groupOriginPeerRequiresNewReviewAndSavesOnlyItsOwnCanonicalPublication(mode: String, automatic: Bool) async throws {
+        let f = try await fixture(automatic: automatic, groupOrigin: true)
+        defer { f.model.cancel(); try? FileManager.default.removeItem(at: f.root) }
+        let group = try #require(f.group)
+        let work = Task { await f.model.sendGroupMessage(groupID: group.id, text: "GROUP_HUMAN_PRIVATE: delegate the shared task") }
+        defer { work.cancel() }
+        try await eventually { f.model.runningGroups.contains(group.id) }
+        let review = try await channelReview(f)
+        expectNoDifference(review.action.context.conversationID, group.id)
+        let details = try #require(review.action.context.metadata["agentMessage"])
+        #expect(details.contains(f.peerConnection.displayName) && !details.contains(f.ownerConnection.displayName))
+        let peer = try #require(f.model.conversations.first { $0.agentBinding?.agentID == f.peer.id })
+        expectNoDifference(peer.messages.map(\.text), ["EXACT_SHARED_TASK"])
+        let before = await f.channels.deliveries(), sent = await f.probe.sent
+        expectNoDifference(before, []); expectNoDifference(sent, [])
+        let groupIndex = try #require(f.model.groups.firstIndex { $0.id == group.id })
+        let peerIndex = try #require(f.model.conversations.firstIndex { $0.id == peer.id })
+        if mode == "stop" { await f.model.stopGroup(id: group.id) }
+        if mode == "account" { await f.model.cancelAutoReviewApprovals(nextAccountID: "other") }
+        if mode == "membership-ABA" {
+            f.model.groups[groupIndex].memberIDs = [f.owner.id, f.peer.id]
+            f.model.groups[groupIndex].memberIDs = group.memberIDs
+        }
+        if mode == "actual-membership-ABA" {
+            await f.model.updateGroupMembers(groupID: group.id, memberIDs: [f.owner.id, f.peer.id])
+            await f.model.updateGroupMembers(groupID: group.id, memberIDs: group.memberIDs)
+        }
+        if mode == "group-summary-ABA" {
+            f.model.groups[groupIndex].summary = "CHANGED_GROUP_SCOPE"
+            f.model.groups[groupIndex].summary = group.summary
+        }
+        if mode == "owner-persona-ABA" || mode == "peer-persona-ABA" {
+            let id = mode == "owner-persona-ABA" ? f.owner.id : f.peer.id
+            let index = try #require(f.model.agents.firstIndex { $0.id == id })
+            let instructions = f.model.agents[index].instructions
+            f.model.agents[index].instructions = "CHANGED_PERSONA"
+            f.model.agents[index].instructions = instructions
+        }
+        if mode == "target-ABA" {
+            let binding = f.model.conversations[peerIndex].agentBinding
+            f.model.conversations[peerIndex].agentBinding = nil
+            f.model.conversations[peerIndex].agentBinding = binding
+        }
+        if mode == "target-hidden-ABA" {
+            f.model.conversations[peerIndex].hiddenAt = date
+            f.model.conversations[peerIndex].hiddenAt = nil
+        }
+        if mode == "target-delete" { f.model.deleteConversation(id: peer.id) }
+        if mode == "target-stop" { f.model.selectRoute(.conversation(peer.id)); f.model.cancel() }
+        if mode == "connection" { try await f.channels.setConnectionEnabled(id: f.peerConnection.id, enabled: false) }
+        if mode == "navigation" { f.model.selectRoute(.conversation(otherID)) }
+        await f.model.resolveGroupApproval(review, groupID: group.id, approve: mode != "deny")
+        await work.value
+        let deliveries = await f.channels.deliveries()
+        let succeeds = mode == "approve" || mode == "navigation"
+        expectNoDifference(deliveries.map(\.outbound), succeeds ? [.init(text: "EXACT_PEER_EXTERNAL_RESULT")] : [])
+        expectNoDifference(deliveries.map(\.connectionID), succeeds ? [f.peerConnection.id] : [])
+        let expected = deliveries.compactMap { ChannelTranscriptProjection.publication(for: $0) }
+        expectNoDifference(expected.map(\.owner), succeeds ? [.init(accountID: "local", agentID: f.peer.id)] : [])
+        expectNoDifference(expected.map(\.conversationID), succeeds ? [peer.id] : [])
+        expectNoDifference(expected.map(\.senderID), succeeds ? [peer.id] : [])
+        let stored = try await ConversationStore(fileURL: f.root.appending(path: "conversations.json")).load()
+        let restoredPeer = stored.first { $0.id == peer.id }
+        if mode == "target-delete" { expectNoDifference(restoredPeer, nil) }
+        else {
+            let saved = try #require(restoredPeer)
+            expectNoDifference(saved.messages.compactMap(\.externalChannelPublication), expected)
+        }
+        expectNoDifference(stored.first { $0.id == otherID }, f.other)
+        expectNoDifference(stored.filter { $0.id != peer.id }.flatMap(\.messages).compactMap(\.externalChannelPublication), [])
+        expectNoDifference(f.model.groupMessages[group.id]?.compactMap(\.externalPublication) ?? [], [])
+        let requests = await f.probe.requests
+        let request = try #require(requests.first { $0.messages.last?.text.hasPrefix("Incoming peer message") == true })
+        #expect(!request.messages.contains { $0.text.contains("GROUP_HUMAN_PRIVATE") || $0.text.contains("SOURCE_GROUP_PRIVATE") || $0.text.contains("UNRELATED_PRIVATE_HISTORY") })
+        let incoming = try #require(f.model.agentMessages.first { $0.recipientID == f.peer.id })
+        if succeeds { expectNoDifference(incoming.delivery?.state, .completed) }
+        expectNoDifference(incoming.delivery?.publications ?? [], [])
+        if succeeds { #expect(incoming.delivery?.response?.contains(peer.id.uuidString) == true) }
+        let sentAfter = await f.probe.sent
+        expectNoDifference(sentAfter, [])
+        let reloaded = try await ConversationStore(fileURL: f.root.appending(path: "conversations.json")).load()
+        expectNoDifference(reloaded, stored)
+    }
+
+    @Test(arguments: ["approve", "target-stop"], [false, true])
+    func repeatedGroupPeerWakeKeepsExistingChatAndOwnsCurrentStop(mode: String, automatic: Bool) async throws {
+        let f = try await fixture(automatic: automatic, groupOrigin: true)
+        let group = try #require(f.group)
+        defer {
+            f.model.selectGroup(id: group.id); f.model.cancel()
+            try? FileManager.default.removeItem(at: f.root)
+        }
+        let first = try await reviewedPeerDelivery(f)
+        let store = ConversationStore(fileURL: f.root.appending(path: "conversations.json"))
+        let destinationID = try #require(first.origin?.conversationID)
+        let original = try #require(try await store.conversation(id: destinationID))
+        let encoder = JSONEncoder(), decoder = JSONDecoder()
+        encoder.dateEncodingStrategy = .secondsSince1970; decoder.dateDecodingStrategy = .secondsSince1970
+        // Canonical SQL dates round-trip epoch seconds. Compare every field in
+        // that wire form rather than Date's extra in-memory fractional bits.
+        func persisted(_ value: Conversation?) throws -> Conversation? {
+            guard let value else { return nil }
+            return try decoder.decode(Conversation.self, from: encoder.encode(value))
+        }
+        let firstMessages = f.model.agentMessages
+        let groupMessages = f.model.groupMessages[group.id] ?? []
+        let work = Task { await f.model.sendGroupMessage(groupID: group.id, text: "SECOND_GROUP_HUMAN_PRIVATE: delegate again") }
+        defer { work.cancel() }
+        try await eventually { f.model.runningGroups.contains(group.id) }
+        let review = try await channelReview(f)
+        let incoming = try #require(f.model.agentMessages.first { candidate in
+            candidate.recipientID == f.peer.id && !firstMessages.contains { $0.id == candidate.id }
+        })
+        let source = try AgentMessageSource(accountID: "local", originConversationID: group.id,
+            deliveryID: incoming.id, senderAgentID: f.owner.id, recipientAgentID: f.peer.id, kind: .incoming)
+        var expected = original
+        let position = expected.messages.firstIndex { $0.createdAt > incoming.createdAt } ?? expected.messages.endIndex
+        expected.messages.insert(.init(id: incoming.id, role: .assistant, text: "EXACT_SHARED_TASK",
+            createdAt: incoming.createdAt, agentMessageSource: source), at: position)
+        expected.updatedAt = max(expected.updatedAt, incoming.createdAt)
+        DirectMessageAddressing.assignMissing(in: &expected)
+        let beforeApproval = try await store.conversation(id: original.id)
+        expectNoDifference(try persisted(beforeApproval), try persisted(expected))
+        expectNoDifference(try persisted(f.model.conversations.first { $0.id == original.id }), try persisted(expected))
+        #expect(f.model.isConversationWorking(original.id))
+        let queuedBeforeApproval = await f.channels.deliveries()
+        expectNoDifference(queuedBeforeApproval, [first])
+        if mode == "target-stop" {
+            f.model.selectRoute(.conversation(original.id)); f.model.cancel()
+            try await eventually { !f.model.runningGroups.contains(group.id) }
+        }
+        await f.model.resolveGroupApproval(review, groupID: group.id, approve: true)
+        await work.value
+        let deliveries = await f.channels.deliveries()
+        expectNoDifference(deliveries.filter { $0.id == first.id }, [first])
+        let second = deliveries.filter { $0.id != first.id }
+        expectNoDifference(second.map(\.outbound), mode == "approve" ? [.init(text: "EXACT_PEER_EXTERNAL_RESULT")] : [])
+        if mode == "approve" {
+            let publication = try #require(second.first.flatMap { ChannelTranscriptProjection.publication(for: $0) })
+            expectNoDifference(publication.owner, .init(accountID: "local", agentID: f.peer.id))
+            expectNoDifference(publication.conversationID, original.id)
+            expectNoDifference(publication.senderID, original.id)
+            expected.messages.append(publication.directMessage)
+            expected.updatedAt = max(expected.updatedAt, publication.queuedAt)
+            DirectMessageAddressing.assignMissing(in: &expected)
+        }
+        let saved = try await store.conversation(id: original.id)
+        expectNoDifference(try persisted(saved), try persisted(expected))
+        let reopened = try await ConversationStore(fileURL: f.root.appending(path: "conversations.json")).conversation(id: original.id)
+        expectNoDifference(try persisted(reopened), try persisted(expected))
+        expectNoDifference(f.model.groupMessages[group.id]?.prefix(groupMessages.count).map { $0 } ?? [], groupMessages)
+        let unrelated = try await store.conversation(id: otherID)
+        expectNoDifference(unrelated, f.other)
+        #expect(!f.model.isConversationWorking(original.id))
+        let requests = await f.probe.requests.filter { $0.messages.last?.text.hasPrefix("Incoming peer message") == true }
+        #expect(requests.count == 2)
+        let lastRequest = try #require(requests.last)
+        #expect(!lastRequest.messages.contains { $0.text.contains("SECOND_GROUP_HUMAN_PRIVATE")
+            || $0.text.contains("SOURCE_GROUP_PRIVATE") || $0.text.contains("UNRELATED_PRIVATE_HISTORY") })
+        let sent = await f.probe.sent
+        expectNoDifference(sent, [])
     }
 
     @Test(arguments: ["approve", "deny", "stop", "account", "origin-ABA", "target-ABA", "origin-route-ABA",
@@ -358,10 +555,17 @@ private struct AppMailboxChannelProvider: InteractiveToolProvider {
     }
 
     private func reviewedPeerDelivery(_ f: Fixture) async throws -> ChannelDelivery {
-        f.model.send()
+        let work: Task<Void, Never>?
+        if let group = f.group {
+            work = Task { await f.model.sendGroupMessage(groupID: group.id, text: "GROUP_HUMAN_PRIVATE: delegate the shared task") }
+            try await eventually { f.model.runningGroups.contains(group.id) }
+        } else { work = nil; f.model.send() }
+        defer { work?.cancel() }
         let review = try await channelReview(f)
-        f.model.handleTranscriptCardIntent(.approveReview(reviewID: review.id))
-        try await eventually { !f.model.running.contains(originID) }
+        if let group = f.group { await f.model.resolveGroupApproval(review, groupID: group.id, approve: true) }
+        else { f.model.handleTranscriptCardIntent(.approveReview(reviewID: review.id)) }
+        if let work { await work.value }
+        else { try await eventually { !f.model.running.contains(originID) } }
         return try #require(await f.channels.deliveries().first)
     }
 
@@ -377,11 +581,61 @@ private struct AppMailboxChannelProvider: InteractiveToolProvider {
         await f.model.reconcileChannelFailureFollowUps()
     }
 
-    @Test(arguments: [(false, "available"), (false, "busy"), (false, "off-page"),
-                       (true, "available"), (true, "busy"), (true, "off-page")], [false, true])
-    func actualPeerDeliveryFailureUsesItsCanonicalOwnerWithoutResending(scenario: (Bool, String), automatic: Bool) async throws {
-        let (ownerRecipient, mode) = scenario
-        let f = try await fixture(automatic: automatic, returnToOwner: ownerRecipient, failsDelivery: true)
+    @Test(arguments: [(false, "origin"), (false, "target"), (true, "origin"), (true, "target")], [false, true])
+    func stopFencesQueuedSiblingAndNoncooperativeLatePeerCallback(scenario: (Bool, String), automatic: Bool) async throws {
+        let (groupOrigin, stopAt) = scenario
+        let gate = AppMailboxChannelFailureGate()
+        defer { Task { await gate.open() } }
+        let f = try await fixture(automatic: automatic, groupOrigin: groupOrigin, queuesSibling: true, latePeerGate: gate)
+        defer { f.model.cancel(); try? FileManager.default.removeItem(at: f.root) }
+        let work: Task<Void, Never>?
+        if let group = f.group {
+            work = Task { await f.model.sendGroupMessage(groupID: group.id, text: "GROUP_HUMAN_PRIVATE: delegate the shared task") }
+            try await eventually { f.model.runningGroups.contains(group.id) }
+        } else { work = nil; f.model.send() }
+        defer { work?.cancel() }
+        let review = try await channelReview(f)
+        let target = try #require(f.model.conversations.first { $0.agentBinding?.agentID == f.peer.id })
+        let store = ConversationStore(fileURL: f.root.appending(path: "conversations.json"))
+        let before = try #require(try await store.conversation(id: target.id))
+        let beforeGroupMessages = f.group.map { f.model.groupMessages[$0.id] ?? [] }
+        let incoming = f.model.agentMessages.filter { $0.recipientID == f.peer.id }.sorted { $0.createdAt < $1.createdAt }
+        expectNoDifference(incoming.map(\.text), ["EXACT_SHARED_TASK", "EXACT_QUEUED_SIBLING_TASK"])
+        expectNoDifference(incoming.map { $0.delivery?.state }, [.running, .queued])
+        expectNoDifference(before.messages.map(\.text), ["EXACT_SHARED_TASK"])
+        if stopAt == "target" {
+            f.model.selectRoute(.conversation(target.id)); f.model.cancel()
+        } else if let group = f.group { await f.model.stopGroup(id: group.id) }
+        else { f.model.cancel() }
+        try await eventually { await gate.isWaiting }
+        await gate.open()
+        if let work { await work.value }
+        else { try await eventually { !f.model.running.contains(originID) } }
+        try await eventually { await f.probe.latePeerAttempts == 1 && f.model.pendingAutoReviewApprovals.isEmpty }
+        // A stale native approval cannot revive the stopped chain either.
+        await f.model.resolveGroupApproval(review, groupID: f.group?.id ?? originID, approve: true)
+        let requests = await f.probe.requests
+        expectNoDifference(requests.filter { $0.messages.last?.text.hasPrefix("Incoming peer message") == true }.count, 1)
+        let deliveries = await f.channels.deliveries(), sent = await f.probe.sent
+        expectNoDifference(deliveries, []); expectNoDifference(sent, [])
+        let terminal = f.model.agentMessages.filter { $0.recipientID == f.peer.id }.sorted { $0.createdAt < $1.createdAt }
+        expectNoDifference(terminal.map(\.text), incoming.map(\.text))
+        expectNoDifference(terminal.map { $0.delivery?.state }, [.cancelled, .cancelled])
+        let saved = try await store.conversation(id: target.id), other = try await store.conversation(id: otherID)
+        expectNoDifference(saved, before); expectNoDifference(other, f.other)
+        expectNoDifference(f.group.map { f.model.groupMessages[$0.id] ?? [] }, beforeGroupMessages)
+        let reopened = ConversationStore(fileURL: f.root.appending(path: "conversations.json"))
+        let restored = try await reopened.conversation(id: target.id)
+        expectNoDifference(restored, saved)
+    }
+
+    @Test(arguments: [(false, "available", false), (false, "busy", false), (false, "off-page", false),
+                       (true, "available", false), (true, "busy", false), (true, "off-page", false),
+                       (false, "available", true), (false, "busy", true), (false, "off-page", true),
+                       (true, "available", true), (true, "busy", true), (true, "off-page", true)], [false, true])
+    func actualPeerDeliveryFailureUsesItsCanonicalOwnerWithoutResending(scenario: (Bool, String, Bool), automatic: Bool) async throws {
+        let (ownerRecipient, mode, groupOrigin) = scenario
+        let f = try await fixture(automatic: automatic, returnToOwner: ownerRecipient, failsDelivery: true, groupOrigin: groupOrigin)
         defer { f.model.cancel(); try? FileManager.default.removeItem(at: f.root) }
         let queued = try await reviewedPeerDelivery(f)
         let target = try #require(queued.origin?.conversationID)
@@ -389,10 +643,11 @@ private struct AppMailboxChannelProvider: InteractiveToolProvider {
         let actual = ownerRecipient ? f.owner : f.peer
         let store = ConversationStore(fileURL: f.root.appending(path: "conversations.json"))
         var untouched: [Conversation] = []
-        for id in [originID, otherID] where id != target {
+        for id in groupOrigin ? [otherID] : [originID, otherID] where id != target {
             untouched.append(try #require(try await store.conversation(id: id)))
         }
         let mailbox = f.model.agentMessages
+        let groupMessages = f.group.map { f.model.groupMessages[$0.id] ?? [] }
         f.model.selectRoute(.conversation(otherID))
         if mode == "busy" { f.model.running.insert(target) }
         if mode == "off-page" { f.model.conversations.removeAll { $0.id == target } }
@@ -428,6 +683,7 @@ private struct AppMailboxChannelProvider: InteractiveToolProvider {
         let sends = await f.probe.sent, deliveries = await f.channels.deliveries()
         expectNoDifference(sends, [queued.outbound]); expectNoDifference(deliveries, [terminal])
         expectNoDifference(f.model.agentMessages, mailbox); expectNoDifference(f.model.selection, otherID)
+        expectNoDifference(f.group.map { f.model.groupMessages[$0.id] ?? [] }, groupMessages)
         for before in untouched {
             let after = try await store.conversation(id: before.id)
             expectNoDifference(after, before)
@@ -455,11 +711,13 @@ private struct AppMailboxChannelProvider: InteractiveToolProvider {
         expectNoDifference(afterReopenClaims, try decoder.decode([ChannelFailureFollowUp].self, from: encoder.encode(followUps)))
     }
 
-    @Test(arguments: [false, true], ["stop", "persona-ABA", "account-ABA"])
-    func revokedActualPeerFailureRejectsLateCorrection(ownerRecipient: Bool, mode: String) async throws {
+    @Test(arguments: [(false, false), (true, false), (false, true), (true, true)], ["stop", "persona-ABA", "account-ABA"])
+    func revokedActualPeerFailureRejectsLateCorrection(scenario: (Bool, Bool), mode: String) async throws {
+        let (ownerRecipient, groupOrigin) = scenario
         let gate = AppMailboxChannelFailureGate()
         defer { Task { await gate.open() } }
-        let f = try await fixture(automatic: true, returnToOwner: ownerRecipient, failsDelivery: true, failureGate: gate)
+        let f = try await fixture(automatic: true, returnToOwner: ownerRecipient, failsDelivery: true,
+            failureGate: gate, groupOrigin: groupOrigin)
         defer { f.model.cancel(); try? FileManager.default.removeItem(at: f.root) }
         let queued = try await reviewedPeerDelivery(f), target = try #require(queued.origin?.conversationID)
         defer { f.model.selectRoute(.conversation(target)); f.model.cancel() }
@@ -492,9 +750,11 @@ private struct AppMailboxChannelProvider: InteractiveToolProvider {
         expectNoDifference(deliveries, [terminal])
     }
 
-    @Test(arguments: [false, true])
-    func actualPeerFailureCannotAcquireAnExternalRetry(ownerRecipient: Bool) async throws {
-        let f = try await fixture(automatic: true, returnToOwner: ownerRecipient, failsDelivery: true, triesExternalFailureRetry: true)
+    @Test(arguments: [(false, false), (true, false), (false, true), (true, true)])
+    func actualPeerFailureCannotAcquireAnExternalRetry(scenario: (Bool, Bool)) async throws {
+        let (ownerRecipient, groupOrigin) = scenario
+        let f = try await fixture(automatic: true, returnToOwner: ownerRecipient, failsDelivery: true,
+            triesExternalFailureRetry: true, groupOrigin: groupOrigin)
         defer { f.model.cancel(); try? FileManager.default.removeItem(at: f.root) }
         let queued = try await reviewedPeerDelivery(f), target = try #require(queued.origin?.conversationID)
         defer { f.model.selectRoute(.conversation(target)); f.model.cancel() }
@@ -514,25 +774,41 @@ private struct AppMailboxChannelProvider: InteractiveToolProvider {
         #expect(f.model.pendingAutoReviewApprovals.isEmpty && f.model.pendingToolApprovals.isEmpty)
     }
 
-    @Test(arguments: [false, true], ["approve", "deny-source", "deny-send", "stop-source", "stop-send", "persona-ABA-source"])
-    func localAndHTTPSAttachmentsRetainIndependentSourceAndSendConsent(local: Bool, mode: String) async throws {
+    @Test(arguments: [(false, false), (true, false), (false, true), (true, true)],
+          ["approve", "deny-source", "deny-send", "stop-source", "stop-send", "persona-ABA-source"])
+    func localAndHTTPSAttachmentsRetainIndependentSourceAndSendConsent(scenario: (Bool, Bool), mode: String) async throws {
+        let (local, groupOrigin) = scenario
         let reference = try RemoteAttachmentReference(url: "https://source.example/peer.html?signature=exact", alt: "Reviewed peer file")
         let f = try await fixture(automatic: true, arguments: ["type": "attachment", "channel": "slack:C_PEER",
-            "url": reference.url, "alt": reference.alt ?? ""], localFile: local)
+            "url": reference.url, "alt": reference.alt ?? ""], localFile: local, groupOrigin: groupOrigin)
         defer { f.model.cancel(); try? FileManager.default.removeItem(at: f.root) }
-        f.model.send()
+        let origin = f.group?.id ?? originID
+        let groupWork: Task<Void, Never>?
+        if let group = f.group {
+            groupWork = Task { await f.model.sendGroupMessage(groupID: group.id, text: "GROUP_HUMAN_PRIVATE: delegate the shared task") }
+            try await eventually { f.model.runningGroups.contains(group.id) }
+        } else { groupWork = nil; f.model.send() }
+        defer { groupWork?.cancel() }
+        func stop() async {
+            if let group = f.group { await f.model.stopGroup(id: group.id) }
+            else { f.model.cancel() }
+        }
+        func resolve(_ pending: PendingApproval, approve: Bool) async {
+            if let group = f.group { await f.model.resolveGroupApproval(pending, groupID: group.id, approve: approve) }
+            else { f.model.handleTranscriptCardIntent(approve ? .approveReview(reviewID: pending.id) : .rejectReview(reviewID: pending.id)) }
+        }
         if local {
             try await eventually {
                 if let delegation = f.model.pendingAutoReviewApprovals.first(where: { $0.action.context.metadata["tool"] == "SendToAgent" }) {
-                    await f.model.resolveGroupApproval(delegation, groupID: originID, approve: true)
+                    await f.model.resolveGroupApproval(delegation, groupID: origin, approve: true)
                 }
                 return !f.model.pendingToolApprovals.isEmpty
             }
             let read = try #require(f.model.pendingToolApprovals.first)
-            expectNoDifference(read.conversationID, originID)
+            expectNoDifference(read.conversationID, origin)
             let before = await f.probe.reads
             expectNoDifference(before, [])
-            if mode == "stop-source" { f.model.cancel() }
+            if mode == "stop-source" { await stop() }
             if mode == "persona-ABA-source" {
                 var changed = f.peer; changed.instructions = "UNREVIEWED_PERSONA"
                 #expect(await f.model.updateAgent(changed)); #expect(await f.model.updateAgent(f.peer))
@@ -540,27 +816,28 @@ private struct AppMailboxChannelProvider: InteractiveToolProvider {
             f.model.resolveLocalToolApproval(id: read.id, allowed: mode != "deny-source")
         } else {
             let source = try await channelReview(f, sourceDownload: true)
-            expectNoDifference(source.action.context.conversationID, originID)
+            expectNoDifference(source.action.context.conversationID, origin)
             let before = await f.probe.downloads
             expectNoDifference(before, [])
-            if mode == "stop-source" { f.model.cancel() }
+            if mode == "stop-source" { await stop() }
             if mode == "persona-ABA-source" {
                 var changed = f.peer; changed.instructions = "UNREVIEWED_PERSONA"
                 #expect(await f.model.updateAgent(changed)); #expect(await f.model.updateAgent(f.peer))
             }
-            f.model.handleTranscriptCardIntent(mode == "deny-source" ? .rejectReview(reviewID: source.id) : .approveReview(reviewID: source.id))
+            await resolve(source, approve: mode != "deny-source")
         }
         if !["deny-source", "stop-source", "persona-ABA-source"].contains(mode) {
             let send = try await channelReview(f)
-            expectNoDifference(send.action.context.conversationID, originID)
+            expectNoDifference(send.action.context.conversationID, origin)
             let before = await f.channels.deliveries()
             expectNoDifference(before, [])
             if let source = f.localSource { try Data("UNREVIEWED_REPLACEMENT".utf8).write(to: source) }
             await f.probe.replaceBytes()
-            if mode == "stop-send" { f.model.cancel() }
-            f.model.handleTranscriptCardIntent(mode == "deny-send" ? .rejectReview(reviewID: send.id) : .approveReview(reviewID: send.id))
+            if mode == "stop-send" { await stop() }
+            await resolve(send, approve: mode != "deny-send")
         }
-        try await eventually { !f.model.running.contains(originID) }
+        if let groupWork { await groupWork.value }
+        else { try await eventually { !f.model.running.contains(originID) } }
         let bytes = Data("EXACT_CAPTURED_PEER_FILE".utf8)
         let prepared = try PreparedAgentPublicationFile(bytes: bytes, filename: "peer.html")
         let attachment = ChannelAttachment(blobID: prepared.digest, filename: prepared.filename,
@@ -585,7 +862,7 @@ private struct AppMailboxChannelProvider: InteractiveToolProvider {
             let actual = try #require(publications.first)
             expectNoDifference(actual.sources, [.init(url: local ? try #require(f.localSource).absoluteString : reference.url, alt: "Reviewed peer file")])
             expectNoDifference(actual.owner, .init(accountID: "local", agentID: f.peer.id))
-            #expect(actual.conversationID != originID)
+            #expect(actual.conversationID != origin)
         } else { #expect(!FileManager.default.fileExists(atPath: f.root.appending(path: "channel-attachments").path)) }
         let sent = await f.probe.sent
         expectNoDifference(sent, [])

@@ -246,11 +246,24 @@ struct MailboxChannelPublicationTests {
         try await session.drain(onUpdate: { await f.probe.update($0) }, onPeerMessage: { await f.probe.project($0, $1) })
     }
 
-    @Test(arguments: [false, true], [false, true])
-    func explicitSavedOutputBelongsOnlyToTheActualRecipient(direct: Bool, ownerRecipient: Bool) async throws {
+    private struct ExplicitHostCase: Sendable {
+        let direct: Bool
+        let ownerRecipient: Bool
+        let localReceipts: Bool
+    }
+    @Test(arguments: [
+        ExplicitHostCase(direct: false, ownerRecipient: false, localReceipts: true),
+        ExplicitHostCase(direct: false, ownerRecipient: true, localReceipts: true),
+        ExplicitHostCase(direct: true, ownerRecipient: false, localReceipts: true),
+        ExplicitHostCase(direct: true, ownerRecipient: true, localReceipts: true),
+        ExplicitHostCase(direct: false, ownerRecipient: false, localReceipts: false),
+        ExplicitHostCase(direct: false, ownerRecipient: true, localReceipts: false)
+    ])
+    private func explicitSavedOutputBelongsOnlyToTheActualRecipient(test: ExplicitHostCase) async throws {
+        let direct = test.direct, ownerRecipient = test.ownerRecipient
         let f = try await fixture(direct: direct, ownerRecipient: ownerRecipient)
         defer { f.lease.close(); try? FileManager.default.removeItem(at: f.root) }
-        let session = session(f)
+        let session = session(f, mode: test.localReceipts ? "approve" : "no-receipts")
         try await enqueue(f, session)
         try await drain(f, session)
         let reviews = await f.probe.reviews, contexts = await f.probe.reviewContexts
@@ -306,7 +319,7 @@ struct MailboxChannelPublicationTests {
         try await session.close()
     }
 
-    @Test(arguments: ["account", "origin", "sender", "agent", "destination", "author", "directory", "group-route", "missing-transcript", "no-factory", "no-receipts", "no-store"])
+    @Test(arguments: ["account", "origin", "sender", "agent", "destination", "author", "directory", "group-route", "missing-transcript", "no-factory", "no-store"])
     func wrongOrAbsentHostAcquisitionNeverBorrowsForegroundCapability(mode: String) async throws {
         let f = try await fixture(); defer { f.lease.close(); try? FileManager.default.removeItem(at: f.root) }
         let session = session(f, mode: mode)
