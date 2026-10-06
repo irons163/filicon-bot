@@ -5677,6 +5677,7 @@ final class AppModel: ObservableObject {
                                            savedMemoryAudience: Set<UUID>? = nil,
                                            collectMemoryEvidence: Bool = true,
                                            allowsGroupMailboxChannels: Bool = false,
+                                           mailboxExecutionLease: AgentWorkflowExecutionScope.Lease? = nil,
                                            manualOrigin: ManualMailboxOrigin? = nil) -> AgentMessagingSession? {
         guard let agentService, let agentMessenger, let agentConversations else { return nil }
         let generation = autoReviewAccountGeneration
@@ -5788,7 +5789,8 @@ final class AppModel: ObservableObject {
             mailboxRemote: makeMailboxRemoteFactory(originID: originID, generation: generation),
             mailboxGallery: makeMailboxGalleryFactory(originID: originID, generation: generation),
             mailboxChannelPublisherFactory: (allowsGroupMailboxChannels || manualOrigin != nil) ? makeMailboxChannelPublisherFactory(originID: originID,
-                generation: generation, binding: nil, manualOrigin: manualOrigin) : nil,
+                generation: generation, binding: nil, manualOrigin: manualOrigin,
+                inheritedExecutionLease: mailboxExecutionLease) : nil,
             authorize: { [weak self] sender, recipient, text, call, context in
                 guard let self else { throw CancellationError() }
                 try await self.authorizeAgentDelegation(sender: sender, recipient: recipient, text: text, call: call, context: context)
@@ -5874,23 +5876,28 @@ final class AppModel: ObservableObject {
     }
 
     /// Each explicitly hosted direct/group/manual peer wake acquires its own
-    /// destination. Inbound/background runners still inherit no grant.
+    /// destination. A reviewed routine supplies its admitted run lease;
+    /// inbound and unreviewed background runners still inherit no grant.
     private func makeMailboxChannelPublisherFactory(originID: UUID, generation: UInt64,
-        binding: DirectConversationAgentBinding?, manualOrigin: ManualMailboxOrigin? = nil) -> AgentMessagingSession.MailboxChannelPublisherFactory? {
+        binding: DirectConversationAgentBinding?, manualOrigin: ManualMailboxOrigin? = nil,
+        inheritedExecutionLease: AgentWorkflowExecutionScope.Lease? = nil) -> AgentMessagingSession.MailboxChannelPublisherFactory? {
         guard channelService != nil else { return nil }
         let originGroup = binding == nil && manualOrigin == nil ? groups.first { $0.id == originID } : nil
         guard binding != nil || originGroup != nil || manualOrigin != nil else { return nil }
         return { [weak self] incoming, sender, parent in
             guard let self else { throw CancellationError() }
             return try await self.makeMailboxChannelPublication(incoming, sender: sender, originID: originID,
-                generation: generation, binding: binding, originGroup: originGroup, manualOrigin: manualOrigin, parent: parent)
+                generation: generation, binding: binding, originGroup: originGroup, manualOrigin: manualOrigin,
+                inheritedExecutionLease: inheritedExecutionLease, parent: parent)
         }
     }
 
     private func makeMailboxChannelPublication(_ incoming: AgentMessage, sender: AgentProfile, originID: UUID,
         generation: UInt64, binding: DirectConversationAgentBinding?, originGroup: AgentGroup?, manualOrigin: ManualMailboxOrigin?,
+        inheritedExecutionLease: AgentWorkflowExecutionScope.Lease?,
         parent: ChannelPublicationLifetime) async throws -> AgentChannelPublicationTransaction? {
         try parent.check()
+        try inheritedExecutionLease?.check()
         let account = binding?.accountID ?? (settings.accountScope ?? "local")
         try checkChannelAccount(account, generation: generation)
         guard sender.id == incoming.recipientID, isAgentMessagingScopeActive(originID),
@@ -5946,7 +5953,10 @@ final class AppModel: ObservableObject {
             identities[id] = identity
         }
         let executionScope = AgentWorkflowExecutionScope()
-        let executionLease = try executionScope.capture(inheriting: workflowExecutionScope.capture())
+        // Never recapture the routine grant after an actor hop. Its admitted
+        // lease remains part of the atomic queue/transcript commit fence, so
+        // revoking and granting the same routine again cannot revive this run.
+        let executionLease = try executionScope.capture(inheriting: inheritedExecutionLease ?? workflowExecutionScope.capture())
         let bindings = MailboxChannelBindings()
         let bindingGuard: ConversationCommitGuard = { operation in
             if let membership { return try membership.withValidMembership { try bindings.withValid(operation) } }
@@ -9900,10 +9910,12 @@ final class AppModel: ObservableObject {
         groupQuestionLifetimes[groupID] = questionLifetime
         let messaging = makeAgentMessagingSession(originID: groupID,
             allowsSavedMemory: binding.memoryAccess == .savedFacts, savedMemoryAudience: Set(binding.memberIDs),
-            collectMemoryEvidence: false)
+            collectMemoryEvidence: false, allowsGroupMailboxChannels: true, mailboxExecutionLease: lease)
         agentMessagingSessions[groupID] = messaging
         defer {
             scope.invalidate(); questionLifetime.close()
+            if let messaging { clearDirectPeerExecutions(originID: groupID, sessionID: messaging.id) }
+            closeMailboxChannelScopes { $0.originID == groupID }
             routineGroupExecutions[request.run.id] = nil
             groupQuestionLifetimes[groupID] = nil; agentMessagingSessions[groupID] = nil
             runningGroups.remove(groupID); cancelledGroupRuns.remove(groupID)

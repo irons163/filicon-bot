@@ -1,5 +1,38 @@
 # 完成驗收入口（2026-09-27）
 
+## 已審閱排程群組委派的 actual peer 送件與執行撤銷
+
+2026-10-06 接續 `51cefd3`，reference HEAD 再核對為 `a9f633e09d49a85829b8236331b9e21f7e612634`；重讀 `agent-to-agent-messaging.ts` 的 hidden peer wake／actual recipient session，以及 `agent-messaging.ts` 的 own chat／private persona／peer 不等於人類授權。Filicon 的已審閱 routine group runner 原本有實際 `SendToAgent`，但沒有明確提供收件成員的 channel factory。本批只在已驗證 canonical routine binding／definition／account／membership 且已預留 running group 之後 opt-in，不讓 inbound、未審閱 routine 或單純選取畫面取得 grant。
+
+peer factory 明確捕捉這次已 admitted routine execution lease，並保留至 atomic queue／canonical transcript commit；actor hop 後不重取較新的排程 grant。routine lease 已繼承 account fence，與獨立 child execution scope／exact membership／unique destination binding／publication lifetime 組合。Stop、修改或刪除 routine、revoke/regrant、account 變更都不能復活舊核准。runner 結束同步清理 exact-session 成員 Stop mapping 與 origin mailbox scopes，不把舊 cleanup 或遲到 callback 套到新的同群組回合。這是 process-local lifecycle fence，不是外部權限、跨 process CAS、跨 stores 原子性或召回已 admitted I/O。
+
+每次 channel send 都新問人類，即使 generic auto-review allow 也不略過；review 留原 group，實際 connection／canonical author／destination／typed receipt 屬於 actual peer。新成員聊天用其 origin-private context ID，已有 canonical DM 只保存 projection mapping，不改 private inference ID／history。完整 verified incoming 保存該成員聊天，不搬來源 group 的人類原話／summary／routine prompt、其他聊天或既有 DM 私人內容。來源群組沒有假的 external receipt。
+
+新增 App 3 methods／80 cases：manual／schedule × 新／既有 canonical chat 的 60 個 approval／deny／Stop／revoke／regrant／definition ABA／delete／account／membership／persona／binding／hidden ABA／connection／navigation cases，16 個 queued sibling＋non-cooperative 舊 callback／fresh reviewed run cases，以及 4 個未審閱 routine 不借 selected group host cases。使用假 provider／connector、暫存 stores、注入 schedule ticks 與完整 typed canonical chats／address reservations／queue／origin／authorization／run history／reopen 比較；connector sent 為空，未做真正外部送件。
+
+聚焦診斷（均 `.build/validation/`，不入版控）：
+
+- `reviewed-routine-peer-red-v1.log` exit 1：產品仍為 `51cefd3`，4 cases／8 issues；actual peer 的 `SendMessage channel` 因缺 factory 被 schema 拒絕，沒有 native review。沒有檔案保護或 credential fixture 失敗，屬有效產品 baseline。
+- `reviewed-routine-peer-focused-v1.log` exit 1：4 cases／2 issues 是新增測試誤把「新聊天的 context ID＝canonical ID」也視為錯誤；核准／完整 queue／canonical history 原已吻合。改為讀取真正 saved context，逐項核對 private ID／optional projection mapping，不改產品或丟 history assertions。
+- `reviewed-routine-peer-focused-v2.log` exit 0：60 cases 及原 routine group 回歸，16 methods／2 suites。
+- `reviewed-routine-peer-focused-v3.log` exit 1：所有原成員送件回歸與 60 lifecycle＋4 unreviewed cases 通過；16 fresh run cases 中兩個 scheduled definition cases 的 fixture 注入了相同 start tick，不能假設 history 次序。改為注入明確較晚的 fresh tick，並提升為完整 typed `AutomationRun` 比較；不改產品排序或刪斷言。
+- `reviewed-routine-peer-focused-v4.log` exit 0：core／store 14 methods／2 suites＋App 32 methods／2 suites；App mailbox channel suite 17 methods／364 cases（原 284＋新 80），包括完整 fresh run histories。七語 `reviewed-routine-peer-localization-final-v1.log` exit 0，各 1,817 keys／0 missing；沒有 UI／catalog／Package／native target 變更。
+
+正式 gates（均 `.build/validation/`，不入版控；不沿用舊產品 gates 當本批完成證據）：
+
+- `reviewed-routine-peer-full-final-v1.log` exit 1：App 795 tests／102 suites 有 1 issue，為既有 `realSourceAndSendCardsKeepWholeIntent` 的 `ja`／340 case，render 前讀取 `pendingAutoReviewApprovals.first?.action.context.metadata["agentMessage"]` 為 nil；新增 80 cases 通過。原斷言不足以區分「review 消失」與「不同 review／缺 metadata」，不把它直接歸因為語言排版、檔案保護或本批 routine 產品錯誤。
+- `reviewed-routine-peer-card-diagnostic-v1.log` exit 0：相同產品 source，單獨重跑原 14 language／width cases 通過。沒有穩定重現或確認原因，不能宣稱已修復；改測試為 render 前後完整比對 exact `PendingApproval`，並保留 stage／appearance／active／error／完整暫存訊息診斷。仍渲染真正 live panel，所有原 OCR／完整 intent／queue／download assertions 保留，沒有改 UI 或放寬期限。
+
+- `reviewed-routine-peer-full-final-v2.log` exit 0：最後產品 source 串行完整重跑，2,153 Swift Testing／257 suites／17 summaries＋135 XCTest／0 failures／17 bundles；App 795 tests／102 suites，452.518 秒。新增 80 cases 及上述 14 個強化 live review 身分的七語／兩寬度案例都通過；首輪單項失敗原因仍未確認，不冒充已定位修復。兩項 opt-in installed Codex live tests skipped，不算外部驗收；既有 CoreData NSXPCConnection／CG 診斷保留。
+
+- `reviewed-routine-peer-native-final-v1.log` exit 0：`Filicon.xcworkspace`／`Filicon App`／arm64 Debug `BUILD SUCCEEDED`，使用隔離 `.build/validation/GroupUnreadFoundationNative` products；既有 no AppIntents.framework dependency metadata extraction skipped warning 保留。
+- `reviewed-routine-peer-native-verify-final-v1.log` exit 0：最後 native app 四個 executables、app／XPC entitlements 與 Support 原檔一致；KaTeX 0.16.45 engine／stylesheet／20 fonts／MIT、public Mermaid 11.16.0 engine／MIT／72 pinned notices 及 deep strict codesign 通過。
+- `reviewed-routine-peer-localization-final-v1.log`／`final-v2.log` exit 0：七語各 1,817 keys／0 missing；沒有 UI／catalog／Package／native target 變更，不等於人工翻譯或 VoiceOver 驗收。
+
+- `reviewed-routine-peer-package-final-v1.log` exit 0：全新 `.build/validation/ReviewedRoutinePeerPackage/Filicon.app`，standalone SPM Debug／ad-hoc；四個 executables、entitlements、同樣離線資源及 deep strict signature 通過。既有 compiler warnings 保留；沒有執行印出的 launch smoke。Debug／ad-hoc 不等於 Developer ID release／公證或真人啟動驗收。
+
+**仍未完成**：inbound／其他 background group peer host、background peer 附件／卡片恢復的獨立入口驗收、其餘 saved-group／inbound 等 failure follow-up、uncaptured locator 的新核准開啟、unified private DM/group runtime，以及 live Slack／Discord／OAuth、真人／VoiceOver／最低 macOS／Developer ID release／公證。本批只取代已審閱 routine group 的 manual／scheduled single-peer text channel host 缺口；AGENT-02／AGENT-04／UI-04／整體 partial、48 分類不變。未 push、啟動／重啟 App 或 Xcode、launch smoke 或改真實帳號／群組資料。
+
 ## 手動成員問答／安全輸入卡片的原生入口與 fresh channel host
 
 2026-10-06 接續 `706f508`，reference HEAD `a9f633e09d49a85829b8236331b9e21f7e612634`；再讀 `source/host/extensions/transcript/widget-responses.ts` 的 question／secret callback：人類回答回實際 agent，另起 fresh turn，安全輸入只留目的地，不把 credential value 加進對話。修正 Filicon 前景 manual mailbox 的 nil direct-binding 卡片原先無 native callback，以及回答後新 session 未取得自己的 channel host 兩個缺口。

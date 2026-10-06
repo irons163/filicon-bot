@@ -4,6 +4,7 @@ import CustomDump
 import FiliconAgents
 @testable import FiliconAppServices
 import FiliconAutoReview
+import FiliconAutomations
 @testable import FiliconChannels
 import FiliconDomain
 import FiliconPersistence
@@ -110,9 +111,17 @@ private struct AppMailboxChannelProvider: InteractiveToolProvider {
     var latePeerGate: AppMailboxChannelFailureGate? = nil
     var savedInput: String? = nil
     var followUpInput: String? = nil
+    var plainResponse: String? = nil
     func models() async throws -> [AIModel] { [.init(id: "fixture")] }
     func stream(_ request: InferenceRequest) -> AsyncThrowingStream<InferenceEvent, Error> {
-        AsyncThrowingStream { $0.finish(throwing: ProviderError.invalidResponse) }
+        guard let plainResponse else { return AsyncThrowingStream { $0.finish(throwing: ProviderError.invalidResponse) } }
+        return AsyncThrowingStream { continuation in
+            let task = Task {
+                await probe.request(request)
+                continuation.yield(.textDelta(plainResponse)); continuation.yield(.completed(.stop)); continuation.finish()
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
     }
     func stream(_ request: InferenceRequest,
                 executeTool: @escaping @Sendable (NormalizedToolCall) async throws -> NormalizedToolResult) -> AsyncThrowingStream<InferenceEvent, Error> {
@@ -324,6 +333,333 @@ private struct AppMailboxChannelProvider: InteractiveToolProvider {
             requests.map { ($0.conversationID, $0.messages.last?.text, $0.tools.map(\.name)) }, results), to: &diagnostic)
         Issue.record(Comment(rawValue: diagnostic))
         throw PendingApprovalError.stale("The peer must expose its own reviewed channel capability")
+    }
+
+    private func reviewedRoutine(_ f: Fixture) async throws -> Automation {
+        let group = try #require(f.group)
+        await f.model.createAutomation(agentID: f.owner.id, name: "Reviewed peer routine",
+            prompt: "ROUTINE_HOST_PRIVATE: delegate only EXACT_SHARED_TASK",
+            trigger: .cron(expression: "@hourly", timeZoneIdentifier: "UTC"))
+        let automation = try #require(f.model.automations.first)
+        let edit = try #require(f.model.beginRoutineGroupSessionEdit(automation))
+        try #require(await f.model.saveRoutineGroupSession(edit, groupID: group.id, memoryAccess: .none))
+        return automation
+    }
+
+    private func persistedConversations(_ values: [Conversation]) throws -> [Conversation] {
+        let encoder = JSONEncoder(), decoder = JSONDecoder()
+        encoder.dateEncodingStrategy = .secondsSince1970; decoder.dateDecodingStrategy = .secondsSince1970
+        return try decoder.decode([Conversation].self, from: encoder.encode(values))
+    }
+
+    @Test(arguments: [false, true], [false, true])
+    func unreviewedRoutineDoesNotBorrowTheSelectedGroupsPeerChannelHost(scheduled: Bool, existing: Bool) async throws {
+        let f = try await fixture(automatic: true, groupOrigin: true, existingPeer: existing)
+        defer { f.model.cancel(); try? FileManager.default.removeItem(at: f.root) }
+        let group = try #require(f.group)
+        await f.model.registry.register(AppMailboxChannelProvider(probe: f.probe, peerID: f.peer.id,
+            channelArguments: ["type": "text", "channel": "slack:C_PEER", "content": "MUST_NOT_BE_SENT"],
+            plainResponse: "UNREVIEWED_PLAIN_RESULT"))
+        await f.model.createAutomation(agentID: f.owner.id, name: "Unreviewed routine", prompt: "UNREVIEWED_TASK",
+            trigger: .cron(expression: "@hourly", timeZoneIdentifier: "UTC"))
+        let automation = try #require(f.model.automations.first)
+        let store = ConversationStore(fileURL: f.root.appending(path: "conversations.json")), before = try await store.load()
+        if scheduled { await f.model.runAutomationScheduleTick(at: try #require(automation.nextRunAt)) }
+        else { await f.model.runAutomationNow(id: automation.id) }
+        let run = try #require(f.model.automationHistory[automation.id]?.first)
+        expectNoDifference(run.status, .ok)
+        expectNoDifference(run.detail, "UNREVIEWED_PLAIN_RESULT")
+        expectNoDifference(run.trigger, scheduled ? .schedule : .manual)
+        let requests = await f.probe.requests
+        expectNoDifference(requests.count, 1)
+        let request = try #require(requests.first)
+        expectNoDifference(request.conversationID, run.id)
+        expectNoDifference(request.tools, [])
+        expectNoDifference(f.model.automationGroupBindings, [])
+        expectNoDifference(f.model.agentMessages, [])
+        expectNoDifference(f.model.groupMessages[group.id] ?? [], [])
+        expectNoDifference(f.model.pendingAutoReviewApprovals, [])
+        let queue = await f.channels.deliveries(), sent = await f.probe.sent, saved = try await store.load()
+        expectNoDifference(queue, []); expectNoDifference(sent, []); expectNoDifference(saved, before)
+    }
+
+    @Test(arguments: [(false, false), (true, false), (false, true), (true, true)],
+          ["origin-stop", "target-stop", "revoke", "definition"])
+    func routineStopFencesQueuedPeersAndOldCallbacksDuringAFreshReviewedRun(scenario: (Bool, Bool), mode: String) async throws {
+        let (existing, scheduled) = scenario
+        let gate = AppMailboxChannelFailureGate()
+        defer { Task { await gate.open() } }
+        let f = try await fixture(automatic: true, groupOrigin: true, queuesSibling: true,
+            latePeerGate: gate, existingPeer: existing)
+        let group = try #require(f.group)
+        defer { f.model.selectGroup(id: group.id); f.model.cancel(); try? FileManager.default.removeItem(at: f.root) }
+        let automation = try await reviewedRoutine(f), nextRun = try #require(automation.nextRunAt)
+        let work = Task {
+            if scheduled { await f.model.runAutomationScheduleTick(at: nextRun) }
+            else { await f.model.runAutomationNow(id: automation.id) }
+        }
+        defer { work.cancel() }
+        try await eventually { f.model.runningGroups.contains(group.id) }
+        let oldReview = try await channelReview(f)
+        let peer = try #require(f.model.conversations.first { $0.agentBinding?.agentID == f.peer.id })
+        let store = ConversationStore(fileURL: f.root.appending(path: "conversations.json")), before = try await store.load()
+        let oldMessages = f.model.agentMessages
+        expectNoDifference(oldMessages.map(\.text), ["EXACT_SHARED_TASK", "EXACT_QUEUED_SIBLING_TASK"])
+        expectNoDifference(oldMessages.map { $0.delivery?.state }, [.running, .queued])
+        switch mode {
+        case "origin-stop": await f.model.stopGroup(id: group.id)
+        case "target-stop": f.model.selectRoute(.conversation(peer.id)); f.model.cancel()
+        case "revoke": await f.model.revokeRoutineGroupSession(try #require(f.model.automationGroupBindings.first))
+        default: await f.model.setAutomationEnabled(id: automation.id, enabled: false)
+        }
+        try await eventually { await gate.isWaiting }
+        if f.model.runningGroups.contains(group.id) {
+            // Some stopped streams need to unwind before another group run can
+            // be admitted. This does not grant the old callback a new lifetime.
+            await gate.open()
+        }
+        await work.value
+        #expect(!f.model.isConversationWorking(peer.id))
+        let cancelledMessages = f.model.agentMessages
+        expectNoDifference(cancelledMessages.map { $0.delivery?.state }, [.cancelled, .cancelled])
+        let afterStop = try await store.load()
+        expectNoDifference(afterStop, before)
+        if mode == "definition" { await f.model.setAutomationEnabled(id: automation.id, enabled: true) }
+        let current = try #require(f.model.automations.first { $0.id == automation.id })
+        let edit = try #require(f.model.beginRoutineGroupSessionEdit(current))
+        try #require(await f.model.saveRoutineGroupSession(edit, groupID: group.id, memoryAccess: .none))
+        // Only the cancelled provider owns the gate/queued sibling. The fresh
+        // fake provider still has to pass the real host's new native review.
+        await f.model.registry.register(AppMailboxChannelProvider(probe: f.probe, peerID: f.peer.id,
+            channelArguments: ["type": "text", "channel": "slack:C_PEER", "content": "EXACT_PEER_EXTERNAL_RESULT"]))
+        // Re-enabling a routine recomputes nextRunAt from wall time. Its next
+        // boundary can equal the synthetic first tick; use a later injected
+        // tick so durable run ordering is meaningful, not a tied timestamp.
+        let freshTick = max(try #require(current.nextRunAt), nextRun.addingTimeInterval(3_600))
+        let freshWork = Task {
+            if scheduled { await f.model.runAutomationScheduleTick(at: freshTick) }
+            else { await f.model.runAutomationNow(id: current.id) }
+        }
+        defer { freshWork.cancel() }
+        try await eventually { f.model.runningGroups.contains(group.id) }
+        let freshReview = try await channelReview(f)
+        expectNoDifference(freshReview.action.context.conversationID, group.id)
+        #expect(freshReview.id != oldReview.id)
+        let fresh = try #require(f.model.agentMessages.first { value in !oldMessages.contains { $0.id == value.id } })
+        #expect(fresh.delivery?.chainID != oldMessages.first?.delivery?.chainID)
+        let pendingStore = try await store.load()
+        var expectedPending = before
+        let peerIndex = try #require(expectedPending.firstIndex { $0.id == peer.id })
+        let source = try AgentMessageSource(accountID: "local", originConversationID: group.id,
+            deliveryID: fresh.id, senderAgentID: f.owner.id, recipientAgentID: f.peer.id, kind: .incoming)
+        expectedPending[peerIndex].messages.append(.init(id: fresh.id, role: .assistant, text: "EXACT_SHARED_TASK",
+            createdAt: fresh.createdAt, agentMessageSource: source))
+        expectedPending[peerIndex].updatedAt = max(expectedPending[peerIndex].updatedAt, fresh.createdAt)
+        DirectMessageAddressing.assignMissing(in: &expectedPending[peerIndex])
+        expectedPending.sort { $0.updatedAt > $1.updatedAt }
+        expectNoDifference(pendingStore, try persistedConversations(expectedPending))
+        await f.model.resolveGroupApproval(oldReview, groupID: group.id, approve: true)
+        await gate.open()
+        try await eventually { await f.probe.latePeerAttempts == 1 }
+        #expect(f.model.runningGroups.contains(group.id))
+        #expect(f.model.pendingAutoReviewApprovals.contains { $0.id == freshReview.id })
+        let afterOld = try await store.load(), queueAfterOld = await f.channels.deliveries()
+        expectNoDifference(afterOld, pendingStore); expectNoDifference(queueAfterOld, [])
+        expectNoDifference(f.model.agentMessages.filter { value in oldMessages.contains { $0.id == value.id } }, cancelledMessages)
+        await f.model.resolveGroupApproval(freshReview, groupID: group.id, approve: true)
+        await freshWork.value
+        let queue = await f.channels.deliveries()
+        let actual = try #require(queue.first), origin = try #require(actual.origin)
+        let expectedQueue = [ChannelDelivery(id: actual.id, connectionID: f.peerConnection.id,
+            address: .init(platform: "slack", channelID: "C_PEER"), outbound: .init(text: "EXACT_PEER_EXTERNAL_RESULT"),
+            idempotencyKey: actual.idempotencyKey, nextAttemptAt: actual.nextAttemptAt, createdAt: actual.createdAt,
+            authorization: .init(ownerAccountID: "local", agentID: f.peer.id,
+                configurationRevision: try #require(actual.authorization).configurationRevision),
+            origin: .init(route: .directConversation, conversationID: peer.id, senderID: peer.id,
+                senderName: f.peer.name, runID: origin.runID, callID: "peer-channel",
+                intent: .init(kind: .text, text: "EXACT_PEER_EXTERNAL_RESULT")))]
+        expectNoDifference(queue, expectedQueue)
+        let publication = try #require(ChannelTranscriptProjection.publication(for: actual))
+        let index = try #require(expectedPending.firstIndex { $0.id == peer.id })
+        expectedPending[index].messages.append(publication.directMessage)
+        expectedPending[index].updatedAt = max(expectedPending[index].updatedAt, publication.queuedAt)
+        DirectMessageAddressing.assignMissing(in: &expectedPending[index])
+        expectedPending.sort { $0.updatedAt > $1.updatedAt }
+        let saved = try await store.load()
+        expectNoDifference(saved, try persistedConversations(expectedPending))
+        let routines = try AutomationService(storeURL: f.root.appending(path: "automations.json"))
+        let history = await routines.history(automationID: automation.id)
+        let completed = try #require(history.first), cancelled = try #require(history.last)
+        let wakes = f.model.groupMessages[group.id]?.compactMap(\.routineWake) ?? []
+        expectNoDifference(wakes.count, 2)
+        let oldWake = try #require(wakes.first), freshWake = try #require(wakes.last)
+        let expectedHistory = [
+            AutomationRun(id: freshWake.runID, automationID: automation.id, trigger: scheduled ? .schedule : .manual,
+                startedAt: scheduled ? freshTick : completed.startedAt, finishedAt: try #require(completed.finishedAt), status: .ok,
+                detail: "Group run finished. Open the group to review replies, tool results and questions."),
+            AutomationRun(id: oldWake.runID, automationID: automation.id, trigger: scheduled ? .schedule : .manual,
+                startedAt: scheduled ? nextRun : cancelled.startedAt, finishedAt: try #require(cancelled.finishedAt),
+                status: .cancelled, detail: "Cancelled.")
+        ]
+        expectNoDifference(history, expectedHistory)
+        #expect(freshWake.runID != oldWake.runID)
+        let requests = await f.probe.requests
+        expectNoDifference(requests.count, 4)
+        expectNoDifference(requests[1].conversationID, requests[3].conversationID)
+        #expect(requests[3].messages.allSatisfy { !$0.text.contains("ROUTINE_HOST_PRIVATE")
+            && !$0.text.contains("SOURCE_GROUP_PRIVATE") && !$0.text.contains("UNRELATED_PRIVATE_HISTORY")
+            && !$0.text.contains("EXISTING_PEER_PRIVATE_HISTORY") && !$0.text.contains("OWNER_PRIVATE_PERSONA") })
+        expectNoDifference(f.model.pendingAutoReviewApprovals, [])
+        #expect(!f.model.isConversationWorking(peer.id) && !f.model.runningGroups.contains(group.id))
+        let sent = await f.probe.sent
+        expectNoDifference(sent, [])
+        let reopened = try await ConversationStore(fileURL: f.root.appending(path: "conversations.json")).load()
+        expectNoDifference(reopened, saved)
+    }
+
+    @Test(arguments: [(false, false), (true, false), (false, true), (true, true)],
+          ["approve", "deny", "origin-stop", "target-stop", "revoke", "revoke-regrant", "definition-ABA",
+           "delete", "account", "membership-ABA", "peer-persona-ABA", "target-ABA", "target-hidden-ABA",
+           "connection", "navigation"])
+    func reviewedRoutinePeerRequiresFreshReviewAndItsOwnCanonicalReceipt(scenario: (Bool, Bool), mode: String) async throws {
+        let (existing, scheduled) = scenario
+        let f = try await fixture(automatic: true, groupOrigin: true, existingPeer: existing)
+        defer { f.model.cancel(); try? FileManager.default.removeItem(at: f.root) }
+        let group = try #require(f.group), automation = try await reviewedRoutine(f)
+        let nextRun = try #require(automation.nextRunAt)
+        let work = Task {
+            if scheduled { await f.model.runAutomationScheduleTick(at: nextRun) }
+            else { await f.model.runAutomationNow(id: automation.id) }
+        }
+        defer { work.cancel() }
+        try await eventually { f.model.runningGroups.contains(group.id) }
+        let review = try await channelReview(f)
+        expectNoDifference(review.action.context.conversationID, group.id)
+        let details = try #require(review.action.context.metadata["agentMessage"])
+        #expect(details.contains(f.peerConnection.displayName) && details.contains("EXACT_PEER_EXTERNAL_RESULT"))
+        #expect(!details.contains(f.ownerConnection.displayName) && !details.contains(f.peerConnection.secretReference))
+        let peer = try #require(f.model.conversations.first { $0.agentBinding?.agentID == f.peer.id })
+        let incoming = try #require(f.model.agentMessages.first { $0.recipientID == f.peer.id })
+        let source = try AgentMessageSource(accountID: "local", originConversationID: group.id,
+            deliveryID: incoming.id, senderAgentID: f.owner.id, recipientAgentID: f.peer.id, kind: .incoming)
+        var expectedPeer = f.existingPeer ?? Conversation(id: peer.id, title: f.peer.name,
+            providerID: f.peer.providerID, modelID: f.peer.modelID, updatedAt: incoming.createdAt)
+        expectedPeer.agentBinding = .init(accountID: "local", agentID: f.peer.id)
+        expectedPeer.messages.append(.init(id: incoming.id, role: .assistant, text: "EXACT_SHARED_TASK",
+            createdAt: incoming.createdAt, agentMessageSource: source))
+        expectedPeer.updatedAt = max(expectedPeer.updatedAt, incoming.createdAt)
+        DirectMessageAddressing.assignMissing(in: &expectedPeer)
+        let store = ConversationStore(fileURL: f.root.appending(path: "conversations.json"))
+        let before = try await store.load()
+        let expectedBefore = [expectedPeer, f.other].sorted { $0.updatedAt > $1.updatedAt }
+        expectNoDifference(before, try persistedConversations(expectedBefore))
+        let queueBefore = await f.channels.deliveries(), sentBefore = await f.probe.sent
+        expectNoDifference(queueBefore, []); expectNoDifference(sentBefore, [])
+        #expect(f.model.isConversationWorking(peer.id))
+        if mode == "origin-stop" { await f.model.stopGroup(id: group.id) }
+        if mode == "target-stop" { f.model.selectRoute(.conversation(peer.id)); f.model.cancel() }
+        if mode == "account" { await f.model.cancelAutoReviewApprovals(nextAccountID: "other") }
+        if mode == "revoke" || mode == "revoke-regrant" {
+            let binding = try #require(f.model.automationGroupBindings.first)
+            await f.model.revokeRoutineGroupSession(binding)
+            if mode == "revoke-regrant" {
+                let edit = try #require(f.model.beginRoutineGroupSessionEdit(automation))
+                try #require(await f.model.saveRoutineGroupSession(edit, groupID: group.id, memoryAccess: .none))
+                #expect(f.model.automationGroupBindings.first?.id != binding.id)
+            }
+        }
+        if mode == "definition-ABA" {
+            await f.model.setAutomationEnabled(id: automation.id, enabled: false)
+            await f.model.setAutomationEnabled(id: automation.id, enabled: true)
+        }
+        if mode == "delete" { await f.model.deleteAutomation(id: automation.id) }
+        if mode == "membership-ABA" {
+            await f.model.updateGroupMembers(groupID: group.id, memberIDs: [f.owner.id, f.peer.id])
+            await f.model.updateGroupMembers(groupID: group.id, memberIDs: group.memberIDs)
+        }
+        if mode == "peer-persona-ABA" {
+            let index = try #require(f.model.agents.firstIndex { $0.id == f.peer.id })
+            let instructions = f.model.agents[index].instructions
+            f.model.agents[index].instructions = "CHANGED_ROUTINE_PEER_PERSONA"
+            f.model.agents[index].instructions = instructions
+        }
+        if mode == "target-ABA" || mode == "target-hidden-ABA" {
+            let index = try #require(f.model.conversations.firstIndex { $0.id == peer.id })
+            if mode == "target-ABA" {
+                let binding = f.model.conversations[index].agentBinding
+                f.model.conversations[index].agentBinding = nil
+                f.model.conversations[index].agentBinding = binding
+            } else {
+                f.model.conversations[index].hiddenAt = date
+                f.model.conversations[index].hiddenAt = nil
+            }
+        }
+        if mode == "connection" { try await f.channels.setConnectionEnabled(id: f.peerConnection.id, enabled: false) }
+        if mode == "navigation" { f.model.selectRoute(.conversation(otherID)) }
+        await f.model.resolveGroupApproval(review, groupID: group.id, approve: mode != "deny")
+        await work.value
+        let deliveries = await f.channels.deliveries()
+        let succeeds = mode == "approve" || mode == "navigation"
+        let expectedQueue: [ChannelDelivery]
+        if succeeds {
+            let actual = try #require(deliveries.first), origin = try #require(actual.origin)
+            expectedQueue = [ChannelDelivery(id: actual.id, connectionID: f.peerConnection.id,
+                address: .init(platform: "slack", channelID: "C_PEER"), outbound: .init(text: "EXACT_PEER_EXTERNAL_RESULT"),
+                idempotencyKey: actual.idempotencyKey, nextAttemptAt: actual.nextAttemptAt, createdAt: actual.createdAt,
+                authorization: .init(ownerAccountID: "local", agentID: f.peer.id,
+                    configurationRevision: try #require(actual.authorization).configurationRevision),
+                origin: .init(route: .directConversation, conversationID: peer.id, senderID: peer.id,
+                    senderName: f.peer.name, runID: origin.runID, callID: "peer-channel",
+                    intent: .init(kind: .text, text: "EXACT_PEER_EXTERNAL_RESULT")))]
+        } else { expectedQueue = [] }
+        expectNoDifference(deliveries, expectedQueue)
+        var expectedHistory = before
+        let index = try #require(expectedHistory.firstIndex { $0.id == peer.id })
+        for queued in expectedQueue {
+            let publication = try #require(ChannelTranscriptProjection.publication(for: queued))
+            expectedHistory[index].messages.append(publication.directMessage)
+            expectedHistory[index].updatedAt = max(expectedHistory[index].updatedAt, publication.queuedAt)
+        }
+        DirectMessageAddressing.assignMissing(in: &expectedHistory[index])
+        expectedHistory.sort { $0.updatedAt > $1.updatedAt }
+        let saved = try await store.load()
+        expectNoDifference(saved, try persistedConversations(expectedHistory))
+        let requests = await f.probe.requests
+        expectNoDifference(requests.count, 2)
+        let peerRequest = try #require(requests.last)
+        let contexts = try AgentConversationStore(url: f.root.appending(path: "agent-conversations.json"))
+        let context = try #require(await contexts.existingContext(accountID: "local", originID: group.id, agentID: f.peer.id))
+        expectNoDifference(peerRequest.conversationID, context.conversationID)
+        expectNoDifference(context.transcriptConversationID, peer.id)
+        expectNoDifference(context.projectionConversationID, existing ? peer.id : nil)
+        #expect(peerRequest.conversationID != group.id)
+        if existing { #expect(peerRequest.conversationID != peer.id) }
+        #expect(peerRequest.messages.allSatisfy { !$0.text.contains("ROUTINE_HOST_PRIVATE")
+            && !$0.text.contains("SOURCE_GROUP_PRIVATE") && !$0.text.contains("UNRELATED_PRIVATE_HISTORY")
+            && !$0.text.contains("EXISTING_PEER_PRIVATE_HISTORY") && !$0.text.contains("OWNER_PRIVATE_PERSONA") })
+        #expect(peerRequest.messages.first?.text.contains("PEER_PRIVATE_PERSONA") == true)
+        let persistedRoutines = try AutomationService(storeURL: f.root.appending(path: "automations.json"))
+        let run = try #require(await persistedRoutines.history(automationID: automation.id).first)
+        if succeeds { expectNoDifference(run.status, .ok) }
+        if ["origin-stop", "target-stop", "revoke", "revoke-regrant", "definition-ABA", "delete", "account"].contains(mode) {
+            expectNoDifference(run.status, .cancelled)
+        }
+        expectNoDifference(run.trigger, scheduled ? .schedule : .manual)
+        let seed = try #require(f.model.groupMessages[group.id]?.first { $0.routineWake != nil })
+        expectNoDifference(seed.routineWake?.runID, run.id)
+        expectNoDifference(seed.text, automation.prompt)
+        expectNoDifference(f.model.groupMessages[group.id]?.compactMap(\.externalPublication) ?? [], [])
+        expectNoDifference(f.model.pendingAutoReviewApprovals, [])
+        #expect(!f.model.runningGroups.contains(group.id) && !f.model.isConversationWorking(peer.id))
+        let sent = await f.probe.sent
+        expectNoDifference(sent, [])
+        let reopened = try await ConversationStore(fileURL: f.root.appending(path: "conversations.json")).load()
+        expectNoDifference(reopened, saved)
+        let encoder = JSONEncoder(), decoder = JSONDecoder()
+        encoder.dateEncodingStrategy = .millisecondsSince1970; decoder.dateDecodingStrategy = .millisecondsSince1970
+        let expectedDurableQueue = try decoder.decode([ChannelDelivery].self, from: encoder.encode(expectedQueue))
+        let durableQueue = try await ChannelService(storeURL: f.root.appending(path: "channels.json")).deliveries()
+        expectNoDifference(durableQueue, expectedDurableQueue)
     }
 
     @Test(arguments: [("question", false), ("question", true), ("secret", false), ("secret", true)],

@@ -1,5 +1,17 @@
 # 協作能力核對紀錄（更新至 2026-10-06）
 
+## 已審閱排程群組的收件成員送件
+
+本批最後完整 v2 exit 0：2,153 Swift Testing／257 suites＋135 XCTest／0 failures，App 795 tests／102 suites；arm64 Debug native／native verify、全新 standalone Debug 封裝／簽章通過。首次完整的既有日文附件卡 `agentMessage` nil issue 與單項診斷保留；後續原 14 cases 加強 exact live review 前後比較後通過，但沒有確認首次原因，不宣稱已修復。兩項 opt-in live tests skipped，既有 SDK／CoreData／CG／compiler 診斷保留；Debug／ad-hoc 不是 release／公證。
+
+2026-10-06 接續 `51cefd3`；reference HEAD `a9f633e09d49a85829b8236331b9e21f7e612634` 的 actual recipient session／hidden peer wake／own chat 語義已再核對。已驗證 consent、canonical definition／account／membership 並 admitted 的 routine group，現在明確提供 actual peer channel host，不讓 inbound／未審閱 routine 或選取畫面借用能力。每次送件另問人類；review 留來源 group，連線、canonical author／destination／typed receipt 使用實際收件成員。新聊天與既有 DM 的 private context／projection mapping 分開，不複製來源群組／routine／其他或既有 DM 私人 history。
+
+factory 捕捉 admitted routine execution lease，child queue／transcript commit 繼承它及原 account fence，不在 await 後重取 grant。exact membership／unique binding／publication lifetime 保留；Stop、revoke/regrant、definition／account 變更拒絕舊核准。runner 結束清 exact-session peer Stop mapping／origin mailbox scopes；queued siblings 及舊 non-cooperative callback 不影響 fresh 同 group run。非跨 process CAS、跨 stores atomicity 或已 admitted I/O 的召回。
+
+新增 80 actual App cases，manual／schedule × 新／既有 DM，涵蓋逐次 approval／deny、origin／target Stop、revoke/regrant、definition ABA／delete、account、membership／persona／binding／hidden ABA、connection／navigation、fresh run／late callback，以及未審閱 routine 不借 host。假 connector sent 為空；完整 canonical history／addresses／queue／origin／authorization／run history／reopen 比較。最後聚焦 core／store 14 methods／2 suites＋App 32 methods／2 suites通過，App mailbox suite 17 methods／364 cases；七語各 1,817 keys／0 missing。有效產品 red、早期 fixture 假設與正式完整／native／standalone gates 均見 [完成驗收入口](Parity-completion-audit.md)。
+
+只取代已審閱 routine group 的 manual／scheduled single-peer text channel host 缺口；inbound／其他 background host、background 附件／卡片恢復入口、其餘 failure follow-up、uncaptured source 新核准開啟、unified private DM/group runtime，以及 live／真人／VoiceOver／最低 macOS／release／公證仍未完成。AGENT-02／AGENT-04／UI-04／整體 partial、48 分類不變；未 push／launch／重啟 App 或 Xcode／改真實資料。
+
 ## 手動成員問答／安全輸入卡片的原生恢復
 
 2026-10-06 接續 `706f508`；reference HEAD `a9f633e09d49a85829b8236331b9e21f7e612634`，`widget-responses.ts` 的 fresh human turn／actual agent／credential value 不進對話語義已核對。foreground manual nil-binding 卡片現在接到真正 own-DM callback，fresh question／secret response 以完整 saved card、unique durable owner、existing private context、account generation／目前 personas 明確重新取得 channel host，而非沿用原送件核准。刪除／隱藏／換 owner 停用卡片；問答重建後仍可經同樣驗證回答，pending secret 重建仍退休，不恢復 writer 或 grant。

@@ -548,7 +548,7 @@ private struct AttachmentFixtureProvider: AIProvider {
             try await eventually { !model.pendingAutoReviewApprovals.isEmpty || finished }
             let source = try #require(model.pendingAutoReviewApprovals.first)
             for dark in [false, true] {
-                try await renderCard(model: model, groupID: group.id, language: language, width: width, dark: dark,
+                try await renderCard(model: model, groupID: group.id, approval: source, language: language, width: width, dark: dark,
                     stage: "source", markers: ["MARKER_SOURCE_report", "signature=", "%2Bb"],
                     notices: ["Download this attachment source?", "Downloading does not authorize sending the file to a channel."])
             }
@@ -568,7 +568,7 @@ private struct AttachmentFixtureProvider: AIProvider {
                 #expect(details.contains("\n유형: image/png\n"))
             }
             for dark in [false, true] {
-                try await renderCard(model: model, groupID: group.id, language: language, width: width, dark: dark,
+                try await renderCard(model: model, groupID: group.id, approval: send, language: language, width: width, dark: dark,
                     stage: "send", markers: ["BEGIN CAPTION", "END CAPTION", "C_FILES", "MARKER_SOURCE_report", "SHA-256", "EXCLUDED_IMAGE", "EXCLUDED ALT"],
                     notices: ["Queue this message to an external channel?", "Only the first image is sent to the channel. The remaining images are not sent.", "Queued is not delivered. Stop does not recall a queued message."])
             }
@@ -580,10 +580,13 @@ private struct AttachmentFixtureProvider: AIProvider {
         }
     }
 
-    private func renderCard(model: AppModel, groupID: UUID, language: String, width: Double, dark: Bool,
+    private func renderCard(model: AppModel, groupID: UUID, approval: PendingApproval, language: String, width: Double, dark: Bool,
         stage: String, markers: [String], notices: [String]) async throws {
         try await withUIRenderTurn(language: language) {
-            let details = try #require(model.pendingAutoReviewApprovals.first?.action.context.metadata["agentMessage"])
+            let pending = try #require(model.pendingAutoReviewApprovals.first,
+                Comment(rawValue: "Missing \(stage) review before \(language)/\(width)/\(dark ? "dark" : "light") render; active: \(model.runningGroups.contains(groupID)); error: \(model.errorMessage ?? "none"); messages: \(model.groupMessages[groupID] ?? [])"))
+            expectNoDifference(pending, approval)
+            let details = try #require(pending.action.context.metadata["agentMessage"])
             for notice in notices {
                 #expect(details.contains(FiliconLocalization.string(notice)))
                 if language != "en" { #expect(FiliconLocalization.string(notice) != notice) }
@@ -616,6 +619,9 @@ private struct AttachmentFixtureProvider: AIProvider {
                 try #require(bitmap.representation(using: .png, properties: [:]))
                     .write(to: directory.appending(path: "channel-attachment-\(stage)-\(language)-\(Int(width))-\(dark ? "dark" : "light").png"))
             }
+            // Drawing must preserve the exact live review, not merely render
+            // whichever approval happened to be first after a queue turn.
+            expectNoDifference(model.pendingAutoReviewApprovals, [approval])
         }
     }
 
