@@ -1,5 +1,35 @@
 # 完成驗收入口（2026-09-27）
 
+## 收件卡片保存後、推論前的取消邊界（2026-10-08，增量已驗證）
+
+`8cabff3` 已提交，下節最後完整與建置 gate 是該提交的證據。後續新增實際 incoming → 原生問答／安全輸入／取消輸入 → 真人 callback 保存的 1 method／起初 18 cases，使用既有 quota `afterCommitPersist` hook 暫停於真正 SQLite 保存之後；測 Stop、切帳號、binding／persona ABA、隱藏與 connection ABA，最後另補 callback task cancellation 為 21 cases。只退休本次 queued assistant、保留已保存的本機回答或無 secret 值收據、不啟動推論／review／外部送件、不覆寫原資料。下方保留先前 compile-only、實際 red 及修正後 runtime 證據；測試檔存在或程式碼推測不算完成。
+
+`inbound-card-callback-boundary-red-v1.log` build complete 12.28 秒，但當時測試尚未執行：唯讀確認 `IOConsoleLocked=Yes`，已透過本次 exec session 34356 中止，exit 130。這是受保護 stores 的環境前置條件，不算產品 red／green；未移除 `.completeFileProtectionUnlessOpen`、未停止使用者 App／Xcode、未改真實資料。當時新測試尚未提交，待解鎖後跑真正邊界測試再決定修正。整體 parity 仍 partial。
+
+當時 fixtures 另由 `inbound-card-callback-compile-only-v2.log` exit 0 編譯（9.37 秒，`swift build --build-tests`，沒有執行測試）；既有 compiler／macro warnings 保留，不宣稱 warning-free。`git diff --check` 通過。這些都不能替代受保護 stores 的 runtime gate，當時沒有新增產品 source 修正或 push。
+
+最新「繼續」後唯讀確認 `IOConsoleLocked=No` 才重跑。`inbound-card-callback-boundary-red-v3.log` exit 1（1 method／18 cases，25.796 秒／39 issues）有 18 個 fixture 沒按既有 addressing allocator 保存 response alias reservation 的差異，已用原 allocator 補完整 expected state，沒有改 runtime allocation 或省略欄位。另有 15 個實際終態差異，及三個 account cases 的 busy 逾時／拋錯，不能全歸為 fixture。`inbound-card-callback-boundary-red-v4.log` exit 1（3.623 秒／21 issues）移除 fixture 錯誤後，18 個 canonical cases 仍失敗：Stop／binding／persona／hidden 的 queued acknowledgment 未取消，connection ABA 把已保存回答／收據回滾；切帳號另有三個忙碌狀態未清掉。沒有環境 store EPERM，這是產品 red。
+
+修正於建立 callback acknowledgment 時記錄實際 assistant UUID，不等到 `startTurn`。正常保存完成後的 proof failure／取消僅使用原 canonical binding 的 storage-only retirement；不能靠失效 lease 保存舊 UI snapshot、取消另一個 owner、回復 inference 或重新送件。已保存回答／value-free credential receipt 保留；正常 live scope 的 quota save error 仍走原 rollback／retry。切帳號先清除尚未有 turn task 的該舊 callback busy marker，晚到的 cleanup 只能清除仍是同一個 continuation 的 marker，不清掉較新帳號工作。沒有新增一般 parser／connection grant、沒有 UI／catalog／Package 修改。
+
+修正後 `inbound-card-callback-focused-v5.log` exit 1：核心 10 tests／2 suites、channel 11／1 通過，App 17／3 中新增 18 cases 通過（3.560 秒），但舊收件／failure entry 有 38 issues，實際是測試程序無法聯絡 macOS `ScopedBookmarksAgent`（NSCocoaErrorDomain 256），不能把新測試 green 當成整批通過。原生執行 `inbound-card-callback-bookmark-native-v6.log` 也有 4 cases 的等待核准逾時／8 issues，保留而不猜測產品原因；加入只顯示隔離 fixture 工具結果的失敗診斷後，預設 sandbox 的 `inbound-card-callback-bookmark-diagnostic-v7.log` 仍在 bookmark 服務處失敗（4 issues）。未放寬 folder scope、檔案保護、核准、fixtures 或斷言。
+
+同一產品 source 由原生 `inbound-card-callback-bookmark-native-diagnostic-v8.log` exit 0 通過 4 cases（0.818 秒），再由 `inbound-card-callback-focused-native-v9.log` exit 0 通過全部 38 tests／6 suites：核心 10／2（0.067 秒）、channel 11／1（0.228 秒）、App 17／3（17.118 秒）。上述窄版失敗不能逕認為已發現並修正另一個 folder／XPC 產品缺陷；最後 gate 明確允許隔離測試程序使用 macOS 原生授權服務，未操作使用者 App 或真實帳號。
+
+最後補 callback task cancellation，不新增產品修正。檔名保留 `inbound-card-callback-task-cancel-red-v10.log`，但實際是 exit 0／1 method／21 cases（2.376 秒，編譯 51.05 秒），**不是另一個產品 red**。原生 human callback 被取消後，既有取消檢查加本批精確退休仍保留 accepted answer／value-free receipt，沒有推論、review 或外部送件；重開完整 canonical rows／inbound runs 相同。這輪窄版完成時整批完整測試、Xcode／獨立 App 包裝 gate 尚待驗，未以先前提交 gate 代替；後續本批最後 gate 見下文。整體仍 partial，外部真人／帳號／release 與下節未完成邊界不縮減。
+
+`inbound-card-callback-full-final-v1.log` exit 1：核心 1,043／117 suites 通過，新取消 21 cases 通過（3.151 秒），App 全 813／103 suites 跑完（582.440 秒），唯一 issue 是既有 `anActivityCheckIsActuallyVisibleInsideItsOwnersChat` 的渲染／OCR 路徑拋 `.nilError`。沒有移除該案例、修改產品／fixture 或縮小 filter；`inbound-card-callback-spend-guard-render-v1.log` 原生單獨重驗 exit 0／1 test／1 suite（0.737 秒），並實際檢視其輸出 `InboundCardCallbackSpendGuardRender/spend-guard-owner-chat.png`，原 owner 的 activity card／Resume／Stay paused 正常可見。這只能證明窄版未重現，不能聲稱已診斷或修正 `.nilError`；第一輪完整失敗保留，另以同一編譯來源重跑無 filter 的最後完整 gate。
+
+`inbound-card-callback-full-final-v2.log` exit 0：全部 17 個 Swift Testing bundles 合計 2,189 tests／261 suites，另 17 個 XCTest bundles 合計 135 tests／0 failures。App 813／103 suites（441.833 秒）、核心 1,043／117 suites（51.664 秒）；原畫面測試在完整 run 通過（0.493 秒），新取消 method 的全部 21 cases 通過（2.114 秒）。兩項 opt-in live Codex tests skipped，既有 CoreData／NSXPC 診斷保留，不算 live gate 或 warning-free。沒有選取某幾個 green tests 拼成全套，也沒有用上一個提交的 gate 代替。
+
+原生建置首輪 `inbound-card-callback-native-final-v1.log` 在 sandbox 中以 exit 66 拒絕 workspace，第二輪改用已核對的 project，`inbound-card-callback-native-final-v2.log` exit 74 明確是標準 SwiftPM manifest 診斷 cache 寫入 `Operation not permitted`，均未完成新 source 的原生編譯，不是產品 green。唯讀已核對 root workspace XML 指向正確的 `Filicon.xcodeproj`，沒有改 project／workspace／檔案保護；接續使用原 workspace、既有隔離 `ChannelInboundNativeV3` DerivedData 與獲准的 cache 存取重驗。
+
+最後 `inbound-card-callback-native-final-v3.log` exit 0／`BUILD SUCCEEDED`：arm64 原生 Debug 增量建置，明確重新編譯本批 `AppModel.swift`，不是 fresh DerivedData。`inbound-card-callback-native-verify-final-v1.log` exit 0 驗證該 App 的 version 0.1.0／build 1、四個 executable、app／XPC entitlements、KaTeX 0.16.45／20 fonts、Mermaid 11.16.0／72 notices 與 deep strict codesign。
+
+`inbound-card-callback-package-final-v1.log` exit 0：事先確認不存在的新 `InboundCardCallbackPackageV1/Filicon.app` bundle，由 SPM Debug 增量建置四個 products（12.30／1.13／0.80／1.35 秒）並封裝；腳本內 verify 及獨立 `inbound-card-callback-package-verify-final-v1.log` 均 exit 0，同樣通過四個 executable／entitlements／離線資源／deep strict codesign。`inbound-card-callback-localization-final-v1.log` exit 0：七語各 1,817 keys／0 missing，沒有新增 UI／catalog／Package。原 native notes／macro／CoreData 診斷保留；Debug／ad-hoc gate 不是 Developer ID release／公證，沒有執行印出的 launch smoke。日誌、隔離截圖、DerivedData 與新 bundle 只保留於忽略的 `.build/validation/`，沒有清理或刪除既有資料。
+
+本批以 Swift Testing／CustomDump 技能保留完整持久化值、實際來源與重開比對，修正 `8cabff3` 尚未覆蓋的 admitted 純文字 incoming 卡片 callback **保存後、推論前中止**。正常 scope 的原有 quota rollback／retry 回歸通過，但不把普通前景測試當成 incoming 保存失敗／連續卡片的全覆蓋；那些入口仍待獨立驗收。其餘 incoming 附件／圖片、其他 background／failure hosts、priority preemption redrive／hidden reply nudge、unified private DM／group runtime，以及真人／VoiceOver／最低 macOS／live／release／公證仍未完成；48 分類（42 個歷史 complete／5 partial／1 NA）與整體 partial 不變。reference HEAD 仍為 `a9f633e09d49a85829b8236331b9e21f7e612634`。本批隨修正提交，不 push、不啟動／重啟使用者 App 或 Xcode，不改真實帳號／群組／聊天資料。
+
 ## 收件原生卡片真人續接（2026-10-07，增量已驗證）
 
 接續 `a85ccb5`，隨本批提交。新 source 保存 credential-free run／message locator，真人 callback 重新驗證原 native receipt／canonical owner／current account／persona／provider／model／connection，發新 lease，不恢復舊 inbound execution。只對核對成功的 exact destination 保留 typed thread；一般 first-colon parser 未變。每次 external publication 仍須 fresh native human review；重開 pending secret 不建立 live writer。

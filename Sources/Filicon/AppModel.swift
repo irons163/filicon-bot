@@ -2159,6 +2159,32 @@ final class AppModel: ObservableObject {
         if directChannelLifetimes[value.conversationID] === value.lifetime { directChannelLifetimes[value.conversationID] = nil }
     }
 
+    /// A human callback can commit before its supervised inference task exists.
+    /// Cancel only that native acknowledgment; an invalidated lease must not
+    /// roll back an accepted answer/credential receipt through a stale snapshot.
+    private func retireUnstartedDirectChannelCardContinuation(_ value: DirectChannelCardContinuation) async {
+        value.close()
+        defer {
+            if directChannelCardScopes[value.conversationID] === value { running.remove(value.conversationID) }
+        }
+        guard let runID = value.runID, let binding = value.bindingLease?.binding else { return }
+        do {
+            if let retired = try await store.retireActivityAcknowledgment(conversationID: value.conversationID,
+                runID: runID, expectedBinding: binding, reviewIDs: []),
+               value.generation == autoReviewAccountGeneration, binding.accountID == (settings.accountScope ?? "local"),
+               directChannelCardScopes[value.conversationID] === value,
+               let ci = conversations.firstIndex(where: { $0.id == value.conversationID }), conversations[ci].agentBinding == binding,
+               let mi = conversations[ci].messages.firstIndex(where: { $0.id == runID }),
+               retired.messages.contains(where: { $0.id == runID && $0.deliveryStatus == .cancelled }) {
+                conversations[ci].messages[mi].deliveryStatus = .cancelled
+                conversations[ci].messages[mi].deliveryError = nil
+            }
+        } catch {
+            if value.generation == autoReviewAccountGeneration, binding.accountID == (settings.accountScope ?? "local"),
+               directChannelCardScopes[value.conversationID] === value { errorMessage = error.localizedDescription }
+        }
+    }
+
     private func checkDirectChannelCardContinuation(_ value: DirectChannelCardContinuation) throws {
         try value.lease.check(); try value.lifetime.check()
         if let binding = value.bindingLease { try binding.withValidBinding {} }
@@ -2249,11 +2275,13 @@ final class AppModel: ObservableObject {
         let generation = autoReviewAccountGeneration
         let account = settings.accountScope ?? "local"
         var insertedIDs = Set<UUID>()
+        var answerWasPersisted = false
         do {
             if let continuation { try await prepareDirectChannelCardContinuation(continuation, messageID: messageID, card: original) }
             let reply = try question.question.reply(for: answer)
             let user = ChatMessage(role: .user, text: reply, replyToMessageID: messageID)
             let assistant = ChatMessage(role: .assistant, text: "", deliveryStatus: .queued)
+            continuation?.runID = assistant.id
             question.answer = answer
             question.responseMessageID = user.id
             var resolved = original
@@ -2267,17 +2295,26 @@ final class AppModel: ObservableObject {
             insertedIDs = [user.id, assistant.id]
             loadedMessageIDs[id, default: []].formUnion(insertedIDs)
             try await persistOrThrow(conversationID: id)
+            answerWasPersisted = true
             if let continuation { try await validateDirectChannelCardContinuation(continuation) }
             guard generation == autoReviewAccountGeneration, account == (settings.accountScope ?? "local"),
                   !agentMessagingAccountTransition, running.contains(id),
                   let current = conversations.first(where: { $0.id == id }),
-                  current.messages.contains(where: { $0.id == assistant.id }) else { return }
+                  current.messages.contains(where: { $0.id == assistant.id }) else {
+                if let continuation { await retireUnstartedDirectChannelCardContinuation(continuation) }
+                return
+            }
             startTurn(conversationID: id, assistantID: assistant.id,
                 requestMessages: current.messages.filter { $0.id != assistant.id },
                 modelID: current.modelID, providerID: current.providerID, reasoningEffort: current.reasoningEffort,
                 cardContinuation: continuation)
             handedOff = true
         } catch {
+            if let continuation, continuation.runID != nil,
+               answerWasPersisted || Task.isCancelled || (try? checkDirectChannelCardContinuation(continuation)) == nil {
+                await retireUnstartedDirectChannelCardContinuation(continuation)
+                return
+            }
             if generation == autoReviewAccountGeneration, account == (settings.accountScope ?? "local"),
                let ci = conversations.firstIndex(where: { $0.id == id }) {
                 if !insertedIDs.isEmpty {
@@ -5511,14 +5548,22 @@ final class AppModel: ObservableObject {
         let response = ChatMessage(id: context.responseID, role: .user, text: acknowledgement,
             createdAt: context.createdAt, replyToMessageID: context.messageID)
         let assistant = ChatMessage(id: context.assistantID, role: .assistant, text: "", deliveryStatus: .queued)
+        continuation?.runID = assistant.id
         running.insert(conversationID)
         conversations[ci].messages[mi].transcriptCards[ki] = card
         conversations[ci].messages.append(contentsOf: [response, assistant])
         loadedMessageIDs[conversationID, default: []].formUnion([response.id, assistant.id])
+        var answerWasPersisted = false
         do {
             try await persistOrThrow(conversationID: conversationID)
+            answerWasPersisted = true
             if let continuation { try await validateDirectChannelCardContinuation(continuation) }
         } catch {
+            if let continuation,
+               answerWasPersisted || Task.isCancelled || (try? checkDirectChannelCardContinuation(continuation)) == nil {
+                await retireUnstartedDirectChannelCardContinuation(continuation)
+                throw error
+            }
             if context.generation == autoReviewAccountGeneration,
                let ci = conversations.firstIndex(where: { $0.id == conversationID }) {
                 conversations[ci].messages.removeAll { $0.id == response.id || $0.id == assistant.id }
@@ -5534,6 +5579,10 @@ final class AppModel: ObservableObject {
         guard context.generation == autoReviewAccountGeneration, directSecretContexts[id] != nil,
               !agentMessagingAccountTransition, running.contains(conversationID),
               let current = conversations.first(where: { $0.id == conversationID }) else {
+            if let continuation {
+                await retireUnstartedDirectChannelCardContinuation(continuation)
+                throw CancellationError()
+            }
             if context.generation == autoReviewAccountGeneration {
                 running.remove(conversationID)
                 setDeliveryStatus(.cancelled, conversationID: conversationID, assistantID: assistant.id)
@@ -12615,7 +12664,13 @@ final class AppModel: ObservableObject {
         for context in externalAttachmentPreviewContexts.values { context.close() }
         externalAttachmentPreviewContexts.removeAll()
         for lifetime in directChannelLifetimes.values { lifetime.close() }
-        for value in directChannelCardScopes.values { value.close() }
+        for value in directChannelCardScopes.values {
+            value.close()
+            // No turn task exists yet during the card callback's durable save.
+            // Clear its old busy marker before this account can start new work;
+            // late callback cleanup must not clear a newer account's marker.
+            if value.runID != nil, turnTasks[value.conversationID] == nil { running.remove(value.conversationID) }
+        }
         directChannelCardScopes.removeAll()
         for lease in sidebarSettingsLeases.values { lease.close() }
         for lifetime in manualSidebarChanges.values { lifetime.close() }

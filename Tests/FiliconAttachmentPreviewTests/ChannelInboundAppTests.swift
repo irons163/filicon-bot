@@ -67,6 +67,30 @@ private final class AppInboundRegistryBarrier: @unchecked Sendable {
     }
     func open() { release.signal() }
 }
+/// Pauses the native quota commit after the callback's SQLite write. This is
+/// not an injected card runner: the real incoming listener and human callback
+/// still create, prove and persist every row before the scope is invalidated.
+private final class AppInboundCardCommitBarrier: @unchecked Sendable {
+    private let lock = NSLock()
+    private let release = DispatchSemaphore(value: 0)
+    private var armed = false
+    private var entered = false
+    private var expired = false
+    var isWaiting: Bool { lock.withLock { entered } }
+    var timedOut: Bool { lock.withLock { expired } }
+    func arm() { lock.withLock { armed = true } }
+    func inject(_ point: StorageQuotaFaultPoint) throws {
+        let shouldWait = lock.withLock {
+            guard armed, point == .afterCommitPersist else { return false }
+            armed = false; entered = true; return true
+        }
+        if shouldWait, release.wait(timeout: .now() + 10) == .timedOut {
+            lock.withLock { expired = true }
+            throw CocoaError(.fileWriteUnknown)
+        }
+    }
+    func open() { release.signal() }
+}
 private struct AppInboundBarrierProvider: AIProvider {
     let gate: AppInboundRegistryBarrier
     var descriptor: ProviderDescriptor {
@@ -187,7 +211,8 @@ private struct AppInboundProvider: InteractiveToolProvider {
         let probe: AppInboundProbe
         let other: Conversation
     }
-    private func fixture(existing: Bool = true, mode: String = "reply", existingPeer: Bool = false) async throws -> Fixture {
+    private func fixture(existing: Bool = true, mode: String = "reply", existingPeer: Bool = false,
+                         quotaFaultInjector: @escaping StorageQuotaLedger.FaultInjector = { _ in }) async throws -> Fixture {
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-inbound-app-\(UUID())")
         let agents = try AgentService(storeURL: root.appending(path: "agents.json"))
         let owner = try await agents.create(name: "Original inbound owner", instructions: "INBOUND_OWNER_PERSONA", providerID: "app-inbound-fixture", modelID: "fixture", at: date)
@@ -221,6 +246,7 @@ private struct AppInboundProvider: InteractiveToolProvider {
         }
         let feed = AppInboundFeed(), probe = AppInboundProbe()
         let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false,
+            quotaFaultInjector: quotaFaultInjector,
             channelService: service, channelConnectors: [AppInboundConnector(feed: feed, probe: probe, failsSends: mode.hasPrefix("failure-"))])
         await model.registry.register(AppInboundProvider(probe: probe, peerID: peer.id, mode: mode))
         await model.bootstrap(); await model.setAutomationRuntimeActive(false); model.setWorkflowRuntimeActive(false)
@@ -259,7 +285,12 @@ private struct AppInboundProvider: InteractiveToolProvider {
             expectNoDifference(deliveries, []); expectNoDifference(sent, [])
             try await f.model.workspaceFolders.resolve(folder, selectedURL: f.root)
         }
-        try await eventually { f.model.pendingAutoReviewApprovals.contains { $0.id != id } }
+        do { try await eventually { f.model.pendingAutoReviewApprovals.contains { $0.id != id } } }
+        catch {
+            let results = await f.probe.results
+            Issue.record("The isolated native send review was not reached. Tool results: \(String(customDumping: results)); app error: \(f.model.errorMessage ?? "none")")
+            throw error
+        }
         return try #require(f.model.pendingAutoReviewApprovals.first { $0.id != id })
     }
     private func storedPendingCard(_ pending: PendingApproval, in store: ConversationStore) async throws -> Conversation {
@@ -809,6 +840,120 @@ private struct AppInboundProvider: InteractiveToolProvider {
         let reopenedRuns = await reopened.inboundRuns()
         expectNoDifference(reopenedRuns, [try persistedChannel(run)])
         let runs = await f.service.inboundRuns(); expectNoDifference(runs, [run])
+        #expect(!String(decoding: try JSONEncoder().encode(after), as: UTF8.self).contains("FAKE_INBOUND_NATIVE_ONLY_SECRET"))
+        try await assertUnrelatedUntouched(f)
+    }
+
+    @Test(arguments: ["question", "secret", "secret-dismiss"], ["stop", "callback-cancel", "account", "binding-aba", "persona-aba", "hidden", "connection-aba"])
+    func incomingCardCommittedAnswerCannotLeaveQueuedRunBeforeInference(kind: String, mutation: String) async throws {
+        let gate = AppInboundCardCommitBarrier()
+        let f = try await fixture(mode: kind == "question" ? "card-question" : "card-secret",
+                                  quotaFaultInjector: { try gate.inject($0) })
+        defer { gate.open(); f.feed.finish(); try? FileManager.default.removeItem(at: f.root) }
+        let writer = AppInboundSecretWriter(); f.model.secretCredentialWriter = writer.write
+        f.feed.emit(event(f)); let run = try await settle(f)
+        let store = ConversationStore(fileURL: f.root.appending(path: "conversations.json"))
+        let before = try #require(try await store.conversation(id: run.conversationID))
+        let message = try #require(before.messages.first { $0.transcriptCards.contains { $0.directChannelInboundOrigin != nil } })
+        let card = try #require(message.transcriptCards.first { $0.directChannelInboundOrigin != nil })
+        let requests = await f.probe.requests
+        expectNoDifference(requests.count, 1)
+        f.model.selectRoute(.conversation(run.conversationID))
+        let input: AgentSecretRequestCardModel?
+        if kind == "question" { input = nil }
+        else { input = try #require(f.model.directSecretCard(conversationID: run.conversationID, messageID: message.id, cardID: card.id)) }
+        input?.draft = "FAKE_INBOUND_NATIVE_ONLY_SECRET"
+        gate.arm()
+        let callback = Task { @MainActor in
+            if kind == "question" {
+                await f.model.directQuestionAnswered(conversationID: run.conversationID, messageID: message.id, cardID: card.id, answer: .option(0))
+            } else if kind == "secret-dismiss" { await input?.dismissButtonTapped() }
+            else { await input?.submitButtonTapped() }
+        }
+        defer { callback.cancel() }
+        try await eventually { gate.isWaiting }
+        let awaiting = try #require(try await store.conversation(id: run.conversationID))
+        let additions = Array(awaiting.messages.dropFirst(before.messages.count))
+        expectNoDifference(additions.count, 2)
+        let response = try #require(additions.first { $0.role == .user })
+        let assistant = try #require(additions.first { $0.role == .assistant })
+        let resolved = try #require(awaiting.messages.first { $0.id == message.id }?.transcriptCards.first { $0.id == card.id })
+        expectNoDifference(assistant, ChatMessage(id: assistant.id, role: .assistant, text: "",
+            createdAt: assistant.createdAt, deliveryStatus: .queued, shortAddress: assistant.shortAddress))
+        var expectedCard = card
+        #expect(resolved.updatedAt >= card.updatedAt && resolved.updatedAt <= Date())
+        expectedCard.updatedAt = resolved.updatedAt
+        let text: String
+        if kind == "question" {
+            var question = try #require(card.directQuestion)
+            question.answer = .option(0); question.responseMessageID = response.id
+            expectedCard.lifecycle = .succeeded
+            expectedCard.payload = .widget(.init(title: question.question.prompt, widgetKind: "choice", question: question,
+                channelInboundOrigin: card.directChannelInboundOrigin))
+            text = "LOCAL_NATIVE_CARD_CHOICE"
+        } else {
+            var request = try #require(card.directSecretRequest)
+            try request.resolve(provided: kind == "secret", responseMessageID: response.id)
+            expectedCard.lifecycle = kind == "secret" ? .provided : .cancelled
+            expectedCard.payload = .secretRequest(.init(requestID: request.requestID.uuidString, service: request.request.connector,
+                directRequest: request, channelInboundOrigin: card.directChannelInboundOrigin))
+            text = try #require(request.acknowledgement)
+        }
+        expectNoDifference(resolved, expectedCard)
+        expectNoDifference(response, ChatMessage(id: response.id, role: .user, text: text,
+            createdAt: response.createdAt, replyToMessageID: message.id, shortAddress: response.shortAddress))
+        var expectedAwaiting = before
+        let mi = try #require(expectedAwaiting.messages.firstIndex { $0.id == message.id })
+        let ki = try #require(expectedAwaiting.messages[mi].transcriptCards.firstIndex { $0.id == card.id })
+        expectedAwaiting.messages[mi].transcriptCards[ki] = expectedCard
+        expectedAwaiting.messages.append(contentsOf: [response, assistant])
+        #expect(awaiting.updatedAt >= before.updatedAt && awaiting.updatedAt <= Date())
+        expectedAwaiting.updatedAt = awaiting.updatedAt
+        DirectMessageAddressing.assignMissing(in: &expectedAwaiting)
+        expectNoDifference(awaiting, sqliteStoredDates(expectedAwaiting))
+        let pausedRequests = await f.probe.requests
+        #expect(diff(pausedRequests, requests) == nil)
+        expectNoDifference(f.model.pendingAutoReviewApprovals, [])
+        expectNoDifference(writer.count, kind == "secret" ? 1 : 0)
+        let ci = try #require(f.model.conversations.firstIndex { $0.id == run.conversationID })
+        if mutation == "stop" { f.model.cancel() }
+        else if mutation == "callback-cancel" { callback.cancel() }
+        else if mutation == "account" {
+            await f.model.cancelAutoReviewApprovals(nextAccountID: "foreign")
+            f.model.settings.accountScope = "foreign"
+        } else if mutation == "binding-aba" {
+            let binding = f.model.conversations[ci].agentBinding
+            f.model.conversations[ci].agentBinding = nil; f.model.conversations[ci].agentBinding = binding
+        } else if mutation == "persona-aba" {
+            let ai = try #require(f.model.agents.firstIndex { $0.id == f.owner.id }), profile = f.model.agents[ai]
+            f.model.agents[ai].instructions = "REPLACEMENT_PERSONA"; f.model.agents[ai] = profile
+        } else if mutation == "hidden" { f.model.conversations[ci].hiddenAt = date }
+        else {
+            try await f.service.setConnectionEnabled(id: f.connection.id, enabled: false)
+            try await f.service.setConnectionEnabled(id: f.connection.id, enabled: true)
+        }
+        gate.open(); await callback.value
+        expectNoDifference(gate.timedOut, false)
+        #expect(!f.model.isConversationWorking(run.conversationID))
+        let after = try #require(try await store.conversation(id: run.conversationID))
+        var expected = awaiting
+        let ri = try #require(expected.messages.firstIndex { $0.id == assistant.id })
+        // The local answer/credential receipt has already committed. Only its
+        // native queued acknowledgment may retire; no old snapshot or grant.
+        expected.messages[ri].deliveryStatus = .cancelled
+        expectNoDifference(after, expected)
+        let actualRequests = await f.probe.requests, deliveries = await f.service.deliveries(), sent = await f.probe.sent
+        #expect(diff(actualRequests, requests) == nil)
+        expectNoDifference(deliveries, []); expectNoDifference(sent, [])
+        expectNoDifference(writer.count, kind == "secret" ? 1 : 0)
+        expectNoDifference(f.model.pendingAutoReviewApprovals, [])
+        expectNoDifference(input?.draft, input == nil ? nil : "")
+        let reopenedStore = ConversationStore(fileURL: f.root.appending(path: "conversations.json"))
+        let reopened = try await reopenedStore.conversation(id: run.conversationID)
+        expectNoDifference(reopened, after)
+        let reopenedChannels = try ChannelService(storeURL: f.root.appending(path: "channels.json"))
+        let reopenedRuns = await reopenedChannels.inboundRuns(), runs = await f.service.inboundRuns()
+        expectNoDifference(reopenedRuns, [try persistedChannel(run)]); expectNoDifference(runs, [run])
         #expect(!String(decoding: try JSONEncoder().encode(after), as: UTF8.self).contains("FAKE_INBOUND_NATIVE_ONLY_SECRET"))
         try await assertUnrelatedUntouched(f)
     }
