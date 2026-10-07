@@ -38,9 +38,13 @@ private actor AppInboundProbe {
     var requests: [InferenceRequest] = []
     var results: [NormalizedToolResult] = []
     var sent: [ChannelOutbound] = []
+    var protocolRejections: [ToolLoopError] = []
+    var failureCorrectionCalls: [NormalizedToolCall] = []
     func request(_ request: InferenceRequest) { requests.append(request) }
     func result(_ result: NormalizedToolResult) { results.append(result) }
     func send(_ value: ChannelOutbound) { sent.append(value) }
+    func rejected(_ value: ToolLoopError) { protocolRejections.append(value) }
+    func correctionCall(_ value: NormalizedToolCall) { failureCorrectionCalls.append(value) }
 }
 /// Holds the real registry actor before the incoming host's provider lookup.
 /// No admission/claim/runner is injected; the actual listener still owns it.
@@ -71,10 +75,12 @@ private struct AppInboundBarrierProvider: AIProvider {
 private struct AppInboundConnector: ChannelConnector {
     let feed: AppInboundFeed
     let probe: AppInboundProbe
+    var failsSends = false
     let descriptor = ChannelConnectorDescriptor(id: "slack", displayName: "Offline inbound transport")
     func inbound(connection: ChannelConnection) -> AsyncThrowingStream<ChannelEnvelope, Error> { feed.stream(connectionID: connection.id) }
     func send(_ message: ChannelOutbound, to address: ChannelAddress, connection: ChannelConnection, idempotencyKey: UUID) async throws {
         await probe.send(message)
+        if failsSends { throw ChannelServiceError.authExpired("PRIVATE_INBOUND_CONNECTOR_TOKEN") }
     }
 }
 private struct AppInboundProvider: InteractiveToolProvider {
@@ -92,6 +98,21 @@ private struct AppInboundProvider: InteractiveToolProvider {
             let task = Task {
                 do {
                     await probe.request(request)
+                    if request.messages.contains(where: { $0.role == .system && $0.text == ChannelFailureFollowUpNotice.instructions }) {
+                        if mode == "failure-throws" { throw ProviderError.transport("Offline inbound failure notice") }
+                        if mode == "failure-external" {
+                            await probe.result(try await executeTool(.init(id: "incoming-forbidden-retry", name: "SendMessage",
+                                argumentsJSON: JSONEncoder().encode(["type": "text", "content": "FORBIDDEN_INBOUND_RETRY", "channel": "slack:C_REMOTE:T_REMOTE"]))))
+                        } else if mode == "failure-correction" {
+                            let call = try NormalizedToolCall(id: "incoming-local-correction", name: "SendMessage",
+                                argumentsJSON: JSONEncoder().encode(["type": "text", "content": "EXACT_LOCAL_INBOUND_FAILURE_CORRECTION"]))
+                            await probe.correctionCall(call)
+                            await probe.result(try await executeTool(call))
+                        }
+                        if mode != "failure-silent" { continuation.yield(.textDelta("PRIVATE_INBOUND_FAILURE_DRAFT")) }
+                        continuation.yield(.completed(.stop)); continuation.finish()
+                        return
+                    }
                     if mode != "silent" {
                         let peer = request.messages.contains { $0.role == .system && $0.text.contains("INBOUND_PEER_PERSONA") }
                         let call: NormalizedToolCall
@@ -113,7 +134,10 @@ private struct AppInboundProvider: InteractiveToolProvider {
                     }
                     continuation.yield(.textDelta("PRIVATE_INCOMING_DRAFT_MUST_NOT_AUTOSEND"))
                     continuation.yield(.completed(.stop)); continuation.finish()
-                } catch { continuation.finish(throwing: error) }
+                } catch {
+                    if let rejection = error as? ToolLoopError { await probe.rejected(rejection) }
+                    continuation.finish(throwing: error)
+                }
             }
             continuation.onTermination = { _ in task.cancel() }
         }
@@ -170,7 +194,7 @@ private struct AppInboundProvider: InteractiveToolProvider {
         }
         let feed = AppInboundFeed(), probe = AppInboundProbe()
         let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false,
-            channelService: service, channelConnectors: [AppInboundConnector(feed: feed, probe: probe)])
+            channelService: service, channelConnectors: [AppInboundConnector(feed: feed, probe: probe, failsSends: mode.hasPrefix("failure-"))])
         await model.registry.register(AppInboundProvider(probe: probe, peerID: peer.id, mode: mode))
         await model.bootstrap(); await model.setAutomationRuntimeActive(false); model.setWorkflowRuntimeActive(false)
         try await model.loadAllMessages(for: otherID)
@@ -228,6 +252,252 @@ private struct AppInboundProvider: InteractiveToolProvider {
         let messages = await groups.messages(groupID: f.group.id)
         expectNoDifference(group, f.group); expectNoDifference(messages, [])
         expectNoDifference(f.model.runningGroups, [])
+    }
+    private func persistedChannel<Value: Codable>(_ value: Value) throws -> Value {
+        let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .millisecondsSince1970
+        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .millisecondsSince1970
+        return try decoder.decode(Value.self, from: encoder.encode(value))
+    }
+    /// Only the three REAL timestamp columns use Unix seconds. Preserve every
+    /// field and exactly model their SQLite write/read conversion, not rounding
+    /// dates or deleting them from the complete UI/canonical comparison.
+    private func sqliteStoredDates(_ value: Conversation) -> Conversation {
+        var stored = value
+        stored.updatedAt = Date(timeIntervalSince1970: value.updatedAt.timeIntervalSince1970)
+        stored.hiddenAt = value.hiddenAt.map { Date(timeIntervalSince1970: $0.timeIntervalSince1970) }
+        for index in stored.messages.indices {
+            stored.messages[index].createdAt = Date(timeIntervalSince1970: value.messages[index].createdAt.timeIntervalSince1970)
+        }
+        return stored
+    }
+    private func assertCanonicalFailureSnapshot(_ canonical: Conversation, before: Conversation,
+                                               delivery: ChannelDelivery, record: ChannelFailureFollowUp,
+                                               added: [ChatMessage]) throws {
+        let finishedAt = try #require(record.finishedAt)
+        #expect(canonical.updatedAt.timeIntervalSince1970.isFinite)
+        #expect(canonical.updatedAt >= before.updatedAt && canonical.updatedAt >= record.startedAt)
+        #expect(canonical.updatedAt <= finishedAt.addingTimeInterval(0.001))
+        var expected = before
+        expected.messages = try terminalProjection(before, delivery: delivery) + added
+        // The native completion timestamp is nondeterministic; its interval is
+        // checked above. No other metadata or old reservation may change.
+        expected.updatedAt = canonical.updatedAt
+        DirectMessageAddressing.assignMissing(in: &expected)
+        expectNoDifference(canonical, sqliteStoredDates(expected))
+    }
+    private struct ReplyTarget: Decodable, Equatable {
+        let id: UUID
+        let shortAddress: String?
+        let senderID: UUID?
+        let excerpt: String
+    }
+    private func assertFailureReplyDirectory(_ request: InferenceRequest, canonical: Conversation) throws {
+        let context = try #require(request.messages.first { $0.role == .system && $0.text.contains(" Reply directory: ") })
+        let start = try #require(context.text.range(of: " Reply directory: ")?.upperBound)
+        let tail = context.text[start...]
+        var depth = 0, inString = false, escaped = false, end: String.Index?
+        for index in tail.indices {
+            let character = tail[index]
+            if escaped { escaped = false; continue }
+            if inString {
+                if character == "\\" { escaped = true }
+                else if character == "\"" { inString = false }
+                continue
+            }
+            if character == "\"" { inString = true }
+            else if character == "[" { depth += 1 }
+            else if character == "]" {
+                depth -= 1
+                if depth == 0 { end = index; break }
+            }
+        }
+        let final = try #require(end)
+        let directory = try JSONDecoder().decode([ReplyTarget].self, from: Data(tail[...final].utf8))
+        let durableIDs = Set(canonical.messages.map(\.id))
+        let expected = request.messages.filter { durableIDs.contains($0.id) && ($0.role == .user || $0.role == .assistant) }
+            .suffix(40).filter { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .map { message in
+                let senderID = message.role == .user ? nil : canonical.id
+                let row = RoomMessage(id: message.id, groupID: canonical.id, senderID: senderID, text: message.text)
+                // Sanitized external context is not a local-human target. Its
+                // stored alias stays unchanged, but the runtime directory must
+                // reject an alias inconsistent with the projected sender role.
+                let address = message.shortAddress.flatMap { GroupMessageAddressing.isValid($0, for: row) ? $0 : nil }
+                return ReplyTarget(id: message.id, shortAddress: address, senderID: senderID, excerpt: String(message.text.prefix(240)))
+            }
+        expectNoDifference(directory, expected)
+    }
+    private func reviewedIncomingSend(_ f: Fixture, genericReview: Bool) async throws -> (ChannelInboundRun, ChannelDelivery, Conversation) {
+        await f.model.setAutoReviewEnabled(genericReview)
+        f.feed.emit(event(f))
+        let pending = try await review(f), run = try #require(await f.service.inboundRuns().first)
+        f.model.selectRoute(.conversation(run.conversationID))
+        f.model.handleTranscriptCardIntent(.approveReview(reviewID: pending.id))
+        let finished = try await settle(f)
+        expectNoDifference(finished.status, .completed)
+        let deliveries = await f.service.deliveries(), sent = await f.probe.sent
+        expectNoDifference(deliveries.count, 1); expectNoDifference(sent, [])
+        let queued = try #require(deliveries.first)
+        expectNoDifference(queued.status, .queued); expectNoDifference(queued.attemptCount, 0)
+        expectNoDifference(queued.address, event(f).address); expectNoDifference(queued.outbound, .init(text: "EXACT_REMOTE_REPLY"))
+        expectNoDifference(queued.origin?.route, .directConversation); expectNoDifference(queued.origin?.conversationID, run.conversationID)
+        expectNoDifference(queued.origin?.runID, run.id); expectNoDifference(queued.authorization?.agentID, f.owner.id)
+        let canonical = try #require(try await ConversationStore(fileURL: f.root.appending(path: "conversations.json")).conversation(id: run.conversationID))
+        #expect(canonical.messages.contains { $0.id == run.messageID && $0.hasValidExternalChannelSource })
+        return (finished, queued, canonical)
+    }
+    private func finishedFailure(_ f: Fixture, in id: UUID) async throws -> ChannelFailureFollowUp {
+        try await eventually {
+            let values = await f.service.failureFollowUps()
+            return values.count == 1 && values[0].status != .running && !f.model.isConversationWorking(id)
+        }
+        return try #require(await f.service.failureFollowUps().first)
+    }
+    private func terminalProjection(_ before: Conversation, delivery: ChannelDelivery) throws -> [ChatMessage] {
+        var messages = before.messages
+        let index = try #require(messages.firstIndex { $0.id == delivery.id })
+        var publication = try #require(messages[index].externalChannelPublication)
+        publication.delivery = .init(status: .deadLetter, attemptCount: 1, deliveredAt: nil)
+        messages[index].transcriptCards = [publication.transcriptCard]
+        return messages
+    }
+    private func assertFailureDoesNotReplay(_ f: Fixture, run: ChannelInboundRun, canonical: Conversation,
+                                          mode: String, requests: [InferenceRequest]) async throws {
+        let deliveries = await f.service.deliveries(), wakes = await f.service.failureWakes(), followUps = await f.service.failureFollowUps()
+        for _ in 0..<3 {
+            f.feed.emit(event(f))
+            await f.model.reconcileChannelInbound(); await f.model.reconcileChannelFailureFollowUps()
+            await f.service.flush(now: Date().addingTimeInterval(1_000))
+        }
+        let secondFeed = AppInboundFeed(); defer { secondFeed.finish() }
+        let restored = try ChannelService(storeURL: f.root.appending(path: "channels.json"))
+        let reopened = AppModel(applicationSupportRoot: f.root, bootstrapImmediately: false, channelService: restored,
+            channelConnectors: [AppInboundConnector(feed: secondFeed, probe: f.probe, failsSends: true)])
+        await reopened.registry.register(AppInboundProvider(probe: f.probe, peerID: f.peer.id, mode: mode))
+        await reopened.bootstrap(); await reopened.setAutomationRuntimeActive(false); reopened.setWorkflowRuntimeActive(false)
+        for _ in 0..<3 {
+            secondFeed.emit(event(f))
+            await reopened.reconcileChannelInbound(); await reopened.reconcileChannelFailureFollowUps()
+            await restored.flush(now: Date().addingTimeInterval(1_000))
+        }
+        let afterRequests = await f.probe.requests, afterSent = await f.probe.sent
+        #expect(diff(afterRequests, requests) == nil)
+        expectNoDifference(afterSent, [.init(text: "EXACT_REMOTE_REPLY")])
+        let afterDeliveries = await restored.deliveries(), afterWakes = await restored.failureWakes()
+        let afterFollowUps = await restored.failureFollowUps(), afterRuns = await restored.inboundRuns()
+        expectNoDifference(afterDeliveries, try persistedChannel(deliveries)); expectNoDifference(afterWakes, try persistedChannel(wakes))
+        expectNoDifference(afterFollowUps, try persistedChannel(followUps)); expectNoDifference(afterRuns, [try persistedChannel(run)])
+        let afterChat = try await ConversationStore(fileURL: f.root.appending(path: "conversations.json")).conversation(id: run.conversationID)
+        expectNoDifference(afterChat, canonical)
+        expectNoDifference(f.model.pendingAutoReviewApprovals, []); expectNoDifference(reopened.pendingAutoReviewApprovals, [])
+        #expect(f.model.pendingWorkspaceFolders.isEmpty && reopened.pendingWorkspaceFolders.isEmpty)
+        #expect(!reopened.isConversationWorking(run.conversationID))
+        try await assertUnrelatedUntouched(f)
+    }
+    @Test(arguments: [(false, false), (true, false), (false, true), (true, true)], ["normal", "busy", "off-page"])
+    func actualIncomingSendFailureUsesOriginalOwnChatAndNeverResends(settings: (Bool, Bool), route: String) async throws {
+        let (existing, genericReview) = settings
+        let f = try await fixture(existing: existing, mode: "failure-correction")
+        defer { f.feed.finish(); try? FileManager.default.removeItem(at: f.root) }
+        let (run, queued, before) = try await reviewedIncomingSend(f, genericReview: genericReview)
+        let initialRequests = await f.probe.requests; expectNoDifference(initialRequests.count, 1)
+        f.model.selectRoute(.conversation(otherID))
+        if route == "busy" { f.model.running.insert(run.conversationID) }
+        if route == "off-page" { f.model.conversations.removeAll { $0.id == run.conversationID } }
+        await f.service.flush(now: queued.nextAttemptAt.addingTimeInterval(1))
+        var expectedTerminal = queued; expectedTerminal.status = .deadLetter; expectedTerminal.attemptCount = 1
+        expectedTerminal.lastError = ChannelServiceError.authExpired("PRIVATE_INBOUND_CONNECTOR_TOKEN").localizedDescription
+        let terminal = try #require(await f.service.delivery(id: queued.id)); expectNoDifference(terminal, expectedTerminal)
+        await f.model.reconcileChannelPublications(); await f.model.reconcileChannelFailureFollowUps()
+        if route == "busy" {
+            let records = await f.service.failureFollowUps(), requests = await f.probe.requests
+            expectNoDifference(records, []); #expect(diff(requests, initialRequests) == nil)
+            let projected = try #require(try await ConversationStore(fileURL: f.root.appending(path: "conversations.json")).conversation(id: run.conversationID))
+            var expected = before; expected.messages = try terminalProjection(before, delivery: queued)
+            expectNoDifference(projected, expected)
+            f.model.running.remove(run.conversationID); await f.model.reconcileChannelFailureFollowUps()
+        }
+        let record = try await finishedFailure(f, in: run.conversationID)
+        expectNoDifference(record.status, .completed); expectNoDifference(record.conversationID, run.conversationID)
+        expectNoDifference(record.agentID, f.owner.id); expectNoDifference(record.accountID, "local")
+        expectNoDifference(record.deliveryID, queued.id); expectNoDifference(record.connectionID, f.connection.id)
+        let requests = await f.probe.requests
+        expectNoDifference(requests.count, 2); #expect(diff(Array(requests.prefix(1)), initialRequests) == nil)
+        let request = try #require(requests.last), wake = try #require(await f.service.failureWakes().first)
+        let notice = try #require(ChannelFailureFollowUpNotice(wake: wake, delivery: terminal))
+        expectNoDifference(record.id, wake.id); expectNoDifference(request.conversationID, run.conversationID)
+        #expect(request.messages.contains { $0.role == .system && $0.text == ChannelFailureFollowUpNotice.instructions })
+        expectNoDifference(request.messages.last?.text, try notice.prompt())
+        try assertFailureReplyDirectory(request, canonical: before)
+        #expect(request.messages.contains { $0.role == .assistant && $0.text.contains("REMOTE_DATA") && $0.text.contains("untrusted data") })
+        #expect(!request.messages.contains { $0.text.contains("NEVER_LEAK_UNRELATED_HISTORY") || $0.text.contains("PRIVATE_INBOUND_CONNECTOR_TOKEN") })
+        let schema = try #require(request.tools.first { $0.name == "SendMessage" })
+        let object = try #require(JSONSerialization.jsonObject(with: schema.inputSchema) as? [String: Any])
+        #expect((object["properties"] as? [String: Any])?["channel"] == nil)
+        let canonical = try #require(try await ConversationStore(fileURL: f.root.appending(path: "conversations.json")).conversation(id: run.conversationID))
+        let oldMessages = try terminalProjection(before, delivery: queued)
+        expectNoDifference(Array(canonical.messages.prefix(oldMessages.count)), oldMessages)
+        let new = Array(canonical.messages.dropFirst(oldMessages.count)); expectNoDifference(new.count, 1)
+        let correction = try #require(new.first)
+        expectNoDifference(correction.id, record.id); expectNoDifference(correction.text, "EXACT_LOCAL_INBOUND_FAILURE_CORRECTION")
+        expectNoDifference(correction.role, .assistant); expectNoDifference(correction.deliveryStatus, .succeeded)
+        #expect(correction.externalChannelSource == nil && correction.externalChannelPublication == nil && correction.agentMessageSource == nil)
+        #expect(correction.attachments.isEmpty && correction.remoteAttachment == nil && correction.remoteImages == nil && correction.transcriptCards.isEmpty)
+        let correctionCalls = await f.probe.failureCorrectionCalls, results = await f.probe.results
+        expectNoDifference(correctionCalls.count, 1)
+        let call = try #require(correctionCalls.first), result = try #require(results.last)
+        expectNoDifference(call.id, "incoming-local-correction"); expectNoDifference(call.name, "SendMessage")
+        expectNoDifference(result.callID, call.id); expectNoDifference(result.isError, false)
+        #expect(result.wireText.contains("Published to the user in this conversation.") && result.wireText.contains(record.id.uuidString))
+        let expectedCorrection = ChatMessage(id: record.id, role: .assistant, text: "EXACT_LOCAL_INBOUND_FAILURE_CORRECTION",
+            createdAt: record.startedAt, toolActivities: [.init(id: call.id, name: call.name,
+                argumentsJSON: String(decoding: call.argumentsJSON, as: UTF8.self), status: .succeeded, result: result.wireText)])
+        try assertCanonicalFailureSnapshot(canonical, before: before, delivery: queued, record: record, added: [expectedCorrection])
+        #expect(!canonical.messages.contains { $0.text.contains("PRIVATE_INBOUND_FAILURE_DRAFT") || $0.text.contains("PRIVATE_INCOMING_DRAFT") })
+        try await f.model.loadAllMessages(for: run.conversationID)
+        let ui = try #require(f.model.conversations.first { $0.id == run.conversationID })
+        expectNoDifference(sqliteStoredDates(ui), canonical); expectNoDifference(f.model.selection, otherID)
+        try await assertFailureDoesNotReplay(f, run: run, canonical: canonical, mode: "failure-correction", requests: requests)
+    }
+    @Test(arguments: [(false, false), (true, false), (false, true), (true, true)], ["private", "silent", "throws", "external"])
+    func incomingFailureNoticeCannotTurnPrivateOutputIntoConsentOrRetry(settings: (Bool, Bool), behavior: String) async throws {
+        let (existing, genericReview) = settings
+        let mode = "failure-\(behavior)", f = try await fixture(existing: existing, mode: mode)
+        defer { f.feed.finish(); try? FileManager.default.removeItem(at: f.root) }
+        let (run, queued, before) = try await reviewedIncomingSend(f, genericReview: genericReview)
+        let initial = await f.probe.requests
+        await f.service.flush(now: queued.nextAttemptAt.addingTimeInterval(1))
+        await f.model.reconcileChannelPublications(); await f.model.reconcileChannelFailureFollowUps()
+        let record = try await finishedFailure(f, in: run.conversationID)
+        expectNoDifference(record.status, ["throws", "external"].contains(behavior) ? .failed : .completed)
+        let requests = await f.probe.requests, rejections = await f.probe.protocolRejections
+        expectNoDifference(requests.count, 2); #expect(diff(Array(requests.prefix(1)), initial) == nil)
+        try assertFailureReplyDirectory(try #require(requests.last), canonical: before)
+        if behavior == "external" {
+            expectNoDifference(rejections, [.schemaMismatch(callID: "incoming-forbidden-retry", detail: "unknown property 'channel'")])
+        } else { expectNoDifference(rejections, []) }
+        let canonical = try #require(try await ConversationStore(fileURL: f.root.appending(path: "conversations.json")).conversation(id: run.conversationID))
+        let oldMessages = try terminalProjection(before, delivery: queued)
+        expectNoDifference(Array(canonical.messages.prefix(oldMessages.count)), oldMessages)
+        let added = Array(canonical.messages.dropFirst(oldMessages.count))
+        if ["private", "silent"].contains(behavior) {
+            expectNoDifference(added, [])
+            try assertCanonicalFailureSnapshot(canonical, before: before, delivery: queued, record: record, added: [])
+        }
+        else {
+            expectNoDifference(added.count, 1); expectNoDifference(added.first?.id, record.id)
+            expectNoDifference(added.first?.deliveryStatus, .failed)
+            let failure: any Error = behavior == "throws"
+                ? ProviderError.transport("Offline inbound failure notice")
+                : ToolLoopError.schemaMismatch(callID: "incoming-forbidden-retry", detail: "unknown property 'channel'")
+            let expectedFailure = ChatMessage(id: record.id, role: .assistant, text: "", createdAt: record.startedAt,
+                deliveryStatus: .failed, deliveryError: failure.localizedDescription)
+            try assertCanonicalFailureSnapshot(canonical, before: before, delivery: queued, record: record, added: [expectedFailure])
+        }
+        #expect(!canonical.messages.contains { $0.text.contains("PRIVATE_INBOUND_FAILURE_DRAFT") || $0.text.contains("FORBIDDEN_INBOUND_RETRY")
+            || $0.text.contains("EXACT_LOCAL_INBOUND_FAILURE_CORRECTION") || $0.text.contains("PRIVATE_INCOMING_DRAFT") })
+        expectNoDifference(f.model.pendingAutoReviewApprovals, []); expectNoDifference(f.model.pendingToolApprovals, [])
+        try await assertFailureDoesNotReplay(f, run: run, canonical: canonical, mode: mode, requests: requests)
     }
     @Test(arguments: [false, true], [false, true])
     func actualListenerUsesCanonicalOwnRunnerAndFreshHumanSendReview(existing: Bool, genericReview: Bool) async throws {

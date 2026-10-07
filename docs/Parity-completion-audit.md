@@ -1,5 +1,33 @@
 # 完成驗收入口（2026-09-27）
 
+## 收件來源失敗通知／canonical reply directory／正式收據（2026-10-07，增量已驗證）
+
+接續 `8dbccb0`，本批修改共用 `AppModel.startTurn`，不是只有測試。main 再讀 reference HEAD `a9f633e09d49a85829b8236331b9e21f7e612634` 的 `source/host/extensions/transcript/background-wakes.ts` 與 `source/shared/channel-messaging.ts`：channel failure 回原 agent own session 的 hidden common runner，用沒有 channel 的本機 `SendMessage` 更正，不暗中 retry；saved-group skip 已在 `e15b357` 驗證，不重新列為缺項。本次並不宣稱 reference 有相同 UUID 配置。
+
+新增真正 listener incoming → native folder consent → fresh human send review → durable queue → fake auth failure → 原 owner failure wake 的 App 2 methods／28 cases，包含新／既有 DM、generic review 開／關、busy／off-page，以及 local correction／private draft／silent／provider error／unknown channel retry。保留全部原 29 incoming cases 與原 failure 33 cases。完整 typed queue／wake／follow-up／run、canonical Conversation／所有訊息／工具活動／metadata／短位址、所有原 inference requests 與完整 reply directory 均比對；三次重複 reconcile／flush、真實 stores 編碼重開和新隔離 AppModel 再驗，未重跑推論或重送 fake connector；原 group／無關選取聊天不變。原 remote context 不變成本機人類 grant，secret sentinel 不入模型／history，沒有真實網路 send 或真實帳號。
+
+更嚴格的入口斷言重現產品問題：failure prompt 是 ephemeral host input，但舊共用 `replyHistory` 匯入所有 request user／assistant rows；failure prompt ID 正好等於新 assistant placeholder／publication ID，既污染正式 reference directory，又讓 `registerReceipt` 因已知 ID 略過新 canonical correction 收據。修正只採真正已保存的 canonical IDs，排除本次 assistant placeholder；host prompt 繼續提供模型失敗資料，不成為保存訊息或可引用目標。正常 sender／引用／alias 安全檢查不放寬；已保存 remote alias 亦不改寫。
+
+日誌都在 `.build/validation/`，不入版控：
+
+- `inbound-origin-failure-focused-v1.log` exit 1：新 `@Test` fixture 誤用三個 Cartesian arguments collection，改兩組 Bool pairs × route／behavior，全部 28 cases 保留；不是有效產品 red。
+- `inbound-origin-failure-focused-v2.log` exit 1：完整 UI／SQLite canonical equality 揭露 Unix REAL 秒 roundtrip 的浮點差；預期套與實際三個 REAL 日期欄相同 codec，其餘所有欄位保留，不刪日期／改 persistence 或採 tolerance。
+- `inbound-origin-failure-focused-v3.log` exit 1：12 個正常／busy／off-page × 新舊 DM／review correction cases 缺正式 receipt，產品問題，不歸因為環境。private／silent／provider error／external schema denial 原案例保留。
+- `inbound-origin-failure-directory-red-v1.log` exit 1：新 fixture 誤把 reply directory 後追加的 host prose 一起 decode，非有效 directory red；改用處理 quoted／escaped strings 的 balanced array 邊界，保留完整 directory 比較。
+- `inbound-origin-failure-directory-red-v2.log` exit 1：未修正的 `8dbccb0` 產品下，所有 28 cases 的 runtime directory 多了 ephemeral host notice target，12 correction cases 仍無正式 receipt；總 40 issues 的差異另含 fixture 錯期待 sanitized external assistant 保留不合法 human alias，不把這一部分算作產品缺陷。新 run UUID／notice excerpt 與 receipt 缺漏為直接產品證據。
+- `inbound-origin-failure-focused-v4.log` exit 1：產品修正後正式 receipt／排除 ephemeral target 已通過，28 directory issues 是上述 fixture alias 預期；改依既有 `GroupMessageAddressing.isValid`，保留正式 UUID、全部目標、sender／excerpt 比較與保存 canonical alias 原值，不放寬產品規則。
+- `inbound-origin-failure-focused-v5.log` exit 0：14 methods／2 suites／90 cases（13.042 秒）；actual incoming 7 methods／57 cases（10.149 秒）及原 failure 7 methods／33 cases 全保留。
+- `inbound-origin-failure-full-final-v1.log` exit 0：未縮 filter 的完整串行 17 bundles，2,180 Swift Testing／260 suites＋135 XCTest／0 failures；App 808 tests／103 suites（442.865 秒）、core 1,041／116 suites（51.117 秒）。兩項 opt-in installed-Codex live tests skipped，不算外部服務驗收；既有 CoreData／NSXPC／CoreGraphics 診斷保留。
+- `inbound-origin-failure-localization-final-v1.log` exit 0：七語各 1,817 keys／0 missing，本批沒有 catalog／UI／Package dependency 變更。
+- `inbound-origin-failure-native-final-v1.log`／`inbound-origin-failure-native-verify-final-v1.log` 均 exit 0：最後 source 的 arm64 Debug `Filicon App` build 與唯讀 verify。因磁碟餘量有限，重用本次自己的隔離 `.build/validation/ChannelInboundNativeV3` DerivedData；log 明確重新編譯 AppModel，不稱全新 native 目錄，也不以未重建的舊 bundle 代驗。產物為該目錄 `Build/Products/Debug/Filicon.app`，四個 executable、offline KaTeX／Mermaid、app／Debug XPC entitlements 與 deep strict 簽章通過；AppIntents metadata warning／ad-hoc runtime notes 保留，未啟動 App。
+- `inbound-origin-failure-package-final-v1.log`／`inbound-origin-failure-package-verify-final-v1.log` 均 exit 0：事先確認 `.build/validation/InboundFailurePackage/Filicon.app` 不存在，原 standalone SPM Debug 封裝與再次唯讀 verify 通過；四個 executable、KaTeX 0.16.45／20 fonts／MIT、Mermaid 11.16.0／72 notices／MIT、app／XPC entitlements 與 deep strict 簽章確認。沒有覆蓋舊 App、修改封裝安全 guard 或執行 script 印出的 launch smoke；Debug／ad-hoc 不是 Developer ID release／公證。
+
+本批最後 source 的完整 suite、原生 Debug 增量 build／verify、fresh standalone Debug 封裝／verify 及七語 keys 均已實際執行成功；不用舊 source 成功結果替代本次建置。原 28 PNG 的 source UI／OCR 證據屬於未改動來源 row，沒有新的全 App 真人 UI／VoiceOver gate。全部非通過日誌與 compiler／SDK 診斷保留，實際執行且 exit 0 才列通過。
+
+彙總再次逐行核對 17 bundle 原 log，`1 suite` 的單數列不可漏計；本批及前批 `channel-inbound-full-v2.log` 都是 260 suites，前批文件的 259 已校正。Swift Testing methods 分別仍為 2,180／2,178，XCTest 135／0 failures 不變，沒有重寫原日誌或將參數化 cases 當作 methods。
+
+只取代已 admitted 純文字 incoming-origin 的 terminal failure 路由與本次共用 receipt／reference-directory 問題，仍不關閉 incoming attachment／image captured-source admission、background cards／fresh resume、其他 failure hosts、preemption redrive／hidden fallback、其他未接 host、uncaptured locator 新核准開啟、unified private DM/group runtime、live／真人／VoiceOver／最低 macOS／Developer ID release／公證。AGENT-02／AGENT-04／UI-04／整體 partial、48 分類不變；未 push／launch smoke／重啟使用者 App 或 Xcode／外部 send 真實 queue／改真實 credentials／群組／聊天。
+
 ## 外部收件的 common direct host（2026-10-07，純文字增量已驗證）
 
 接續 `e15b357`，本節隨產品 source／測試提交，只驗收純文字 common-host 增量，不列為全部 parity 完成。main 已重讀 reference HEAD `a9f633e09d49a85829b8236331b9e21f7e612634` 的 `source/host/extensions/transcript/background-wakes.ts` 收件 host／own session／group skip／preemption redrive，以及 `source/shared/channel-messaging.ts` 的遠端人類不等於本機人類權限與 explicit channel reply；`source/shared/channels.ts` 保留一般 first-colon grammar。原 Filicon inbound 的 bare provider stream＋automatic plaintext queue 不是這個契約。
@@ -25,7 +53,7 @@ durable run 在推論前一次性 claim，重開 running 改 interrupted，不�
 - `channel-inbound-source-ui-v1.log` exit 1：預設 module cache 在 sandbox 外無法寫入；改為 workspace cache。`v2.log`、`v4.log`、`v5.log` exit 1：Vision text recognition 回傳 `Foundation._GenericObjCError.nilError`，保留原 OCR 斷言。v5 已產生七語×窄寬×明暗 28 PNG；人工確認繁中窄亮／西文窄暗完整來源地址及 sender，不能取代整個七語 OCR／真人 UI gate。v3 需額外權限，但 approval review 因帳號用量限制失敗，命令未執行，沒有 v3 success log，沒有繞過限制。
 - `python3 -B scripts/localization_audit.py` exit 0：七語各 1,817 keys／0 missing，不等於整個畫面或 VoiceOver 已驗收。
 - `channel-inbound-focused-v12.log` exit 0：額外權限審查本次實際放行，同一完整相關 filter、最後 source／fixture 的 core 50 methods／3 suites（1.068 秒）、channel 9 methods／1 suite（0.174 秒）、App 5 methods／1 suite／29 cases（3.238 秒）全通過。原 10 個 native folder-consent cases 與 silent／peer／preparation／ID collision／unread 全保留；沒有 skip、放寬斷言或注入 fake grant。前輪的 ScopedBookmarksAgent 失敗不抹除，也不推論其他未測行為均無缺陷。
-- `channel-inbound-full-v2.log` exit 0：最後 source 完整串行 suite、17 bundles，2,178 Swift Testing／259 suites＋135 XCTest／0 failures；App 806 tests／103 suites（400.266 秒）。之前的相關 peer／failure／routine／folder／attachment cases、schema migration、OCR 及 synchronous WebKit 案例均包含在未縮減的 suite 中，這次跑完通過；兩項 opt-in installed-Codex live tests skipped，不算真實外部服務驗收。既有 CoreData／NSXPC／CoreGraphics PDF 診斷保留。
+- `channel-inbound-full-v2.log` exit 0：最後 source 完整串行 suite、17 bundles，2,178 Swift Testing／260 suites＋135 XCTest／0 failures；App 806 tests／103 suites（400.266 秒）。之前的相關 peer／failure／routine／folder／attachment cases、schema migration、OCR 及 synchronous WebKit 案例均包含在未縮減的 suite 中，這次跑完通過；兩項 opt-in installed-Codex live tests skipped，不算真實外部服務驗收。既有 CoreData／NSXPC／CoreGraphics PDF 診斷保留。
 - `channel-inbound-source-ui-final-v1.log` exit 0：七語×280／680 points×明暗共 28 PNG，完整 sender、正文結尾、channel／thread address 的原 OCR 斷言通過；main 逐張查看 `.build/validation/ChannelInboundSourceUIFinal` 全部原生渲染，未見來源 header 截斷或窄版正文裁切。測試內容是原樣外部資料，不翻譯 sender／address／正文；不冒充整個 App 的七語真人、焦點或 VoiceOver 驗收。
 - `channel-inbound-native-final-v3.log`／`channel-inbound-native-verify-final-v3.log` 均 exit 0：全新隔離 DerivedData 的 arm64 Debug `Filicon App` 原生 build 與唯讀 verify。四個 executable、offline KaTeX／Mermaid resources、app／Debug XPC entitlements、deep strict 簽章通過；原 AppIntents metadata／`String?` coercion／Keychain deprecation warnings 保留，不啟動 App。
 - `channel-inbound-package-final-v2.log`／`channel-inbound-package-verify-final-v2.log` 均 exit 0：事先確認不存在的 `.build/validation/ChannelInboundPackageV2/Filicon.app`，原 SPM Debug 封裝腳本與再次唯讀 verify 通過；四個 executable、KaTeX 0.16.45／20 fonts／MIT、Mermaid 11.16.0／72 notices／MIT、app／XPC entitlements 與 deep strict 簽章確認。沒有覆蓋舊 App，未執行 script 印出的 launch smoke；Debug／ad-hoc 不是 Developer ID release／公證。

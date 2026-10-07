@@ -2945,7 +2945,14 @@ final class AppModel: ObservableObject {
                     let images = imageSource?.attachments.filter {
                         $0.kind == .image && ["image/png", "image/jpeg"].contains($0.mimeType)
                     } ?? []
-                    let replyHistory = requestMessages.filter { $0.role == .user || $0.role == .assistant }.map {
+                    // Ephemeral host wakes are inference data, not saved
+                    // reference targets. In particular, a failure notice may
+                    // share its run ID with the new assistant placeholder;
+                    // importing it would suppress that publication's receipt.
+                    let durableReplyIDs = Set(current.messages.filter { $0.id != assistantID }.map(\.id))
+                    let replyHistory = requestMessages.filter {
+                        durableReplyIDs.contains($0.id) && ($0.role == .user || $0.role == .assistant)
+                    }.map {
                         var message = RoomMessage(id: $0.id, groupID: id, senderID: $0.role == .user ? nil : id,
                             text: $0.text, createdAt: $0.createdAt, remoteAttachment: $0.remoteAttachment,
                             remoteImages: $0.remoteImages, imageGalleryLayout: $0.imageGalleryLayout)
