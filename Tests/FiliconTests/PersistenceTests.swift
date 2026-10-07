@@ -29,7 +29,7 @@ import CustomDump
     var database: OpaquePointer?
     try #require(sqlite3_open(url.path, &database) == SQLITE_OK)
     defer { sqlite3_close(database) }
-    try #require(sqlite3_exec(database, "ALTER TABLE messages DROP COLUMN image_gallery_layout_json; ALTER TABLE messages DROP COLUMN remote_images_json; UPDATE schema_version SET version=14", nil, nil, nil) == SQLITE_OK)
+    try #require(sqlite3_exec(database, "ALTER TABLE messages DROP COLUMN image_gallery_layout_json; ALTER TABLE messages DROP COLUMN remote_images_json; ALTER TABLE messages DROP COLUMN external_channel_source_json; UPDATE schema_version SET version=14", nil, nil, nil) == SQLITE_OK)
     let migrated = try ConversationRepository(databaseURL: url)
     let legacy = try await migrated.load()
     expectNoDifference(legacy.first?.messages.last?.remoteImages, nil)
@@ -85,7 +85,7 @@ import CustomDump
     var database: OpaquePointer?
     #expect(sqlite3_open(url.path, &database) == SQLITE_OK)
     defer { sqlite3_close(database) }
-    #expect(sqlite3_exec(database, "ALTER TABLE messages DROP COLUMN image_gallery_layout_json; ALTER TABLE messages DROP COLUMN remote_images_json; ALTER TABLE messages DROP COLUMN remote_attachment_json; UPDATE schema_version SET version=13", nil, nil, nil) == SQLITE_OK)
+    #expect(sqlite3_exec(database, "ALTER TABLE messages DROP COLUMN image_gallery_layout_json; ALTER TABLE messages DROP COLUMN remote_images_json; ALTER TABLE messages DROP COLUMN remote_attachment_json; ALTER TABLE messages DROP COLUMN external_channel_source_json; UPDATE schema_version SET version=13", nil, nil, nil) == SQLITE_OK)
     let migrated = try ConversationRepository(databaseURL: url)
     let legacy = try await migrated.load()
     expectNoDifference(legacy.first?.messages.first?.remoteAttachment, nil)

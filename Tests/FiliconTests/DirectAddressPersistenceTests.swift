@@ -52,7 +52,7 @@ struct DirectAddressPersistenceTests {
         let opened = sqlite3_open(url.path, &database)
         defer { sqlite3_close_v2(database) }
         try #require(opened == SQLITE_OK)
-        let changed = sqlite3_exec(database, "ALTER TABLE messages DROP COLUMN short_address; ALTER TABLE conversations DROP COLUMN message_addresses_json; ALTER TABLE conversations DROP COLUMN agent_binding_json; ALTER TABLE messages DROP COLUMN agent_message_source_json; ALTER TABLE messages DROP COLUMN image_gallery_layout_json; ALTER TABLE messages DROP COLUMN remote_images_json; ALTER TABLE messages DROP COLUMN remote_attachment_json; UPDATE schema_version SET version=9", nil, nil, nil)
+        let changed = sqlite3_exec(database, "ALTER TABLE messages DROP COLUMN short_address; ALTER TABLE conversations DROP COLUMN message_addresses_json; ALTER TABLE conversations DROP COLUMN agent_binding_json; ALTER TABLE messages DROP COLUMN agent_message_source_json; ALTER TABLE messages DROP COLUMN image_gallery_layout_json; ALTER TABLE messages DROP COLUMN remote_images_json; ALTER TABLE messages DROP COLUMN remote_attachment_json; ALTER TABLE messages DROP COLUMN external_channel_source_json; UPDATE schema_version SET version=9", nil, nil, nil)
         try #require(changed == SQLITE_OK)
         let migrated = try ConversationRepository(databaseURL: url)
         let version = try await migrated.schemaVersion()

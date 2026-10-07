@@ -1485,10 +1485,25 @@ struct TranscriptMessageView: View {
 
     var body: some View {
         let _ = uiLocale.identifier
-        let isUser = message.role == .user
+        let isUser = isLocalUser
         HStack(alignment: .bottom, spacing: 8) {
             if isUser { Spacer(minLength: 50) }
             VStack(alignment: isUser ? .trailing : .leading, spacing: 5) {
+                if let source = message.externalChannelSource {
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            Image(systemName: "network")
+                            Text(verbatim: source.senderName)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Text(verbatim: source.address)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .font(.caption)
+                    .foregroundStyle(FiliconTheme.textSecondary)
+                    .help(source.address)
+                    .accessibilityElement(children: .combine)
+                }
                 if let source = message.agentMessageSource {
                     HStack(spacing: 6) {
                         if let profile = model.agents.first(where: { $0.id == source.authorAgentID }) {
@@ -1524,7 +1539,7 @@ struct TranscriptMessageView: View {
 
     @ViewBuilder
     private var messageBubble: some View {
-        messageBubbleContent.frame(maxWidth: 520, alignment: message.role == .user ? .trailing : .leading)
+        messageBubbleContent.frame(maxWidth: 520, alignment: isLocalUser ? .trailing : .leading)
     }
 
     private var messageBubbleContent: some View {
@@ -1570,7 +1585,7 @@ struct TranscriptMessageView: View {
             } else if !message.text.isEmpty && !message.isAutomationActivityCardBody && !message.transcriptCards.contains(where: {
                 $0.externalCursorReference?.summary == message.text || $0.directQuestion?.question.prompt == message.text
             }) {
-                if message.role == .user {
+                if isLocalUser {
                     Text(message.text).textSelection(.enabled)
                         .foregroundStyle(FiliconTheme.userBubbleText)
                         .fixedSize(horizontal: false, vertical: true)
@@ -1650,7 +1665,7 @@ struct TranscriptMessageView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
-        .background(message.role == .user ? FiliconTheme.userBubble : FiliconTheme.incomingBubble, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .background(isLocalUser ? FiliconTheme.userBubble : FiliconTheme.incomingBubble, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay {
             if isReplyJumpTarget {
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
@@ -1690,7 +1705,10 @@ struct TranscriptMessageView: View {
         .accessibilityElement(children: .contain)
     }
 
-    private var roleLabel: String { FiliconLocalization.string(message.role == .user ? "You" : message.role == .assistant ? "Assistant" : message.role.rawValue.capitalized) }
+    private var isLocalUser: Bool { message.role == .user && message.externalChannelSource == nil }
+    private var roleLabel: String {
+        message.externalChannelSource?.senderName ?? FiliconLocalization.string(message.role == .user ? "You" : message.role == .assistant ? "Assistant" : message.role.rawValue.capitalized)
+    }
     private var referenceNavigation: RichMarkdownMessageReferences? {
         guard message.role == .assistant, let inlineReferences else { return nil }
         return .init(target: { url in

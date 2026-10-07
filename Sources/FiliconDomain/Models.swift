@@ -70,6 +70,7 @@ public struct ChatMessage: Identifiable, Codable, Hashable, Sendable {
     /// Host-assigned reference identity; never derived from a paginated view.
     public var shortAddress: String?
     public var agentMessageSource: AgentMessageSource?
+    public var externalChannelSource: ExternalChannelMessageSource?
     public var remoteAttachment: RemoteAttachmentReference?
     public var remoteImages: RemoteImageGallery?
     public var imageGalleryLayout: ImageGalleryLayout?
@@ -89,6 +90,7 @@ public struct ChatMessage: Identifiable, Codable, Hashable, Sendable {
         reactions: [ChatReaction] = [],
         shortAddress: String? = nil,
         agentMessageSource: AgentMessageSource? = nil,
+        externalChannelSource: ExternalChannelMessageSource? = nil,
         remoteAttachment: RemoteAttachmentReference? = nil,
         remoteImages: RemoteImageGallery? = nil,
         imageGalleryLayout: ImageGalleryLayout? = nil
@@ -107,6 +109,7 @@ public struct ChatMessage: Identifiable, Codable, Hashable, Sendable {
         self.reactions = reactions
         self.shortAddress = shortAddress
         self.agentMessageSource = agentMessageSource
+        self.externalChannelSource = externalChannelSource
         self.remoteAttachment = remoteAttachment
         self.remoteImages = remoteImages
         self.imageGalleryLayout = imageGalleryLayout
@@ -138,7 +141,7 @@ public struct ChatMessage: Identifiable, Codable, Hashable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case id, role, text, createdAt, attachments, deliveryStatus, deliveryError
         case reasoningText, toolActivities, transcriptCards, replyToMessageID, reactions, shortAddress
-        case agentMessageSource, remoteAttachment, remoteImages, imageGalleryLayout
+        case agentMessageSource, externalChannelSource, remoteAttachment, remoteImages, imageGalleryLayout
     }
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -155,6 +158,10 @@ public struct ChatMessage: Identifiable, Codable, Hashable, Sendable {
         replyToMessageID = try values.decodeIfPresent(UUID.self, forKey: .replyToMessageID)
         shortAddress = try values.decodeIfPresent(String.self, forKey: .shortAddress)
         agentMessageSource = try values.decodeIfPresent(AgentMessageSource.self, forKey: .agentMessageSource)
+        externalChannelSource = try values.decodeIfPresent(ExternalChannelMessageSource.self, forKey: .externalChannelSource)
+        if externalChannelSource != nil {
+            transcriptCards = try values.decodeIfPresent([TranscriptCard].self, forKey: .transcriptCards) ?? []
+        }
         remoteAttachment = try values.decodeIfPresent(RemoteAttachmentReference.self, forKey: .remoteAttachment)
         remoteImages = try values.decodeIfPresent(RemoteImageGallery.self, forKey: .remoteImages)
         imageGalleryLayout = try values.decodeIfPresent(ImageGalleryLayout.self, forKey: .imageGalleryLayout)
@@ -166,6 +173,10 @@ public struct ChatMessage: Identifiable, Codable, Hashable, Sendable {
             throw DecodingError.dataCorruptedError(forKey: .agentMessageSource, in: values, debugDescription: "Peer messages must have assistant role")
         }
         reactions = try values.decodeIfPresent([ChatReaction].self, forKey: .reactions) ?? []
+        guard hasValidExternalChannelSource else {
+            throw DecodingError.dataCorruptedError(forKey: .externalChannelSource, in: values,
+                debugDescription: "External channel provenance must match the remote human message")
+        }
     }
 }
 

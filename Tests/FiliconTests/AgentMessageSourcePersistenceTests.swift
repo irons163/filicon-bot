@@ -80,7 +80,7 @@ struct AgentMessageSourcePersistenceTests {
         let conversation = Conversation(messages: [.init(role: .assistant, text: "Old text", createdAt: Date(timeIntervalSince1970: 1000))], updatedAt: Date(timeIntervalSince1970: 2000))
         let repository = try ConversationRepository(databaseURL: url)
         try await repository.save([conversation])
-        try sql(url, "ALTER TABLE messages DROP COLUMN image_gallery_layout_json; ALTER TABLE messages DROP COLUMN remote_images_json; ALTER TABLE messages DROP COLUMN remote_attachment_json; ALTER TABLE messages DROP COLUMN agent_message_source_json; UPDATE schema_version SET version=12")
+        try sql(url, "ALTER TABLE messages DROP COLUMN image_gallery_layout_json; ALTER TABLE messages DROP COLUMN remote_images_json; ALTER TABLE messages DROP COLUMN remote_attachment_json; ALTER TABLE messages DROP COLUMN agent_message_source_json; ALTER TABLE messages DROP COLUMN external_channel_source_json; UPDATE schema_version SET version=12")
         for _ in 0..<2 {
             let upgraded = try ConversationRepository(databaseURL: url)
             let loaded = try await upgraded.load()

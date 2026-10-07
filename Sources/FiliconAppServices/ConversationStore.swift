@@ -91,6 +91,21 @@ public actor ConversationStore {
         return try await repository.leaseUniqueBinding(accountID: accountID, agentID: agentID, conversationID: conversationID)
     }
 
+    public func resolveInboundOwner(_ candidate: Conversation, commit: @escaping ConversationCommitGuard) async throws -> Conversation {
+        let repository = try resolveRepository()
+        try await importLegacyIfNeeded(into: repository)
+        return try await repository.resolveInboundOwner(candidate, commit: commit)
+    }
+
+    public func receiveExternalChannel(_ message: ChatMessage, bindingLease: ConversationBindingLease,
+                                       activityAt: Date, commit: @escaping ConversationCommitGuard) async throws -> Conversation {
+        let repository = try resolveRepository()
+        try await importLegacyIfNeeded(into: repository)
+        let result = try await repository.receiveExternalChannel(message, bindingLease: bindingLease, activityAt: activityAt, commit: commit)
+        try await transcriptService.reconcile(result)
+        return result
+    }
+
     public func unreadState(conversationID: UUID) async throws -> ConversationUnreadState? {
         let repository = try resolveRepository()
         try await importLegacyIfNeeded(into: repository)

@@ -1,4 +1,16 @@
-# 協作能力核對紀錄（更新至 2026-10-06）
+# 協作能力核對紀錄（更新至 2026-10-07）
+
+## 外部純文字收件進入真正成員聊天（純文字增量已驗證）
+
+2026-10-07 接續 `e15b357`，reference HEAD 仍為 `a9f633e09d49a85829b8236331b9e21f7e612634`。`background-wakes.ts` 收件使用實際 agent own session／common runner，`channel-messaging.ts` 明確區分 remote human 與 local human authority；group skip／redrive／hidden fallback 是另外的契約，不能把原 Filicon 一次 bare stream 自動回覆稱為 parity。
+
+目前純文字 receipt 由 native account／revision／owner admission 進唯一 canonical own DM，使用 common direct tool／peer host；schema 18 保存嚴格 display-only sender／destination provenance，遠端內容不升格為本機人類權限。plain draft 不自動送件、不收集記憶，actual `SendMessage channel` 每次 native fresh human review；actual peer 使用自己的 connection／作者與 own DM，保留 private inference 分離。durable claim 防 duplicate／重開 replay，Stop／account／connection／binding／persona／hidden 的舊核准失效；準備階段的 actor hop 亦捕捉 scope，修改後還原不復活舊 attempt。只有 native captured incoming 的 exact address 正規化 thread，一般 first-colon parser 不變。
+
+最後相關 v12 的 core 50 methods／3 suites、channel 9 methods／1 suite、actual App 5 methods／29 cases 全通過，原 10 個 native folder-consent cases 與 silent／peer／preparation／ID collision／全部未讀遷移斷言保留。本次 approval review 確實放行，完整串行 v2 為 2,178 Swift Testing／259 suites＋135 XCTest／0 failures，App 806 tests／103 suites（400.266 秒）；兩項 opt-in live tests skipped。28 張七語窄寬明暗來源 header 的完整 sender／正文／channel-thread OCR 通過，main 逐張查看原生渲染；七語 keys 各 1,817／0 missing，不等於全部 App 真人 UI／VoiceOver 驗收。全新隔離 arm64 原生 Debug build／verify、fresh standalone SPM Debug 封裝／verify 亦通過，四個 executable、offline KaTeX／Mermaid、entitlements、deep strict 簽章已確認；原 compiler／SDK／CoreData／NSXPC／CoreGraphics 診斷保留，不是 Developer ID release／公證。本節隨純文字產品增量提交；早期 source／fixture 錯誤與完整／native／standalone／OCR 非通過紀錄保留，精確 log／artifact 見 [完成驗收入口](Parity-completion-audit.md)，不用舊 gates 冒充新 source 證據。
+
+前輪 peer／routine 相關 filter 保持原案例跑完：core 34 methods／3 suites 通過；App 73 methods／4 suites（116.057 秒）有 101 issues，全部為 ScopedBookmarksAgent 建立／通訊失敗（mailbox local attachment 80、direct routine 14、group routine 7）。該輪仍是非通過；本次完整 v2 包含原案例並全部通過，不移除舊失敗，也不將未測的 incoming attachment 行為當作已驗收。未 skip、刪斷言或注入 fake folder grant。
+
+**仍未完成**：incoming 附件／圖片的 source admission、background cards／fresh resume、其餘 failure follow-up、preemption redrive／hidden fallback、其他 host、uncaptured locator 新核准開啟、unified private DM/group runtime，以及 live／真人／VoiceOver／最低 macOS／release／公證。AGENT-02／AGENT-04／UI-04／整體 partial、48 分類不變；未 push／launch／重啟 App 或 Xcode／操作真實服務或資料。
 
 ## saved-group failure wake 的原始略過契約
 

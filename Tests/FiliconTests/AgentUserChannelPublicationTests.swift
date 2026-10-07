@@ -61,6 +61,7 @@ struct AgentUserChannelPublicationTests {
         authorize: AgentChannelPublicationTransaction.Authorize? = nil,
         lifetime: ChannelPublicationLifetime = .init(), scope: UUID? = nil, author: UUID? = nil,
         transcriptSource: AgentChannelPublicationTransaction.TranscriptSource? = nil,
+        inboundReplyAddress: ChannelAddress? = nil,
         remote: Bool = false, makeID: (@Sendable () -> UUID)? = nil,
         validate: @escaping @Sendable () async throws -> Void = {}) -> AgentChannelPublicationTransaction {
         let ids = ChannelMessageIDs(), date = self.date
@@ -68,6 +69,7 @@ struct AgentUserChannelPublicationTests {
             channels: f.channels, lifetime: lifetime, validateScope: validate,
             authorize: authorize ?? { review, _, _ in await f.probe.review(review) },
             prepare: prepare, install: install, supportsRemoteSources: remote, transcriptSource: transcriptSource,
+            inboundReplyAddress: inboundReplyAddress,
             makeID: makeID ?? { ids.next() }, now: { date })
     }
     private func tool(_ f: Fixture, transaction: AgentChannelPublicationTransaction?) -> AgentUserMessageTool {
@@ -128,6 +130,35 @@ struct AgentUserChannelPublicationTests {
         expectNoDifference(events, ["read approved source", "review", "install reviewed bytes"])
         expectNoDifference(deliveries.map(\.outbound), [.init(text: "Report caption", attachments: [prepared.metadata])])
         expectNoDifference(sends, [])
+    }
+
+    @Test(arguments: [false, true], ["C_SAFE:THREAD", "C_OTHER:THREAD"])
+    func onlyAnAdmittedInboundHostResolvesItsExactTypedReplyThread(admitted: Bool, chat: String) async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let source = ChannelAddress(platform: "slack", channelID: "C_SAFE", threadID: "THREAD")
+        let request = try NormalizedToolCall(id: "reply", name: "SendMessage", argumentsJSON:
+            JSONEncoder().encode(["type": "text", "content": "Exact reply", "channel": "slack:\(chat)"]))
+        let context = ToolContext(conversationID: origin, runID: channelTestID(5))
+        let parsed = try AgentChannelMessage.parse(try #require(JSONSerialization.jsonObject(with: request.argumentsJSON) as? [String: Any]))
+        expectNoDifference(parsed.address, .init(platform: "slack", channelID: chat))
+        let tx = transaction(f, authorize: { review, _, _ in
+                let before = await f.channels.deliveries()
+                expectNoDifference(before, [])
+                await f.probe.review(review)
+            }, inboundReplyAddress: admitted ? source : nil)
+        let tool = tool(f, transaction: tx)
+        let result = try await tool.execute(request, context: context)
+        #expect(!result.isError)
+        let expected = admitted && chat == "C_SAFE:THREAD" ? source : parsed.address
+        let reviews = await f.probe.reviews, deliveries = await f.channels.deliveries(), sends = await f.probe.sends
+        expectNoDifference(reviews.count, 1); expectNoDifference(deliveries.count, 1)
+        expectNoDifference(reviews.first?.message.address, expected)
+        expectNoDifference(reviews.first?.publication.address, expected)
+        expectNoDifference(deliveries.first?.address, expected)
+        expectNoDifference(sends, [])
+        let replay = try await tool.execute(request, context: context)
+        expectNoDifference(replay, result)
+        let unchanged = await f.channels.deliveries(); expectNoDifference(unchanged, deliveries)
     }
 
     @Test func textOnlyDestinationRejectsAttachmentIntentBeforeSourceAccess() async throws {

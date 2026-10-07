@@ -91,6 +91,61 @@ import FiliconDomain
     }
 
     @Test(arguments: ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"], [280.0, 680.0])
+    func incomingRemoteHumanRowShowsSourceInsteadOfLocalHumanIdentity(language: String, width: Double) async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "filicon-incoming-source-ui-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+        let id = UUID(uuidString: "46000000-0000-0000-0000-000000000001")!, date = Date(timeIntervalSince1970: 2_000)
+        let source = ExternalChannelMessageSource(connectionID: id, externalEventID: "exact-incoming-event",
+            owner: .init(accountID: "fixture", agentID: id), conversationID: id, platform: "slack",
+            channelID: "C_REMOTE", threadID: "T_REMOTE", senderID: "U_REMOTE", senderName: "REMOTE SENDER {0}", receivedAt: date)
+        let message = ChatMessage(role: .user, text: "REMOTE DATA ONLY\nEND REMOTE TEXT", createdAt: date, externalChannelSource: source)
+        var chat = Conversation(id: id, title: "Native inbound row", messages: [message], updatedAt: date)
+        chat.agentBinding = source.owner
+        #expect(message.hasValidExternalChannelSource)
+        for dark in [false, true] {
+            try await withUIRenderTurn(language: language) {
+                let host = NSHostingView(rootView: TranscriptMessageView(message: message, conversation: chat) { _ in
+                    Issue.record("Rendering incoming history must not trigger a message action")
+                }.padding(12).frame(width: width).background(FiliconTheme.canvas).environmentObject(model)
+                    .environment(\.locale, Locale(identifier: language)).environment(\.colorScheme, dark ? .dark : .light))
+                host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+                let size = host.fittingSize
+                #expect(abs(size.width - width) < 0.5 && size.height > 60 && size.height < 500)
+                host.frame = .init(origin: .zero, size: size)
+                let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+                window.appearance = host.appearance; window.contentView = host
+                defer { window.contentView = nil }
+                host.layoutSubtreeIfNeeded(); host.displayIfNeeded()
+                let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                host.appearance?.performAsCurrentDrawingAppearance { host.cacheDisplay(in: host.bounds, to: bitmap) }
+                // Preserve the actual rendering before invoking Vision. A
+                // recognition-service failure must not erase the visual
+                // evidence or be mistaken for a successful layout check.
+                if let path = ProcessInfo.processInfo.environment["FILICON_UI_REVIEW_OUTPUT"] {
+                    let directory = URL(fileURLWithPath: path)
+                    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                    try #require(bitmap.representation(using: .png, properties: [:])).write(to:
+                        directory.appending(path: "inbound-source-\(language)-\(Int(width))-\(dark ? "dark" : "light").png"))
+                }
+                let recognition = VNRecognizeTextRequest(); recognition.recognitionLevel = .accurate; recognition.recognitionLanguages = ["en-US"]
+                do {
+                    try VNImageRequestHandler(cgImage: try #require(bitmap.cgImage)).perform([recognition])
+                } catch {
+                    Issue.record("Incoming source text recognition failed (\(language), \(width), dark=\(dark)): \(String(reflecting: error))")
+                    // Keep the failed gate, but render the other appearance as
+                    // well. No missing recognition result counts as a pass.
+                }
+                let visible = recognition.results?.compactMap { $0.topCandidates(1).first?.string }.joined().filter { !$0.isWhitespace } ?? ""
+                #expect(visible.contains("REMOTESENDER") && visible.contains("ENDREMOTETEXT"), "Remote sender and complete incoming text must be visible: \(visible)")
+                let route = visible.filter { $0.isLetter || $0.isNumber }.lowercased()
+                #expect(route.contains("slackcremotetremote"), "The complete incoming channel/thread address must remain visible: \(visible)")
+                expectNoDifference(message.externalChannelSource, source)
+            }
+        }
+    }
+
+    @Test(arguments: ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"], [280.0, 680.0])
     func nativeCapturedFilePreviewButtonFitsSevenLanguagesWithoutLinkingUnsentSources(language: String, width: Double) async throws {
         let expected = try #require([
             "en": "Preview attachment", "zh-Hant": "預覽附件", "zh-Hans": "预览附件",

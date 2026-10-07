@@ -152,6 +152,10 @@ public actor AgentChannelPublicationTransaction {
     private let now: @Sendable () -> Date
     private let transcriptSource: TranscriptSource?
     private let publishTranscript: PublishTranscript?
+    /// Only a live admitted inbound host supplies this exact source address.
+    /// It is not parsed from a model argument or restored transcript. The
+    /// legacy platform:chat grammar still treats additional colons as data.
+    private let inboundReplyAddress: ChannelAddress?
     private struct Key: Hashable { let run: UUID; let call: ToolCallID }
     private struct Input: Equatable { let message: AgentChannelMessage; let replyTo: UUID? }
     private struct Completed { let input: Input; let receipt: Receipt }
@@ -169,6 +173,7 @@ public actor AgentChannelPublicationTransaction {
                 supportsRemoteSources: Bool = false,
                 transcriptSource: TranscriptSource? = nil,
                 publishTranscript: PublishTranscript? = nil,
+                inboundReplyAddress: ChannelAddress? = nil,
                 makeID: @escaping @Sendable () -> UUID = { UUID() },
                 now: @escaping @Sendable () -> Date = { Date() }) {
         self.conversationID = conversationID; self.senderID = senderID; self.agentID = agentID
@@ -184,6 +189,7 @@ public actor AgentChannelPublicationTransaction {
         self.makeID = makeID; self.now = now
         self.transcriptSource = transcriptSource
         self.publishTranscript = publishTranscript
+        self.inboundReplyAddress = inboundReplyAddress
     }
 
     /// Synchronous Stop fence, including while this actor waits for approval.
@@ -202,6 +208,14 @@ public actor AgentChannelPublicationTransaction {
         busy = true
         defer { busy = false }
         try await checkScope()
+        let message: AgentChannelMessage
+        if let address = inboundReplyAddress, let thread = address.threadID,
+           input.message.address == .init(platform: address.platform, channelID: "\(address.channelID):\(thread)") {
+            // Restore the native source's typed thread only for its exact wake
+            // token. Ownership and fresh human review below still apply.
+            message = .init(address: address, text: input.message.text, images: input.message.images,
+                            attachment: input.message.attachment)
+        } else { message = input.message }
         if let transcriptSource {
             guard destinationSenderID == (transcriptSource.route == .directConversation ? destinationConversationID : agentID),
                   destinationConversationID == replyDirectoryConversationID || replyTo == nil else { throw Failure.unavailable }

@@ -188,11 +188,20 @@ extension ConversationRepository {
     /// new arrivals. Receipts are tombstones, not foreign keys to message rows.
     static func seedUnreadHistory(_ database: SQLiteDatabase) throws {
         try database.execute("INSERT OR IGNORE INTO conversation_read_state(conversation_id) SELECT id FROM conversations", operation: "seed unread history state")
-        let messages = try database.prepare("SELECT id,role,text,created_at,attachments_json,delivery_status,delivery_error,reasoning_text,tool_activities_json,reply_to_message_id,reactions_json,transcript_cards_json,short_address,agent_message_source_json,remote_attachment_json,remote_images_json,image_gallery_layout_json,conversation_id FROM messages", operation: "seed unread history receipts")
+        // Migration 17 also calls this before the provenance column exists.
+        // Keep decodeMessage's projection stable without inventing a source for
+        // legacy rows, while recovery of schema 18 retains the real source.
+        let columns = try database.prepare("PRAGMA table_info(messages)", operation: "inspect unread history message columns")
+        var hasExternalSource = false
+        while try columns.step() == SQLITE_ROW {
+            if columns.text(1) == "external_channel_source_json" { hasExternalSource = true }
+        }
+        let externalSource = hasExternalSource ? "external_channel_source_json" : "'null'"
+        let messages = try database.prepare("SELECT id,role,text,created_at,attachments_json,delivery_status,delivery_error,reasoning_text,tool_activities_json,reply_to_message_id,reactions_json,transcript_cards_json,short_address,agent_message_source_json,remote_attachment_json,remote_images_json,image_gallery_layout_json,\(externalSource),conversation_id FROM messages", operation: "seed unread history receipts")
         let bindingRow = try database.prepare("SELECT agent_binding_json FROM conversations WHERE id=?", operation: "resolve historical unread owner")
         let insert = try database.prepare("INSERT OR IGNORE INTO conversation_activity_receipts(conversation_id,message_id,activity_at) VALUES(?,?,?)", operation: "seed historical unread receipt")
         while try messages.step() == SQLITE_ROW {
-            let message = try decodeMessage(messages), rawID = messages.text(17)
+            let message = try decodeMessage(messages), rawID = messages.text(18)
             guard let conversationID = UUID(uuidString: rawID) else {
                 throw PersistenceError.invalidData(table: "messages", row: message.id.uuidString, field: "conversation_id")
             }

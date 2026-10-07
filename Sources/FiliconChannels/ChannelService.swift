@@ -34,6 +34,8 @@ private struct ChannelPersistentState: Codable, Sendable {
     // so restored publications cannot follow a replacement connection (or ABA).
     var publicationRevisions: [String: UUID]? = nil
     var failureFollowUps: [ChannelFailureFollowUp]? = nil
+    var inboundReceipts: [ChannelInboundReceipt]? = nil
+    var inboundRuns: [ChannelInboundRun]? = nil
 }
 
 public actor ChannelService {
@@ -64,6 +66,7 @@ public actor ChannelService {
     // edits. This is a process-local fence, not cross-process compare-and-swap.
     private var storageRevision = UUID()
     private let publicationIssuerID = UUID()
+    private var inboundAdmissions: [WeakChannelInboundAdmission] = []
 
     public init(storeURL: URL, newDeliveryID: @escaping @Sendable () -> UUID = { UUID() },
                 now: @Sendable () -> Date = { Date() }) throws {
@@ -104,6 +107,36 @@ public actor ChannelService {
                 }
                 state.failureFollowUps = values
             }
+            let receipts = state.inboundReceipts ?? []
+            let acceptedEnvelopes = state.inbound
+            guard receipts.count <= state.inbound.count,
+                  Set(receipts.map(\.envelopeID)).count == receipts.count,
+                  receipts.allSatisfy({ receipt in
+                      let matches = acceptedEnvelopes.filter { $0.id == receipt.envelopeID }
+                      return matches.count == 1 && matches.first.map(receipt.isConsistent(with:)) == true
+                  }) else { throw ChannelServiceError.invalidEnvelope }
+            if var values = state.inboundRuns {
+                let date = now()
+                guard values.count <= receipts.count, date.timeIntervalSince1970.isFinite,
+                      Set(values.map(\.id)).count == values.count,
+                      Set(values.map(\.messageID)).count == values.count,
+                      Set(values.map(\.id)).isDisjoint(with: Set(values.map(\.messageID))),
+                      Set(values.map { $0.receipt.envelopeID }).count == values.count else { throw ChannelServiceError.invalidEnvelope }
+                for index in values.indices {
+                    guard values[index].startedAt.timeIntervalSince1970.isFinite,
+                          values[index].id != values[index].messageID,
+                          receipts.contains(values[index].receipt),
+                          values[index].status == .running
+                            ? values[index].finishedAt == nil
+                            : values[index].finishedAt.map({ $0.timeIntervalSince1970.isFinite && $0 >= values[index].startedAt }) == true
+                    else { throw ChannelServiceError.invalidEnvelope }
+                    if values[index].status == .running {
+                        values[index].status = .interrupted
+                        values[index].finishedAt = max(date, values[index].startedAt)
+                    }
+                }
+                state.inboundRuns = values
+            }
             for index in state.deliveries.indices where state.deliveries[index].status == .sending {
                 state.deliveries[index].status = .retrying
             }
@@ -117,6 +150,7 @@ public actor ChannelService {
     deinit { for listener in listeners.values { listener.task.cancel() } }
 
     public func register(_ connector: any ChannelConnector) {
+        retireInboundAdmissions { $0.envelope.address.platform == connector.descriptor.id }
         connectors[connector.descriptor.id] = connector
         connectorRevisions[connector.descriptor.id] = UUID()
     }
@@ -208,6 +242,7 @@ public actor ChannelService {
         // retire a suspended proposal or profile request. This local fence is
         // advanced before entering the writer, not only on its success path.
         connectionRevisions[connectionID] = UUID()
+        retireInboundAdmissions { $0.receipt.connectionID == connectionID }
         let outcome = try operation(state.connections)
         if outcome.changed {
             profileRequests[connectionID] = nil
@@ -295,6 +330,8 @@ public actor ChannelService {
         state.deliveries.removeAll { $0.connectionID == id }
         state.failureWakes.removeAll { $0.connectionID == id }
         state.failureFollowUps?.removeAll { $0.connectionID == id }
+        state.inboundReceipts?.removeAll { $0.connectionID == id }
+        state.inboundRuns?.removeAll { $0.receipt.connectionID == id }
         state.publicationRevisions?[id.uuidString] = nil
         try persist()
         // Do not tear down the live connection if the deletion failed to save.
@@ -342,6 +379,7 @@ public actor ChannelService {
     }
 
     public func stop(connectionID: UUID) {
+        retireInboundAdmissions { $0.receipt.connectionID == connectionID }
         listeners.removeValue(forKey: connectionID)?.task.cancel()
     }
 
@@ -357,8 +395,20 @@ public actor ChannelService {
             $0.connectionID == envelope.connectionID && $0.externalEventID == envelope.externalEventID
         }) else { return false }
         state.inbound.append(envelope)
+        if let connection = state.connections.first(where: { $0.id == envelope.connectionID }),
+           connection.enabled, let agentID = connection.agentID,
+           ["slack", "discord"].contains(connection.connectorID), connection.connectorID == envelope.address.platform {
+            if state.inboundReceipts == nil { state.inboundReceipts = [] }
+            let receipt = ChannelInboundReceipt(envelopeID: envelope.id, connectionID: connection.id,
+                accountID: connection.authorizationAccountID, agentID: agentID,
+                configurationRevision: publicationRevision(connectionID: connection.id))
+            if receipt.isConsistent(with: envelope) { state.inboundReceipts?.append(receipt) }
+        }
         if state.inbound.count > Self.maximumRetainedInboundEvents {
             state.inbound.removeFirst(state.inbound.count - Self.maximumRetainedInboundEvents)
+            let retained = Set(state.inbound.map(\.id))
+            state.inboundReceipts?.removeAll { !retained.contains($0.envelopeID) }
+            state.inboundRuns?.removeAll { !retained.contains($0.receipt.envelopeID) }
         }
         if let index = state.connections.firstIndex(where: { $0.id == envelope.connectionID }) {
             state.connections[index].cursor = envelope.cursor ?? state.connections[index].cursor
@@ -370,6 +420,81 @@ public actor ChannelService {
 
     public func inboundEvents(connectionID: UUID? = nil) -> [ChannelEnvelope] {
         state.inbound.filter { connectionID == nil || $0.connectionID == connectionID }
+    }
+
+    public func inboundRuns() -> [ChannelInboundRun] { state.inboundRuns ?? [] }
+
+    /// Only envelopes accepted under the current own-agent configuration can
+    /// start. Legacy imports, changed accounts, and already admitted rows skip.
+    public func pendingInbound(accountID: String) -> [ChannelEnvelope] {
+        state.inbound.filter { envelope in
+            guard let receipt = state.inboundReceipts?.first(where: { $0.envelopeID == envelope.id }),
+                  receipt.accountID == accountID, inboundReceiptIsCurrent(receipt),
+                  !(state.inboundRuns ?? []).contains(where: { $0.receipt.envelopeID == envelope.id }) else { return false }
+            return true
+        }
+    }
+
+    public func prepareInbound(_ envelope: ChannelEnvelope, accountID: String,
+                              invalidate: @escaping @Sendable () -> Void) throws -> ChannelInboundAdmission {
+        guard state.inbound.contains(envelope),
+              let receipt = state.inboundReceipts?.first(where: { $0.envelopeID == envelope.id }),
+              receipt.accountID == accountID, inboundReceiptIsCurrent(receipt),
+              !(state.inboundRuns ?? []).contains(where: { $0.receipt.envelopeID == envelope.id }) else { throw CancellationError() }
+        let admission = ChannelInboundAdmission(receipt: receipt, envelope: envelope,
+            issuerID: publicationIssuerID, invalidate: invalidate)
+        inboundAdmissions.removeAll { $0.value?.isActive != true }
+        inboundAdmissions.append(.init(value: admission))
+        return admission
+    }
+
+    public func claimInbound(_ admission: ChannelInboundAdmission, conversationID: UUID,
+                             runID: UUID, messageID: UUID, at date: Date,
+                             commit: @Sendable (_ operation: () throws -> Void) throws -> Void = { try $0() }) throws -> ChannelInboundRun {
+        try admission.check()
+        guard date.timeIntervalSince1970.isFinite, runID != messageID, admission.issuerID == publicationIssuerID,
+              state.inboundReceipts?.contains(admission.receipt) == true, admission.receipt.isConsistent(with: admission.envelope),
+              inboundReceiptIsCurrent(admission.receipt), state.inbound.contains(admission.envelope),
+              !(state.inboundRuns ?? []).contains(where: { $0.id == runID || $0.messageID == messageID
+                  || $0.id == messageID || $0.messageID == runID || $0.receipt.envelopeID == admission.envelope.id }) else { throw CancellationError() }
+        let run = ChannelInboundRun(id: runID, receipt: admission.receipt, conversationID: conversationID,
+            messageID: messageID, startedAt: date, status: .running)
+        try admission.withCurrent {
+            try commit {
+                if state.inboundRuns == nil { state.inboundRuns = [] }
+                state.inboundRuns?.append(run)
+                try persist()
+            }
+        }
+        return run
+    }
+
+    public func isInboundCurrent(_ admission: ChannelInboundAdmission, run: ChannelInboundRun) -> Bool {
+        admission.isActive && admission.issuerID == publicationIssuerID && inboundReceiptIsCurrent(admission.receipt)
+            && admission.receipt == run.receipt && state.inbound.contains(admission.envelope)
+            && state.inboundRuns?.contains(where: { $0 == run && $0.status == .running }) == true
+    }
+
+    public func finishInbound(_ run: ChannelInboundRun, status: ChannelInboundRun.Status, at date: Date) throws {
+        guard status != .running, date.timeIntervalSince1970.isFinite,
+              let index = state.inboundRuns?.firstIndex(where: { $0 == run && $0.status == .running }) else { return }
+        state.inboundRuns?[index].status = status
+        state.inboundRuns?[index].finishedAt = max(date, run.startedAt)
+        try persist()
+    }
+
+    private func inboundReceiptIsCurrent(_ receipt: ChannelInboundReceipt) -> Bool {
+        guard let connection = state.connections.first(where: { $0.id == receipt.connectionID }),
+              connection.enabled, connection.agentID == receipt.agentID,
+              connection.authorizationAccountID == receipt.accountID,
+              publicationRevision(connectionID: connection.id) == receipt.configurationRevision,
+              connectors[connection.connectorID] != nil else { return false }
+        return true
+    }
+
+    private func retireInboundAdmissions(where predicate: (ChannelInboundAdmission) -> Bool) {
+        for entry in inboundAdmissions { if let value = entry.value, predicate(value) { value.close() } }
+        inboundAdmissions.removeAll { $0.value?.isActive != true }
     }
 
     /// Read-only preparation. No connection ID, credential or peer identity is
@@ -672,6 +797,7 @@ public actor ChannelService {
         state.publicationRevisions?[connectionID.uuidString] ?? publicationIssuerID
     }
     private func advancePublicationRevision(connectionID: UUID) {
+        retireInboundAdmissions { $0.receipt.connectionID == connectionID }
         if state.publicationRevisions == nil { state.publicationRevisions = [:] }
         state.publicationRevisions?[connectionID.uuidString] = UUID()
     }

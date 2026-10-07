@@ -16,7 +16,7 @@ struct WeakConversationUnreadObservation {
 }
 
 public actor ConversationRepository {
-    public static let currentSchemaVersion = 17
+    public static let currentSchemaVersion = 18
     let database: SQLiteDatabase
     private var bindingLeases: [ConversationBindingLease] = []
     var unreadObservations: [WeakConversationUnreadObservation] = []
@@ -38,7 +38,7 @@ public actor ConversationRepository {
 
     public func load() throws -> [Conversation] {
         let conversations = try database.prepare("SELECT id, title, provider_id, model_id, updated_at, hidden_at, reasoning_effort, message_addresses_json, agent_binding_json FROM conversations ORDER BY updated_at DESC, id DESC", operation: "load conversations")
-        let messages = try database.prepare("SELECT id, role, text, created_at, attachments_json, delivery_status, delivery_error, reasoning_text, tool_activities_json, reply_to_message_id, reactions_json, transcript_cards_json, short_address, agent_message_source_json, remote_attachment_json, remote_images_json, image_gallery_layout_json FROM messages WHERE conversation_id = ? ORDER BY ordinal", operation: "load messages")
+        let messages = try database.prepare("SELECT id, role, text, created_at, attachments_json, delivery_status, delivery_error, reasoning_text, tool_activities_json, reply_to_message_id, reactions_json, transcript_cards_json, short_address, agent_message_source_json, remote_attachment_json, remote_images_json, image_gallery_layout_json, external_channel_source_json FROM messages WHERE conversation_id = ? ORDER BY ordinal", operation: "load messages")
         var result: [Conversation] = []
         while try conversations.step() == SQLITE_ROW {
             var conversation = try Self.decodeConversationMetadata(conversations)
@@ -85,6 +85,42 @@ public actor ConversationRepository {
         return lease
     }
 
+    /// Native channel owner resolution is atomic with creation. Existing hidden
+    /// or duplicate owners never cause a second history to be manufactured.
+    public func resolveInboundOwner(_ candidate: Conversation, commit: ConversationCommitGuard) throws -> Conversation {
+        guard let binding = candidate.agentBinding, candidate.messages.isEmpty,
+              candidate.hiddenAt == nil else { throw CancellationError() }
+        if let existing = try uniqueBoundConversation(accountID: binding.accountID, agentID: binding.agentID) { return existing }
+        var values = try load()
+        guard !values.contains(where: { $0.id == candidate.id }) else { throw CancellationError() }
+        values.append(candidate)
+        try commit { try save(values, activityAt: candidate.updatedAt) }
+        return candidate
+    }
+
+    public func receiveExternalChannel(_ message: ChatMessage, bindingLease: ConversationBindingLease,
+                                       activityAt: Date, commit: ConversationCommitGuard) throws -> Conversation {
+        guard let source = message.externalChannelSource, message.hasValidExternalChannelSource,
+              source.owner == bindingLease.binding, source.conversationID == bindingLease.conversationID,
+              bindingLease.legacyHiddenAt == nil,
+              let owner = try uniqueBoundConversation(accountID: source.owner.accountID, agentID: source.owner.agentID),
+              owner.id == source.conversationID, owner.hiddenAt == nil else { throw CancellationError() }
+        var values = try load()
+        guard let index = values.firstIndex(where: { $0.id == source.conversationID }) else { throw CancellationError() }
+        if let existing = values[index].messages.first(where: { $0.externalChannelSource?.envelopeID == source.envelopeID }) {
+            var copy = existing; copy.shortAddress = nil; copy.reactions = []
+            guard copy == message else { throw CancellationError() }
+            try commit { try bindingLease.withValidBinding {} }
+            return values[index]
+        }
+        guard !values.contains(where: { $0.messages.contains(where: { $0.id == message.id }) }) else { throw CancellationError() }
+        values[index].messages.append(message)
+        values[index].updatedAt = max(values[index].updatedAt, activityAt)
+        DirectMessageAddressing.assignMissing(in: &values[index])
+        try commit { try bindingLease.withValidBinding { try persist(values, activityAt: activityAt, historicalImport: false) } }
+        return values[index]
+    }
+
     /// Loads one stable keyset page of conversation metadata. The canonical
     /// `load()` API remains the full snapshot API, including every message.
     public func conversationPage(_ request: ConversationPageRequest = ConversationPageRequest()) throws -> ConversationPage {
@@ -122,9 +158,9 @@ public actor ConversationRepository {
         let limit = Self.normalizedLimit(request.limit)
         let sql: String
         if request.before == nil {
-            sql = "SELECT id, role, text, created_at, attachments_json, delivery_status, delivery_error, reasoning_text, tool_activities_json, reply_to_message_id, reactions_json, transcript_cards_json, short_address, agent_message_source_json, remote_attachment_json, remote_images_json, image_gallery_layout_json, ordinal FROM messages WHERE conversation_id = ? ORDER BY ordinal DESC, id DESC LIMIT ?"
+            sql = "SELECT id, role, text, created_at, attachments_json, delivery_status, delivery_error, reasoning_text, tool_activities_json, reply_to_message_id, reactions_json, transcript_cards_json, short_address, agent_message_source_json, remote_attachment_json, remote_images_json, image_gallery_layout_json, external_channel_source_json, ordinal FROM messages WHERE conversation_id = ? ORDER BY ordinal DESC, id DESC LIMIT ?"
         } else {
-            sql = "SELECT id, role, text, created_at, attachments_json, delivery_status, delivery_error, reasoning_text, tool_activities_json, reply_to_message_id, reactions_json, transcript_cards_json, short_address, agent_message_source_json, remote_attachment_json, remote_images_json, image_gallery_layout_json, ordinal FROM messages WHERE conversation_id = ? AND (ordinal < ? OR (ordinal = ? AND id < ?)) ORDER BY ordinal DESC, id DESC LIMIT ?"
+            sql = "SELECT id, role, text, created_at, attachments_json, delivery_status, delivery_error, reasoning_text, tool_activities_json, reply_to_message_id, reactions_json, transcript_cards_json, short_address, agent_message_source_json, remote_attachment_json, remote_images_json, image_gallery_layout_json, external_channel_source_json, ordinal FROM messages WHERE conversation_id = ? AND (ordinal < ? OR (ordinal = ? AND id < ?)) ORDER BY ordinal DESC, id DESC LIMIT ?"
         }
         let statement = try database.prepare(sql, operation: "page messages")
         try statement.bind(conversationID.uuidString, at: 1)
@@ -139,7 +175,7 @@ public actor ConversationRepository {
 
         var rows: [(ordinal: Int, message: ChatMessage)] = []
         while try statement.step() == SQLITE_ROW {
-            rows.append((statement.int(17), try Self.decodeMessage(statement)))
+            rows.append((statement.int(18), try Self.decodeMessage(statement)))
         }
         let hasMore = rows.count > limit
         if hasMore { rows.removeLast() }
@@ -159,6 +195,13 @@ public actor ConversationRepository {
         var values = try load()
         var conversation = conversation
         if let canonical = values.first(where: { $0.id == conversation.id }) {
+            for message in conversation.messages {
+                guard let existing = canonical.messages.first(where: { $0.id == message.id }),
+                      existing.externalChannelSource != nil else { continue }
+                var old = existing, new = message
+                old.reactions = []; new.reactions = []; old.shortAddress = nil; new.shortAddress = nil
+                guard old == new else { throw CancellationError() }
+            }
             for row in conversation.messages.indices {
                 guard let existing = canonical.messages.first(where: { $0.id == conversation.messages[row].id }),
                       let previous = existing.externalChannelPublication else { continue }
@@ -174,7 +217,7 @@ public actor ConversationRepository {
                 // A receipt may have arrived after the host captured even a
                 // complete chat snapshot. Only a loaded row can be deleted by
                 // that snapshot; never erase a newly projected external send.
-                for message in canonical.messages where message.externalChannelPublication != nil
+                for message in canonical.messages where (message.externalChannelPublication != nil || message.externalChannelSource != nil)
                     && !suppliedIDs.contains(message.id) && !replacingLoadedMessageIDs.contains(message.id) {
                     let insertion = conversation.messages.firstIndex { $0.createdAt > message.createdAt }
                         ?? conversation.messages.endIndex
@@ -364,8 +407,9 @@ public actor ConversationRepository {
             let loadNextOrdinal = try database.prepare("SELECT next_message_ordinal FROM conversations WHERE id = ?", operation: "load next message ordinal")
             let storeNextOrdinal = try database.prepare("UPDATE conversations SET next_message_ordinal = ? WHERE id = ?", operation: "store next message ordinal")
             let existingOrdinals = try database.prepare("SELECT id, ordinal FROM messages WHERE conversation_id = ? ORDER BY ordinal", operation: "load stable message ordinals")
+            let existingExternal = try database.prepare("SELECT id, role, text, created_at, attachments_json, delivery_status, delivery_error, reasoning_text, tool_activities_json, reply_to_message_id, reactions_json, transcript_cards_json, short_address, agent_message_source_json, remote_attachment_json, remote_images_json, image_gallery_layout_json, external_channel_source_json FROM messages WHERE conversation_id = ? AND external_channel_source_json != 'null'", operation: "preserve external channel source")
             let clearMessages = try database.prepare("DELETE FROM messages WHERE conversation_id = ?", operation: "replace messages")
-            let insertMessage = try database.prepare("INSERT INTO messages(id,conversation_id,ordinal,role,text,created_at,attachments_json,delivery_status,delivery_error,reasoning_text,tool_activities_json,reply_to_message_id,reactions_json,transcript_cards_json,short_address,agent_message_source_json,remote_attachment_json,remote_images_json,image_gallery_layout_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", operation: "insert message")
+            let insertMessage = try database.prepare("INSERT INTO messages(id,conversation_id,ordinal,role,text,created_at,attachments_json,delivery_status,delivery_error,reasoning_text,tool_activities_json,reply_to_message_id,reactions_json,transcript_cards_json,short_address,agent_message_source_json,remote_attachment_json,remote_images_json,image_gallery_layout_json,external_channel_source_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", operation: "insert message")
             let clearSearch = try database.prepare("DELETE FROM conversation_search WHERE conversation_id = ?", operation: "replace search document")
             let insertSearch = try database.prepare("INSERT INTO conversation_search(conversation_id,content) VALUES(?,?)", operation: "index conversation")
             let clearMessageSearch = try database.prepare("DELETE FROM message_search WHERE conversation_id = ?", operation: "replace message search documents")
@@ -376,6 +420,14 @@ public actor ConversationRepository {
             let insertMediaFTS = try database.prepare("INSERT INTO media_search_fts(conversation_id,message_id,attachment_id,content) VALUES(?,?,?,?)", operation: "full-text index attachment")
             try database.execute("UPDATE global_search_state SET ready = 0 WHERE singleton = 1", operation: "mark global search update in progress")
             for conversation in values {
+                try existingExternal.bind(conversation.id.uuidString, at: 1)
+                while try existingExternal.step() == SQLITE_ROW {
+                    var old = try Self.decodeMessage(existingExternal)
+                    guard var proposed = conversation.messages.first(where: { $0.id == old.id }) else { continue }
+                    old.reactions = []; proposed.reactions = []; old.shortAddress = nil; proposed.shortAddress = nil
+                    guard old == proposed else { throw CancellationError() }
+                }
+                existingExternal.reset()
                 let oldOwner = try unreadBinding(conversation.id)
                 try upsert.bind(conversation.id.uuidString, at: 1); try upsert.bind(conversation.title, at: 2); try upsert.bind(conversation.providerID.rawValue, at: 3); try upsert.bind(conversation.modelID.rawValue, at: 4); try upsert.bind(conversation.updatedAt.timeIntervalSince1970, at: 5); try upsert.bind(conversation.hiddenAt?.timeIntervalSince1970 ?? 0, at: 6); try upsert.bind(conversation.reasoningEffort.rawValue, at: 7); try upsert.bind(String(decoding: JSONEncoder().encode(conversation.messageAddressReservations), as: UTF8.self), at: 8)
                 try upsert.bind(String(decoding: JSONEncoder().encode(conversation.agentBinding), as: UTF8.self), at: 9)
@@ -401,6 +453,12 @@ public actor ConversationRepository {
                 try clearMediaSearch.bind(conversation.id.uuidString, at: 1); _ = try clearMediaSearch.step(); clearMediaSearch.reset()
                 try clearMediaFTS.bind(conversation.id.uuidString, at: 1); _ = try clearMediaFTS.step(); clearMediaFTS.reset()
                 for message in conversation.messages {
+                    guard message.hasValidExternalChannelSource,
+                          message.externalChannelSource.map({ $0.owner == conversation.agentBinding
+                              && $0.conversationID == conversation.id
+                              && values.filter { $0.agentBinding == conversation.agentBinding }.count == 1 }) ?? true else {
+                        throw PersistenceError.invalidData(table: "messages", row: message.id.uuidString, field: "external_channel_source_json")
+                    }
                     guard message.agentMessageSource == nil || message.role == .assistant else { throw PersistenceError.invalidData(table: "messages", row: message.id.uuidString, field: "agent_message_source_json") }
                     guard message.imageGalleryLayout == nil || message.imageGalleryLayout?.matches(attachments: message.attachments, remoteGallery: message.remoteImages) == true else {
                         throw PersistenceError.invalidData(table: "messages", row: message.id.uuidString, field: "image_gallery_layout_json")
@@ -416,7 +474,7 @@ public actor ConversationRepository {
                     let activities = try JSONEncoder().encode(message.toolActivities)
                     let reactions = try JSONEncoder().encode(message.reactions)
                     let transcriptCards = try JSONEncoder().encode(message.transcriptCards)
-                    try insertMessage.bind(message.id.uuidString, at: 1); try insertMessage.bind(conversation.id.uuidString, at: 2); try insertMessage.bind(ordinal, at: 3); try insertMessage.bind(message.role.rawValue, at: 4); try insertMessage.bind(message.text, at: 5); try insertMessage.bind(message.createdAt.timeIntervalSince1970, at: 6); try insertMessage.bind(String(decoding: attachments, as: UTF8.self), at: 7); try insertMessage.bind(message.deliveryStatus.rawValue, at: 8); try insertMessage.bind(message.deliveryError ?? "", at: 9); try insertMessage.bind(message.reasoningText, at: 10); try insertMessage.bind(String(decoding: activities, as: UTF8.self), at: 11); try insertMessage.bind(message.replyToMessageID?.uuidString ?? "", at: 12); try insertMessage.bind(String(decoding: reactions, as: UTF8.self), at: 13); try insertMessage.bind(String(decoding: transcriptCards, as: UTF8.self), at: 14); try insertMessage.bind(message.shortAddress ?? "", at: 15); try insertMessage.bind(String(decoding: JSONEncoder().encode(message.agentMessageSource), as: UTF8.self), at: 16); try insertMessage.bind(String(decoding: JSONEncoder().encode(message.remoteAttachment), as: UTF8.self), at: 17); try insertMessage.bind(String(decoding: JSONEncoder().encode(message.remoteImages), as: UTF8.self), at: 18); try insertMessage.bind(String(decoding: JSONEncoder().encode(message.imageGalleryLayout), as: UTF8.self), at: 19); _ = try insertMessage.step(); insertMessage.reset()
+                    try insertMessage.bind(message.id.uuidString, at: 1); try insertMessage.bind(conversation.id.uuidString, at: 2); try insertMessage.bind(ordinal, at: 3); try insertMessage.bind(message.role.rawValue, at: 4); try insertMessage.bind(message.text, at: 5); try insertMessage.bind(message.createdAt.timeIntervalSince1970, at: 6); try insertMessage.bind(String(decoding: attachments, as: UTF8.self), at: 7); try insertMessage.bind(message.deliveryStatus.rawValue, at: 8); try insertMessage.bind(message.deliveryError ?? "", at: 9); try insertMessage.bind(message.reasoningText, at: 10); try insertMessage.bind(String(decoding: activities, as: UTF8.self), at: 11); try insertMessage.bind(message.replyToMessageID?.uuidString ?? "", at: 12); try insertMessage.bind(String(decoding: reactions, as: UTF8.self), at: 13); try insertMessage.bind(String(decoding: transcriptCards, as: UTF8.self), at: 14); try insertMessage.bind(message.shortAddress ?? "", at: 15); try insertMessage.bind(String(decoding: JSONEncoder().encode(message.agentMessageSource), as: UTF8.self), at: 16); try insertMessage.bind(String(decoding: JSONEncoder().encode(message.remoteAttachment), as: UTF8.self), at: 17); try insertMessage.bind(String(decoding: JSONEncoder().encode(message.remoteImages), as: UTF8.self), at: 18); try insertMessage.bind(String(decoding: JSONEncoder().encode(message.imageGalleryLayout), as: UTF8.self), at: 19); try insertMessage.bind(String(decoding: JSONEncoder().encode(message.externalChannelSource), as: UTF8.self), at: 20); _ = try insertMessage.step(); insertMessage.reset()
                     try insertMessageSearch.bind(conversation.id.uuidString, at: 1); try insertMessageSearch.bind(message.id.uuidString, at: 2); try insertMessageSearch.bind(message.role.rawValue, at: 3); try insertMessageSearch.bind(message.createdAt.timeIntervalSince1970, at: 4); try insertMessageSearch.bind(GlobalSearchQuery.boundedBody(message.text), at: 5); _ = try insertMessageSearch.step(); insertMessageSearch.reset()
                     var indexedAttachmentIDs: Set<String> = []
                     for attachment in message.attachments where indexedAttachmentIDs.insert(attachment.id).inserted {
@@ -714,6 +772,12 @@ public actor ConversationRepository {
                     try database.execute("UPDATE schema_version SET version=17 WHERE singleton=1", operation: "finish migration 17")
                 }
             }
+            if version < 18 {
+                try database.transaction("migration 18") {
+                    try database.execute("ALTER TABLE messages ADD COLUMN external_channel_source_json TEXT NOT NULL DEFAULT 'null'", operation: "migration 18 remote human provenance")
+                    try database.execute("UPDATE schema_version SET version=18 WHERE singleton=1", operation: "finish migration 18")
+                }
+            }
         } catch let error as PersistenceError { throw error }
         catch { throw PersistenceError.migration(version: 1, message: error.localizedDescription) }
     }
@@ -797,13 +861,14 @@ public actor ConversationRepository {
         let remote: RemoteAttachmentReference? = try decodeJSON(statement.text(14), table: "messages", row: rawID, field: "remote_attachment_json")
         let remoteImages: RemoteImageGallery? = try decodeJSON(statement.text(15), table: "messages", row: rawID, field: "remote_images_json")
         let imageGalleryLayout: ImageGalleryLayout? = try decodeJSON(statement.text(16), table: "messages", row: rawID, field: "image_gallery_layout_json")
+        let external: ExternalChannelMessageSource? = try decodeJSON(statement.text(17), table: "messages", row: rawID, field: "external_channel_source_json")
         guard source == nil || role == .assistant else { throw PersistenceError.invalidData(table: "messages", row: rawID, field: "agent_message_source_json") }
         guard imageGalleryLayout == nil || imageGalleryLayout?.matches(attachments: attachments, remoteGallery: remoteImages) == true else {
             throw PersistenceError.invalidData(table: "messages", row: rawID, field: "image_gallery_layout_json")
         }
         let createdAt = statement.double(3)
         guard createdAt.isFinite else { throw PersistenceError.invalidData(table: "messages", row: rawID, field: "created_at") }
-        return ChatMessage(
+        let message = ChatMessage(
             id: id,
             role: role,
             text: statement.text(2),
@@ -818,10 +883,15 @@ public actor ConversationRepository {
             reactions: reactions,
             shortAddress: statement.text(12).isEmpty ? nil : statement.text(12),
             agentMessageSource: source,
+            externalChannelSource: external,
             remoteAttachment: remote,
             remoteImages: remoteImages,
             imageGalleryLayout: imageGalleryLayout
         )
+        guard message.hasValidExternalChannelSource else {
+            throw PersistenceError.invalidData(table: "messages", row: rawID, field: "external_channel_source_json")
+        }
+        return message
     }
 
     private static func decodeJSON<T: Decodable>(_ value: String, table: String, row: String, field: String) throws -> T {
