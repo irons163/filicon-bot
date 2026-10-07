@@ -46,6 +46,12 @@ private actor AppInboundProbe {
     func rejected(_ value: ToolLoopError) { protocolRejections.append(value) }
     func correctionCall(_ value: NormalizedToolCall) { failureCorrectionCalls.append(value) }
 }
+private final class AppInboundSecretWriter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var writes = 0
+    var count: Int { lock.withLock { writes } }
+    func write(_ value: AgentSecretValue, _ reference: CredentialRef) { lock.withLock { writes += 1 } }
+}
 /// Holds the real registry actor before the incoming host's provider lookup.
 /// No admission/claim/runner is injected; the actual listener still owns it.
 private final class AppInboundRegistryBarrier: @unchecked Sendable {
@@ -98,6 +104,25 @@ private struct AppInboundProvider: InteractiveToolProvider {
             let task = Task {
                 do {
                     await probe.request(request)
+                    if mode.hasPrefix("card-") {
+                        let answered = request.messages.contains { $0.role == .user && ($0.text == "LOCAL_NATIVE_CARD_CHOICE"
+                            || $0.text.contains("securely provided the requested credential")
+                            || $0.text.contains("dismissed the credential request")) }
+                        let fields: [String: Any]
+                        if answered {
+                            fields = ["type": "text", "content": "EXACT_NATIVE_CARD_REPLY", "channel": "slack:C_REMOTE:T_REMOTE"]
+                        } else if mode == "card-question" {
+                            fields = ["type": "widget", "widget": ["prompt": "INBOUND_NATIVE_QUESTION",
+                                "options": [["label": "Continue", "value": "LOCAL_NATIVE_CARD_CHOICE"]]]]
+                        } else {
+                            fields = ["type": "secret-request", "secret": ["label": "INBOUND_NATIVE_CREDENTIAL",
+                                "connector": "slack", "field": "token"]]
+                        }
+                        await probe.result(try await executeTool(.init(id: answered ? "incoming-card-fresh-send" : "incoming-native-card",
+                            name: "SendMessage", argumentsJSON: JSONSerialization.data(withJSONObject: fields, options: .sortedKeys))))
+                        continuation.yield(.textDelta("PRIVATE_NATIVE_CARD_DRAFT")); continuation.yield(.completed(.stop)); continuation.finish()
+                        return
+                    }
                     if request.messages.contains(where: { $0.role == .system && $0.text == ChannelFailureFollowUpNotice.instructions }) {
                         if mode == "failure-throws" { throw ProviderError.transport("Offline inbound failure notice") }
                         if mode == "failure-external" {
@@ -185,8 +210,10 @@ private struct AppInboundProvider: InteractiveToolProvider {
         }
         try await ConversationStore(fileURL: root.appending(path: "conversations.json")).save(histories)
         let service = try ChannelService(storeURL: root.appending(path: "channels.json"))
-        let connection = ChannelConnection(connectorID: "slack", displayName: "Original inbound connection",
-            secretReference: "keychain://channels/TEST-only-never-read", agentID: owner.id, ownerAccountID: "local")
+        let connectionID = UUID()
+        let connection = ChannelConnection(id: connectionID, connectorID: "slack", displayName: "Original inbound connection",
+            secretReference: mode == "card-secret" ? "keychain://channels/\(connectionID)" : "keychain://channels/TEST-only-never-read",
+            agentID: owner.id, ownerAccountID: "local")
         try await service.saveConnection(connection)
         if mode == "peer" {
             try await service.saveConnection(.init(connectorID: "slack", displayName: "Separate peer connection",
@@ -234,6 +261,29 @@ private struct AppInboundProvider: InteractiveToolProvider {
         }
         try await eventually { f.model.pendingAutoReviewApprovals.contains { $0.id != id } }
         return try #require(f.model.pendingAutoReviewApprovals.first { $0.id != id })
+    }
+    private func storedPendingCard(_ pending: PendingApproval, in store: ConversationStore) async throws -> Conversation {
+        var snapshot: Conversation?
+        // Publishing the UI pending request precedes the repository actor hop.
+        // Take the full-value baseline at the durable card/tool boundary, not
+        // at the earlier UI notification or an arbitrary delay.
+        try await eventually {
+            guard let conversation = try? await store.conversation(id: pending.action.context.conversationID),
+                  conversation.messages.contains(where: { message in
+                      message.id == pending.fence.runID && message.toolActivities.contains {
+                          $0.id.rawValue == pending.action.context.toolCallID && $0.status == .running
+                      }
+                  }),
+                  conversation.messages.contains(where: { message in
+                      message.transcriptCards.contains {
+                          guard case .autoReview(let review) = $0.payload else { return false }
+                          return review.reviewID == pending.id && $0.lifecycle == .waiting
+                      }
+                  }) else { return false }
+            snapshot = conversation
+            return true
+        }
+        return try #require(snapshot)
     }
     private func settle(_ f: Fixture) async throws -> ChannelInboundRun {
         try await eventually {
@@ -459,6 +509,355 @@ private struct AppInboundProvider: InteractiveToolProvider {
         expectNoDifference(sqliteStoredDates(ui), canonical); expectNoDifference(f.model.selection, otherID)
         try await assertFailureDoesNotReplay(f, run: run, canonical: canonical, mode: "failure-correction", requests: requests)
     }
+    @Test(arguments: [(false, false), (true, false), (false, true), (true, true)], ["question", "secret", "secret-dismiss"])
+    func incomingNativeCardsResumeTheirOwnChatAndReviewTheOriginalThread(settings: (Bool, Bool), kind: String) async throws {
+        let (existing, genericReview) = settings
+        let f = try await fixture(existing: existing, mode: kind == "question" ? "card-question" : "card-secret")
+        defer { f.feed.finish(); try? FileManager.default.removeItem(at: f.root) }
+        let writer = AppInboundSecretWriter(); f.model.secretCredentialWriter = writer.write
+        await f.model.setAutoReviewEnabled(genericReview)
+        f.feed.emit(event(f))
+        let run = try await settle(f)
+        expectNoDifference(run.status, .completed)
+        let store = ConversationStore(fileURL: f.root.appending(path: "conversations.json"))
+        let before = try #require(try await store.conversation(id: run.conversationID))
+        let initialRequests = await f.probe.requests
+        expectNoDifference(initialRequests.count, 1)
+        let message = try #require(before.messages.first { $0.transcriptCards.contains { $0.directQuestion != nil || $0.directSecretRequest != nil } })
+        let original = try #require(message.transcriptCards.first { $0.directQuestion != nil || $0.directSecretRequest != nil })
+        expectNoDifference(original.directChannelInboundOrigin, .init(runID: run.id, messageID: run.messageID))
+        expectNoDifference(before.agentBinding, .init(accountID: "local", agentID: f.owner.id))
+        #expect(before.messages.contains { $0.id == run.messageID && $0.hasValidExternalChannelSource })
+        expectNoDifference(f.model.pendingAutoReviewApprovals, [])
+        let initialDeliveries = await f.service.deliveries(), initialSent = await f.probe.sent
+        expectNoDifference(initialDeliveries, []); expectNoDifference(initialSent, [])
+        expectNoDifference(writer.count, 0)
+        f.model.selectRoute(.conversation(run.conversationID))
+        if kind == "question" {
+            #expect(f.model.canAnswerDirectQuestion(conversationID: run.conversationID, messageID: message.id, cardID: original.id))
+            await f.model.directQuestionAnswered(conversationID: run.conversationID, messageID: message.id, cardID: original.id, answer: .option(0))
+        } else {
+            let input = try #require(f.model.directSecretCard(conversationID: run.conversationID, messageID: message.id, cardID: original.id))
+            input.draft = "FAKE_INBOUND_NATIVE_ONLY_SECRET"
+            if kind == "secret-dismiss" { await input.dismissButtonTapped() }
+            else { await input.submitButtonTapped() }
+            expectNoDifference(input.draft, "")
+        }
+        let pending = try await review(f)
+        expectNoDifference(pending.action.context.conversationID, run.conversationID)
+        let awaiting = try await storedPendingCard(pending, in: store)
+        let freshRun = try #require(awaiting.messages.first { $0.id == pending.fence.runID })
+        let pendingReview = try #require(awaiting.messages.first { message in
+            message.transcriptCards.contains {
+                guard case .autoReview(let review) = $0.payload else { return false }
+                return review.reviewID == pending.id
+            }
+        })
+        let beforeApproval = await f.service.deliveries(), beforeSent = await f.probe.sent
+        expectNoDifference(beforeApproval, []); expectNoDifference(beforeSent, [])
+        f.model.handleTranscriptCardIntent(.approveReview(reviewID: pending.id))
+        try await eventually { !f.model.isConversationWorking(run.conversationID) }
+        let deliveries = await f.service.deliveries(), sent = await f.probe.sent
+        expectNoDifference(deliveries.count, 1); expectNoDifference(sent, [])
+        let queued = try #require(deliveries.first)
+        // A fresh human callback must preserve the captured channel/thread,
+        // not borrow the old incoming execution or apply first-colon fallback.
+        expectNoDifference(queued.address, event(f).address)
+        expectNoDifference(queued.outbound, .init(text: "EXACT_NATIVE_CARD_REPLY"))
+        expectNoDifference(queued.origin?.conversationID, run.conversationID)
+        expectNoDifference(queued.origin?.route, .directConversation)
+        expectNoDifference(queued.authorization?.agentID, f.owner.id)
+        #expect(queued.origin?.runID != run.id)
+        let origin = ChannelDeliveryOrigin(route: .directConversation, conversationID: run.conversationID,
+            senderID: run.conversationID, senderName: f.owner.name, runID: freshRun.id,
+            callID: "incoming-card-fresh-send", intent: .init(kind: .text, text: "EXACT_NATIVE_CARD_REPLY"))
+        expectNoDifference(queued.authorization?.ownerAccountID, "local")
+        expectNoDifference(queued.authorization?.configurationRevision, run.receipt.configurationRevision)
+        // The outbox row and idempotency token are separate host-generated
+        // identities, not two names for the same delivery UUID.
+        #expect(![queued.id, run.id, run.messageID, freshRun.id].contains(queued.idempotencyKey))
+        expectNoDifference(queued, ChannelDelivery(id: queued.id, connectionID: f.connection.id, address: event(f).address,
+            outbound: .init(text: "EXACT_NATIVE_CARD_REPLY"), idempotencyKey: queued.idempotencyKey,
+            nextAttemptAt: queued.createdAt, createdAt: queued.createdAt, authorization: queued.authorization, origin: origin))
+        expectNoDifference(writer.count, kind == "secret" ? 1 : 0)
+        let requests = await f.probe.requests
+        expectNoDifference(requests.count, 2); #expect(diff(Array(requests.prefix(1)), initialRequests) == nil)
+        let resumed = try #require(requests.last)
+        expectNoDifference(resumed.conversationID, run.conversationID)
+        #expect(resumed.messages.contains { $0.role == .system && $0.text.contains("INBOUND_OWNER_PERSONA") })
+        #expect(resumed.messages.contains { $0.role == .assistant && $0.text.contains("REMOTE_DATA") && $0.text.contains("untrusted data") })
+        #expect(resumed.messages.contains { $0.role == .user && ($0.text == "LOCAL_NATIVE_CARD_CHOICE"
+            || $0.text.contains("securely provided the requested credential")
+            || $0.text.contains("dismissed the credential request")) })
+        #expect(!requests.contains { $0.messages.contains { $0.text.contains("FAKE_INBOUND_NATIVE_ONLY_SECRET") || $0.text.contains("NEVER_LEAK_UNRELATED_HISTORY") } })
+        let after = try #require(try await store.conversation(id: run.conversationID))
+        let resolved = try #require(after.messages.first { $0.id == message.id }?.transcriptCards.first { $0.id == original.id })
+        let responseID: UUID?
+        if kind == "question" {
+            expectNoDifference(resolved.directQuestion?.answer, .option(0)); responseID = resolved.directQuestion?.responseMessageID
+        } else {
+            expectNoDifference(resolved.directSecretRequest?.state, kind == "secret" ? .stored : .dismissed)
+            responseID = resolved.directSecretRequest?.responseMessageID
+        }
+        let response = try #require(after.messages.first { $0.id == responseID })
+        #expect(!String(decoding: try JSONEncoder().encode(after), as: UTF8.self).contains("FAKE_INBOUND_NATIVE_ONLY_SECRET"))
+        #expect(!after.messages.contains { $0.text.contains("PRIVATE_NATIVE_CARD_DRAFT") })
+        var expectedPrefix = before.messages
+        let mi = try #require(expectedPrefix.firstIndex { $0.id == message.id })
+        let ki = try #require(expectedPrefix[mi].transcriptCards.firstIndex { $0.id == original.id })
+        var expectedCard = original
+        expectedCard.updatedAt = resolved.updatedAt
+        #expect(resolved.updatedAt >= original.updatedAt)
+        let expectedText: String
+        if kind == "question" {
+            var question = try #require(original.directQuestion)
+            question.answer = .option(0); question.responseMessageID = response.id
+            expectedCard.lifecycle = .succeeded
+            expectedCard.payload = .widget(.init(title: question.question.prompt, widgetKind: "choice", question: question,
+                channelInboundOrigin: original.directChannelInboundOrigin))
+            expectedText = "LOCAL_NATIVE_CARD_CHOICE"
+        } else {
+            var request = try #require(original.directSecretRequest)
+            try request.resolve(provided: kind == "secret", responseMessageID: response.id)
+            expectedCard.lifecycle = kind == "secret" ? .provided : .cancelled
+            expectedCard.payload = .secretRequest(.init(requestID: request.requestID.uuidString, service: request.request.connector,
+                directRequest: request, channelInboundOrigin: original.directChannelInboundOrigin))
+            expectedText = try #require(request.acknowledgement)
+        }
+        expectNoDifference(resolved, expectedCard)
+        expectNoDifference(response, ChatMessage(id: response.id, role: .user, text: expectedText,
+            createdAt: response.createdAt, replyToMessageID: message.id, shortAddress: response.shortAddress))
+        expectedPrefix[mi].transcriptCards[ki] = expectedCard
+        expectNoDifference(Array(after.messages.prefix(expectedPrefix.count)), expectedPrefix)
+        let result = try #require(await f.probe.results.last)
+        let arguments = try JSONSerialization.data(withJSONObject: ["type": "text", "content": "EXACT_NATIVE_CARD_REPLY",
+            "channel": "slack:C_REMOTE:T_REMOTE"], options: .sortedKeys)
+        let expectedRun = ChatMessage(id: freshRun.id, role: .assistant, text: "", createdAt: freshRun.createdAt,
+            toolActivities: [.init(id: "incoming-card-fresh-send", name: "SendMessage",
+                argumentsJSON: String(decoding: arguments, as: UTF8.self), status: .succeeded, result: result.wireText)])
+        var expectedReview = pendingReview
+        let terminalCard = try #require(after.messages.first { $0.id == pendingReview.id }?.transcriptCards.first)
+        expectNoDifference(expectedReview.transcriptCards.count, 1)
+        #expect(terminalCard.updatedAt >= expectedReview.transcriptCards[0].updatedAt && terminalCard.updatedAt <= Date())
+        expectedReview.transcriptCards[0].lifecycle = .approved
+        expectedReview.transcriptCards[0].updatedAt = terminalCard.updatedAt
+        let publication = ExternalChannelTranscriptPublication(deliveryID: queued.id, connectionID: f.connection.id,
+            owner: .init(accountID: "local", agentID: f.owner.id), route: .directConversation,
+            conversationID: run.conversationID, senderID: run.conversationID, senderName: f.owner.name,
+            runID: freshRun.id, callID: "incoming-card-fresh-send", replyToMessageID: nil,
+            queuedAt: queued.createdAt, kind: .text, text: "EXACT_NATIVE_CARD_REPLY", sources: [], files: [],
+            platform: "slack", channelID: "C_REMOTE", threadID: "T_REMOTE",
+            delivery: .init(status: .queued, attemptCount: 0, deliveredAt: nil))
+        var expected = before
+        expected.messages = expectedPrefix + [ChatMessage(id: response.id, role: .user, text: expectedText,
+            createdAt: response.createdAt, replyToMessageID: message.id), expectedRun, expectedReview, publication.directMessage]
+        #expect(after.updatedAt >= awaiting.updatedAt && after.updatedAt <= Date())
+        #expect(queued.createdAt >= freshRun.createdAt && queued.createdAt <= after.updatedAt)
+        expected.updatedAt = after.updatedAt
+        DirectMessageAddressing.assignMissing(in: &expected)
+        expectNoDifference(after, sqliteStoredDates(expected))
+        let finishedRequests = await f.probe.requests
+        if kind == "question" {
+            await f.model.directQuestionAnswered(conversationID: run.conversationID, messageID: message.id, cardID: original.id, answer: .option(0))
+        }
+        f.feed.emit(event(f)); await f.model.reconcileChannelInbound()
+        let replayRequests = await f.probe.requests, replayRuns = await f.service.inboundRuns(), replayDeliveries = await f.service.deliveries()
+        #expect(diff(replayRequests, finishedRequests) == nil)
+        expectNoDifference(replayRuns, [run]); expectNoDifference(replayDeliveries, deliveries)
+        let reloaded = try await store.conversation(id: run.conversationID)
+        expectNoDifference(reloaded, after)
+        try await assertUnrelatedUntouched(f)
+    }
+    @Test(arguments: ["question", "secret"], ["account", "hidden", "duplicate", "foreign-binding", "archived", "connection-aba", "run-locator", "source-locator"])
+    func incomingCardsRejectChangedOwnerOrUnprovedSourceBeforeHumanCommit(kind: String, mutation: String) async throws {
+        let f = try await fixture(mode: "card-\(kind)")
+        defer { f.feed.finish(); try? FileManager.default.removeItem(at: f.root) }
+        let writer = AppInboundSecretWriter(); f.model.secretCredentialWriter = writer.write
+        f.feed.emit(event(f)); let run = try await settle(f)
+        let store = ConversationStore(fileURL: f.root.appending(path: "conversations.json"))
+        let before = try #require(try await store.conversation(id: run.conversationID))
+        let message = try #require(before.messages.first { $0.transcriptCards.contains { $0.directChannelInboundOrigin != nil } })
+        let card = try #require(message.transcriptCards.first { $0.directChannelInboundOrigin != nil })
+        let requests = await f.probe.requests
+        f.model.selectRoute(.conversation(run.conversationID))
+        let input = kind == "secret" ? try #require(f.model.directSecretCard(conversationID: run.conversationID, messageID: message.id, cardID: card.id)) : nil
+        // A real user enters the value while the card is still editable. Once
+        // invalidated, that old input is no longer an editable UI surface.
+        input?.draft = "FAKE_INBOUND_NATIVE_ONLY_SECRET"
+        let ci = try #require(f.model.conversations.firstIndex { $0.id == run.conversationID })
+        if mutation == "account" {
+            await f.model.cancelAutoReviewApprovals(nextAccountID: "foreign")
+            f.model.settings.accountScope = "foreign"
+        }
+        else if mutation == "hidden" { f.model.conversations[ci].hiddenAt = date }
+        else if mutation == "duplicate" {
+            var duplicate = Conversation(title: "Ambiguous owner", providerID: before.providerID, modelID: before.modelID)
+            duplicate.agentBinding = before.agentBinding; f.model.conversations.append(duplicate)
+        } else if mutation == "foreign-binding" { f.model.conversations[ci].agentBinding = .init(accountID: "local", agentID: f.peer.id) }
+        else if mutation == "archived" { await f.model.archiveAgent(id: f.owner.id) }
+        else if mutation == "connection-aba" {
+            try await f.service.setConnectionEnabled(id: f.connection.id, enabled: false)
+            try await f.service.setConnectionEnabled(id: f.connection.id, enabled: true)
+        } else {
+            let mi = try #require(f.model.conversations[ci].messages.firstIndex { $0.id == message.id })
+            let ki = try #require(f.model.conversations[ci].messages[mi].transcriptCards.firstIndex { $0.id == card.id })
+            let origin = ChannelInboundCardOrigin(runID: mutation == "run-locator" ? UUID() : run.id,
+                messageID: mutation == "source-locator" ? UUID() : run.messageID)
+            var forged = card
+            if let question = card.directQuestion {
+                forged.payload = .widget(.init(title: question.question.prompt, widgetKind: "choice", question: question, channelInboundOrigin: origin))
+            } else {
+                let request = try #require(card.directSecretRequest)
+                forged.payload = .secretRequest(.init(requestID: request.requestID.uuidString, service: request.request.connector,
+                    directRequest: request, channelInboundOrigin: origin))
+            }
+            f.model.conversations[ci].messages[mi].transcriptCards[ki] = forged
+        }
+        if kind == "question" {
+            await f.model.directQuestionAnswered(conversationID: run.conversationID, messageID: message.id, cardID: card.id, answer: .option(0))
+        } else if let input {
+            await input.submitButtonTapped()
+            expectNoDifference(input.draft, "")
+        }
+        let after = try await store.conversation(id: run.conversationID), actualRequests = await f.probe.requests
+        let deliveries = await f.service.deliveries(), sent = await f.probe.sent
+        expectNoDifference(after, before); #expect(diff(actualRequests, requests) == nil)
+        expectNoDifference(writer.count, 0); expectNoDifference(deliveries, []); expectNoDifference(sent, [])
+        expectNoDifference(f.model.pendingAutoReviewApprovals, [])
+        #expect(!f.model.isConversationWorking(run.conversationID))
+        try await assertUnrelatedUntouched(f)
+    }
+
+    @Test(arguments: ["question", "secret"], ["stop", "account", "binding-aba", "persona-aba", "hidden", "connection-aba"])
+    func incomingCardFreshReviewCannotReviveAfterInvalidation(kind: String, mutation: String) async throws {
+        let f = try await fixture(mode: "card-\(kind)")
+        defer { f.feed.finish(); try? FileManager.default.removeItem(at: f.root) }
+        let writer = AppInboundSecretWriter(); f.model.secretCredentialWriter = writer.write
+        f.feed.emit(event(f)); let run = try await settle(f)
+        let store = ConversationStore(fileURL: f.root.appending(path: "conversations.json"))
+        let before = try #require(try await store.conversation(id: run.conversationID))
+        let message = try #require(before.messages.first { $0.transcriptCards.contains { $0.directChannelInboundOrigin != nil } })
+        let card = try #require(message.transcriptCards.first { $0.directChannelInboundOrigin != nil })
+        f.model.selectRoute(.conversation(run.conversationID))
+        if kind == "question" {
+            await f.model.directQuestionAnswered(conversationID: run.conversationID, messageID: message.id, cardID: card.id, answer: .option(0))
+        } else {
+            let input = try #require(f.model.directSecretCard(conversationID: run.conversationID, messageID: message.id, cardID: card.id))
+            input.draft = "FAKE_INBOUND_NATIVE_ONLY_SECRET"; await input.submitButtonTapped()
+            expectNoDifference(input.draft, "")
+        }
+        let pending = try await review(f), requests = await f.probe.requests
+        let resolved = try await storedPendingCard(pending, in: store)
+        let ci = try #require(f.model.conversations.firstIndex { $0.id == run.conversationID })
+        if mutation == "stop" { f.model.cancel() }
+        else if mutation == "account" {
+            await f.model.cancelAutoReviewApprovals(nextAccountID: "foreign")
+            f.model.settings.accountScope = "foreign"
+        }
+        else if mutation == "binding-aba" {
+            let binding = f.model.conversations[ci].agentBinding
+            f.model.conversations[ci].agentBinding = nil; f.model.conversations[ci].agentBinding = binding
+        } else if mutation == "persona-aba" {
+            let ai = try #require(f.model.agents.firstIndex { $0.id == f.owner.id }), profile = f.model.agents[ai]
+            f.model.agents[ai].instructions = "REPLACEMENT_PERSONA"; f.model.agents[ai] = profile
+        } else if mutation == "hidden" { f.model.conversations[ci].hiddenAt = date }
+        else {
+            try await f.service.setConnectionEnabled(id: f.connection.id, enabled: false)
+            try await f.service.setConnectionEnabled(id: f.connection.id, enabled: true)
+        }
+        f.model.handleTranscriptCardIntent(.approveReview(reviewID: pending.id))
+        try await eventually { !f.model.isConversationWorking(run.conversationID) }
+        let deliveries = await f.service.deliveries(), sent = await f.probe.sent, actualRequests = await f.probe.requests
+        expectNoDifference(deliveries, []); expectNoDifference(sent, []); #expect(diff(actualRequests, requests) == nil)
+        expectNoDifference(writer.count, kind == "secret" ? 1 : 0)
+        let after = try #require(try await store.conversation(id: run.conversationID))
+        expectNoDifference(Array(after.messages.prefix(before.messages.count)), Array(resolved.messages.prefix(before.messages.count)))
+        // Not sending is insufficient: an invalidated turn must not leave a
+        // durable spinner or an approval card that reappears after reopening.
+        let freshRun = try #require(resolved.messages.dropFirst(before.messages.count).first {
+            $0.role == .assistant && [.queued, .streaming].contains($0.deliveryStatus)
+        })
+        expectNoDifference(after.messages.first { $0.id == freshRun.id }?.deliveryStatus, .cancelled)
+        let terminalReview = try #require(after.messages.flatMap(\.transcriptCards).first {
+            guard case .autoReview(let value) = $0.payload else { return false }
+            return value.reviewID == pending.id
+        })
+        expectNoDifference(terminalReview.lifecycle, .cancelled)
+        var expected = resolved
+        let ri = try #require(expected.messages.firstIndex { $0.id == freshRun.id })
+        expected.messages[ri].deliveryStatus = .cancelled
+        expected.messages[ri].deliveryError = nil
+        for ti in expected.messages[ri].toolActivities.indices where expected.messages[ri].toolActivities[ti].status == .running {
+            expected.messages[ri].toolActivities[ti].status = .failed
+            if expected.messages[ri].toolActivities[ti].result == nil { expected.messages[ri].toolActivities[ti].result = "Cancelled" }
+        }
+        for mi in expected.messages.indices {
+            for ki in expected.messages[mi].transcriptCards.indices where expected.messages[mi].transcriptCards[ki].id == terminalReview.id {
+                let prior = expected.messages[mi].transcriptCards[ki]
+                #expect(terminalReview.updatedAt >= prior.updatedAt && terminalReview.updatedAt <= Date())
+                expected.messages[mi].transcriptCards[ki].lifecycle = .cancelled
+                expected.messages[mi].transcriptCards[ki].updatedAt = terminalReview.updatedAt
+            }
+        }
+        #expect(after.updatedAt >= resolved.updatedAt && after.updatedAt <= Date())
+        expected.updatedAt = after.updatedAt
+        expectNoDifference(after, expected)
+        for _ in 0..<2 { f.model.handleTranscriptCardIntent(.approveReview(reviewID: pending.id)); await Task.yield() }
+        let afterStaleClicks = try await store.conversation(id: run.conversationID)
+        expectNoDifference(afterStaleClicks, after)
+        let reopened = try ChannelService(storeURL: f.root.appending(path: "channels.json"))
+        let reopenedRuns = await reopened.inboundRuns()
+        expectNoDifference(reopenedRuns, [try persistedChannel(run)])
+        let runs = await f.service.inboundRuns(); expectNoDifference(runs, [run])
+        #expect(!String(decoding: try JSONEncoder().encode(after), as: UTF8.self).contains("FAKE_INBOUND_NATIVE_ONLY_SECRET"))
+        try await assertUnrelatedUntouched(f)
+    }
+
+    @Test(arguments: ["question", "secret"], [false, true])
+    func incomingSavedCardsReopenWithoutReusingTheOldExecution(kind: String, existing: Bool) async throws {
+        let f = try await fixture(existing: existing, mode: "card-\(kind)")
+        defer { f.feed.finish(); try? FileManager.default.removeItem(at: f.root) }
+        let writer = AppInboundSecretWriter(); f.model.secretCredentialWriter = writer.write
+        f.feed.emit(event(f)); let run = try await settle(f)
+        let store = ConversationStore(fileURL: f.root.appending(path: "conversations.json"))
+        let before = try #require(try await store.conversation(id: run.conversationID))
+        let message = try #require(before.messages.first { $0.transcriptCards.contains { $0.directChannelInboundOrigin != nil } })
+        let card = try #require(message.transcriptCards.first { $0.directChannelInboundOrigin != nil })
+        f.feed.finish()
+        let channels = try ChannelService(storeURL: f.root.appending(path: "channels.json"))
+        let feed = AppInboundFeed(), probe = AppInboundProbe(); defer { feed.finish() }
+        let reopened = AppModel(applicationSupportRoot: f.root, bootstrapImmediately: false,
+            channelService: channels, channelConnectors: [AppInboundConnector(feed: feed, probe: probe)])
+        reopened.secretCredentialWriter = writer.write
+        await reopened.registry.register(AppInboundProvider(probe: probe, peerID: f.peer.id, mode: "card-\(kind)"))
+        await reopened.bootstrap(); await reopened.setAutomationRuntimeActive(false); reopened.setWorkflowRuntimeActive(false)
+        try await reopened.loadAllMessages(for: run.conversationID); reopened.selectRoute(.conversation(run.conversationID))
+        let runs = await channels.inboundRuns(), requests = await probe.requests, initialDeliveries = await channels.deliveries()
+        let persistedRun = try persistedChannel(run)
+        expectNoDifference(runs, [persistedRun]); #expect(diff(requests, [InferenceRequest]()) == nil); expectNoDifference(initialDeliveries, [])
+        let loaded = try await store.conversation(id: run.conversationID); expectNoDifference(loaded, before)
+        if kind == "secret" {
+            expectNoDifference(reopened.directSecretCards.count, 0)
+            #expect(reopened.directSecretCard(conversationID: run.conversationID, messageID: message.id, cardID: card.id) == nil)
+            let projection = try #require(reopened.conversations.first { $0.id == run.conversationID })
+            expectNoDifference(projection.messages.first { $0.id == message.id }?.transcriptCards.first { $0.id == card.id }?.rendererLifecycle, .retired)
+        } else {
+            #expect(reopened.canAnswerDirectQuestion(conversationID: run.conversationID, messageID: message.id, cardID: card.id))
+            await reopened.directQuestionAnswered(conversationID: run.conversationID, messageID: message.id, cardID: card.id, answer: .option(0))
+            try await eventually { !reopened.pendingAutoReviewApprovals.isEmpty }
+            let pending = try #require(reopened.pendingAutoReviewApprovals.first)
+            reopened.handleTranscriptCardIntent(.approveReview(reviewID: pending.id))
+            try await eventually { !reopened.isConversationWorking(run.conversationID) }
+            let deliveries = await channels.deliveries(), resumed = await probe.requests, sent = await probe.sent
+            expectNoDifference(deliveries.count, 1); expectNoDifference(deliveries.first?.address, event(f).address)
+            expectNoDifference(resumed.count, 1); expectNoDifference(resumed.first?.conversationID, run.conversationID)
+            expectNoDifference(sent, [])
+        }
+        expectNoDifference(writer.count, 0)
+        let finalRuns = await channels.inboundRuns(); expectNoDifference(finalRuns, [persistedRun])
+        try await assertUnrelatedUntouched(f)
+    }
+
     @Test(arguments: [(false, false), (true, false), (false, true), (true, true)], ["private", "silent", "throws", "external"])
     func incomingFailureNoticeCannotTurnPrivateOutputIntoConsentOrRetry(settings: (Bool, Bool), behavior: String) async throws {
         let (existing, genericReview) = settings

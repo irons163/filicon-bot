@@ -63,7 +63,8 @@ public final class AgentSecretSubmission: @unchecked Sendable {
     }
 
     public func submit(_ value: AgentSecretValue, accountID: String, agentID: UUID, conversationID: UUID,
-                       channels: ChannelService, write: @escaping Writer) async throws -> AgentSecretReceipt {
+                       channels: ChannelService, write: @escaping Writer,
+                       commit: @escaping @Sendable (_ operation: () throws -> Void) throws -> Void = { try $0() }) async throws -> AgentSecretReceipt {
         try Task.checkCancellation()
         // Connections cannot be replaced between validation and the Keychain
         // call. The synchronous lifetime fence also excludes Stop/account swaps.
@@ -75,10 +76,12 @@ public final class AgentSecretSubmission: @unchecked Sendable {
                     conversationID: conversationID, connections: connections)
                 if case .stored(let receipt) = current { return (receipt, false) }
                 guard current == .pending else { throw AgentSecretSubmissionError.unavailable }
-                do { try write(value, destination.credentialReference) }
-                catch { throw AgentSecretSubmissionError.writeFailed }
                 let receipt = AgentSecretReceipt(requestID: id)
-                current = .stored(receipt)
+                do { try commit {
+                    try write(value, destination.credentialReference)
+                    current = .stored(receipt)
+                } }
+                catch { throw AgentSecretSubmissionError.writeFailed }
                 return (receipt, true)
             }
         }

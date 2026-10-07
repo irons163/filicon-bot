@@ -1,5 +1,23 @@
 # 協作能力核對紀錄（更新至 2026-10-07）
 
+## 收件原生問題／安全輸入卡片的真人續接（增量已驗證）
+
+接續 `a85ccb5`。main 核對 reference HEAD `a9f633e09d49a85829b8236331b9e21f7e612634` 的 `widget-responses.ts`：問題回答回精確 agent／session，安全輸入走 value-free hidden acknowledgement。新 actual incoming fixture 重現 Filicon 的問題：真人選項 callback 丟失原 native source address，使 `C_REMOTE:T_REMOTE` 成為 channelID 而非原 channel／thread。不是 reference 使用同樣 UUID 的聲明。
+
+本批修正只保存來源 run／message locator；真人 callback 從 canonical chat、原 completed native receipt、目前 account／unique binding／persona／provider／model／connection 重驗，建立新的執行與 binding fence，不復活舊 inbound run 或保存 grant。原目的地 thread 仍須新的人類送件核准；remote history 不成為本機人類權限，secure value 不進模型／聊天。重開的 pending secret 仍為 display-only retired，沒有恢復 live credential writer。
+
+新增來源 Codable／native read-only resolution／actual App callback、取消與重開測試已通過最後 v9／完整 v1 gate。`inbound-cards-entry-red-v1.log` 的 4 個 question cases 是產品 thread-routing 紅燈；4 個 secret cases 是 fixture credential reference 未使用合法 UUID，已修 fixture，不冒稱第二個產品紅燈。`inbound-cards-focused-v1.log` 是獨立 Channels target 不該引用 Domain 的編譯整合錯誤，已改 primitive native IDs，未新增 dependency。`inbound-cards-focused-v2.log` 編譯完成後掛住；1 秒 stack sample 明確定位一般 repository save 重入 binding lock，已改 storage-only binding commit、移除重複 parent／child scope guard。後續更嚴格入口亦抓到 proof rejection 的偽造 UI card 被 rollback 寫入，以及取消的 fresh turn 誤標成功／舊 account review 誤寫 failed，均已修產品，不降低 scope／來源驗證。
+
+早期 `focused-v7` core 10 methods／2 suites＋channel 11 methods／1 suite 通過，App 原普通 question／secret 與新失效／重開語意檢查通過，但完整相關 gate 仍 exit 1：強化完整資料斷言誤把獨立 queue idempotency token 視同 delivery ID、批准卡視為 succeeded，以及 canonical baseline 取樣早於 native card／tool durable save。fixture 已更正、全部值斷言保留。`focused-v8` 編譯成功後系統鎖屏，保護中的暫存 channels.json 回 Code=257／EPERM；唯讀系統狀態確認 locked，只停止本輪指定測試程序，exit 143，不算最後 gate。日誌與產品／fixture／環境失敗分類見 [完成驗收入口](Parity-completion-audit.md)。
+
+鎖屏續檢中，`inbound-cards-domain-locked-v1.log` exit 0（明確 skip-build）：最後已編譯來源的 2 methods／1 suite／10 個純記憶體 Codable／inert-source cases 通過，不是 native store／App callback gate；`inbound-cards-localization-locked-v1.log` exit 0，七語各 1,817 keys／0 missing，不是真人 UI／VoiceOver 驗收。測試技能要求完整 card／ChatMessage／unknown redacted payload 比對，全部欄位斷言保留，沒有降低來源驗證。
+
+2026-10-07 最新續檢：磁碟已回復約 8.6 GB，暫時不需清理，未刪任何檔案。最後 source 的 arm64 native Debug 增量 build／verify 與 fresh standalone SPM Debug 封裝／verify 均 exit 0；原生重用隔離 DerivedData 並明確重編本批產品檔案，獨立 bundle 事先確認不存在。四個 executable、offline resources、app／XPC entitlements 與 deep strict 簽章確認；原 warnings 保留，Debug／ad-hoc 不是 release／公證，沒有 launch。精確 log／bundle 見 [完成驗收入口](Parity-completion-audit.md)。
+
+前次使用者「已解鎖」後 macOS 狀態仍是 locked；最新「繼續」後唯讀檢查明確 `IOConsoleLocked=No`，沒有修改鎖屏設定／檔案保護。相同最後 source 的 `inbound-cards-focused-v9.log` exit 0，37 methods／6 suites（actual App 16／3、17.783 秒）；`inbound-cards-full-final-v1.log` exit 0，完整串行 2,188 Swift Testing／261 suites＋135 XCTest／0 failures（17 bundles；App 812／103、453.740 秒）。兩項 opt-in live tests skipped，原 CoreData／NSXPC／CoreGraphics／compiler 診斷保留。
+
+本批隨修正提交，不再以鎖屏失敗或前批 `a85ccb5` 的測試代替新 source。只關閉已 admitted 純文字 incoming native question／credential 的本次 fresh human callback 範圍；連續卡片、保存後尚未 startTurn 的中止／儲存失敗邊界仍待 actual incoming 加強驗收。incoming 附件／圖片、其他 background／failure hosts、preemption redrive／hidden fallback、unified runtime、真人／VoiceOver／最低 macOS／live／release／公證仍保留。整體 partial、48 分類與其他未完成邊界維持不變；未 push／launch／重啟 App 或 Xcode／改真實帳號或聊天。
+
 ## 收件來源的失敗通知與正式回覆收據（增量已驗證）
 
 2026-10-07 接續 `8dbccb0`，main 再核對 reference HEAD `a9f633e09d49a85829b8236331b9e21f7e612634`：`background-wakes.ts` 的 channel failure 使用原 agent own session／hidden common runner，group session 直接略過；`channel-messaging.ts` 要求用沒有 channel target 的 `SendMessage` 在原 App 聊天更正，不默默重送。新增真正 incoming → native folder consent → fresh human send review → fake terminal failure → own-DM follow-up 的入口驗收，沒有以手動插入 wake 或 fake grant 取代原流程。

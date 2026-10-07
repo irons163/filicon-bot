@@ -424,6 +424,22 @@ public actor ChannelService {
 
     public func inboundRuns() -> [ChannelInboundRun] { state.inboundRuns ?? [] }
 
+    /// Read-only source resolution for a fresh local human card response. This
+    /// never resumes/claims the old wake and never admits a delivery. Replaced
+    /// routes, legacy imports, interrupted wakes, and expired receipts fail shut.
+    public func inboundCardEnvelope(runID: UUID, messageID: UUID, conversationID: UUID,
+                                    accountID: String, agentID: UUID) throws -> ChannelEnvelope {
+        guard let run = state.inboundRuns?.first(where: { $0.id == runID }),
+              run.status == .completed, run.messageID == messageID,
+              run.conversationID == conversationID, run.receipt.accountID == accountID,
+              run.receipt.agentID == agentID, inboundReceiptIsCurrent(run.receipt),
+              let envelope = state.inbound.first(where: { $0.id == run.receipt.envelopeID }),
+              run.receipt.isConsistent(with: envelope), envelope.attachments.isEmpty else {
+            throw CancellationError()
+        }
+        return envelope
+    }
+
     /// Only envelopes accepted under the current own-agent configuration can
     /// start. Legacy imports, changed accounts, and already admitted rows skip.
     public func pendingInbound(accountID: String) -> [ChannelEnvelope] {

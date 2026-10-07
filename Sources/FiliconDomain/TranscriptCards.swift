@@ -76,6 +76,7 @@ public struct TranscriptCardLifecycle: RawRepresentable, Codable, Hashable, Send
 
 public struct WidgetTranscriptCard: Codable, Hashable, Sendable {
     public var question: GroupQuestion?
+    public var channelInboundOrigin: ChannelInboundCardOrigin?
     /// Display-only bookkeeping. Buttons require a separately issued native
     /// lease and automation-store entry; decoded metadata grants no authority.
     public var automationActivity: AutomationActivityTranscriptCard?
@@ -86,8 +87,10 @@ public struct WidgetTranscriptCard: Codable, Hashable, Sendable {
     public var facts: [String: String]
     public init(title: String, body: String = "", widgetKind: String = "summary", facts: [String: String] = [:], question: GroupQuestion? = nil,
                 automationActivity: AutomationActivityTranscriptCard? = nil,
-                externalPublication: ExternalChannelTranscriptPublication? = nil) {
+                externalPublication: ExternalChannelTranscriptPublication? = nil,
+                channelInboundOrigin: ChannelInboundCardOrigin? = nil) {
         self.question = question
+        self.channelInboundOrigin = channelInboundOrigin
         self.automationActivity = automationActivity
         self.externalPublication = externalPublication
         self.title = title; self.body = body; self.widgetKind = widgetKind; self.facts = facts
@@ -235,13 +238,16 @@ public struct SecretRequestTranscriptCard: Codable, Hashable, Sendable {
     /// Presence routes through the agent-bound secure submission flow only.
     /// It must never fall back to the legacy generic credential action.
     public var directRequest: DirectSecretRequest?
+    public var channelInboundOrigin: ChannelInboundCardOrigin?
     public var requestID: String
     public var service: String
     public var account: String?
     public var scope: String?
     public var prompt: String
-    public init(requestID: String, service: String, account: String? = nil, scope: String? = nil, prompt: String = "Credential required", directRequest: DirectSecretRequest? = nil) {
+    public init(requestID: String, service: String, account: String? = nil, scope: String? = nil, prompt: String = "Credential required", directRequest: DirectSecretRequest? = nil,
+                channelInboundOrigin: ChannelInboundCardOrigin? = nil) {
         self.directRequest = directRequest
+        self.channelInboundOrigin = channelInboundOrigin
         self.requestID = requestID; self.service = service; self.account = account; self.scope = scope; self.prompt = prompt
     }
 }

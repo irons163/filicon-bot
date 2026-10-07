@@ -1,5 +1,34 @@
 # 完成驗收入口（2026-09-27）
 
+## 收件原生卡片真人續接（2026-10-07，增量已驗證）
+
+接續 `a85ccb5`，隨本批提交。新 source 保存 credential-free run／message locator，真人 callback 重新驗證原 native receipt／canonical owner／current account／persona／provider／model／connection，發新 lease，不恢復舊 inbound execution。只對核對成功的 exact destination 保留 typed thread；一般 first-colon parser 未變。每次 external publication 仍須 fresh native human review；重開 pending secret 不建立 live writer。
+
+- `inbound-cards-entry-red-v1.log` exit 1：actual incoming native card 1 method／8 cases／8 issues，其中 4 question cases 直接重現真人回答後原 thread 被誤當 channelID；4 secret cases 為 fixture Keychain reference 尾段非法，已更正為 fixture connection UUID，沒有讀寫真實 Keychain。
+- `inbound-cards-focused-v1.log` exit 1：新 source 將 Domain type 引入沒有 Domain dependency 的獨立 Channels target，已改 primitive UUID／account API，未改 Package.swift；這是編譯整合失敗，不當產品語意 red。
+- `inbound-cards-focused-v2.log` build complete（262.89 秒），沒有成功 test summary。native helper 的 stack sample `inbound-cards-focused-v2.sample.txt` 顯示 `directQuestionAnswered → persistOrThrow → general repository save → binding isActive` 重入同一 NSLock；亦阻塞 main actor。只終止本次 PID 73790／70335，swift-test exit 143，不把它列為環境綠燈或完整回歸。
+- 採 repository 自身的 bindingLease storage-only commit，移除 callback 外層 binding 包裝；publication child 持有 scope＋binding，parent 僅 close fence，避免重複 scope lock。secret callback 的早期 throw 也釋放本次 scope。
+- 已補新舊 DM／generic review／question／secret provide-or-dismiss、Stop／account／binding／persona／hidden／connection ABA、偽造來源／歧義 owner、stores＋AppModel 重開、legacy／malformed origin 等測試，最後同一來源實際 gate 見下列 v9／完整 v1；不以新增測試檔存在冒充通過。
+
+- `inbound-cards-core-skipbuild-v1.log` exit 0 僅舊已編譯的 channel 9 methods／1 suite，不包含新 locator tests，也不作新 App source gate。
+- `inbound-cards-focused-v3.log` exit 1：新增完整 request 斷言誤要求 `InferenceRequest: Equatable`，改用完整 CustomDump diff，不刪任何 cases／request 欄位，非產品語意 red。
+- `inbound-cards-focused-v4.log` exit 1：core 10 methods／2 suites 與 channel 11 methods／1 suite 通過；App 16 methods／3 suites／11 issues。account fixture 只有 broker teardown、未切換真正 settings account，secret fixture 在失效後才寫入舊 input，以及 ChannelService 毫秒日期 codec 預期另更正。偽造 run locator 在 proof rejection 後仍被 rollback save 寫進 canonical chat 是真實產品問題；現在只回復／保存實際插入過的 answer，不能藉失敗路徑保存未驗證的 UI card。
+- `inbound-cards-terminal-red-v5.log` exit 1：3 methods／1 suite／32 cases／11 issues，保留更正後 fixtures 與完整 canonical 比較。除上述 forged locator 外，8 個 binding／persona／hidden／connection ABA cases 將無效 fresh turn 誤標成功，account question／secret 的舊 review 又被寫成 failed，均為產品 red。新增 exact native run／review retirement，不保存失效聊天快照、不復活舊 execution 或重新送件。
+- `inbound-cards-focused-v6.log` exit 1：core 10 methods／2 suites、channel 11 methods／1 suite 通過；App 16 methods／3 suites／31.063 秒／2 issues，只剩 account teardown 的舊 review 被寫成 failed。已補 native pending approval／account／generation 檢查，不能以可見舊 action 當作 live authority。
+- `inbound-cards-focused-v7.log` exit 1：build complete 33.76 秒；core／channel 同上通過；App 16 methods／3 suites／23.624 秒／24 issues。新強化的完整值斷言有三項 fixture 錯誤：把 outbox idempotency token 預期為 delivery UUID、把批准卡預期為 succeeded 而非 router 的 approved，以及在 UI pending 通知後立即讀 repository，早於 card／tool 的 durable actor save。原取消／失效／重開與普通 question／secret 語意檢查通過；不能把整輪算成功。測試已改等待 exact native card＋running tool 的實際保存邊界，仍完整比對 canonical chat、queue、所有工具／卡片／日期／aliases／原資料，不採任意 sleep 或省略新斷言。
+- `inbound-cards-focused-v8.log` build complete 12.98 秒，但未通過 gate；core 原 secret submission 1 issue、channel 24 issues 為暫存 `channels.json` 的 `NSCocoaErrorDomain Code=257`／`EPERM`。唯讀 `ioreg` 明確顯示 `IOConsoleLocked=Yes`、`CGSSessionScreenIsLocked=Yes`，原 service 使用 `.completeFileProtectionUnlessOpen`；不能以解鎖訊息假設當下仍解鎖，也不移除檔案保護。App 原案例在 native admission 前逾時，不能當產品續接失敗或成功。只停止已核對本輪 filter／bundle 的 testing helper PID 28435 與 swift-test PID 28029，exit 143；日誌保留、使用者 App／Xcode 未動。
+- 鎖屏續檢的 `inbound-cards-domain-locked-v1.log` exit 0：2 methods／1 suite／10 cases（0.008 秒），明確 `--skip-build` 使用已在 v8 編譯完成的最後來源，只有純記憶體 origin／完整 card／ChatMessage Codable 與損壞來源轉 inert unknown 的驗證；不碰受保護的暫存 store，不當 App callback、native／standalone 或全套 gate。
+- `inbound-cards-localization-locked-v1.log` exit 0：七語各 1,817 keys／0 missing，沒有 UI／catalog／Package 修改，不當七語真人畫面／翻譯／VoiceOver 驗收。
+- `inbound-cards-native-locked-v1.log` exit 0／`BUILD SUCCEEDED`：同一最後 source 的 arm64 native Debug 增量 build，重用隔離 `ChannelInboundNativeV3` DerivedData；日誌明確重新編譯 AppModel、ChannelInboundCardOrigin、TranscriptCards、ChannelService、AgentSecretSubmission，不稱 fresh native build。`inbound-cards-native-verify-locked-v1.log` exit 0，驗證 `.build/validation/ChannelInboundNativeV3/Build/Products/Debug/Filicon.app`（version 0.1.0／build 1），native Debug entitlements／四個 executable／offline resources／deep strict 簽章通過。
+- `inbound-cards-package-locked-v1.log` exit 0：事先確認不存在的新 `.build/validation/InboundCardPackageV1/Filicon.app`，standalone SPM Debug App build 54.99 秒，另三個 products 依序建置；腳本內 verify 及獨立 `inbound-cards-package-verify-locked-v1.log` 均 exit 0。四個 executable、離線 KaTeX／Mermaid、app／XPC entitlements 與 deep strict 簽章通過。原 compiler／AppIntents／script notes 保留；Debug／ad-hoc 不是 Developer ID release／公證，沒有執行印出的 launch smoke，也沒有啟動 App。
+
+磁碟曾回復約 4.7 GB，v8 時又只剩約 310 MB；續檢回復約 8.6 GB，暫時不需清理，沒有刪任何檔案。前次「已解鎖」後唯讀狀態仍是 locked，當時未重跑受保護 store 測試。最新「繼續」後明確確認 `IOConsoleLocked=No`，才以相同最後產品來源與修正後完整 fixtures 重跑；沒有改鎖屏設定／檔案保護，原失敗／停止紀錄保留。
+
+- `inbound-cards-focused-v9.log` exit 0：build 94.80 秒；core 10 methods／2 suites（0.068 秒）、channel 11 methods／1 suite（0.244 秒）、actual App 16 methods／3 suites（17.783 秒），合計 37 methods／6 suites。包含本批新增 App 4 methods／44 cases、native-store 2 methods／7 cases、source Codable 2 methods／10 cases，原 incoming／failure／普通 question／secret 與完整 typed canonical／queue／request／日期／aliases 斷言均保留。
+- `inbound-cards-full-final-v1.log` exit 0：同一最後 source 完整串行 2,188 Swift Testing／261 suites＋135 XCTest／0 failures，17 個 bundle summaries（含 0-test bundles）；App 812／103 suites、453.740 秒，core 1,043／117 suites、49.915 秒。兩項 opt-in live Codex tests skipped，不當真實服務驗收；原 CoreData／NSXPC／CoreGraphics／compiler 診斷保留，不稱 warning-free。前批 `a85ccb5` gate 不用來代替這次完整回歸。
+
+上述 build／package／language 與最後測試 gates 一起支援本批 admitted 純文字 incoming native question／credential card 的 fresh human continuation 範圍，不關閉 incoming 附件／圖片、其他 background／failure hosts、preemption redrive／hidden fallback、unified private DM／group runtime、真人／VoiceOver／最低 macOS／live／release／公證。連續卡片與 callback 已保存但尚未 startTurn 的中止／儲存失敗邊界仍待獨立 actual incoming 入口加強驗收，不將普通前景 tests 當作新入口全覆蓋。AGENT-02／AGENT-04／UI-04／整體 partial、48 分類不變，未 push、launch、重啟使用者 App／Xcode 或改真實服務／資料。
+
 ## 收件來源失敗通知／canonical reply directory／正式收據（2026-10-07，增量已驗證）
 
 接續 `8dbccb0`，本批修改共用 `AppModel.startTurn`，不是只有測試。main 再讀 reference HEAD `a9f633e09d49a85829b8236331b9e21f7e612634` 的 `source/host/extensions/transcript/background-wakes.ts` 與 `source/shared/channel-messaging.ts`：channel failure 回原 agent own session 的 hidden common runner，用沒有 channel 的本機 `SendMessage` 更正，不暗中 retry；saved-group skip 已在 `e15b357` 驗證，不重新列為缺項。本次並不宣稱 reference 有相同 UUID 配置。

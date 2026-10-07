@@ -152,8 +152,9 @@ public actor AgentChannelPublicationTransaction {
     private let now: @Sendable () -> Date
     private let transcriptSource: TranscriptSource?
     private let publishTranscript: PublishTranscript?
-    /// Only a live admitted inbound host supplies this exact source address.
-    /// It is not parsed from a model argument or restored transcript. The
+    /// A live admitted inbound host or freshly validated native human card
+    /// callback supplies this exact source address from the channel store.
+    /// A model argument or restored transcript alone cannot supply it. The
     /// legacy platform:chat grammar still treats additional colons as data.
     private let inboundReplyAddress: ChannelAddress?
     private struct Key: Hashable { let run: UUID; let call: ToolCallID }

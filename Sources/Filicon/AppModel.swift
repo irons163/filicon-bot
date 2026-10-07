@@ -144,6 +144,8 @@ final class AppModel: ObservableObject {
                     || before?.modelID != after?.modelID || before?.reasoningEffort != after?.reasoningEffort
                     || before?.hiddenAt != after?.hiddenAt || after == nil || !uniqueOwner {
                     lifetime.close()
+                    directChannelCardScopes[id]?.close()
+                    invalidateDirectSecrets(conversationID: id)
                 }
             }
             if oldValue.count != conversations.count || !zip(oldValue, conversations).allSatisfy({ before, after in
@@ -245,6 +247,8 @@ final class AppModel: ObservableObject {
                 if Self.channelSenderIdentity(oldValue.first(where: { $0.id == owner.agentID }), owner: owner)
                     != Self.channelSenderIdentity(agents.first(where: { $0.id == owner.agentID }), owner: owner) {
                     lifetime.close()
+                    directChannelCardScopes[id]?.close()
+                    invalidateDirectSecrets(conversationID: id)
                 }
             }
             invalidateChannelFailureFollowUps { id in
@@ -560,6 +564,59 @@ final class AppModel: ObservableObject {
         let createdAt = Date()
     }
     private var directSecretContexts: [UUID: DirectSecretContext] = [:]
+
+    /// Fresh human callback scope, never the suspended incoming execution.
+    /// Only a source locator survives a card/reopen; all leases are reissued.
+    @MainActor private final class DirectChannelCardContinuation {
+        let origin: ChannelInboundCardOrigin
+        let conversationID: UUID
+        let source: ChatMessage
+        let identity: DirectAgentExecutionIdentity
+        let providerID: ProviderID
+        let modelID: ModelID
+        let reasoningEffort: ReasoningEffort
+        let generation: UInt64
+        let scope = AgentWorkflowExecutionScope()
+        let lease: AgentWorkflowExecutionScope.Lease
+        let lifetime: ChannelPublicationLifetime
+        var bindingLease: ConversationBindingLease?
+        var envelope: ChannelEnvelope?
+        var runID: UUID?
+        var registeredReviewIDs: Set<String> = []
+        private var reviewActions: Set<UUID> = []
+        private var reviewWaiters: [CheckedContinuation<Void, Never>] = []
+
+        init(origin: ChannelInboundCardOrigin, conversation: Conversation, source: ChatMessage,
+             identity: DirectAgentExecutionIdentity, generation: UInt64,
+             accountLease: AgentWorkflowExecutionScope.Lease) throws {
+            self.origin = origin; conversationID = conversation.id; self.source = source; self.identity = identity
+            providerID = conversation.providerID; modelID = conversation.modelID
+            reasoningEffort = conversation.reasoningEffort; self.generation = generation
+            lease = try scope.capture(inheriting: accountLease)
+            // The publication child holds this lease and the binding together.
+            // The parent is only a close fence; duplicating its scope guard in
+            // both parent and child would re-enter a non-recursive scope lock.
+            lifetime = .init()
+        }
+        func registerReview(_ id: String) { registeredReviewIDs.insert(id) }
+        func beginReviewAction(_ id: UUID) { reviewActions.insert(id) }
+        func finishReviewAction(_ id: UUID) {
+            reviewActions.remove(id)
+            if reviewActions.isEmpty { releaseReviewWaiters() }
+        }
+        func waitForReviewActions() async {
+            guard !reviewActions.isEmpty, !Task.isCancelled, (try? lease.check()) != nil else { return }
+            await withCheckedContinuation { reviewWaiters.append($0) }
+        }
+        private func releaseReviewWaiters() {
+            let values = reviewWaiters; reviewWaiters.removeAll()
+            for value in values { value.resume() }
+        }
+        func close() {
+            scope.invalidate(); lifetime.close(); bindingLease?.close(); releaseReviewWaiters()
+        }
+    }
+    private var directChannelCardScopes: [UUID: DirectChannelCardContinuation] = [:]
     var secretCredentialWriter: AgentSecretSubmission.Writer?
     private var delegatedGroupOrigins: [UUID: UUID] = [:]
     private var delegatedGroupPosts: [UUID: AgentGroupDispatch] = [:]
@@ -2068,17 +2125,118 @@ final class AppModel: ObservableObject {
         return question
     }
 
+    private func channelCardSource(origin: ChannelInboundCardOrigin, conversationID: UUID) -> ChatMessage? {
+        guard origin.runID != origin.messageID, !agentMessagingAccountTransition,
+              !deletedConversationIDs.contains(conversationID),
+              let chat = conversations.first(where: { $0.id == conversationID }),
+              chat.hiddenAt == nil, !isConversationHidden(chat),
+              let owner = chat.agentBinding, owner.accountID == (settings.accountScope ?? "local"),
+              conversations.filter({ $0.agentBinding == owner }).count == 1,
+              let identity = Self.channelSenderIdentity(agents.first(where: { $0.id == owner.agentID }), owner: owner),
+              identity.providerID == chat.providerID, identity.modelID == chat.modelID,
+              let source = chat.messages.first(where: { $0.id == origin.messageID }), source.hasValidExternalChannelSource,
+              source.externalChannelSource?.owner == owner, source.externalChannelSource?.conversationID == conversationID else { return nil }
+        return source
+    }
+
+    private func beginDirectChannelCardContinuation(_ origin: ChannelInboundCardOrigin, conversationID: UUID) throws -> DirectChannelCardContinuation {
+        guard directChannelCardScopes[conversationID] == nil,
+              let source = channelCardSource(origin: origin, conversationID: conversationID),
+              let chat = conversations.first(where: { $0.id == conversationID }), let owner = chat.agentBinding,
+              let identity = Self.channelSenderIdentity(agents.first(where: { $0.id == owner.agentID }), owner: owner) else { throw CancellationError() }
+        let value = try DirectChannelCardContinuation(origin: origin, conversation: chat, source: source, identity: identity,
+            generation: autoReviewAccountGeneration, accountLease: workflowExecutionScope.capture())
+        directChannelCardScopes[conversationID] = value
+        directChannelLifetimes[conversationID]?.close()
+        directChannelLifetimes[conversationID] = value.lifetime
+        return value
+    }
+
+    private func closeDirectChannelCardContinuation(_ value: DirectChannelCardContinuation?) {
+        guard let value else { return }
+        value.close()
+        if directChannelCardScopes[value.conversationID] === value { directChannelCardScopes[value.conversationID] = nil }
+        if directChannelLifetimes[value.conversationID] === value.lifetime { directChannelLifetimes[value.conversationID] = nil }
+    }
+
+    private func checkDirectChannelCardContinuation(_ value: DirectChannelCardContinuation) throws {
+        try value.lease.check(); try value.lifetime.check()
+        if let binding = value.bindingLease { try binding.withValidBinding {} }
+        guard directChannelCardScopes[value.conversationID] === value, value.generation == autoReviewAccountGeneration,
+              let source = channelCardSource(origin: value.origin, conversationID: value.conversationID),
+              source.externalChannelSource == value.source.externalChannelSource, source.text == value.source.text,
+              let owner = source.externalChannelSource?.owner,
+              let chat = conversations.first(where: { $0.id == value.conversationID }),
+              chat.providerID == value.providerID, chat.modelID == value.modelID, chat.reasoningEffort == value.reasoningEffort,
+              Self.channelSenderIdentity(agents.first(where: { $0.id == value.identity.agentID }), owner: owner) == value.identity else {
+            throw CancellationError()
+        }
+    }
+
+    private func validateDirectChannelCardContinuation(_ value: DirectChannelCardContinuation) async throws {
+        try checkDirectChannelCardContinuation(value)
+        guard let service = channelService, let owner = value.source.externalChannelSource?.owner,
+              let binding = value.bindingLease, binding.isActive, binding.legacyHiddenAt == nil,
+              let canonical = try await store.conversation(id: value.conversationID), canonical.agentBinding == owner,
+              canonical.hiddenAt == nil, canonical.providerID == value.providerID, canonical.modelID == value.modelID,
+              canonical.reasoningEffort == value.reasoningEffort,
+              canonical.messages.contains(where: { $0.id == value.origin.messageID && $0.hasValidExternalChannelSource
+                  && $0.externalChannelSource == value.source.externalChannelSource && $0.text == value.source.text }),
+              Self.channelSenderIdentity(await agentService?.profile(id: owner.agentID), owner: owner) == value.identity else { throw CancellationError() }
+        let envelope = try await service.inboundCardEnvelope(runID: value.origin.runID, messageID: value.origin.messageID,
+            conversationID: value.conversationID, accountID: owner.accountID, agentID: owner.agentID)
+        let source = ExternalChannelMessageSource(connectionID: envelope.connectionID, externalEventID: envelope.externalEventID,
+            owner: owner, conversationID: value.conversationID, platform: envelope.address.platform, channelID: envelope.address.channelID,
+            threadID: envelope.address.threadID, senderID: envelope.senderID, senderName: envelope.senderDisplayName, receivedAt: envelope.timestamp)
+        guard source == value.source.externalChannelSource, envelope.text == value.source.text,
+              value.envelope == nil || value.envelope == envelope else { throw CancellationError() }
+        value.envelope = envelope
+        try checkDirectChannelCardContinuation(value)
+    }
+
+    private func prepareDirectChannelCardContinuation(_ value: DirectChannelCardContinuation, messageID: UUID, card: TranscriptCard) async throws {
+        try checkDirectChannelCardContinuation(value)
+        guard card.directChannelInboundOrigin == value.origin, let owner = value.source.externalChannelSource?.owner else { throw CancellationError() }
+        if value.bindingLease == nil {
+            value.bindingLease = try await store.leaseUniqueBinding(accountID: owner.accountID, agentID: owner.agentID, conversationID: value.conversationID)
+        }
+        try await validateDirectChannelCardContinuation(value)
+        guard let canonical = try await store.conversation(id: value.conversationID),
+              canonical.messages.filter({ $0.id == messageID }).count == 1,
+              canonical.messages.first(where: { $0.id == messageID })?.transcriptCards.filter({ $0.id == card.id }) == [card] else { throw CancellationError() }
+        try checkDirectChannelCardContinuation(value)
+    }
+
+    /// Only for the synchronous credential writer, never a repository save.
+    private func directChannelCardCredentialCommit(_ value: DirectChannelCardContinuation?) -> ConversationCommitGuard {
+        let lease = value?.lease, binding = value?.bindingLease
+        return { operation in
+            if let lease, let binding { try lease.commit { try binding.withValidBinding(operation) } }
+            else { try operation() }
+        }
+    }
+
     func canAnswerDirectQuestion(conversationID: UUID, messageID: UUID, cardID: UUID) -> Bool {
         guard isBootstrapped, !agentMessagingAccountTransition, !running.contains(conversationID),
               !synchronizingAgentConversations.contains(conversationID),
               !deletedConversationIDs.contains(conversationID),
               let question = directQuestionForDisplay(conversationID: conversationID, messageID: messageID, cardID: cardID) else { return false }
+        if let origin = conversations.first(where: { $0.id == conversationID })?.messages.first(where: { $0.id == messageID })?
+            .transcriptCards.first(where: { $0.id == cardID })?.directChannelInboundOrigin,
+           channelCardSource(origin: origin, conversationID: conversationID) == nil { return false }
         return question.isPending && question.accountID == (settings.accountScope ?? "local")
     }
 
     func directQuestionAnswered(conversationID id: UUID, messageID: UUID, cardID: UUID, answer: AgentQuestionAnswer) async {
         let initialGeneration = autoReviewAccountGeneration
-        guard canAnswerDirectQuestion(conversationID: id, messageID: messageID, cardID: cardID) else { return }
+        guard directChannelCardScopes[id] == nil, canAnswerDirectQuestion(conversationID: id, messageID: messageID, cardID: cardID) else { return }
+        let origin = conversations.first(where: { $0.id == id })?.messages.first(where: { $0.id == messageID })?
+            .transcriptCards.first(where: { $0.id == cardID })?.directChannelInboundOrigin
+        let continuation: DirectChannelCardContinuation?
+        do { continuation = try origin.map { try beginDirectChannelCardContinuation($0, conversationID: id) } }
+        catch { return }
+        var handedOff = false
+        defer { if !handedOff { closeDirectChannelCardContinuation(continuation) } }
         do { try await loadAllMessages(for: id) }
         catch { errorMessage = error.localizedDescription; return }
         guard initialGeneration == autoReviewAccountGeneration else { return }
@@ -2092,6 +2250,7 @@ final class AppModel: ObservableObject {
         let account = settings.accountScope ?? "local"
         var insertedIDs = Set<UUID>()
         do {
+            if let continuation { try await prepareDirectChannelCardContinuation(continuation, messageID: messageID, card: original) }
             let reply = try question.question.reply(for: answer)
             let user = ChatMessage(role: .user, text: reply, replyToMessageID: messageID)
             let assistant = ChatMessage(role: .assistant, text: "", deliveryStatus: .queued)
@@ -2100,32 +2259,39 @@ final class AppModel: ObservableObject {
             var resolved = original
             resolved.lifecycle = .succeeded
             resolved.updatedAt = Date()
-            resolved.payload = .widget(.init(title: question.question.prompt, widgetKind: "choice", question: question))
+            resolved.payload = .widget(.init(title: question.question.prompt, widgetKind: "choice", question: question,
+                channelInboundOrigin: original.directChannelInboundOrigin))
             running.insert(id)
             conversations[ci].messages[mi].transcriptCards[ki] = resolved
             conversations[ci].messages.append(contentsOf: [user, assistant])
             insertedIDs = [user.id, assistant.id]
             loadedMessageIDs[id, default: []].formUnion(insertedIDs)
             try await persistOrThrow(conversationID: id)
+            if let continuation { try await validateDirectChannelCardContinuation(continuation) }
             guard generation == autoReviewAccountGeneration, account == (settings.accountScope ?? "local"),
                   !agentMessagingAccountTransition, running.contains(id),
                   let current = conversations.first(where: { $0.id == id }),
                   current.messages.contains(where: { $0.id == assistant.id }) else { return }
             startTurn(conversationID: id, assistantID: assistant.id,
                 requestMessages: current.messages.filter { $0.id != assistant.id },
-                modelID: current.modelID, providerID: current.providerID, reasoningEffort: current.reasoningEffort)
+                modelID: current.modelID, providerID: current.providerID, reasoningEffort: current.reasoningEffort,
+                cardContinuation: continuation)
+            handedOff = true
         } catch {
             if generation == autoReviewAccountGeneration, account == (settings.accountScope ?? "local"),
                let ci = conversations.firstIndex(where: { $0.id == id }) {
-                conversations[ci].messages.removeAll { insertedIDs.contains($0.id) }
-                if let mi = conversations[ci].messages.firstIndex(where: { $0.id == messageID }),
-                   let ki = conversations[ci].messages[mi].transcriptCards.firstIndex(where: { $0.id == cardID }) {
-                    conversations[ci].messages[mi].transcriptCards[ki] = original
+                if !insertedIDs.isEmpty {
+                    conversations[ci].messages.removeAll { insertedIDs.contains($0.id) }
+                    if let mi = conversations[ci].messages.firstIndex(where: { $0.id == messageID }),
+                       let ki = conversations[ci].messages[mi].transcriptCards.firstIndex(where: { $0.id == cardID }) {
+                        conversations[ci].messages[mi].transcriptCards[ki] = original
+                    }
+                    // A quota commit may report failure after the SQLite write.
+                    // Roll back only an answer we actually inserted. Rejected
+                    // source proof must never persist an untrusted UI card.
+                    try? await persistOrThrow(conversationID: id)
+                    running.remove(id)
                 }
-                // A quota commit may report failure after the SQLite write.
-                // Persist the restored question before allowing another answer.
-                try? await persistOrThrow(conversationID: id)
-                running.remove(id)
                 errorMessage = error.localizedDescription
             }
         }
@@ -2174,7 +2340,8 @@ final class AppModel: ObservableObject {
                               question.accountID == (settings.accountScope ?? "local"),
                               question.question.dismissOnMoveOn == true else { continue }
                         question.retired = true
-                        cards[k].payload = .widget(.init(title: question.question.prompt, widgetKind: "choice", question: question))
+                        cards[k].payload = .widget(.init(title: question.question.prompt, widgetKind: "choice", question: question,
+                            channelInboundOrigin: cards[k].directChannelInboundOrigin))
                         cards[k].lifecycle = .retired
                     }
                     if cards != previous {
@@ -2406,12 +2573,19 @@ final class AppModel: ObservableObject {
             return
         }
         let acknowledgment = context.execution?.boundWake
+        let continuation = context.cardContinuation
         let actionID = UUID()
         // Keep the original inference/binding lease alive for an already
         // clicked native review action, not for new work or a future click.
-        if case .autoReview = context.card.payload { acknowledgment?.beginReviewAction(actionID) }
+        if case .autoReview = context.card.payload {
+            acknowledgment?.beginReviewAction(actionID)
+            continuation?.beginReviewAction(actionID)
+        }
         Task {
-            defer { acknowledgment?.finishReviewAction(actionID) }
+            defer {
+                acknowledgment?.finishReviewAction(actionID)
+                continuation?.finishReviewAction(actionID)
+            }
             await executeTranscriptCardIntent(intent, context: context)
         }
     }
@@ -2421,6 +2595,7 @@ final class AppModel: ObservableObject {
         let messageID: UUID
         let card: TranscriptCard
         let execution: BackgroundDirectExecution?
+        let cardContinuation: DirectChannelCardContinuation?
     }
 
     private func transcriptCardContext(for intent: TranscriptCardActionIntent) -> TranscriptCardContext? {
@@ -2429,8 +2604,24 @@ final class AppModel: ObservableObject {
         let matches = conversation.messages.flatMap { message in
             message.transcriptCards.compactMap { card -> TranscriptCardContext? in
                 guard card.actions.contains(where: { $0.intent == intent }) else { return nil }
+                if case .autoReview(let review) = card.payload {
+                    // A displayed action is not a live approval. In particular,
+                    // account teardown removes the native pending request while
+                    // an old UI card may still be visible. Do not write a new
+                    // running/failed lifecycle for that stale callback.
+                    guard let pending = pendingAutoReviewByID[review.reviewID],
+                          pending.action.context.conversationID == conversationID,
+                          pending.fence.accountID == (settings.accountScope ?? "local"),
+                          pending.fence.generation == autoReviewAccountGeneration,
+                          !agentMessagingAccountTransition else { return nil }
+                }
+                let continuation = directChannelCardScopes[conversationID].flatMap { value in
+                    guard case .autoReview(let review) = card.payload,
+                          value.registeredReviewIDs.contains(review.reviewID) else { return nil as DirectChannelCardContinuation? }
+                    return value
+                }
                 return .init(conversationID: conversationID, messageID: message.id, card: card,
-                    execution: backgroundDirectExecutions[conversationID])
+                    execution: backgroundDirectExecutions[conversationID], cardContinuation: continuation)
             }
         }
         return matches.count == 1 ? matches[0] : nil
@@ -2471,7 +2662,8 @@ final class AppModel: ObservableObject {
             return
         }
         do {
-            try await persistTranscriptCardConversation(context.conversationID, execution: context.execution)
+            try await persistTranscriptCardConversation(context.conversationID, execution: context.execution,
+                cardContinuation: context.cardContinuation)
         } catch {
             do { try await validateBackgroundChannelReview(context) }
             catch { await transcriptCardActionRouter.abandon(ticket); return }
@@ -2501,14 +2693,16 @@ final class AppModel: ObservableObject {
             guard updateTranscriptCard(context: context, expectedUpdatedAt: startedAt, lifecycle: ticket.successLifecycle) else {
                 throw TranscriptCardActionRoutingError.staleCard
             }
-            try await persistTranscriptCardConversation(context.conversationID, execution: context.execution)
+            try await persistTranscriptCardConversation(context.conversationID, execution: context.execution,
+                cardContinuation: context.cardContinuation)
         } catch {
             await transcriptCardActionRouter.abandon(ticket)
             guard (try? checkTranscriptCardAcknowledgment(context)) != nil else { return }
             let actionError = error
             if updateTranscriptCard(context: context, expectedUpdatedAt: startedAt, lifecycle: .failed) {
                 do {
-                    try await persistTranscriptCardConversation(context.conversationID, execution: context.execution)
+                    try await persistTranscriptCardConversation(context.conversationID, execution: context.execution,
+                        cardContinuation: context.cardContinuation)
                     errorMessage = actionError.localizedDescription
                 } catch {
                     errorMessage = l10n("\(actionError.localizedDescription) Card failure state could not be persisted: \(error.localizedDescription)")
@@ -2564,6 +2758,7 @@ final class AppModel: ObservableObject {
     }
 
     private func checkTranscriptCardAcknowledgment(_ context: TranscriptCardContext) throws {
+        if let continuation = context.cardContinuation { try checkDirectChannelCardContinuation(continuation) }
         if let acknowledgment = context.execution?.activityAcknowledgment,
            !acceptsActivityAcknowledgment(acknowledgment) { throw CancellationError() }
         if let failure = context.execution?.channelFailure, !acceptsChannelFailure(failure) { throw CancellationError() }
@@ -2588,24 +2783,26 @@ final class AppModel: ObservableObject {
     /// covers transient SQLite busy/I/O failures; failure is surfaced to the
     /// user and never reported as a successfully persisted lifecycle.
     private func persistTranscriptCardConversation(_ conversationID: UUID) async throws {
-        try await persistTranscriptCardConversation(conversationID, execution: backgroundDirectExecutions[conversationID])
+        try await persistTranscriptCardConversation(conversationID, execution: backgroundDirectExecutions[conversationID],
+            cardContinuation: directChannelCardScopes[conversationID])
     }
 
-    private func persistTranscriptCardConversation(_ conversationID: UUID, execution: BackgroundDirectExecution?) async throws {
+    private func persistTranscriptCardConversation(_ conversationID: UUID, execution: BackgroundDirectExecution?,
+        cardContinuation: DirectChannelCardContinuation?) async throws {
         guard !deletedConversationIDs.contains(conversationID),
               let conversation = conversations.first(where: { $0.id == conversationID }) else {
             throw TranscriptCardActionRoutingError.staleCard
         }
         var lastError: Error?
-        let lease = execution.map { $0.finalizing && $0.boundWake == nil ? $0.accountLease : $0.lease }
-        let bindingLease = execution?.boundWake?.bindingLease
+        let lease = execution.map { $0.finalizing && $0.boundWake == nil ? $0.accountLease : $0.lease } ?? cardContinuation?.lease
+        let bindingLease = execution?.boundWake?.bindingLease ?? cardContinuation?.bindingLease
         for attempt in 0..<3 {
             do {
                 try await store.upsert(
                     conversation,
                     replacingLoadedMessageIDs: loadedMessageIDs[conversation.id] ?? [],
                     historyComplete: completeMessageHistories.contains(conversation.id),
-                    expectedBinding: execution == nil ? nil : conversation.agentBinding,
+                    expectedBinding: execution == nil && cardContinuation == nil ? nil : conversation.agentBinding,
                     bindingLease: bindingLease,
                     commit: { write in
                         if let lease { try lease.commit(write) } else { try write() }
@@ -2842,8 +3039,10 @@ final class AppModel: ObservableObject {
         modelID requestModelID: ModelID,
         providerID: ProviderID,
         reasoningEffort: ReasoningEffort,
-        routine: BackgroundDirectExecution? = nil
+        routine: BackgroundDirectExecution? = nil,
+        cardContinuation: DirectChannelCardContinuation? = nil
     ) -> Task<Void, Never> {
+        cardContinuation?.runID = assistantID
         running.insert(id)
         workspaceFolders.beginTurn(conversationID: id)
         let accountScope = settings.accountScope ?? "local"
@@ -2852,9 +3051,9 @@ final class AppModel: ObservableObject {
         // Reviewed background tasks use the same original bound destination as
         // foreground turns. Bound notices and unbound chats get no capability.
         let channelLifetime: ChannelPublicationLifetime? = agentBinding != nil
-            && (routine?.allowsChannelPublication ?? true) ? .init() : nil
+            && (routine?.allowsChannelPublication ?? true) ? (cardContinuation?.lifetime ?? .init()) : nil
         if let channelLifetime {
-            directChannelLifetimes[id]?.close()
+            if directChannelLifetimes[id] !== channelLifetime { directChannelLifetimes[id]?.close() }
             directChannelLifetimes[id] = channelLifetime
         }
         let turnTask = Task { [self] in
@@ -2863,6 +3062,7 @@ final class AppModel: ObservableObject {
             var messaging: AgentMessagingSession?
             var channelBindingLease: ConversationBindingLease?
             defer {
+                closeDirectChannelCardContinuation(cardContinuation)
                 channelLifetime?.close()
                 channelBindingLease?.close()
                 if let channelLifetime, directChannelLifetimes[id] === channelLifetime {
@@ -2872,6 +3072,7 @@ final class AppModel: ObservableObject {
             }
             do {
                 if let routine { try await validateBackgroundDirectExecution(routine) }
+                if let cardContinuation { try await validateDirectChannelCardContinuation(cardContinuation) }
                 try await persistOrThrow(conversationID: id)
                 let withoutBookkeeping = await requestMessagesExcludingAutomationBookkeeping(requestMessages, in: id, accountID: accountScope)
                 try Task.checkCancellation()
@@ -2982,11 +3183,17 @@ final class AppModel: ObservableObject {
                             publicationLifetime = .init(parent: channelLifetime, commitGuard: { operation in
                                 try executionLease.commit { try bindingLease.withValidBinding(operation) }
                             })
+                        } else if let cardContinuation, let bindingLease = cardContinuation.bindingLease {
+                            let lease = cardContinuation.lease
+                            publicationLifetime = .init(parent: channelLifetime, commitGuard: { operation in
+                                try lease.commit { try bindingLease.withValidBinding(operation) }
+                            })
                         } else { publicationLifetime = channelLifetime }
                         channelPublication = try await makeDirectChannelPublication(conversationID: id,
                             assistantID: assistantID, identity: agentIdentity, binding: agentBinding,
                             providerID: providerID, modelID: requestModelID, account: accountScope,
-                            generation: publicationGeneration, lifetime: publicationLifetime, execution: routine)
+                            generation: publicationGeneration, lifetime: publicationLifetime, execution: routine,
+                            cardContinuation: cardContinuation)
                     } else { channelPublication = nil }
                     publisher = AgentUserMessageTool(conversationID: id, availableImages: images, imageStore: nil,
                         hostImageValidator: { [weak self] images in
@@ -3138,12 +3345,14 @@ final class AppModel: ObservableObject {
                         memoryQuery: requestMessages.last(where: { $0.role == .user })?.text ?? "")
                 }
                 try await coordinator.send(request: request, providerID: providerID, additionalTools: tools,
-                    toolContext: routine.map { .init(conversationID: id, runID: $0.runID) },
+                    toolContext: routine.map { .init(conversationID: id, runID: $0.runID) }
+                        ?? cardContinuation.map { _ in .init(conversationID: id, runID: assistantID) },
                     agentID: agentIdentity?.agentID,
                     agentLane: routine?.isManual == true || routine == nil ? .user : .background,
                     executionTimeout: routine == nil ? nil : .seconds(180), onStart: { [weak self] in
                         guard let self else { throw CancellationError() }
                         if let routine { try await self.validateBackgroundDirectExecution(routine) }
+                        if let cardContinuation { try await self.validateDirectChannelCardContinuation(cardContinuation) }
                         let liveIdentity = try await self.directTurnAgentIdentity(conversationID: id,
                             binding: agentBinding, accountScope: accountScope, generation: publicationGeneration,
                             providerID: providerID, modelID: requestModelID)
@@ -3153,6 +3362,10 @@ final class AppModel: ObservableObject {
                     if let routine {
                         guard let self else { throw CancellationError() }
                         try await self.validateBackgroundDirectExecution(routine)
+                    }
+                    if let cardContinuation {
+                        guard let self else { throw CancellationError() }
+                        try await self.validateDirectChannelCardContinuation(cardContinuation)
                     }
                     await self?.consume(event, conversationID: id, assistantID: assistantID)
                 }
@@ -3180,6 +3393,7 @@ final class AppModel: ObservableObject {
                     if routine == nil { await messaging.suggestMemories() }
                 }
                 if let routine { try await validateBackgroundDirectExecution(routine) }
+                if let cardContinuation { try await validateDirectChannelCardContinuation(cardContinuation) }
                 succeeded = true
             } catch is ToolTurnSuspension {
                 routine?.awaitingReply = true
@@ -3207,7 +3421,45 @@ final class AppModel: ObservableObject {
             // clicked review action saves its terminal card. Settle that
             // original action before capturing the final chat snapshot.
             await routine?.boundWake?.waitForReviewActions()
+            await cardContinuation?.waitForReviewActions()
             routine?.finalizing = true
+            if let continuation = cardContinuation, let binding = continuation.bindingLease,
+               Task.isCancelled || (try? checkDirectChannelCardContinuation(continuation)) == nil {
+                // The old lease cannot publish a snapshot. Retire only the
+                // native run/approval IDs already saved in its original owner.
+                // This cannot replay inference, redirect a card or add content.
+                if publicationGeneration == autoReviewAccountGeneration, accountScope == (settings.accountScope ?? "local"),
+                   conversations.first(where: { $0.id == id })?.agentBinding == binding.binding {
+                    setDeliveryStatus(.cancelled, conversationID: id, assistantID: assistantID)
+                    finishTurn(conversationID: id, assistantID: assistantID, succeeded: false,
+                        accountID: accountScope, providerID: providerID)
+                }
+                do {
+                    if let retired = try await store.retireActivityAcknowledgment(conversationID: id, runID: assistantID,
+                        expectedBinding: binding.binding, reviewIDs: continuation.registeredReviewIDs),
+                       publicationGeneration == autoReviewAccountGeneration, accountScope == (settings.accountScope ?? "local"),
+                       let ci = conversations.firstIndex(where: { $0.id == id }), conversations[ci].agentBinding == binding.binding {
+                        let cancelled = retired.messages.flatMap(\.transcriptCards).filter {
+                            guard $0.lifecycle == .cancelled, case .autoReview(let review) = $0.payload else { return false }
+                            return continuation.registeredReviewIDs.contains(review.reviewID)
+                        }
+                        for mi in conversations[ci].messages.indices {
+                            for ti in conversations[ci].messages[mi].transcriptCards.indices {
+                                let current = conversations[ci].messages[mi].transcriptCards[ti]
+                                if cancelled.contains(where: { $0.id == current.id && $0.payload == current.payload }) {
+                                    conversations[ci].messages[mi].transcriptCards[ti].lifecycle = .cancelled
+                                }
+                            }
+                        }
+                    }
+                } catch {
+                    if publicationGeneration == autoReviewAccountGeneration, accountScope == (settings.accountScope ?? "local") {
+                        errorMessage = error.localizedDescription
+                    }
+                }
+                running.remove(id); turnTasks.removeValue(forKey: id)
+                return
+            }
             if let routine, let acknowledgment = routine.boundWake,
                Task.isCancelled || (try? routine.lease.check()) == nil {
                 // A revoked inference lease cannot save a final chat snapshot.
@@ -3359,6 +3611,10 @@ final class AppModel: ObservableObject {
         }
         invalidateDirectSecrets(conversationID: selection)
         cancelDirectMessaging(conversationID: selection)
+        // Keep the closed native fence registered until its task finalizes.
+        // Removing it here would let the queued approval cleanup fall back to
+        // an ordinary snapshot save while the cancelled run is still unwinding.
+        directChannelCardScopes[selection]?.close()
         turnTasks[selection]?.cancel()
         workspaceFolders.cancel(conversationID: selection)
         Task {
@@ -3459,6 +3715,7 @@ final class AppModel: ObservableObject {
     private func checkDirectFileScope(_ id: UUID, assistantID: UUID, account: String, generation: UInt64) throws {
         try Task.checkCancellation()
         try backgroundDirectExecutions[id]?.lease.check()
+        if let value = directChannelCardScopes[id] { try checkDirectChannelCardContinuation(value) }
         guard !agentMessagingAccountTransition, generation == autoReviewAccountGeneration,
               account == (settings.accountScope ?? "local"), running.contains(id),
               !deletedConversationIDs.contains(id), directPublicationIDs[assistantID] != nil,
@@ -3838,16 +4095,20 @@ final class AppModel: ObservableObject {
             [TranscriptCard(lifecycle: .succeeded, payload: .cloudAgent(.init(
                 agentID: "", title: "Cursor cloud agent", externalReferenceID: reference.bcID)))]
         } ?? []
+        let incomingOrigin = backgroundDirectExecutions[conversationID]?.channelInbound.map {
+            ChannelInboundCardOrigin(runID: $0.run.id, messageID: $0.message.id)
+        } ?? directChannelCardScopes[conversationID]?.origin
         let savedQuestion = question.map { GroupQuestion(question: $0, accountID: accountScope, memberIDs: []) }
         if let savedQuestion {
             try savedQuestion.question.validate()
             cards.append(TranscriptCard(lifecycle: .waiting, payload: .widget(.init(
-                title: savedQuestion.question.prompt, widgetKind: "choice", question: savedQuestion))))
+                title: savedQuestion.question.prompt, widgetKind: "choice", question: savedQuestion,
+                channelInboundOrigin: incomingOrigin))))
         }
         if let secret {
             cards.append(TranscriptCard(id: secret.requestID, lifecycle: .waiting,
                 payload: .secretRequest(.init(requestID: secret.requestID.uuidString,
-                    service: secret.request.connector, directRequest: secret))))
+                    service: secret.request.connector, directRequest: secret, channelInboundOrigin: incomingOrigin))))
         }
         let messageID: UUID
         if published.isEmpty {
@@ -3955,9 +4216,13 @@ final class AppModel: ObservableObject {
         let loadedIDs = loadedMessageIDs[conversation.id] ?? []
         let historyComplete = completeMessageHistories.contains(conversation.id)
         let routine = backgroundDirectExecutions[conversation.id]
-        let lease = routine.map { $0.finalizing && $0.boundWake == nil ? $0.accountLease : $0.lease }
-        let bindingLease = routine?.boundWake?.bindingLease
-        let expectedBinding = routine == nil ? nil : conversation.agentBinding
+        let cardContinuation = directChannelCardScopes[conversation.id]
+        let lease = routine.map { $0.finalizing && $0.boundWake == nil ? $0.accountLease : $0.lease } ?? cardContinuation?.lease
+        let bindingLease = routine?.boundWake?.bindingLease ?? cardContinuation?.bindingLease
+        let expectedBinding = routine == nil && cardContinuation == nil ? nil : conversation.agentBinding
+        // The repository owns the binding-lease lock around its storage-only
+        // commit. Wrapping its general save in the same lock re-enters lease
+        // cleanup and deadlocks; credential writes use a separate fence below.
         let operation: @Sendable () async throws -> Void = { [store, conversation, loadedIDs, historyComplete, lease, expectedBinding, bindingLease, commit] in
             try await store.upsert(conversation, replacingLoadedMessageIDs: loadedIDs, historyComplete: historyComplete,
                 expectedBinding: expectedBinding, bindingLease: bindingLease, commit: { write in
@@ -5143,6 +5408,11 @@ final class AppModel: ObservableObject {
               request.binding == conversation.agentBinding, request.conversationID == conversation.id,
               request.connectionID == destination.connectionID,
               !conversation.messages.dropFirst(mi + 1).contains(where: { $0.role == .user }) else { return false }
+        if let card = conversation.messages[mi].transcriptCards.first(where: { $0.id == id }),
+           let origin = card.directChannelInboundOrigin {
+            guard channelCardSource(origin: origin, conversationID: destination.conversationID) != nil else { return false }
+            if let value = directChannelCardScopes[destination.conversationID], (try? checkDirectChannelCardContinuation(value)) == nil { return false }
+        }
         return true
     }
 
@@ -5189,14 +5459,32 @@ final class AppModel: ObservableObject {
             throw AgentSecretSubmissionError.unavailable
         }
         let destination = context.submission.destination
-        return try await context.submission.submit(value, accountID: destination.accountID,
-            agentID: destination.agentID, conversationID: destination.conversationID,
-            channels: channelService, write: secretCredentialWriter ?? credentials.secretRequestWriter())
+        var continuation: DirectChannelCardContinuation?
+        do {
+            if let card = conversations.first(where: { $0.id == destination.conversationID })?.messages.first(where: { $0.id == context.messageID })?
+                .transcriptCards.first(where: { $0.id == id }), let origin = card.directChannelInboundOrigin {
+                let prepared = try beginDirectChannelCardContinuation(origin, conversationID: destination.conversationID)
+                continuation = prepared
+                try await prepareDirectChannelCardContinuation(prepared, messageID: context.messageID, card: card)
+            }
+            guard canUseDirectSecret(id) else { throw AgentSecretSubmissionError.unavailable }
+            return try await context.submission.submit(value, accountID: destination.accountID,
+                agentID: destination.agentID, conversationID: destination.conversationID,
+                channels: channelService, write: secretCredentialWriter ?? credentials.secretRequestWriter(),
+                commit: directChannelCardCredentialCommit(continuation))
+        } catch {
+            closeDirectChannelCardContinuation(continuation)
+            throw error
+        }
     }
 
     private func resumeDirectSecret(_ id: UUID) async throws {
-        guard canUseDirectSecret(id), let context = directSecretContexts[id] else { throw AgentSecretSubmissionError.unavailable }
+        guard let context = directSecretContexts[id] else { throw AgentSecretSubmissionError.unavailable }
         let conversationID = context.submission.destination.conversationID
+        var continuation = directChannelCardScopes[conversationID]
+        var handedOff = false
+        defer { if !handedOff { closeDirectChannelCardContinuation(continuation) } }
+        guard canUseDirectSecret(id) else { throw AgentSecretSubmissionError.unavailable }
         try await loadAllMessages(for: conversationID)
         guard let channelService else { throw AgentSecretSubmissionError.unavailable }
         let destination = context.submission.destination
@@ -5208,12 +5496,17 @@ final class AppModel: ObservableObject {
               let request = conversations[ci].messages[mi].transcriptCards[ki].directSecretRequest else {
             throw AgentSecretSubmissionError.unavailable
         }
+        let original = conversations[ci].messages[mi].transcriptCards[ki]
+        if let origin = original.directChannelInboundOrigin, continuation == nil {
+            continuation = try beginDirectChannelCardContinuation(origin, conversationID: conversationID)
+        }
+        if let continuation { try await prepareDirectChannelCardContinuation(continuation, messageID: context.messageID, card: original) }
         let resolved = try context.submission.resolvingDirectRequest(request, responseID: context.responseID)
         guard let acknowledgement = resolved.acknowledgement else { throw AgentSecretSubmissionError.unavailable }
-        let original = conversations[ci].messages[mi].transcriptCards[ki]
         var card = original
         card.lifecycle = resolved.state == .stored ? .provided : .cancelled
-        card.payload = .secretRequest(.init(requestID: id.uuidString, service: request.request.connector, directRequest: resolved))
+        card.payload = .secretRequest(.init(requestID: id.uuidString, service: request.request.connector, directRequest: resolved,
+            channelInboundOrigin: original.directChannelInboundOrigin))
         card.updatedAt = Date()
         let response = ChatMessage(id: context.responseID, role: .user, text: acknowledgement,
             createdAt: context.createdAt, replyToMessageID: context.messageID)
@@ -5224,6 +5517,7 @@ final class AppModel: ObservableObject {
         loadedMessageIDs[conversationID, default: []].formUnion([response.id, assistant.id])
         do {
             try await persistOrThrow(conversationID: conversationID)
+            if let continuation { try await validateDirectChannelCardContinuation(continuation) }
         } catch {
             if context.generation == autoReviewAccountGeneration,
                let ci = conversations.firstIndex(where: { $0.id == conversationID }) {
@@ -5250,7 +5544,9 @@ final class AppModel: ObservableObject {
         invalidateDirectSecret(id)
         startTurn(conversationID: conversationID, assistantID: assistant.id,
             requestMessages: current.messages.filter { $0.id != assistant.id },
-            modelID: current.modelID, providerID: current.providerID, reasoningEffort: current.reasoningEffort)
+            modelID: current.modelID, providerID: current.providerID, reasoningEffort: current.reasoningEffort,
+            cardContinuation: continuation)
+        handedOff = true
     }
 
     private func invalidateMailboxSecret(_ id: UUID) {
@@ -6447,13 +6743,15 @@ final class AppModel: ObservableObject {
     private func makeDirectChannelPublication(conversationID id: UUID, assistantID: UUID,
         identity: DirectAgentExecutionIdentity, binding: DirectConversationAgentBinding,
         providerID: ProviderID, modelID: ModelID, account: String, generation: UInt64,
-        lifetime: ChannelPublicationLifetime, execution: BackgroundDirectExecution? = nil) async throws -> AgentChannelPublicationTransaction? {
+        lifetime: ChannelPublicationLifetime, execution: BackgroundDirectExecution? = nil,
+        cardContinuation: DirectChannelCardContinuation? = nil) async throws -> AgentChannelPublicationTransaction? {
         guard channelService != nil else { return nil }
         let validate: @Sendable () async throws -> Void = { [weak self] in
             try lifetime.check()
             guard let self else { throw CancellationError() }
             try await self.checkDirectFileScope(id, assistantID: assistantID, account: account, generation: generation)
             if let execution { try await self.validateBackgroundDirectExecution(execution) }
+            if let cardContinuation { try await self.validateDirectChannelCardContinuation(cardContinuation) }
             let current = try await self.directTurnAgentIdentity(conversationID: id, binding: binding,
                 accountScope: account, generation: generation, providerID: providerID, modelID: modelID)
             guard current == identity else { throw AgentMessagingError.scopeMismatch }
@@ -6466,7 +6764,7 @@ final class AppModel: ObservableObject {
         // connection ownership is the actual bound agent, never the chat UUID.
         return makeAgentChannelPublication(conversationID: id, senderID: id, agentID: identity.agentID,
             senderName: sender.name, route: .directConversation, account: account, generation: generation, lifetime: lifetime,
-            inboundReplyAddress: execution?.channelInbound?.admission.envelope.address,
+            inboundReplyAddress: execution?.channelInbound?.admission.envelope.address ?? cardContinuation?.envelope?.address,
             validateScope: validate, publishTranscript: { [weak self] publication in
                 try await validate()
                 guard let self else { throw CancellationError() }
@@ -12210,6 +12508,9 @@ final class AppModel: ObservableObject {
            pending.fence.runID == execution.runID {
             acknowledgment.registerReview(pending.id)
         }
+        if let continuation = directChannelCardScopes[conversationID], pending.fence.runID == continuation.runID {
+            continuation.registerReview(pending.id)
+        }
         pendingAutoReviewByID[pending.id] = pending
         pendingAutoReviewApprovals = pendingAutoReviewByID.values.sorted { $0.createdAt < $1.createdAt }
         var publicationDetails: [String] = []
@@ -12314,6 +12615,8 @@ final class AppModel: ObservableObject {
         for context in externalAttachmentPreviewContexts.values { context.close() }
         externalAttachmentPreviewContexts.removeAll()
         for lifetime in directChannelLifetimes.values { lifetime.close() }
+        for value in directChannelCardScopes.values { value.close() }
+        directChannelCardScopes.removeAll()
         for lease in sidebarSettingsLeases.values { lease.close() }
         for lifetime in manualSidebarChanges.values { lifetime.close() }
         // Queued peer work is scoped to the account that approved the exchange.

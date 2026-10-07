@@ -48,6 +48,67 @@ struct ChannelInboundTests {
             senderID: f.envelope.senderID, senderDisplayName: f.envelope.senderDisplayName,
             text: "Another remote request", timestamp: date.addingTimeInterval(1))
     }
+    @Test(arguments: [ChannelInboundRun.Status.completed, .cancelled, .failed, .interrupted])
+    func cardSourceResolutionIsReadOnlyAndRequiresCompletedOwnReceipt(status: ChannelInboundRun.Status) async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let admission = try await f.service.prepareInbound(f.envelope, accountID: "fixture", invalidate: {})
+        let run = try await claim(f, admission)
+        await #expect(throws: CancellationError.self) {
+            try await f.service.inboundCardEnvelope(runID: run.id, messageID: run.messageID, conversationID: run.conversationID,
+                accountID: "fixture", agentID: run.receipt.agentID)
+        }
+        try await f.service.finishInbound(run, status: status, at: date.addingTimeInterval(1))
+        let records = await f.service.inboundRuns(), bytes = try Data(contentsOf: f.file)
+        if status == .completed {
+            let source = try await f.service.inboundCardEnvelope(runID: run.id, messageID: run.messageID, conversationID: run.conversationID,
+                accountID: "fixture", agentID: run.receipt.agentID)
+            expectNoDifference(source, f.envelope)
+        } else {
+            await #expect(throws: CancellationError.self) {
+                try await f.service.inboundCardEnvelope(runID: run.id, messageID: run.messageID, conversationID: run.conversationID,
+                    accountID: "fixture", agentID: run.receipt.agentID)
+            }
+        }
+        for mutation in ["run", "message", "conversation", "account", "agent"] {
+            await #expect(throws: CancellationError.self) {
+                try await f.service.inboundCardEnvelope(runID: mutation == "run" ? inboundID(10) : run.id,
+                    messageID: mutation == "message" ? inboundID(11) : run.messageID,
+                    conversationID: mutation == "conversation" ? inboundID(12) : run.conversationID,
+                    accountID: mutation == "account" ? "foreign" : "fixture",
+                    agentID: mutation == "agent" ? inboundID(13) : run.receipt.agentID)
+            }
+        }
+        let after = await f.service.inboundRuns(), deliveries = await f.service.deliveries()
+        expectNoDifference(after, records); expectNoDifference(deliveries, []); expectNoDifference(try Data(contentsOf: f.file), bytes)
+        let reopened = try ChannelService(storeURL: f.file); await reopened.register(InboundOfflineConnector())
+        if status == .completed {
+            let source = try await reopened.inboundCardEnvelope(runID: run.id, messageID: run.messageID, conversationID: run.conversationID,
+                accountID: "fixture", agentID: run.receipt.agentID)
+            expectNoDifference(source, f.envelope)
+        }
+        let loaded = await reopened.inboundRuns(); expectNoDifference(loaded, records)
+        expectNoDifference(try Data(contentsOf: f.file), bytes)
+    }
+    @Test(arguments: ["disable-enable", "remove-recreate", "same-save"])
+    func savedCardLocatorCannotFollowReplacementConfiguration(mutation: String) async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let admission = try await f.service.prepareInbound(f.envelope, accountID: "fixture", invalidate: {})
+        let run = try await claim(f, admission)
+        try await f.service.finishInbound(run, status: .completed, at: date.addingTimeInterval(1))
+        if mutation == "disable-enable" {
+            try await f.service.setConnectionEnabled(id: f.connection.id, enabled: false)
+            try await f.service.setConnectionEnabled(id: f.connection.id, enabled: true)
+        } else if mutation == "remove-recreate" {
+            _ = try await f.service.removeConnection(id: f.connection.id); try await f.service.saveConnection(f.connection)
+        } else { try await f.service.saveConnection(f.connection) }
+        let bytes = try Data(contentsOf: f.file)
+        await #expect(throws: CancellationError.self) {
+            try await f.service.inboundCardEnvelope(runID: run.id, messageID: run.messageID, conversationID: run.conversationID,
+                accountID: "fixture", agentID: run.receipt.agentID)
+        }
+        expectNoDifference(try Data(contentsOf: f.file), bytes)
+        let queued = await f.service.deliveries(); expectNoDifference(queued, [])
+    }
     @Test func admissionIsExactlyOnceAndNeverDeliveryConsent() async throws {
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
         let cancellations = InboundInvalidations()
