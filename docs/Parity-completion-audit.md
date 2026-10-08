@@ -1,5 +1,36 @@
 # 完成驗收入口（2026-09-27）
 
+## 純文字 incoming 卡片 quota failure／retry 與送件等待依賴（2026-10-08，最後完整 gate 通過）
+
+接續已提交的 `cb7fd18`。原 quota writer 的 token cleanup／generation refresh、common direct 問答 rollback 與安全輸入 receipt retry 已有實作，新增 actual incoming 入口驗收，不把測試新增稱為保存流程的產品修正。解鎖後的相關回歸另捕捉到既有 continuous-card fixture 與真正兩秒送件輪詢競爭：核准後 queue 可以正確送到 fake connector，測試卻還預期 queued。新增 `AppModel.channelDeliveryTick` 注入等待依賴，正式 app 的預設仍是 `Task.sleep(.seconds(2))`；等待後檢查 cancellation，再執行原 `ChannelService.flush`／reload 流程。測試明確停止自動輪詢或逐 tick 驅動原 worker，不放寬 full-value queue／canonical 斷言、不關閉原人類核准或來源驗證。UI、catalog、Package、schema 與真實資料均未修改。
+
+新增 actual listener → saved question／secret provide／secret dismiss → 真人 callback 的 1 method／36 cases：新／既有 own DM × quota 的 `afterTemporaryWriteBeforeRename`／`afterReservationPersist`／`afterCommitPersist` × 正常修復後 retry／retry 前 connection ABA。只在 native quota hook 暫停並失敗一次，擷取真正 callback 已建立的 message／card／response／assistant UUID 和地址 allocation；不注入 synthetic runner、receipt、proposal 或 grant。提交後才報錯的 case 先讀到真實 SQLite 的 staged answer，其餘兩點尚未寫入；失敗後全部只回滾本次回答／queued assistant，完整 pending card、既有歷史與 original incoming source 保留。失敗嘗試的原生地址 reservations 仍保留在真正 UUID 下，不能默默重用或把它們當多存一份回答。
+
+重試問答只保存一列真人回答；secret provide 使用 native `retryButtonTapped` 的 value-free stored receipt，writer 只一次；dismiss 全程不寫憑證。安全輸入框清空、receipt failure／dismissal failure 與最後 stored／cancelled 狀態、重複點擊和 listener replay 全部核對。正常 retry 的 secret context 保留原 response／assistant UUID，問答重新配置 UUID；這是原生保存失敗重試的行為，不聲稱每次 attempt 都分配新 UUID。native source proof／fresh human remote-send review 仍重新執行；generic automatic review 不能核准外部送件，connection ABA 不能恢復已失效的來源或 send authority。
+
+Swift Testing／CustomDump 技能保留完整 staged／rollback／pending-review／final canonical Conversation、所有 cards／actions／tool arguments／results／delivery／idempotency IDs、原 owner／thread／authorization、原生日期與地址 allocator 的比較，及真正 SQLite／ChannelService codec 重開。另逐欄驗 native quota record 的 scope／key／bytes／generation／content ID 及全部五個 usage fields，三個 failure 點均無殘留 reservation；commit 已持久化後報錯的 generation 不退回。所有 inference requests（包含 exchanges）的完整 dump 及保存 transcript 不含 fake secret／其他對話資料；真正 saved human rows 與原 request prefix 全值比對，本機工具 permission 不變，原群組／其他聊天不動。connector 從未執行真正送件；queued 不是 delivered。
+
+另外新增 1 method／2 cases，實際 listener → human review → 原 worker tick：未核准時推進 tick 不保存 outbox／不送件；真人核准後先逐欄驗 queued publication／owner／thread／authorization，再推進 tick，fake connector 恰好送一次，正式 delivered receipt 與 canonical 只更新該 publication 的 delivery evidence。後續兩次 tick 不重新推論、核准、排隊或送件；完整 requests／results／queue／canonical／native codec 重開與無關聊天／群組／permission 保留。此兩案刻意驗 fake delivery，而其餘保存／連續卡片案刻意停留 durable queued 邊界；不能把 fake connector delivered 當外部帳號驗收。
+
+忽略的 `.build/validation/` 日誌：
+
+- `inbound-card-quota-baseline-v1.log` exit 0：既有產品 source 的 new method／全部 36 cases（7.542 秒），build 19.15 秒。這是有效 green baseline，不是產品 red 或新修正證據。
+- `inbound-card-quota-regression-v1.log` build complete 12.81 秒，最後新增安全輸入終態／重複工具 result 的斷言已編譯，但新 method 尚未執行，完整相關 filter **未通過／未跑完**。原 background suite 先出現 56 個 workflow fixture 狀態 issues，後續 failure suite 明確有 Cocoa 257／POSIX EPERM 的 `channels.json` 讀取失敗；唯讀兩次確認 `IOConsoleLocked=Yes`，只能說當輪鎖屏／受保護 store 前置條件不成立，不能把每個語意 issue 一概歸因或冒充產品 red／green。只中止本輪 testing session，exit 130，未移除檔案保護或停止使用者 App／Xcode；當時新 36 cases／相關回歸待解鎖、未提交。
+- `inbound-card-quota-focused-v2.log` exit 0：使用者再次「繼續」後實測 `IOConsoleLocked=No`、磁碟約 13 GiB；最後強化的 36 cases 全通過（7.626 秒），增量 build 1.62 秒。此時尚未加入 tick 依賴。
+- `inbound-card-quota-regression-v2.log` exit 1：56 methods／6 suites 跑完（137.687 秒），只有 continuous-card `sq／既有 DM／approve` 的重開 queue 比對有 1 issue：fake connector 已正確 delivered／attempt 1，測試仍預期 queued／attempt 0。其他保存重試／問答／安全輸入及 background／failure／mailbox suites 通過；原 issue 保留，不假稱全綠。
+- `inbound-card-quota-focused-v3.log` exit 0：加入 tick 依賴後重新編譯最後 Swift source（508.38 秒），3 methods／1 suite 的全部 70 cases 通過（99.416 秒）：2 個原 worker 輪詢、32 個連續卡片與 36 個 quota failure／retry。沒有以較早編譯的 source 取代。
+- `inbound-card-quota-regression-v3.log` exit 0：同一最後編譯 source，以 `--skip-build` 串行跑完整相關 filter，57 methods／6 suites（279.052 秒）全部通過；background direct、failure follow-up、actual incoming、question、secure credential 與 peer publication／mailbox 均保留，沒有刪除 v2 的失敗案例。
+- `inbound-card-quota-localization-v1.log` exit 0：最後 source 的七語各 1,817 keys／0 missing；這只是 key 完整性檢查，不是翻譯品質、UI 版面或 VoiceOver 驗收。
+- `inbound-card-quota-full-v1.log` exit 130：同一最後編譯 source、live opt-in 明確關閉的無 filter 串行 run。核心 1,049 methods／118 suites（60.091 秒）等 bundles 通過後，App 的 background／group fixtures 先有語意 issues，後續 `agents.json` 明確出現 Cocoa 257／POSIX EPERM；唯讀檢查 `IOConsoleLocked=Yes`、空間仍約 6.4 GiB。只中止本 testing session、保留全部斷言與日誌，不能把每個先前語意 issue 一概歸因鎖屏或稱產品已修；整輪未通過／未跑完。未改檔案保護或停止使用者 App／Xcode，解鎖後仍須重跑完整 gate。
+- `inbound-card-quota-full-v2.log` exit 0：唯讀確認重新解鎖後，以同一最後編譯 source、相同完整無 filter 串行設定重跑。全部 17 個 Swift Testing bundle summaries（12 個非空、5 個零測試）合計 2,201 methods／262 suites 通過，另全部 17 個 XCTest bundles 合計 135 tests／0 failures；App 819／103 suites（590.254 秒）、核心 1,049／118 suites（58.089 秒）。本批 actual incoming suite 通過（45.564 秒），原 mailbox／routine／rendering 等案例完整保留。兩項 opt-in installed Codex tests skipped，既有 CoreData／NSXPC 診斷保留，不算 live gate 或 warning-free；v1 的 issues 未藉刪除／skip 或拼接較早 green 隱藏。
+- `inbound-card-quota-native-v1.log` exit 0／`BUILD SUCCEEDED`：同一最後產品 source 的 arm64 native Debug 增量建置，重用本專案隔離 `ChannelInboundNativeV3` DerivedData，明確重新編譯 `AppModel.swift`，不沿用上一提交 binary，也不是 clean build。
+- `inbound-card-quota-native-verify-v1.log` exit 0：該 native App 的 version 0.1.0／build 1、四個 executable、app／XPC entitlements、KaTeX 0.16.45／20 fonts、Mermaid 11.16.0／72 notices 與 deep strict codesign 通過。
+- `inbound-card-quota-package-v1.log` exit 0：確認不存在的新 `InboundCardQuotaPackageV1/Filicon.app`，SPM Debug 增量建置四個 products（8.34／0.86／0.57／0.59 秒）並封裝。腳本內 verify 與獨立 `inbound-card-quota-package-verify-v1.log` 均 exit 0，同樣驗證 version／四個 executable／entitlements／離線資源／deep strict codesign；沒有覆蓋現有 App，也沒有執行印出的 launch smoke。
+
+上述 full v2／native／standalone／catalog 為同一最後 source 的本批新 gate，不借歷史成功或拼接窄版 green。既有 native notes／compiler 診斷保留，不當 warning-free 或 Developer ID release／公證驗收。先前 `cb7fd18` 的最後無 filter v2 曾出現明確 ENOSPC／SQLite FULL 後中止、本批 full v1 的鎖屏受保護 store 失敗仍保留；本批 full v2 才是最後完整成功證據，不聲稱已定位每個先前 issue。磁碟空間先回到約 5.8 GB，這次解鎖後約 13 GiB，重新編譯後約 3.6 GiB，最後相關回歸結束唯讀檢查只剩 322 MiB，稍後回到 838 MiB，再回到 7.8 GiB 後才開始 full v1；native 完成後仍約 6.3 GiB。full v2 中最低讀到約 1.1 GiB，結束回到約 3.7 GiB；唯讀也讀到全系統 encrypted swap used 35,474.88 MiB，但沒有歸因特定 App／程序或診斷空間波動原因。未取得清理授權或刪任何資料，只監測並保留原檔案；本批隨已完成最後驗證提交。
+
+只補上述三個正常 live callback 的 quota failure／retry 入口；反覆或持續儲存失敗、retry 同時與其他人類／帳號／binding／persona 操作競爭、其他卡片組合、incoming 附件／圖片、priority preemption redrive、其他未 opt-in hosts、unified private DM/group runtime，以及 live／真人／VoiceOver／最低 macOS／Developer ID release／公證仍保留。48 分類與整體 partial 不變；本批未 push、launch 或重啟使用者 App／Xcode，不改真實帳號／群組／聊天。
+
 ## 純文字 incoming 連續卡片（2026-10-08，既有實作驗收）
 
 接續 `58a019c`，本批只有測試／文件變更，沒有產品執行 source、UI、catalog、Package 或儲存 schema 變更。common direct host 已透過 `directChannelCardScopes` 將原 incoming receipt／source locators 帶到後續卡片；這批驗證該現有流程，不將增加測試稱為新的產品修正。

@@ -1150,6 +1150,7 @@ final class AppModel: ObservableObject {
     var workflowNextRuns: [String: Date] = [:]
     private var pluginCatalogCache: PluginCatalogCache?
     private var channelFlushTask: Task<Void, Never>?
+    private let channelDeliveryTick: @Sendable () async throws -> Void
     private var conversationContinuation: ConversationMetadataContinuation?
     private var messageContinuations: [UUID: MessageHistoryContinuation] = [:]
     private var loadedMessageIDs: [UUID: Set<UUID>] = [:]
@@ -1196,7 +1197,8 @@ final class AppModel: ObservableObject {
         mcpOAuthBrowserOpener: @escaping @MainActor @Sendable (URL) -> Bool = { NSWorkspace.shared.open($0) },
         quotaFaultInjector: @escaping StorageQuotaLedger.FaultInjector = { _ in },
         channelService: ChannelService? = nil,
-        channelConnectors: [any ChannelConnector]? = nil
+        channelConnectors: [any ChannelConnector]? = nil,
+        channelDeliveryTick: @escaping @Sendable () async throws -> Void = { try await Task.sleep(for: .seconds(2)) }
     ) {
         let context: AppStartupContext = (try? .isolated(root: applicationSupportRoot, reason: .isolatedUserData))
             ?? .init(root: applicationSupportRoot, settlement: .init(route: .unchanged, reason: .isolatedUserData, root: applicationSupportRoot), warning: "The isolated data root could not be fully verified.")
@@ -1208,7 +1210,8 @@ final class AppModel: ObservableObject {
             mcpOAuthBrowserOpener: mcpOAuthBrowserOpener,
             quotaFaultInjector: quotaFaultInjector,
             channelService: channelService,
-            channelConnectors: channelConnectors
+            channelConnectors: channelConnectors,
+            channelDeliveryTick: channelDeliveryTick
         )
     }
 
@@ -1220,7 +1223,8 @@ final class AppModel: ObservableObject {
         mcpOAuthBrowserOpener: @escaping @MainActor @Sendable (URL) -> Bool = { NSWorkspace.shared.open($0) },
         quotaFaultInjector: @escaping StorageQuotaLedger.FaultInjector = { _ in },
         channelService: ChannelService? = nil,
-        channelConnectors: [any ChannelConnector]? = nil
+        channelConnectors: [any ChannelConnector]? = nil,
+        channelDeliveryTick: @escaping @Sendable () async throws -> Void = { try await Task.sleep(for: .seconds(2)) }
     ) {
         let root = startupContext.root
         dataRoot = root
@@ -1289,6 +1293,7 @@ final class AppModel: ObservableObject {
         workflowDirectBindingStore = try? WorkflowDirectSessionBindingStore(url: root.appending(path: "workflow-direct-sessions.json"))
         self.channelService = channelService ?? (try? ChannelService(storeURL: root.appending(path: "channels.json")))
         configuredChannelConnectors = channelConnectors
+        self.channelDeliveryTick = channelDeliveryTick
         mcpConfigStore = MCPConfigurationStore(url: root.appending(path: "mcp-servers.json"))
         let mcpOAuthCoordinator = MCPOAuthPendingCoordinator()
         self.mcpOAuthCoordinator = mcpOAuthCoordinator
@@ -9749,9 +9754,12 @@ final class AppModel: ObservableObject {
 
     private func observeChannelDeliveries() {
         guard channelFlushTask == nil else { return }
+        // Keep the production cadence while letting isolated hosts advance the
+        // real worker explicitly, without racing queued-receipt assertions.
+        let tick = channelDeliveryTick
         channelFlushTask = Task { [weak self] in
             while !Task.isCancelled {
-                do { try await Task.sleep(for: .seconds(2)) } catch { return }
+                do { try await tick(); try Task.checkCancellation() } catch { return }
                 guard let self, let channelService = self.channelService else { return }
                 await channelService.flush()
                 await self.reloadChannelState()
