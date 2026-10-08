@@ -1216,7 +1216,7 @@ struct ChatDetailView: View {
                     .padding(.horizontal, 7)
                     .padding(.vertical, 6)
                     .frame(minHeight: 34, maxHeight: 54)
-                    .onSubmit { if !model.isConversationWorking(conversation.id) { model.send() } }
+                    .onSubmit { Task { await model.sendButtonTapped() } }
                     .help(l10n("Type / after a space to reference an enabled workflow"))
                 VoiceComposerControls(
                     controller: model.voiceComposer,
@@ -1226,14 +1226,16 @@ struct ChatDetailView: View {
                 )
                 if model.isConversationWorking(conversation.id) {
                     FiliconIconButton(label: l10n("Stop"), systemName: "stop.fill", size: 32, isDestructive: true, action: model.cancel)
-                } else {
+                }
+                if !model.isConversationWorking(conversation.id)
+                    || model.canPrioritizeIncomingWithHumanMessage(conversation.id)
+                        && (!model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !model.pendingAttachments.isEmpty) {
                     FiliconIconButton(
                         label: l10n("Send"),
                         systemName: "arrow.up",
                         size: 32,
-                        isProminent: true,
-                        action: model.send
-                    )
+                        isProminent: true
+                    ) { Task { await model.sendButtonTapped() } }
                     .keyboardShortcut(.return, modifiers: .command)
                     .disabled(
                         model.selectedConversationConfigurationError != nil

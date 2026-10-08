@@ -63,3 +63,25 @@ public final class ChannelInboundAdmission: @unchecked Sendable {
 }
 
 struct WeakChannelInboundAdmission { weak var value: ChannelInboundAdmission? }
+
+public final class ChannelInboundRedrive: Sendable {
+    public let originalRun: ChannelInboundRun
+    let fence: ChannelInboundAdmission
+
+    init(originalRun: ChannelInboundRun, fence: ChannelInboundAdmission) {
+        self.originalRun = originalRun
+        self.fence = fence
+    }
+
+    public var envelope: ChannelEnvelope { fence.envelope }
+    public var isActive: Bool { fence.isActive }
+    public func check() throws { try fence.check() }
+    public func close() { fence.close() }
+}
+
+struct ChannelInboundRedriveRecord: Codable, Sendable {
+    let originalRunID: UUID
+    let redriveRunID: UUID
+}
+
+struct WeakChannelInboundRedrive { weak var value: ChannelInboundRedrive? }

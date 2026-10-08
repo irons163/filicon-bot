@@ -1,5 +1,51 @@
 # 完成驗收入口（2026-09-27）
 
+## Incoming 人類訊息優先／單次 redrive（2026-10-08，最後必要 gate 全部通過，隨本批提交）
+
+本批以 `a07a899` 為基線；下節成功紀錄只證明該來源，**不是本節修改的 gate**。本批最後 source 已由 v11 重新編譯，全部聚焦、完整相關回歸、無 filter 全套、原生 Debug build／verify、fresh standalone Debug 封裝／獨立 verify 及七語 keys gates 均通過。只關閉下述已測增量，不冒充全部 parity／live／真人／release 完成。
+
+重新唯讀核對原始參考 HEAD `a9f633e09d49a85829b8236331b9e21f7e612634` 的 `source/host/extensions/transcript/background-wakes.ts:225` 與 `send-turn-dispatch.ts:123`：只有真正人類 direct send 中止已在執行的背景 wake，才讓原 envelope 以 displayed／redriven 狀態排回一次；普通 Stop、upgrade quiescence 或已離開的 agent 不重排。原版另支援中止 group-member run 與 incoming images，這兩項不在本批已實作範圍，也尚未關閉差異。
+
+本批目前接到 actual listener／common own-DM host 與真正 Send 按鈕：捕捉原人類 draft／attachments／reply target，關閉舊來源 scope 並等待原 native parent／cleanup 結束，才開始 foreground。原 source message 不複製，child run 保存原 receipt／conversation／source message ID 的一次性對應；重開、第二次 human preemption、Stop 或 connection／account／binding／persona／hidden ABA 不恢復舊票據、核准或推論。foreground 和 child 均使用自己的 native lifetime／binding fence；外部 SendMessage 仍另需 fresh human consent，generic automatic review 不能代替。以下聚焦與相關回歸提供已覆蓋邊界的 runtime 證據，不等於真人／live 或全部 parity 完成。
+
+靜態檢查另補兩個邊界：foreground 核准 callback 必須捕捉原 execution，等已點擊的 durable action 收尾，不能晚到後改寫下一次執行；foreground 初始保存若失敗，必須明確回傳失敗，不得觸發 redrive。初始 assistant UUID 現在於保存前記錄，保存後重驗 scope；仍有效的保存失敗只回滾本次人類／placeholder，已失效的 scope 只能對原 canonical binding 做 storage-only retirement。是否已有保存的人類 row 決定能否恢復 draft，避免重送已保存的人類內容；反覆保存失敗與其他競爭組合仍須實測加強。
+
+等待舊 run 清理期間導航，不應借新選取聊天的 model catalog 或附件設定來拒絕原已按下的 Send。目前 input 同時捕捉原已驗證模型與 configuration 結果，後續仍重驗原 account／binding／persona；actual cleanup quota hook 暫停後導航及 human-save 後列表排序的兩案均已通過，不把導航當新送件目標或權限。
+
+新增 core 10 methods／42 cases、scope 1 method／1 case 與 actual App 8 methods／62 cases，共 19 methods／105 cases，涵蓋一次性 native bookkeeping／損壞 codec／真正 atomic file 故障與 retry、human／Stop／呼叫者 task cancellation／第二次 preemption／ABA、foreground fresh-send review／late callback、舊 run／human save 兩個等待點中導航及列表排序、route／history 的延遲 draft restore，以及三個 quota fault points × 新／既有 own DM × 正常失敗／Stop／connection ABA／task cancellation 的 24 個初始保存案例。保存案例透過原 quota hook 暫停真正 transaction，放行人類 row 出現前的保存，才讓目標保存失敗；沒有注入 runner、receipt、grant 或真正外部送件。完整 canonical／cards／UUID／地址／queue／request／native codec 與無關聊天斷言保留，案例數不是通過數。
+
+首次聚焦執行要求被自動審核服務的使用額度限制攔住；回覆明示未執行，而非判定動作不安全或測試失敗。該拒絕沒有建立 log 或 session，沒有 exit 0／編譯結果。未改用另一條路繞過審核。2026-10-08 後續唯讀額度狀態顯示普通工作仍可用；這本身不證明執行審核已恢復，但經同一審核入口重新要求後確實獲准。解鎖且約 25 GiB 可用時，`inbound-human-priority-focused-v1.log` 才真正建立：編譯成功，core 21 methods／1 suite 通過（0.702 秒），actual App 7 methods／49 cases 失敗（362.130 秒、96 issues），整體 exit 1；保留既有 compiler warning，不稱 warning-free。
+
+v2 診斷輸出新增時有 Swift type-check 編譯錯誤，已拆成獨立輸出，該輪 exit 1、沒有 runtime gate。v3／v4 同一 happy-path 的 4 cases 均失敗；實際狀態顯示舊 native run 已取消、人類 row／推論尚未開始、draft 被還原，非來訊辨識錯誤。v4 暫時 phase log 證明 post-cancel validation 前新 human scope／binding／interruption／ticket 全被撤銷。source 核對定位：已取消的舊 task 更新 `conversations` 時，`didSet` 用 task-aware `Lease.check()` 觀察獨立新 scope，誤把觀察者取消當作被觀察 lifetime 失效，繼而 `close()` 新人類工作。暫時 product log 已移除；新增 lock-protected、與觀察者 task cancellation 無關的 `Lease.isActive` 供狀態失效觀察使用，實際 check／commit 仍拒絕 cancelled task 與失效 scope。追加 cancelled observer 不能 commit、account／child revoke 不復活的 regression。`inbound-human-priority-lifetime-v5.log` 因新測試遺漏 throwing Task 的 `try await` 編譯失敗，沒有 runtime gate。
+
+`inbound-human-priority-lifetime-v6.log` exit 1：scope 9 methods／1 suite 通過（0.042 秒），happy path 4 cases 有 3 個通過、1 個仍因 draft 消失失敗（3 issues）。新產品問題為 route 的 history hydration 晚回來後才取得 draft generation，使先輸入的文字被 stored draft 清掉。現在於 navigation／typing 時撤銷舊 generation，history／store hop 前捕捉 token，回來後重驗才投影；不是讓测试多等幾秒來避開競爭。
+
+`inbound-human-priority-focused-v7.log` exit 1：新無推論断言誤用要求 Equatable 的 API 比較 `InferenceRequest`，已改為完整 CustomDump diff，無 runtime gate。`inbound-human-priority-focused-v8.log` build complete 68.60 秒、exit 1：core 21 methods（0.809 秒）與 scope 9 methods（0.039 秒）通過；App 8 methods／51 cases（15.817 秒）有 16 issues。4 happy cases、2 draft cases、Stop／12 lifetime ABA／第二次 preemption 均通過。其餘為 fixture 的 SQLite REAL 日期與 native UI 日期直接比較（13）、把一般 foreground channel override 誤當 admitted incoming typed-thread token（2），以及把第一個 quota save 錯假定為舊 run 清理（1）。已按原 codec 比較完整保存值、讓 foreground 明確指定 `slack:C_REMOTE`，並在真正舊 run first-save／human initial-save 兩個邊界暫停，沒有放寬來源、thread 或核准檢查。
+
+`inbound-human-priority-boundaries-v9.log` build complete 21.35 秒、exit 1：App 3 methods／30 cases（19.051 秒），原 18 個保存故障與 10 個 review cases 通過，舊 run 等待期間導航亦通過。新增 human-save 暫停後列表排序 case 仍失敗（3 issues）：`beginDirectSend` 把 await 前的 array index 用於 await 後的 history／provider／model，native identity fence 雖擋住錯誤推論，卻沒有實際執行該 human turn，而先跑 child incoming。現改為在 hop 後用原 conversation UUID 重新定位完整 row，attachment failure rollback 亦按 ID；不借新選取聊天或 array slot。caller cancellation 另同步撤銷 human scope，再取消子 task，避免獨立 review callback 趁 cleanup 尚未結束使用舊票據；新增上述 task-cancellation cases。
+
+`inbound-human-priority-focused-v10.log` build complete 117.87 秒、exit 1：core 21 methods（0.809 秒）與 scope 9 methods（0.038 秒）通過；App 8 methods／62 cases（39.857 秒）有 11 issues。draft 2 cases、Stop 3 cases、舊 run／human-save 導航 2 cases（0.623 秒）、lifetime 14 cases、review 12 cases及第二次中止通過。pending-review happy 的新／既有 DM 各未抵達 human inference，原 run 仍 running、draft 未清空，共 6 issues，不是無核准送件。save 的原 18 cases 通過，新增 caller-task-cancellation 有 5 issues：三案在後續 reconcile 後 canonical metadata 出現額外的 staged human address reservation／updatedAt，另一案未抵達預期等待點；完整日期／reservations 斷言保留，未刪除或採寬鬆比對。
+
+後續唯讀 source 核對：actual Send 在 `selectedConversationConfigurationError` 非空時停用，但 route 與 explicit refresh 是不同 async callbacks，原 fixture 在刷新回來後沒有驗按下當刻的 native configuration；現於測試 Task 內等待真正 selection／configuration 有效後才呼叫原 Send，仍逐欄驗完整結果，沒有設定 fake catalog。這不是所有早期 happy timeout 動態原因已證明的聲明。取消核准流程原本即使無 requests 也保存整份 chat，並在 broker await 後重新取 execution，可能在舊 lifetime 移除後落入無 fence 保存；現在呼叫一開始捕捉原 execution／continuation／human／account generation，帳號變更拒絕投影，且沒有核准就不寫回。最後這些修改已由 v11 編譯及 runtime 通過，與較早的 source 推論分開記錄；暫時產品診斷 print 已全移除。
+
+上一輪繼續時唯讀實測 `IOConsoleLocked=No`，但磁碟只剩 319 MiB，後續約 877 MiB、仍不足 1 GiB；當時未啟動 v11、full、native 或 standalone，也未自行清理任何檔案。不能把這個後續容量前置條件當作 v10 既有語意 issues 的原因。最新繼續時空間已回到約 5.8 GiB、Mac 未鎖定，才獲同一審核入口批准並重編譯。回歸期間最低觀察約 1.8 GiB，完成時約 2.8 GiB；沒有診斷波動原因或刪除資料。
+
+最後 source 的新 gate（忽略的 `.build/validation/` 日誌）：
+
+- `inbound-human-priority-focused-v11.log` exit 0：build complete 107.34 秒；core 21 methods／1 suite（0.810 秒）、App 8 methods／全部 62 cases／1 suite（13.885 秒）、scope 9 methods／1 suite（0.036 秒）通過。4 happy cases、兩個導航等待點、24 個保存故障／取消 cases 及 12 個 review cases 全保留；日期／reservations／canonical 完整斷言沒有放寬。既有三處 redundant `#require` compiler warnings 保留，不稱 warning-free。
+- `inbound-human-priority-regression-v1.log` exit 0：同一 v11 最後編譯 source，以 `--skip-build` 串行跑完整相關 filter；core 21 methods／1 suite（1.842 秒）、App 87 methods／9 suites（513.798 秒）、scope 9 methods／1 suite（0.048 秒）全部通過，合計 117 methods／11 suites。incoming／background／failure／question／credential／mailbox／foreground channel publication／navigation／card router 原案例完整保留。
+- `inbound-human-priority-full-v1.log` exit 0：同一 v11 最後編譯 source、無 filter／live opt-in 關閉／串行／明確 `--skip-build`，17 Swift Testing bundles（12 個非空、5 個零測試）合計 2,220 methods／262 suites 全部通過；另 17 XCTest bundles 合計 135 tests／0 failures。App 827／103 suites（527.253 秒）、core 1,049／118 suites（62.312 秒）；两項 opt-in installed Codex tests skipped，既有 CoreData／NSXPC 診斷保留，不算 live 或 warning-free gate。較早 red 的案例全部保留，没有縮減或拼接其他 source 的結果。
+- `inbound-human-priority-native-v1.log` exit 1：系統 active developer directory 為 `/Library/Developer/CommandLineTools`，`xcodebuild` 在建置前拒絕，沒有 compile 或 binary gate。保留日誌；只為新 v2 呼叫設定 `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer`，不修改系統 `xcode-select` 設定。v2 尚在建置中，fresh standalone／catalog 尚未執行。full 結束後唯讀空間約 17 GiB、Mac 未鎖定；沒有清理或診斷波動原因。本節沒有借上一提交的 binary／green；全部必要 gate 通過才提交。
+
+上述 native v1 後的新 gate 已完成，覆蓋該項當時的 v2 進行中狀態：
+
+- `inbound-human-priority-native-v2.log` exit 0／`BUILD SUCCEEDED`：arm64 native Debug 增量建置，重用本任務隔離 `ChannelInboundNativeV3` DerivedData；明確重新編譯 `ChannelService.swift`／`AppModel.swift`，不是 clean build 或沿用舊 App。既有 Keychain deprecation／AppIntents warnings 及 ad-hoc runtime notes 保留。
+- `inbound-human-priority-native-verify-v1.log` exit 0：上述 App 的 version 0.1.0／build 1、四個 executable、app／XPC entitlements、KaTeX 0.16.45／20 fonts／MIT、Mermaid 11.16.0／72 notices／MIT 與 deep strict codesign 通過。
+- `inbound-human-priority-package-v1.log` exit 0：事先確認不存在的新 `InboundHumanPriorityPackageV1/Filicon.app`，SPM Debug 依序增量建置四個 products（9.23／1.02／0.65／0.45 秒）後封裝，腳本內 verify 通過；獨立 `inbound-human-priority-package-verify-v1.log` exit 0，再驗 version／四個 executable／entitlements／offline resources／deep strict codesign。沒有覆蓋既有 App，也沒有執行印出的 launch smoke。
+- `inbound-human-priority-localization-v1.log` exit 0：七語各 1,817 keys／0 missing；不是翻譯品質、真人全畫面／VoiceOver 或版面驗收。
+
+最後 source 的全部必要 gate 已完成，磁碟最後唯讀約 19 GiB，未清理。整體 parity 仍 partial，48 分類不變。incoming 附件／圖片、group-member／其他 host priority、其他未 opt-in host／unified private DM/group runtime、uncaptured locator 新核准開啟，以及真人／live 帳號／VoiceOver／最低 macOS／Developer ID release／公證仍保留。未 push、啟動或重啟使用者 App／Xcode、清理資料或修改真實帳號／群組／聊天。
+
 ## 純文字 incoming 卡片 quota failure／retry 與送件等待依賴（2026-10-08，最後完整 gate 通過）
 
 接續已提交的 `cb7fd18`。原 quota writer 的 token cleanup／generation refresh、common direct 問答 rollback 與安全輸入 receipt retry 已有實作，新增 actual incoming 入口驗收，不把測試新增稱為保存流程的產品修正。解鎖後的相關回歸另捕捉到既有 continuous-card fixture 與真正兩秒送件輪詢競爭：核准後 queue 可以正確送到 fake connector，測試卻還預期 queued。新增 `AppModel.channelDeliveryTick` 注入等待依賴，正式 app 的預設仍是 `Task.sleep(.seconds(2))`；等待後檢查 cancellation，再執行原 `ChannelService.flush`／reload 流程。測試明確停止自動輪詢或逐 tick 驅動原 worker，不放寬 full-value queue／canonical 斷言、不關閉原人類核准或來源驗證。UI、catalog、Package、schema 與真實資料均未修改。

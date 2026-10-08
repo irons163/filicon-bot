@@ -36,6 +36,7 @@ private struct ChannelPersistentState: Codable, Sendable {
     var failureFollowUps: [ChannelFailureFollowUp]? = nil
     var inboundReceipts: [ChannelInboundReceipt]? = nil
     var inboundRuns: [ChannelInboundRun]? = nil
+    var inboundRedrives: [ChannelInboundRedriveRecord]? = nil
 }
 
 public actor ChannelService {
@@ -67,6 +68,7 @@ public actor ChannelService {
     private var storageRevision = UUID()
     private let publicationIssuerID = UUID()
     private var inboundAdmissions: [WeakChannelInboundAdmission] = []
+    private var inboundRedrives: [WeakChannelInboundRedrive] = []
 
     public init(storeURL: URL, newDeliveryID: @escaping @Sendable () -> UUID = { UUID() },
                 now: @Sendable () -> Date = { Date() }) throws {
@@ -117,11 +119,11 @@ public actor ChannelService {
                   }) else { throw ChannelServiceError.invalidEnvelope }
             if var values = state.inboundRuns {
                 let date = now()
-                guard values.count <= receipts.count, date.timeIntervalSince1970.isFinite,
+                let redrives = state.inboundRedrives ?? []
+                guard values.count <= receipts.count + redrives.count, date.timeIntervalSince1970.isFinite,
                       Set(values.map(\.id)).count == values.count,
-                      Set(values.map(\.messageID)).count == values.count,
-                      Set(values.map(\.id)).isDisjoint(with: Set(values.map(\.messageID))),
-                      Set(values.map { $0.receipt.envelopeID }).count == values.count else { throw ChannelServiceError.invalidEnvelope }
+                      Set(values.map(\.id)).isDisjoint(with: Set(values.map(\.messageID))) else { throw ChannelServiceError.invalidEnvelope }
+                try Self.validateInboundRedrives(redrives, runs: values)
                 for index in values.indices {
                     guard values[index].startedAt.timeIntervalSince1970.isFinite,
                           values[index].id != values[index].messageID,
@@ -136,6 +138,8 @@ public actor ChannelService {
                     }
                 }
                 state.inboundRuns = values
+            } else if state.inboundRedrives?.isEmpty == false {
+                throw ChannelServiceError.invalidEnvelope
             }
             for index in state.deliveries.indices where state.deliveries[index].status == .sending {
                 state.deliveries[index].status = .retrying
@@ -332,6 +336,7 @@ public actor ChannelService {
         state.failureFollowUps?.removeAll { $0.connectionID == id }
         state.inboundReceipts?.removeAll { $0.connectionID == id }
         state.inboundRuns?.removeAll { $0.receipt.connectionID == id }
+        pruneInboundRedrives()
         state.publicationRevisions?[id.uuidString] = nil
         try persist()
         // Do not tear down the live connection if the deletion failed to save.
@@ -409,6 +414,7 @@ public actor ChannelService {
             let retained = Set(state.inbound.map(\.id))
             state.inboundReceipts?.removeAll { !retained.contains($0.envelopeID) }
             state.inboundRuns?.removeAll { !retained.contains($0.receipt.envelopeID) }
+            pruneInboundRedrives()
         }
         if let index = state.connections.firstIndex(where: { $0.id == envelope.connectionID }) {
             state.connections[index].cursor = envelope.cursor ?? state.connections[index].cursor
@@ -497,6 +503,110 @@ public actor ChannelService {
         state.inboundRuns?[index].status = status
         state.inboundRuns?[index].finishedAt = max(date, run.startedAt)
         try persist()
+    }
+
+    public func prepareInboundInterruption(_ admission: ChannelInboundAdmission, run: ChannelInboundRun,
+                                          invalidate: @escaping @Sendable () -> Void) throws -> ChannelInboundAdmission {
+        try admission.check()
+        guard isInboundCurrent(admission, run: run) else { throw CancellationError() }
+        let fence = ChannelInboundAdmission(receipt: admission.receipt, envelope: admission.envelope,
+            issuerID: publicationIssuerID, invalidate: invalidate)
+        inboundAdmissions.removeAll { $0.value?.isActive != true }
+        inboundAdmissions.append(.init(value: fence))
+        return fence
+    }
+
+    public func reserveInboundRedrive(_ admission: ChannelInboundAdmission, run: ChannelInboundRun,
+                                     invalidate: @escaping @Sendable () -> Void) throws -> ChannelInboundRedrive {
+        try admission.check()
+        inboundRedrives.removeAll { $0.value?.isActive != true }
+        guard isInboundCurrent(admission, run: run),
+              !(state.inboundRedrives ?? []).contains(where: { $0.originalRunID == run.id || $0.redriveRunID == run.id }),
+              !inboundRedrives.contains(where: { $0.value?.originalRun.id == run.id }) else { throw CancellationError() }
+        let fence = ChannelInboundAdmission(receipt: admission.receipt, envelope: admission.envelope,
+            issuerID: publicationIssuerID, invalidate: invalidate)
+        let redrive = ChannelInboundRedrive(originalRun: run, fence: fence)
+        inboundAdmissions.append(.init(value: fence))
+        inboundRedrives.append(.init(value: redrive))
+        return redrive
+    }
+
+    public func prepareInboundRedrive(_ redrive: ChannelInboundRedrive, accountID: String,
+                                     invalidate: @escaping @Sendable () -> Void) throws -> ChannelInboundAdmission {
+        try validateInboundRedrive(redrive, accountID: accountID)
+        let admission = ChannelInboundAdmission(receipt: redrive.originalRun.receipt, envelope: redrive.envelope,
+            issuerID: publicationIssuerID, invalidate: invalidate)
+        inboundAdmissions.removeAll { $0.value?.isActive != true }
+        inboundAdmissions.append(.init(value: admission))
+        return admission
+    }
+
+    public func claimInboundRedrive(_ redrive: ChannelInboundRedrive, admission: ChannelInboundAdmission,
+                                   runID: UUID, at date: Date,
+                                   commit: @Sendable (_ operation: () throws -> Void) throws -> Void = { try $0() }) throws -> ChannelInboundRun {
+        try validateInboundRedrive(redrive, accountID: admission.receipt.accountID)
+        try admission.check()
+        let original = redrive.originalRun
+        guard admission.issuerID == publicationIssuerID, admission.receipt == original.receipt,
+              admission.envelope == redrive.envelope, date.timeIntervalSince1970.isFinite,
+              let finishedAt = state.inboundRuns?.first(where: { $0.id == original.id })?.finishedAt,
+              date >= finishedAt,
+              !(state.inboundRuns ?? []).contains(where: { $0.id == runID || $0.messageID == runID }) else { throw CancellationError() }
+        let run = ChannelInboundRun(id: runID, receipt: original.receipt, conversationID: original.conversationID,
+            messageID: original.messageID, startedAt: date, status: .running)
+        try redrive.fence.withCurrent {
+            try admission.withCurrent {
+                try commit {
+                    state.inboundRuns?.append(run)
+                    if state.inboundRedrives == nil { state.inboundRedrives = [] }
+                    state.inboundRedrives?.append(.init(originalRunID: original.id, redriveRunID: run.id))
+                    try persist()
+                }
+            }
+        }
+        redrive.close()
+        return run
+    }
+
+    private func validateInboundRedrive(_ redrive: ChannelInboundRedrive, accountID: String) throws {
+        try redrive.check()
+        let original = redrive.originalRun
+        var cancelled = original
+        cancelled.status = .cancelled
+        cancelled.finishedAt = state.inboundRuns?.first(where: { $0.id == original.id })?.finishedAt
+        guard original.status == .running, redrive.fence.issuerID == publicationIssuerID,
+              original.receipt.accountID == accountID, cancelled.finishedAt != nil,
+              state.inboundRuns?.contains(cancelled) == true,
+              state.inboundReceipts?.contains(original.receipt) == true,
+              original.receipt.isConsistent(with: redrive.envelope), inboundReceiptIsCurrent(original.receipt),
+              state.inbound.contains(redrive.envelope),
+              !(state.inboundRedrives ?? []).contains(where: { $0.originalRunID == original.id || $0.redriveRunID == original.id }) else { throw CancellationError() }
+    }
+
+    private static func validateInboundRedrives(_ redrives: [ChannelInboundRedriveRecord], runs: [ChannelInboundRun]) throws {
+        let originals = Set(redrives.map(\.originalRunID)), children = Set(redrives.map(\.redriveRunID))
+        guard originals.count == redrives.count, children.count == redrives.count,
+              originals.isDisjoint(with: children) else { throw ChannelServiceError.invalidEnvelope }
+        for record in redrives {
+            guard let original = runs.first(where: { $0.id == record.originalRunID }),
+                  let child = runs.first(where: { $0.id == record.redriveRunID }), original.status == .cancelled,
+                  let finishedAt = original.finishedAt, child.startedAt >= finishedAt,
+                  original.receipt == child.receipt, original.conversationID == child.conversationID,
+                  original.messageID == child.messageID else { throw ChannelServiceError.invalidEnvelope }
+        }
+        let groups = Dictionary(grouping: runs, by: { $0.receipt.envelopeID })
+        guard runs.count == groups.count + redrives.count,
+              Set(groups.values.compactMap { $0.first?.messageID }).count == groups.count else { throw ChannelServiceError.invalidEnvelope }
+        for group in groups.values {
+            guard group.count == 1 || group.count == 2 && redrives.contains(where: { record in
+                group.contains(where: { $0.id == record.originalRunID }) && group.contains(where: { $0.id == record.redriveRunID })
+            }) else { throw ChannelServiceError.invalidEnvelope }
+        }
+    }
+
+    private func pruneInboundRedrives() {
+        let retained = Set((state.inboundRuns ?? []).map(\.id))
+        state.inboundRedrives?.removeAll { !retained.contains($0.originalRunID) || !retained.contains($0.redriveRunID) }
     }
 
     private func inboundReceiptIsCurrent(_ receipt: ChannelInboundReceipt) -> Bool {

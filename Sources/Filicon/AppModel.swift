@@ -191,7 +191,12 @@ final class AppModel: ObservableObject {
     private var conversationReadContexts: [UUID: ConversationReadContext] = [:]
     private var conversationUnreadLoadEpochs: [UUID: UInt64] = [:]
     @Published var selection: UUID? {
-        didSet { if selection != oldValue { cancelVisibleConversationRead(); cancelExternalAttachmentPreview() } }
+        didSet {
+            if selection != oldValue {
+                draftLoadGeneration += 1
+                cancelVisibleConversationRead(); cancelExternalAttachmentPreview()
+            }
+        }
     }
     @Published var descriptors: [ProviderDescriptor] = []
     @Published var availableModels: [AIModel] = []
@@ -534,11 +539,13 @@ final class AppModel: ObservableObject {
         isConversationWorking(id, excludingInboundPreparation: nil)
     }
 
-    private func isConversationWorking(_ id: UUID, excludingInboundPreparation preparation: ChannelInboundPreparation?) -> Bool {
+    private func isConversationWorking(_ id: UUID, excludingInboundPreparation preparation: ChannelInboundPreparation?,
+                                       excludingHumanTurn humanTurn: ChannelInboundHumanTurn? = nil) -> Bool {
         running.contains(id) || runningGroups.contains(id) || backgroundDirectExecutions[id] != nil || runningAgentMessageScopes.contains(id)
             || directPeerExecutions[id] != nil || recoveringPeerConversations.contains(id)
             || activityAcknowledgmentTasks.values.contains { $0.context.entry.conversationID == id }
             || preparingChannelInbound.values.contains { $0 !== preparation && $0.conversationID == id && (try? $0.lease.check()) != nil }
+            || channelInboundHumanTurns[id].map { $0 !== humanTurn && $0.lease.isActive } == true
     }
 
     private func clearDirectPeerExecutions(originID: UUID, sessionID: UUID) {
@@ -810,6 +817,55 @@ final class AppModel: ObservableObject {
         func close() { scope.invalidate(); admission.close(); bindingLease.close(); releaseWaiters() }
     }
     private var channelInboundTasks: [UUID: (context: ChannelInboundContext, task: Task<Void, Never>)] = [:]
+    private struct DirectSendInput {
+        let conversation: Conversation
+        let draft: String
+        let attachments: [AttachmentMetadata]
+        let replyToMessageID: UUID?
+        let model: AIModel?
+        let configurationError: String?
+    }
+    @MainActor private final class ChannelInboundHumanTurn {
+        let context: ChannelInboundContext
+        let input: DirectSendInput
+        let scope: AgentWorkflowExecutionScope
+        let lease: AgentWorkflowExecutionScope.Lease
+        var redrive: ChannelInboundRedrive?
+        var interruptionAdmission: ChannelInboundAdmission?
+        var bindingLease: ConversationBindingLease?
+        var runID: UUID?
+        var userMessageID: UUID?
+        var inputIsDurable = false
+        var registeredReviewIDs: Set<String> = []
+        private var reviewActions: Set<UUID> = []
+        private var reviewWaiters: [CheckedContinuation<Void, Never>] = []
+        init(context: ChannelInboundContext, input: DirectSendInput, scope: AgentWorkflowExecutionScope) throws {
+            self.context = context
+            self.input = input
+            self.scope = scope
+            lease = try scope.capture(inheriting: context.accountLease)
+        }
+        func registerReview(_ id: String) { registeredReviewIDs.insert(id) }
+        func beginReviewAction(_ id: UUID) { reviewActions.insert(id) }
+        func finishReviewAction(_ id: UUID) {
+            reviewActions.remove(id)
+            if reviewActions.isEmpty { releaseReviewWaiters() }
+        }
+        func waitForReviewActions() async {
+            guard !reviewActions.isEmpty, !Task.isCancelled, (try? lease.check()) != nil else { return }
+            await withCheckedContinuation { reviewWaiters.append($0) }
+        }
+        private func releaseReviewWaiters() {
+            let values = reviewWaiters; reviewWaiters.removeAll()
+            for value in values { value.resume() }
+        }
+        func close() {
+            scope.invalidate(); redrive?.close(); interruptionAdmission?.close(); bindingLease?.close()
+            releaseReviewWaiters()
+        }
+    }
+    @Published private var channelInboundHumanTurns: [UUID: ChannelInboundHumanTurn] = [:]
+    private var queuedChannelInboundRedrives: [UUID: ChannelInboundHumanTurn] = [:]
     /// Reserve the native identity before the first profile/provider/store hop,
     /// not only after durable claim. ABA edits during preparation must retire
     /// the old attempt; an equal final snapshot cannot revive its lease.
@@ -1373,7 +1429,10 @@ final class AppModel: ObservableObject {
         return model.capabilities.inputModalities.contains(.audio)
     }
     var selectedModelAttachmentError: String? {
-        guard let model = selectedModel, !selectedModelSupportsAttachments else { return nil }
+        attachmentSupportError(for: selectedModel)
+    }
+    private func attachmentSupportError(for model: AIModel?) -> String? {
+        guard let model, model.capabilities.inputModalities.isDisjoint(with: [.image, .audio, .video, .document]) else { return nil }
         return "\(model.displayName) does not accept attachments. Choose a model with image, audio, video, or document input."
     }
     var selectedModelAudioError: String? {
@@ -1491,8 +1550,9 @@ final class AppModel: ObservableObject {
         }
         await restoreWorkspaceNavigation()
         if let selection {
+            let generation = draftLoadGeneration
             await loadLatestMessages(for: selection)
-            await restoreDraft(for: selection)
+            await restoreDraft(for: selection, generation: generation)
         }
         isBootstrapped = true
         await refreshModels()
@@ -1675,10 +1735,11 @@ final class AppModel: ObservableObject {
         if case .some(.conversation(let id)) = value, id != selection {
             persistCurrentDraftImmediately()
             selection = id
+            let generation = draftLoadGeneration
             Task {
                 await loadLatestMessages(for: id)
                 guard selection == id else { return }
-                await restoreDraft(for: id)
+                await restoreDraft(for: id, generation: generation)
                 await refreshModels()
             }
         } else if case .some(.conversation) = value {
@@ -1733,10 +1794,11 @@ final class AppModel: ObservableObject {
         if case .conversation(let id) = value, id != selection {
             persistCurrentDraftImmediately()
             selection = id
+            let generation = draftLoadGeneration
             Task {
                 await loadLatestMessages(for: id)
                 guard selection == id else { return }
-                await restoreDraft(for: id)
+                await restoreDraft(for: id, generation: generation)
                 await refreshModels()
             }
         }
@@ -1807,10 +1869,11 @@ final class AppModel: ObservableObject {
             selection = visibleConversations.first(where: { $0.id != id })?.id
             setRoute(selection.map(WorkspaceRoute.conversation) ?? .search, recordingHistory: true)
             if let selection {
+                let generation = draftLoadGeneration
                 Task {
                     await loadLatestMessages(for: selection)
                     guard self.selection == selection else { return }
-                    await restoreDraft(for: selection)
+                    await restoreDraft(for: selection, generation: generation)
                     await refreshModels()
                 }
             }
@@ -1853,9 +1916,10 @@ final class AppModel: ObservableObject {
                 selection = visibleConversations.first(where: { $0.id != id })?.id
                 setRoute(selection.map(WorkspaceRoute.conversation) ?? .search, recordingHistory: true)
                 if let next = selection {
+                    let generation = draftLoadGeneration
                     await loadLatestMessages(for: next)
                     guard selection == next else { return true }
-                    await restoreDraft(for: next)
+                    await restoreDraft(for: next, generation: generation)
                     await refreshModels()
                 }
             }
@@ -1907,6 +1971,7 @@ final class AppModel: ObservableObject {
         navigationHistory.reconcile(validConversationIDs: remainingHistoryIDs)
         scheduleNavigationPersistence()
         if conversations.isEmpty { addConversationUnchecked() }
+        let draftSelection = selection, draftGeneration = draftLoadGeneration
         Task {
             do {
                 if wasBound {
@@ -1917,10 +1982,10 @@ final class AppModel: ObservableObject {
                 try await attachmentLifecycle?.removeReferences(conversationID: id)
             }
             catch { errorMessage = error.localizedDescription }
-            if let selection {
+            if let selection = draftSelection {
                 await loadLatestMessages(for: selection)
                 guard self.selection == selection else { return }
-                await restoreDraft(for: selection)
+                await restoreDraft(for: selection, generation: draftGeneration)
                 await refreshModels()
             }
         }
@@ -2340,36 +2405,48 @@ final class AppModel: ObservableObject {
     }
 
     func send() {
-        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard isBootstrapped, (!text.isEmpty || !pendingAttachments.isEmpty), let id = selection, !isConversationWorking(id), conversations.contains(where: { $0.id == id }) else { return }
-        guard !synchronizingAgentConversations.contains(id) else { return }
-        guard let conversation = selectedConversation else { return }
-        if !pendingAttachments.isEmpty, let attachmentError = selectedModelAttachmentError {
+        _ = beginDirectSend()
+    }
+
+    @discardableResult private func beginDirectSend(input supplied: DirectSendInput? = nil,
+                                                  humanTurn: ChannelInboundHumanTurn? = nil) -> Task<Bool, Never>? {
+        guard let input = supplied ?? selectedConversation.map({
+            DirectSendInput(conversation: $0, draft: draft, attachments: pendingAttachments, replyToMessageID: replyingToMessageID,
+                model: selectedModel, configurationError: selectedConversationConfigurationError)
+        }) else { return nil }
+        let text = input.draft.trimmingCharacters(in: .whitespacesAndNewlines), id = input.conversation.id
+        guard isBootstrapped, (!text.isEmpty || !input.attachments.isEmpty),
+              !isConversationWorking(id, excludingInboundPreparation: nil, excludingHumanTurn: humanTurn),
+              conversations.contains(where: { $0.id == id }),
+              !synchronizingAgentConversations.contains(id) else { return nil }
+        if let humanTurn, !acceptsChannelInboundHumanTurn(humanTurn) { return nil }
+        if !input.attachments.isEmpty, let attachmentError = attachmentSupportError(for: input.model) {
             errorMessage = attachmentError
-            return
+            return nil
         }
-        if let validationError = ProviderCatalogPresentation.validationError(
-            conversation: conversation,
-            models: availableModels,
-            catalogProviderID: modelCatalogProviderID,
-            catalogConversationID: modelCatalogConversationID,
-            loading: isLoadingModels
-        ) {
+        if let validationError = input.configurationError {
             errorMessage = validationError
-            return
+            return nil
         }
         invalidateDirectSecrets(conversationID: id)
-        let attachments = pendingAttachments
-        let replyToMessageID = replyingToMessageID
-        let originalDraft = draft
-        draft = ""
-        pendingAttachments = []
-        replyingToMessageID = nil
+        let attachments = input.attachments
+        let replyToMessageID = input.replyToMessageID
+        let originalDraft = input.draft
+        if supplied == nil {
+            draft = ""
+            pendingAttachments = []
+            replyingToMessageID = nil
+        }
         running.insert(id)
-        Task {
+        return Task {
             var retiredQuestions: [UUID: [TranscriptCard]] = [:]
             do {
                 try await loadAllMessages(for: id)
+                try Task.checkCancellation()
+                if let humanTurn {
+                    try humanTurn.lease.check()
+                    guard acceptsChannelInboundHumanTurn(humanTurn) else { throw CancellationError() }
+                }
                 guard let hydratedIndex = conversations.firstIndex(where: { $0.id == id }) else {
                     throw CancellationError()
                 }
@@ -2394,14 +2471,20 @@ final class AppModel: ObservableObject {
                 conversations[hydratedIndex].messages.append(userMessage)
                 let assistantMessage = ChatMessage(role: .assistant, text: "", deliveryStatus: .queued)
                 conversations[hydratedIndex].messages.append(assistantMessage)
+                humanTurn?.userMessageID = userMessage.id
+                humanTurn?.runID = assistantMessage.id
                 loadedMessageIDs[id, default: []].formUnion([userMessage.id, assistantMessage.id])
                 if conversations[hydratedIndex].title == "New conversation" { conversations[hydratedIndex].title = String(text.prefix(40)) }
                 // The transcript must be durable before its CAS reachability records are added.
                 try await persistOrThrow(conversationID: id)
+                humanTurn?.inputIsDurable = true
+                if let humanTurn { try checkChannelInboundHumanTurn(humanTurn) }
                 if let attachmentLifecycle {
                     var committed: [AttachmentMetadata] = []
                     do {
                         for metadata in attachments {
+                            try Task.checkCancellation()
+                            if let humanTurn { try checkChannelInboundHumanTurn(humanTurn) }
                         let owner = AttachmentReferenceOwner(conversationID: id, messageID: userMessage.id)
                             if let staged = stagedAttachments[metadata.id] {
                                 committed.append(try await attachmentLifecycle.commit(staged, to: owner))
@@ -2415,7 +2498,10 @@ final class AppModel: ObservableObject {
                         let commitError = error
                         // First remove the durable transcript references. Until that succeeds,
                         // retain every CAS reachability/upload record so a crash cannot dangle it.
-                        conversations[hydratedIndex].messages.removeAll { $0.id == userMessage.id || $0.id == assistantMessage.id }
+                        try Task.checkCancellation()
+                        if let humanTurn { try checkChannelInboundHumanTurn(humanTurn) }
+                        guard let currentIndex = conversations.firstIndex(where: { $0.id == id }) else { throw CancellationError() }
+                        conversations[currentIndex].messages.removeAll { $0.id == userMessage.id || $0.id == assistantMessage.id }
                         loadedMessageIDs[id]?.subtract([userMessage.id, assistantMessage.id])
                         try await persistOrThrow(conversationID: id)
                         for metadata in committed {
@@ -2432,32 +2518,184 @@ final class AppModel: ObservableObject {
                         throw commitError
                     }
                 }
-                let requestMessages = Array(conversations[hydratedIndex].messages.dropLast())
-                startTurn(
+                try Task.checkCancellation()
+                if let humanTurn { try checkChannelInboundHumanTurn(humanTurn) }
+                guard let current = conversations.first(where: { $0.id == id }) else { throw CancellationError() }
+                let requestMessages = current.messages.filter { $0.id != assistantMessage.id }
+                let inputScope = humanTurn?.scope
+                let turn = startTurn(
                     conversationID: id,
                     assistantID: assistantMessage.id,
                     requestMessages: requestMessages,
-                    modelID: conversations[hydratedIndex].modelID,
-                    providerID: conversations[hydratedIndex].providerID,
-                    reasoningEffort: conversations[hydratedIndex].reasoningEffort
+                    modelID: current.modelID,
+                    providerID: current.providerID,
+                    reasoningEffort: current.reasoningEffort,
+                    humanTurn: humanTurn
                 )
+                await withTaskCancellationHandler { await turn.value } onCancel: { inputScope?.invalidate(); turn.cancel() }
+                return true
             } catch {
-                if let ci = conversations.firstIndex(where: { $0.id == id }) {
+                if let humanTurn {
+                    await retireInitialHumanSend(humanTurn, retiredQuestions: retiredQuestions)
+                } else if let ci = conversations.firstIndex(where: { $0.id == id }) {
                     for mi in conversations[ci].messages.indices {
                         if let cards = retiredQuestions[conversations[ci].messages[mi].id] {
                             conversations[ci].messages[mi].transcriptCards = cards
                         }
                     }
                 }
-                running.remove(id)
-                if selection == id {
+                if humanTurn == nil || (channelInboundHumanTurns[id] === humanTurn && turnTasks[id] == nil) { running.remove(id) }
+                if humanTurn == nil, selection == id, draft.isEmpty, pendingAttachments.isEmpty {
                     draft = originalDraft
                     pendingAttachments = attachments
                     replyingToMessageID = replyToMessageID
                 }
-                if !(error is CancellationError) { errorMessage = error.localizedDescription }
+                if !(error is CancellationError), humanTurn == nil || humanTurn?.context.generation == autoReviewAccountGeneration {
+                    errorMessage = error.localizedDescription
+                }
+                return false
             }
         }
+    }
+
+    private func retireInitialHumanSend(_ value: ChannelInboundHumanTurn,
+                                       retiredQuestions: [UUID: [TranscriptCard]]) async {
+        let id = value.input.conversation.id
+        guard let binding = value.bindingLease, let runID = value.runID, let userID = value.userMessageID else { return }
+        if (try? checkChannelInboundHumanTurn(value)) != nil,
+           let ci = conversations.firstIndex(where: { $0.id == id }) {
+            conversations[ci].messages.removeAll { $0.id == userID || $0.id == runID }
+            loadedMessageIDs[id]?.subtract([userID, runID])
+            for mi in conversations[ci].messages.indices {
+                if let cards = retiredQuestions[conversations[ci].messages[mi].id] {
+                    conversations[ci].messages[mi].transcriptCards = cards
+                }
+            }
+            do { try await persistOrThrow(conversationID: id) }
+            catch { errorMessage = error.localizedDescription }
+        }
+        do {
+            let canonical = try await store.retireActivityAcknowledgment(conversationID: id, runID: runID,
+                expectedBinding: binding.binding, reviewIDs: value.registeredReviewIDs)
+            guard let canonical else { return }
+            value.inputIsDurable = canonical.messages.contains { $0.id == userID }
+            if value.context.generation == autoReviewAccountGeneration,
+               binding.binding.accountID == (settings.accountScope ?? "local"),
+               channelInboundHumanTurns[id] === value,
+               let ci = conversations.firstIndex(where: { $0.id == id && $0.agentBinding == binding.binding }) {
+                let absent = Set([userID, runID].filter { target in !canonical.messages.contains { $0.id == target } })
+                conversations[ci].messages.removeAll { absent.contains($0.id) }
+                loadedMessageIDs[id]?.subtract(absent)
+                if canonical.messages.contains(where: { $0.id == runID && $0.deliveryStatus == .cancelled }) {
+                    setDeliveryStatus(.cancelled, conversationID: id, assistantID: runID)
+                }
+            }
+        } catch {
+            value.inputIsDurable = true
+            if value.context.generation == autoReviewAccountGeneration { errorMessage = error.localizedDescription }
+        }
+    }
+
+    func canPrioritizeIncomingWithHumanMessage(_ id: UUID) -> Bool {
+        guard channelInboundHumanTurns[id] == nil, !runningGroups.contains(id),
+              !runningAgentMessageScopes.contains(id), directPeerExecutions[id] == nil,
+              recoveringPeerConversations.contains(id) == false,
+              let context = backgroundDirectExecutions[id]?.channelInbound,
+              channelInboundTasks[context.run.id]?.context === context,
+              turnTasks[id] != nil, acceptsChannelInbound(context) else { return false }
+        return true
+    }
+
+    func sendButtonTapped() async {
+        guard let id = selection, isConversationWorking(id) else { send(); return }
+        guard canPrioritizeIncomingWithHumanMessage(id), let channelService,
+              let original = channelInboundTasks.values.first(where: { $0.context.run.conversationID == id }),
+              let conversation = conversations.first(where: { $0.id == id }),
+              !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !pendingAttachments.isEmpty,
+              selectedConversationConfigurationError == nil,
+              pendingAttachments.isEmpty || selectedModelAttachmentError == nil else { return }
+        let input = DirectSendInput(conversation: conversation, draft: draft, attachments: pendingAttachments,
+            replyToMessageID: replyingToMessageID, model: selectedModel, configurationError: selectedConversationConfigurationError)
+        let scope = AgentWorkflowExecutionScope()
+        guard let humanTurn = try? ChannelInboundHumanTurn(context: original.context, input: input, scope: scope) else { return }
+        channelInboundHumanTurns[id] = humanTurn
+        draft = ""; pendingAttachments = []; replyingToMessageID = nil
+        var queuedRedrive = false, submitted = false
+        defer {
+            if channelInboundHumanTurns[id] === humanTurn { channelInboundHumanTurns.removeValue(forKey: id) }
+            if !queuedRedrive { humanTurn.close() }
+            if !submitted, selection == id, draft.isEmpty, pendingAttachments.isEmpty,
+               humanTurn.context.generation == autoReviewAccountGeneration {
+                draft = input.draft; pendingAttachments = input.attachments; replyingToMessageID = input.replyToMessageID
+            }
+        }
+        do {
+            try humanTurn.lease.check()
+            humanTurn.bindingLease = try await store.leaseUniqueBinding(accountID: original.context.run.receipt.accountID,
+                agentID: original.context.run.receipt.agentID, conversationID: id)
+            try humanTurn.lease.check()
+            humanTurn.interruptionAdmission = try await channelService.prepareInboundInterruption(original.context.admission,
+                run: original.context.run, invalidate: { [weak self, weak humanTurn] in
+                    scope.invalidate()
+                    Task { @MainActor [weak self, weak humanTurn] in
+                        guard let self, let humanTurn, self.channelInboundHumanTurns[id] === humanTurn,
+                              humanTurn.runID != nil else { return }
+                        self.cancelConversationWork(id)
+                    }
+                })
+            try humanTurn.lease.check()
+            humanTurn.redrive = try? await channelService.reserveInboundRedrive(original.context.admission,
+                run: original.context.run, invalidate: { scope.invalidate() })
+            try humanTurn.lease.check(); try Task.checkCancellation()
+            guard acceptsChannelInboundHumanTurn(humanTurn),
+                  channelInboundTasks[original.context.run.id]?.context === original.context,
+                  acceptsChannelInbound(original.context) else { throw CancellationError() }
+            original.context.close()
+            original.task.cancel()
+            let cancellation = cancelConversationWork(id, preservingHumanTurn: humanTurn)
+            await cancellation.value
+            await original.task.value
+            try humanTurn.lease.check(); try Task.checkCancellation()
+            guard acceptsChannelInboundHumanTurn(humanTurn),
+                  let task = beginDirectSend(input: input, humanTurn: humanTurn) else { throw CancellationError() }
+            submitted = true
+            let completed = await withTaskCancellationHandler { await task.value } onCancel: { scope.invalidate(); task.cancel() }
+            submitted = humanTurn.inputIsDurable
+            guard completed else { throw CancellationError() }
+            try humanTurn.lease.check(); try Task.checkCancellation()
+            if let redrive = humanTurn.redrive, redrive.isActive, acceptsChannelInboundHumanTurn(humanTurn) {
+                queuedChannelInboundRedrives[id]?.close()
+                queuedChannelInboundRedrives[id] = humanTurn
+                queuedRedrive = true
+                channelInboundHumanTurns.removeValue(forKey: id)
+                await reconcileChannelInbound()
+            }
+        } catch {
+            if !(error is CancellationError), humanTurn.context.generation == autoReviewAccountGeneration {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func acceptsChannelInboundHumanTurn(_ value: ChannelInboundHumanTurn) -> Bool {
+        let context = value.context, id = context.run.conversationID, owner = context.bindingLease.binding
+        guard channelFailureRecoveryReady, !agentMessagingAccountTransition,
+              context.generation == autoReviewAccountGeneration, owner.accountID == (settings.accountScope ?? "local"),
+              value.lease.isActive, value.bindingLease?.isActive != false,
+              value.interruptionAdmission?.isActive != false, !deletedConversationIDs.contains(id),
+              let chat = conversations.first(where: { $0.id == id }), chat.agentBinding == owner,
+              chat.hiddenAt == nil, !isConversationHidden(chat), conversations.filter({ $0.agentBinding == owner }).count == 1,
+              chat.providerID == context.providerID, chat.modelID == context.modelID,
+              chat.reasoningEffort == context.reasoningEffort,
+              ChannelFailureContext.identity(agents.first(where: { $0.id == owner.agentID }), owner: owner) == context.identity else { return false }
+        return true
+    }
+
+    private func checkChannelInboundHumanTurn(_ value: ChannelInboundHumanTurn) throws {
+        try Task.checkCancellation()
+        try value.lease.check()
+        guard channelInboundHumanTurns[value.context.run.conversationID] === value,
+              acceptsChannelInboundHumanTurn(value) else { throw CancellationError() }
     }
 
     func acceptVoiceResult() {
@@ -2616,17 +2854,20 @@ final class AppModel: ObservableObject {
         }
         let acknowledgment = context.execution?.boundWake
         let continuation = context.cardContinuation
+        let humanTurn = context.humanTurn
         let actionID = UUID()
         // Keep the original inference/binding lease alive for an already
         // clicked native review action, not for new work or a future click.
         if case .autoReview = context.card.payload {
             acknowledgment?.beginReviewAction(actionID)
             continuation?.beginReviewAction(actionID)
+            humanTurn?.beginReviewAction(actionID)
         }
         Task {
             defer {
                 acknowledgment?.finishReviewAction(actionID)
                 continuation?.finishReviewAction(actionID)
+                humanTurn?.finishReviewAction(actionID)
             }
             await executeTranscriptCardIntent(intent, context: context)
         }
@@ -2638,6 +2879,7 @@ final class AppModel: ObservableObject {
         let card: TranscriptCard
         let execution: BackgroundDirectExecution?
         let cardContinuation: DirectChannelCardContinuation?
+        let humanTurn: ChannelInboundHumanTurn?
     }
 
     private func transcriptCardContext(for intent: TranscriptCardActionIntent) -> TranscriptCardContext? {
@@ -2662,8 +2904,13 @@ final class AppModel: ObservableObject {
                           value.registeredReviewIDs.contains(review.reviewID) else { return nil as DirectChannelCardContinuation? }
                     return value
                 }
+                let humanTurn = channelInboundHumanTurns[conversationID].flatMap { value in
+                    guard case .autoReview(let review) = card.payload,
+                          value.registeredReviewIDs.contains(review.reviewID) else { return nil as ChannelInboundHumanTurn? }
+                    return value
+                }
                 return .init(conversationID: conversationID, messageID: message.id, card: card,
-                    execution: backgroundDirectExecutions[conversationID], cardContinuation: continuation)
+                    execution: backgroundDirectExecutions[conversationID], cardContinuation: continuation, humanTurn: humanTurn)
             }
         }
         return matches.count == 1 ? matches[0] : nil
@@ -2705,7 +2952,7 @@ final class AppModel: ObservableObject {
         }
         do {
             try await persistTranscriptCardConversation(context.conversationID, execution: context.execution,
-                cardContinuation: context.cardContinuation)
+                cardContinuation: context.cardContinuation, humanTurn: context.humanTurn)
         } catch {
             do { try await validateBackgroundChannelReview(context) }
             catch { await transcriptCardActionRouter.abandon(ticket); return }
@@ -2736,7 +2983,7 @@ final class AppModel: ObservableObject {
                 throw TranscriptCardActionRoutingError.staleCard
             }
             try await persistTranscriptCardConversation(context.conversationID, execution: context.execution,
-                cardContinuation: context.cardContinuation)
+                cardContinuation: context.cardContinuation, humanTurn: context.humanTurn)
         } catch {
             await transcriptCardActionRouter.abandon(ticket)
             guard (try? checkTranscriptCardAcknowledgment(context)) != nil else { return }
@@ -2744,7 +2991,7 @@ final class AppModel: ObservableObject {
             if updateTranscriptCard(context: context, expectedUpdatedAt: startedAt, lifecycle: .failed) {
                 do {
                     try await persistTranscriptCardConversation(context.conversationID, execution: context.execution,
-                        cardContinuation: context.cardContinuation)
+                        cardContinuation: context.cardContinuation, humanTurn: context.humanTurn)
                     errorMessage = actionError.localizedDescription
                 } catch {
                     errorMessage = l10n("\(actionError.localizedDescription) Card failure state could not be persisted: \(error.localizedDescription)")
@@ -2800,6 +3047,7 @@ final class AppModel: ObservableObject {
     }
 
     private func checkTranscriptCardAcknowledgment(_ context: TranscriptCardContext) throws {
+        if let humanTurn = context.humanTurn { try checkChannelInboundHumanTurn(humanTurn) }
         if let continuation = context.cardContinuation { try checkDirectChannelCardContinuation(continuation) }
         if let acknowledgment = context.execution?.activityAcknowledgment,
            !acceptsActivityAcknowledgment(acknowledgment) { throw CancellationError() }
@@ -2826,25 +3074,26 @@ final class AppModel: ObservableObject {
     /// user and never reported as a successfully persisted lifecycle.
     private func persistTranscriptCardConversation(_ conversationID: UUID) async throws {
         try await persistTranscriptCardConversation(conversationID, execution: backgroundDirectExecutions[conversationID],
-            cardContinuation: directChannelCardScopes[conversationID])
+            cardContinuation: directChannelCardScopes[conversationID], humanTurn: channelInboundHumanTurns[conversationID])
     }
 
     private func persistTranscriptCardConversation(_ conversationID: UUID, execution: BackgroundDirectExecution?,
-        cardContinuation: DirectChannelCardContinuation?) async throws {
+        cardContinuation: DirectChannelCardContinuation?, humanTurn: ChannelInboundHumanTurn? = nil) async throws {
         guard !deletedConversationIDs.contains(conversationID),
               let conversation = conversations.first(where: { $0.id == conversationID }) else {
             throw TranscriptCardActionRoutingError.staleCard
         }
         var lastError: Error?
-        let lease = execution.map { $0.finalizing && $0.boundWake == nil ? $0.accountLease : $0.lease } ?? cardContinuation?.lease
-        let bindingLease = execution?.boundWake?.bindingLease ?? cardContinuation?.bindingLease
+        let lease = execution.map { $0.finalizing && $0.boundWake == nil ? $0.accountLease : $0.lease }
+            ?? cardContinuation?.lease ?? humanTurn?.lease
+        let bindingLease = execution?.boundWake?.bindingLease ?? cardContinuation?.bindingLease ?? humanTurn?.bindingLease
         for attempt in 0..<3 {
             do {
                 try await store.upsert(
                     conversation,
                     replacingLoadedMessageIDs: loadedMessageIDs[conversation.id] ?? [],
                     historyComplete: completeMessageHistories.contains(conversation.id),
-                    expectedBinding: execution == nil && cardContinuation == nil ? nil : conversation.agentBinding,
+                    expectedBinding: execution == nil && cardContinuation == nil && humanTurn == nil ? nil : conversation.agentBinding,
                     bindingLease: bindingLease,
                     commit: { write in
                         if let lease { try lease.commit(write) } else { try write() }
@@ -3055,10 +3304,15 @@ final class AppModel: ObservableObject {
         conversationID: UUID, binding: DirectConversationAgentBinding?, accountScope: String,
         generation: UInt64, providerID: ProviderID, modelID: ModelID
     ) async throws -> DirectAgentExecutionIdentity? {
+        try Task.checkCancellation()
+        let humanTurn = channelInboundHumanTurns[conversationID]
+        if let humanTurn { try checkChannelInboundHumanTurn(humanTurn) }
         if let routine = backgroundDirectExecutions[conversationID] { try await validateBackgroundDirectExecution(routine) }
         let profile: AgentProfile?
         if let binding { profile = await agentService?.profile(id: binding.agentID) }
         else { profile = nil }
+        try Task.checkCancellation()
+        if let humanTurn { try checkChannelInboundHumanTurn(humanTurn) }
         guard generation == autoReviewAccountGeneration, !agentMessagingAccountTransition,
               (settings.accountScope ?? "local") == accountScope,
               let conversation = conversations.first(where: { $0.id == conversationID }),
@@ -3082,9 +3336,11 @@ final class AppModel: ObservableObject {
         providerID: ProviderID,
         reasoningEffort: ReasoningEffort,
         routine: BackgroundDirectExecution? = nil,
-        cardContinuation: DirectChannelCardContinuation? = nil
+        cardContinuation: DirectChannelCardContinuation? = nil,
+        humanTurn: ChannelInboundHumanTurn? = nil
     ) -> Task<Void, Never> {
         cardContinuation?.runID = assistantID
+        humanTurn?.runID = assistantID
         running.insert(id)
         workspaceFolders.beginTurn(conversationID: id)
         let accountScope = settings.accountScope ?? "local"
@@ -3114,6 +3370,7 @@ final class AppModel: ObservableObject {
                 directPublicationIDs.removeValue(forKey: assistantID)
             }
             do {
+                if let humanTurn { try checkChannelInboundHumanTurn(humanTurn) }
                 if let routine { try await validateBackgroundDirectExecution(routine) }
                 if let cardContinuation { try await validateDirectChannelCardContinuation(cardContinuation) }
                 try await persistOrThrow(conversationID: id)
@@ -3228,6 +3485,12 @@ final class AppModel: ObservableObject {
                             })
                         } else if let cardContinuation, let bindingLease = cardContinuation.bindingLease {
                             let lease = cardContinuation.lease
+                            publicationLifetime = .init(parent: channelLifetime, commitGuard: { operation in
+                                try lease.commit { try bindingLease.withValidBinding(operation) }
+                            })
+                        } else if let humanTurn, let bindingLease = humanTurn.bindingLease {
+                            try checkChannelInboundHumanTurn(humanTurn)
+                            let lease = humanTurn.lease
                             publicationLifetime = .init(parent: channelLifetime, commitGuard: { operation in
                                 try lease.commit { try bindingLease.withValidBinding(operation) }
                             })
@@ -3360,7 +3623,8 @@ final class AppModel: ObservableObject {
                         mailboxRemote: makeMailboxRemoteFactory(originID: id, generation: publicationGeneration),
                         mailboxGallery: makeMailboxGalleryFactory(originID: id, generation: publicationGeneration),
                         mailboxChannelPublisherFactory: makeMailboxChannelPublisherFactory(originID: id,
-                            generation: publicationGeneration, binding: agentBinding, inheritedExecutionLease: routine?.lease),
+                            generation: publicationGeneration, binding: agentBinding,
+                            inheritedExecutionLease: routine?.lease ?? humanTurn?.lease),
                         authorize: { [weak self] sender, recipient, text, call, context in
                             guard let self else { throw CancellationError() }
                             try await self.validateDirectDelegation(conversationID: id, binding: agentBinding,
@@ -3394,19 +3658,26 @@ final class AppModel: ObservableObject {
                     let trace = pass == 0 ? replyNudge : nil
                     try await coordinator.send(request: passRequest, providerID: providerID, additionalTools: tools,
                         toolContext: routine.map { .init(conversationID: id, runID: $0.runID) }
-                            ?? cardContinuation.map { _ in .init(conversationID: id, runID: assistantID) },
+                            ?? cardContinuation.map { _ in .init(conversationID: id, runID: assistantID) }
+                            ?? humanTurn.map { _ in .init(conversationID: id, runID: assistantID) },
                         agentID: agentIdentity?.agentID,
                         agentLane: routine?.isManual == true || routine == nil ? .user : .background,
                         executionTimeout: routine == nil ? nil : .seconds(180), onStart: { [weak self] in
                             guard let self else { throw CancellationError() }
+                            if let humanTurn { try await self.checkChannelInboundHumanTurn(humanTurn) }
                             if let routine { try await self.validateBackgroundDirectExecution(routine) }
                             if let cardContinuation { try await self.validateDirectChannelCardContinuation(cardContinuation) }
                             let liveIdentity = try await self.directTurnAgentIdentity(conversationID: id,
                                 binding: agentBinding, accountScope: accountScope, generation: publicationGeneration,
                                 providerID: providerID, modelID: requestModelID)
                             guard liveIdentity == agentIdentity else { throw CancellationError() }
+                            if let humanTurn { try await self.checkChannelInboundHumanTurn(humanTurn) }
                             if let routine { try await self.validateBackgroundDirectExecution(routine) }
                         }) { [weak self] event in
+                        if let humanTurn {
+                            guard let self else { throw CancellationError() }
+                            try await self.checkChannelInboundHumanTurn(humanTurn)
+                        }
                         if let routine {
                             guard let self else { throw CancellationError() }
                             try await self.validateBackgroundDirectExecution(routine)
@@ -3431,6 +3702,7 @@ final class AppModel: ObservableObject {
                     try Task.checkCancellation()
                     try await validateBackgroundDirectExecution(routine)
                 }
+                if let humanTurn { try checkChannelInboundHumanTurn(humanTurn) }
                 // send has released the foreground agent lane. Draining inside
                 // that lane would deadlock when a peer replies to the sender.
                 if let messaging, let agentIdentity {
@@ -3456,6 +3728,7 @@ final class AppModel: ObservableObject {
                 }
                 if let routine { try await validateBackgroundDirectExecution(routine) }
                 if let cardContinuation { try await validateDirectChannelCardContinuation(cardContinuation) }
+                if let humanTurn { try checkChannelInboundHumanTurn(humanTurn) }
                 succeeded = true
             } catch is ToolTurnSuspension {
                 routine?.awaitingReply = true
@@ -3484,7 +3757,42 @@ final class AppModel: ObservableObject {
             // original action before capturing the final chat snapshot.
             await routine?.boundWake?.waitForReviewActions()
             await cardContinuation?.waitForReviewActions()
+            await humanTurn?.waitForReviewActions()
             routine?.finalizing = true
+            if let humanTurn, let binding = humanTurn.bindingLease,
+               Task.isCancelled || (try? checkChannelInboundHumanTurn(humanTurn)) == nil {
+                if publicationGeneration == autoReviewAccountGeneration, accountScope == (settings.accountScope ?? "local"),
+                   conversations.first(where: { $0.id == id })?.agentBinding == binding.binding {
+                    setDeliveryStatus(.cancelled, conversationID: id, assistantID: assistantID)
+                    finishTurn(conversationID: id, assistantID: assistantID, succeeded: false,
+                        accountID: accountScope, providerID: providerID)
+                }
+                do {
+                    if let retired = try await store.retireActivityAcknowledgment(conversationID: id, runID: assistantID,
+                        expectedBinding: binding.binding, reviewIDs: humanTurn.registeredReviewIDs),
+                       publicationGeneration == autoReviewAccountGeneration, accountScope == (settings.accountScope ?? "local"),
+                       let ci = conversations.firstIndex(where: { $0.id == id }), conversations[ci].agentBinding == binding.binding {
+                        let cancelled = retired.messages.flatMap(\.transcriptCards).filter {
+                            guard $0.lifecycle == .cancelled, case .autoReview(let review) = $0.payload else { return false }
+                            return humanTurn.registeredReviewIDs.contains(review.reviewID)
+                        }
+                        for mi in conversations[ci].messages.indices {
+                            for ti in conversations[ci].messages[mi].transcriptCards.indices {
+                                let current = conversations[ci].messages[mi].transcriptCards[ti]
+                                if cancelled.contains(where: { $0.id == current.id && $0.payload == current.payload }) {
+                                    conversations[ci].messages[mi].transcriptCards[ti].lifecycle = .cancelled
+                                }
+                            }
+                        }
+                    }
+                } catch {
+                    if publicationGeneration == autoReviewAccountGeneration, accountScope == (settings.accountScope ?? "local") {
+                        errorMessage = error.localizedDescription
+                    }
+                }
+                running.remove(id); turnTasks.removeValue(forKey: id)
+                return
+            }
             if let continuation = cardContinuation, let binding = continuation.bindingLease,
                Task.isCancelled || (try? checkDirectChannelCardContinuation(continuation)) == nil {
                 // The old lease cannot publish a snapshot. Retire only the
@@ -3637,7 +3945,11 @@ final class AppModel: ObservableObject {
         cancelConversationWork(directPeerExecutions[selection]?.originID ?? selection)
     }
 
-    private func cancelConversationWork(_ selection: UUID) {
+    @discardableResult private func cancelConversationWork(_ selection: UUID,
+                                                          preservingHumanTurn humanTurn: ChannelInboundHumanTurn? = nil) -> Task<Void, Never> {
+        if let current = channelInboundHumanTurns[selection], current !== humanTurn { current.close() }
+        queuedChannelInboundRedrives[selection]?.close()
+        queuedChannelInboundRedrives.removeValue(forKey: selection)
         invalidateActivityAcknowledgments { $0 == selection }
         if runningGroups.contains(selection) {
             // A projected peer chat's Stop owns the original group chain, not
@@ -3679,7 +3991,7 @@ final class AppModel: ObservableObject {
         directChannelCardScopes[selection]?.close()
         turnTasks[selection]?.cancel()
         workspaceFolders.cancel(conversationID: selection)
-        Task {
+        return Task {
             await cancelAutoReviewApprovals(conversationID: selection, lifecycle: .cancelled)
             await localToolApprovalBroker.cancel(conversationID: selection)
             await localToolPermissionPolicy.revokePendingGrants(conversationID: selection)
@@ -3776,6 +4088,10 @@ final class AppModel: ObservableObject {
 
     private func checkDirectFileScope(_ id: UUID, assistantID: UUID, account: String, generation: UInt64) throws {
         try Task.checkCancellation()
+        if let value = channelInboundHumanTurns[id] {
+            try checkChannelInboundHumanTurn(value)
+            guard value.runID == assistantID else { throw CancellationError() }
+        }
         try backgroundDirectExecutions[id]?.lease.check()
         if let value = directChannelCardScopes[id] { try checkDirectChannelCardContinuation(value) }
         guard !agentMessagingAccountTransition, generation == autoReviewAccountGeneration,
@@ -4132,6 +4448,10 @@ final class AppModel: ObservableObject {
                                    question: AgentQuestion? = nil, images: [AttachmentMetadata] = [],
                                    secret: DirectSecretRequest? = nil) async throws -> RoomMessage {
         try Task.checkCancellation()
+        if let value = channelInboundHumanTurns[conversationID] {
+            try checkChannelInboundHumanTurn(value)
+            guard value.runID == assistantID else { throw CancellationError() }
+        }
         if let routine = backgroundDirectExecutions[conversationID] { try await validateBackgroundDirectExecution(routine) }
         guard !agentMessagingAccountTransition, generation == autoReviewAccountGeneration,
               accountScope == (settings.accountScope ?? "local"),
@@ -4279,9 +4599,11 @@ final class AppModel: ObservableObject {
         let historyComplete = completeMessageHistories.contains(conversation.id)
         let routine = backgroundDirectExecutions[conversation.id]
         let cardContinuation = directChannelCardScopes[conversation.id]
-        let lease = routine.map { $0.finalizing && $0.boundWake == nil ? $0.accountLease : $0.lease } ?? cardContinuation?.lease
-        let bindingLease = routine?.boundWake?.bindingLease ?? cardContinuation?.bindingLease
-        let expectedBinding = routine == nil && cardContinuation == nil ? nil : conversation.agentBinding
+        let humanTurn = channelInboundHumanTurns[conversation.id]
+        let lease = routine.map { $0.finalizing && $0.boundWake == nil ? $0.accountLease : $0.lease }
+            ?? cardContinuation?.lease ?? humanTurn?.lease
+        let bindingLease = routine?.boundWake?.bindingLease ?? cardContinuation?.bindingLease ?? humanTurn?.bindingLease
+        let expectedBinding = routine == nil && cardContinuation == nil && humanTurn == nil ? nil : conversation.agentBinding
         // The repository owns the binding-lease lock around its storage-only
         // commit. Wrapping its general save in the same lock re-enters lease
         // cleanup and deadlocks; credential writes use a separate fence below.
@@ -4303,6 +4625,7 @@ final class AppModel: ObservableObject {
 
     private func scheduleDraftPersistence() {
         guard !isRestoringDraft, let conversationID = selection else { return }
+        draftLoadGeneration += 1
         let value = draft
         draftCache[conversationID] = value
         let previous = draftSaveTask
@@ -4323,17 +4646,16 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func restoreDraft(for conversationID: UUID) async {
-        draftLoadGeneration += 1
-        let generation = draftLoadGeneration
+    private func restoreDraft(for conversationID: UUID, generation: Int) async {
+        guard selection == conversationID, draftLoadGeneration == generation else { return }
         do {
             let value: String
             if let cached = draftCache[conversationID] { value = cached }
             else {
                 value = try await draftStore.draft(for: conversationID)
-                draftCache[conversationID] = value
             }
             guard selection == conversationID, draftLoadGeneration == generation else { return }
+            draftCache[conversationID] = value
             isRestoringDraft = true
             draft = value
             isRestoringDraft = false
@@ -5270,6 +5592,10 @@ final class AppModel: ObservableObject {
         for value in preparingChannelInbound.values where value.owner.agentID == profile.id {
             if ChannelFailureContext.identity(profile, owner: value.owner) != value.identity { value.scope.invalidate() }
         }
+        for value in Array(channelInboundHumanTurns.values) + Array(queuedChannelInboundRedrives.values)
+            where value.context.run.receipt.agentID == profile.id {
+            if ChannelFailureContext.identity(profile, owner: value.context.bindingLease.binding) != value.context.identity { value.close() }
+        }
         for execution in Array(backgroundDirectExecutions.values) where execution.agentID == profile.id {
             if let conversation = conversations.first(where: { $0.id == execution.conversationID }),
                !execution.matchesIdentity(conversation: conversation, profile: profile, accountID: settings.accountScope ?? "local") {
@@ -5292,6 +5618,8 @@ final class AppModel: ObservableObject {
             value.scope.invalidate()
         }
         for value in preparingChannelInbound.values where value.owner.agentID == id { value.scope.invalidate() }
+        for value in Array(channelInboundHumanTurns.values) + Array(queuedChannelInboundRedrives.values)
+            where value.context.run.receipt.agentID == id { value.close() }
         invalidateConversationSpendGuardPresentations { chatID in
             conversations.first(where: { $0.id == chatID })?.agentBinding?.agentID == id
         }
@@ -8296,6 +8624,7 @@ final class AppModel: ObservableObject {
     }
 
     private func isAgentMessagingScopeActive(_ scopeID: UUID) -> Bool {
+        if let execution = channelInboundHumanTurns[scopeID], !acceptsChannelInboundHumanTurn(execution) { return false }
         if let execution = backgroundDirectExecutions[scopeID], (try? execution.lease.check()) == nil { return false }
         if let execution = routineGroupExecutions.values.first(where: { $0.groupID == scopeID }),
            (try? execution.lease.check()) == nil { return false }
@@ -9565,6 +9894,14 @@ final class AppModel: ObservableObject {
     }
 
     private func invalidateChannelInboundExecutions() {
+        for value in Array(channelInboundHumanTurns.values) + Array(queuedChannelInboundRedrives.values) {
+            if !acceptsChannelInboundHumanTurn(value) {
+                value.close()
+                if value.runID != nil, channelInboundHumanTurns[value.context.run.conversationID] === value {
+                    turnTasks[value.context.run.conversationID]?.cancel()
+                }
+            }
+        }
         for value in preparingChannelInbound.values {
             if agentMessagingAccountTransition || value.owner.accountID != (settings.accountScope ?? "local")
                 || ChannelFailureContext.identity(agents.first(where: { $0.id == value.owner.agentID }), owner: value.owner) != value.identity
@@ -9610,7 +9947,11 @@ final class AppModel: ObservableObject {
         let generation = autoReviewAccountGeneration, account = settings.accountScope ?? "local"
         let accountLease: AgentWorkflowExecutionScope.Lease
         do { accountLease = try workflowExecutionScope.capture() } catch { return }
-        let envelopes = await channelService.pendingInbound(accountID: account)
+        for (id, value) in Array(queuedChannelInboundRedrives) where !acceptsChannelInboundHumanTurn(value) || value.redrive?.isActive != true {
+            value.close(); queuedChannelInboundRedrives.removeValue(forKey: id)
+        }
+        let redrives = queuedChannelInboundRedrives.values.compactMap { $0.redrive?.envelope }
+        let envelopes = redrives + (await channelService.pendingInbound(accountID: account))
         for envelope in envelopes {
             guard generation == autoReviewAccountGeneration, account == (settings.accountScope ?? "local"),
                   !agentMessagingAccountTransition, !Task.isCancelled else { return }
@@ -9620,6 +9961,8 @@ final class AppModel: ObservableObject {
                   let connection = channelConnections.first(where: { $0.id == envelope.connectionID && $0.enabled
                       && $0.authorizationAccountID == account }), let agentID = connection.agentID else { continue }
             let owner = DirectConversationAgentBinding(accountID: account, agentID: agentID)
+            let redrive = queuedChannelInboundRedrives.values.first { $0.redrive?.envelope == envelope }
+            if let redrive, !acceptsChannelInboundHumanTurn(redrive) { redrive.close(); continue }
             guard let identity = ChannelFailureContext.identity(agents.first(where: { $0.id == agentID }), owner: owner) else { continue }
             let projected = conversations.filter { $0.agentBinding == owner }
             guard projected.count <= 1,
@@ -9642,8 +9985,14 @@ final class AppModel: ObservableObject {
             }
             do {
                 let lease = preparation.lease
-                let accepted = try await channelService.prepareInbound(envelope, accountID: account,
-                    invalidate: { scope.invalidate() })
+                let accepted: ChannelInboundAdmission
+                if let ticket = redrive?.redrive {
+                    accepted = try await channelService.prepareInboundRedrive(ticket, accountID: account,
+                        invalidate: { scope.invalidate() })
+                } else {
+                    accepted = try await channelService.prepareInbound(envelope, accountID: account,
+                        invalidate: { scope.invalidate() })
+                }
                 admission = accepted
                 guard accepted.receipt.accountID == owner.accountID, accepted.receipt.agentID == owner.agentID,
                       let profile = await agentService.profile(id: owner.agentID), profile.archivedAt == nil,
@@ -9666,6 +10015,9 @@ final class AppModel: ObservableObject {
                 try lease.check(); try accepted.check()
                 let id = canonical.id
                 preparation.conversationID = id
+                if let redrive {
+                    guard acceptsChannelInboundHumanTurn(redrive), redrive.context.run.conversationID == id else { throw CancellationError() }
+                }
                 guard canonical.hiddenAt == nil, !isConversationHidden(canonical), canonical.agentBinding == owner,
                       canonical.providerID == profile.providerID, canonical.modelID == profile.modelID,
                       !deletedConversationIDs.contains(id), !isConversationWorking(id, excludingInboundPreparation: preparation),
@@ -9692,10 +10044,20 @@ final class AppModel: ObservableObject {
                     owner: owner, conversationID: id, platform: envelope.address.platform, channelID: envelope.address.channelID,
                     threadID: envelope.address.threadID, senderID: envelope.senderID, senderName: envelope.senderDisplayName,
                     receivedAt: envelope.timestamp)
-                let message = ChatMessage(role: .user, text: envelope.text, createdAt: source.receivedAt, externalChannelSource: source)
+                let message = redrive?.context.message
+                    ?? ChatMessage(role: .user, text: envelope.text, createdAt: source.receivedAt, externalChannelSource: source)
                 guard message.hasValidExternalChannelSource else { continue }
-                let run = try await channelService.claimInbound(accepted, conversationID: id, runID: UUID(),
-                    messageID: message.id, at: Date(), commit: { write in try lease.commit { try bound.withValidBinding(write) } })
+                let run: ChannelInboundRun
+                if let redrive, let ticket = redrive.redrive {
+                    guard acceptsChannelInboundHumanTurn(redrive), message.externalChannelSource == source else { throw CancellationError() }
+                    run = try await channelService.claimInboundRedrive(ticket, admission: accepted, runID: UUID(), at: Date(),
+                        commit: { write in try lease.commit { try bound.withValidBinding(write) } })
+                    if queuedChannelInboundRedrives[id] === redrive { queuedChannelInboundRedrives.removeValue(forKey: id) }
+                    redrive.bindingLease?.close()
+                } else {
+                    run = try await channelService.claimInbound(accepted, conversationID: id, runID: UUID(),
+                        messageID: message.id, at: Date(), commit: { write in try lease.commit { try bound.withValidBinding(write) } })
+                }
                 claim = run
                 let value = try ChannelInboundContext(admission: accepted, run: run, message: message,
                     bindingLease: bound, identity: identity, conversation: canonical, generation: generation,
@@ -12588,6 +12950,13 @@ final class AppModel: ObservableObject {
         if let continuation = directChannelCardScopes[conversationID], pending.fence.runID == continuation.runID {
             continuation.registerReview(pending.id)
         }
+        if let humanTurn = channelInboundHumanTurns[conversationID], pending.fence.runID == humanTurn.runID {
+            guard (try? checkChannelInboundHumanTurn(humanTurn)) != nil else {
+                await autoReviewBroker.cancel(reviewID: pending.id, fence: pending.fence)
+                return
+            }
+            humanTurn.registerReview(pending.id)
+        }
         pendingAutoReviewByID[pending.id] = pending
         pendingAutoReviewApprovals = pendingAutoReviewByID.values.sorted { $0.createdAt < $1.createdAt }
         var publicationDetails: [String] = []
@@ -12687,6 +13056,12 @@ final class AppModel: ObservableObject {
     }
 
     func cancelAutoReviewApprovals(nextAccountID: String) async {
+        for (id, humanTurn) in channelInboundHumanTurns {
+            humanTurn.close()
+            if humanTurn.runID != nil { turnTasks[id]?.cancel() }
+        }
+        for humanTurn in queuedChannelInboundRedrives.values { humanTurn.close() }
+        queuedChannelInboundRedrives.removeAll()
         closeDelegatedChannelScopes { _ in true }
         closeMailboxChannelScopes { _ in true }
         for context in externalAttachmentPreviewContexts.values { context.close() }
@@ -12781,17 +13156,24 @@ final class AppModel: ObservableObject {
     private func cancelAutoReviewApprovals(
         conversationID: UUID, lifecycle: TranscriptCardLifecycle
     ) async {
+        let execution = backgroundDirectExecutions[conversationID]
+        let continuation = directChannelCardScopes[conversationID]
+        let humanTurn = channelInboundHumanTurns[conversationID]
+        let generation = autoReviewAccountGeneration
+        let account = settings.accountScope ?? "local"
         let requests = pendingAutoReviewByID.values.filter {
             $0.action.context.conversationID == conversationID
         }
         await autoReviewBroker.cancelAll(agentID: conversationID.uuidString.lowercased())
+        guard generation == autoReviewAccountGeneration, account == (settings.accountScope ?? "local") else { return }
         for request in requests {
             pendingAutoReviewByID.removeValue(forKey: request.id)
             setAutoReviewCardLifecycle(reviewID: request.id, conversationID: conversationID, lifecycle: lifecycle)
         }
         pendingAutoReviewApprovals = pendingAutoReviewByID.values.sorted { $0.createdAt < $1.createdAt }
-        if conversations.contains(where: { $0.id == conversationID }) {
-            try? await persistTranscriptCardConversation(conversationID)
+        if !requests.isEmpty, conversations.contains(where: { $0.id == conversationID }) {
+            try? await persistTranscriptCardConversation(conversationID, execution: execution,
+                cardContinuation: continuation, humanTurn: humanTurn)
         }
     }
 

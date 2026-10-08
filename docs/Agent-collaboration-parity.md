@@ -1,4 +1,16 @@
-# 協作能力核對紀錄（更新至 2026-10-07）
+# 協作能力核對紀錄（更新至 2026-10-08）
+
+## Incoming 人類訊息優先與原來源單次重排（最後必要 gate 全部通過，隨本批提交）
+
+最後驗收覆蓋下方保留的 v10 舊狀態：`focused-v11` 重編譯最後 source，38 methods／3 suites（含 App 8 methods／全部 62 cases）通過；完整相關回歸 117 methods／11 suites 通過。無 filter／串行／明確 `--skip-build` 的 full v1 exit 0，17 Swift Testing bundles 合計 2,220 methods／262 suites，另 17 XCTest bundles 合計 135 tests／0 failures；App 827／103 suites（527.253 秒）。同一最後產品 source 的 arm64 native Debug build／verify、事先不存在的 standalone SPM Debug 封裝／獨立 verify、七語各 1,817 keys／0 missing 均通過。兩項 opt-in live Codex tests skipped，既有診斷保留，Debug／ad-hoc 不算 Developer ID release／公證、真人全畫面或 VoiceOver 驗收；精確日誌與 artifact 見 [完成驗收入口](Parity-completion-audit.md) 最上方章節。磁碟最後約 19 GiB，沒有清理；本批隨 source／tests 提交。
+
+以下為本批 scope 與較早的非通過紀錄，不能用其中 v10 的「未編譯／容量不足」取代上述最新狀態：
+
+HEAD `a07a899` 後的未提交修改，已重新核對 reference HEAD `a9f633e09d49a85829b8236331b9e21f7e612634` 的 `background-wakes.ts`／`send-turn-dispatch.ts`：真正 direct human send 可中止背景 connector wake，原 envelope 只 redrive 一次；普通 Stop 不重排，group-member run 另有同類 priority 契約。
+
+目前只接 actual channel incoming 的 own-DM host：人類 Send 先使舊 native scope 失效並等完整清理，再用獨立 lifetime 執行前景工作；原 source message 保留，child receipt／bookkeeping 不變成送件權限。新增 core／scope／actual App 共 19 methods／105 cases，保留完整資料斷言。首次自動執行審核額度拒絕及各 compile／runtime red 原紀錄保留，未繞過審核。已定位並修正舊 cancelled observer 誤撤銷新 human scope、延遲 draft restore 清掉新文字、await 後沿用聊天 array index；實際 commit 仍檢查 cancellation／scope，caller cancellation 同步撤銷 lifetime。v10 core 21 methods／scope 9 methods 通過；App 8 methods／62 cases 有 11 issues、exit 1，兩個導航等待點、延遲草稿、Stop、14 lifetime／12 review cases 通過，但 pending-review happy path 與部分 caller-cancel save cases 仍失敗。source 核對後補上取消核准前捕捉原 scope／account、無核准不保存及測試 native Send readiness；最後修改尚未編譯或驗證，不稱原因已全部定位或整輪 green。磁碟目前不足 1 GiB，新的重型驗證待釋出空間，未自行刪除資料／日誌或提交。精確失敗分類、下一步與界線見 [完成驗收入口](Parity-completion-audit.md) 最上方章節。
+
+下方歷史 green 僅對各已提交來源有效，不能證明本批修改。incoming images、group-member／其他背景 host priority、unified private DM/group runtime 及其他外部真人／live／release 缺口仍未完成；48 分類與整體 partial 不變，未 push／重啟 App 或 Xcode／改真實資料。
 
 ## 收件原生問題／安全輸入卡片的真人續接（增量已驗證）
 

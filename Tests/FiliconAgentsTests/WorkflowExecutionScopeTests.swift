@@ -69,19 +69,52 @@ struct WorkflowExecutionScopeTests {
         expectNoDifference(try scope.capture(), original)
         expectNoDifference(Set([original, try scope.capture()]).count, 1)
         scope.invalidate()
+        expectNoDifference(original.isActive, false)
         #expect(throws: CancellationError.self) { try original.check() }
         let current = try scope.capture()
         try current.check()
         #expect(current != original)
         scope.suspend()
+        expectNoDifference(current.isActive, false)
         #expect(throws: CancellationError.self) { try scope.capture() }
         #expect(throws: CancellationError.self) { try current.check() }
         scope.resume()
+        expectNoDifference(original.isActive, false)
+        expectNoDifference(current.isActive, false)
         #expect(throws: CancellationError.self) { try original.check() }
         #expect(throws: CancellationError.self) { try current.check() }
         try scope.capture().check()
         let independent = try AgentWorkflowExecutionScope().capture()
         #expect(independent != current)
+    }
+
+    @Test func cancelledObserverCannotRetireOrCommitAnIndependentCurrentLease() async throws {
+        let account = AgentWorkflowExecutionScope(), human = AgentWorkflowExecutionScope(), gate = WorkflowScopeGate()
+        let parent = try account.capture(), lease = try human.capture(inheriting: parent)
+        let observer = Task {
+            await gate.hold()
+            var commits = 0
+            let active = lease.isActive
+            do { try lease.commit { commits += 1 } }
+            catch is CancellationError { return (active, true, commits) }
+            return (active, false, commits)
+        }
+        await gate.waitUntilEntered()
+        observer.cancel()
+        await gate.release()
+        let observed = try await observer.value
+        expectNoDifference(observed.0, true)
+        expectNoDifference(observed.1, true)
+        expectNoDifference(observed.2, 0)
+        expectNoDifference(lease.isActive, true)
+        try lease.check()
+        account.suspend(); account.resume()
+        expectNoDifference(lease.isActive, false)
+        #expect(throws: CancellationError.self) { try lease.check() }
+        let fresh = try human.capture(inheriting: account.capture())
+        expectNoDifference(fresh.isActive, true)
+        human.invalidate()
+        expectNoDifference(fresh.isActive, false)
     }
 
     @Test func overlappingTransitionsStaySuspendedUntilBothFinish() throws {

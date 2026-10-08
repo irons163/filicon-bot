@@ -145,6 +145,76 @@ private final class AppInboundDeliveryClock: @unchecked Sendable {
     func advance() { continuation.yield(()) }
     func finish() { continuation.finish() }
 }
+private final class AppInboundHumanSaveFault: @unchecked Sendable {
+    private let lock = NSLock()
+    private let point: StorageQuotaFaultPoint
+    private var armed = false
+    private var sequence = 0
+    private var waiting: (id: Int, release: DispatchSemaphore)?
+    private var failed: Set<Int> = []
+    private var expired = false
+    init(_ point: StorageQuotaFaultPoint) { self.point = point }
+    var waitingID: Int? { lock.withLock { waiting?.id } }
+    var timedOut: Bool { lock.withLock { expired } }
+    func arm() { lock.withLock { armed = true } }
+    func inject(_ point: StorageQuotaFaultPoint) throws {
+        let attempt: (id: Int, release: DispatchSemaphore)? = lock.withLock {
+            guard armed, point == self.point else { return nil }
+            sequence += 1
+            let value = (id: sequence, release: DispatchSemaphore(value: 0))
+            waiting = value
+            return value
+        }
+        guard let attempt else { return }
+        if attempt.release.wait(timeout: .now() + 10) == .timedOut {
+            lock.withLock { expired = true }
+            throw CocoaError(.fileWriteUnknown)
+        }
+        if lock.withLock({ failed.remove(attempt.id) != nil }) { throw CocoaError(.fileWriteUnknown) }
+    }
+    func resolve(_ id: Int, failing: Bool) {
+        let release = lock.withLock {
+            guard let value = waiting, value.id == id else { return nil as DispatchSemaphore? }
+            waiting = nil
+            if failing { armed = false; failed.insert(id) }
+            return value.release
+        }
+        release?.signal()
+    }
+    func finish() {
+        let release = lock.withLock {
+            armed = false
+            let value = waiting?.release
+            waiting = nil
+            return value
+        }
+        release?.signal()
+    }
+}
+private final class AppInboundPriorityGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var incomingCount = 0
+    private var humanCount = 0
+    private var waiting: Set<String> = []
+    private var released: Set<String> = []
+    func enter(incoming: Bool) -> String {
+        lock.withLock {
+            let key = incoming ? "incoming-\(incomingCount)" : "human-\(humanCount)"
+            if incoming { incomingCount += 1 } else { humanCount += 1 }
+            waiting.insert(key)
+            return key
+        }
+    }
+    func isWaiting(_ key: String) -> Bool { lock.withLock { waiting.contains(key) } }
+    func open(_ key: String) { _ = lock.withLock { released.insert(key) } }
+    var snapshot: (waiting: Set<String>, released: Set<String>) {
+        lock.withLock { (waiting, released) }
+    }
+    func wait(_ key: String) async throws {
+        while !lock.withLock({ released.contains(key) }) { try await Task.sleep(for: .milliseconds(5)) }
+        try Task.checkCancellation()
+    }
+}
 private struct AppInboundBarrierProvider: AIProvider {
     let gate: AppInboundRegistryBarrier
     var descriptor: ProviderDescriptor {
@@ -192,6 +262,7 @@ private struct AppInboundProvider: InteractiveToolProvider {
     let peerID: UUID
     var mode = "reply"
     var passBarrier: AppInboundPassBarrier?
+    var priorityGate: AppInboundPriorityGate?
     func models() async throws -> [AIModel] { [.init(id: "fixture")] }
     func stream(_ request: InferenceRequest) -> AsyncThrowingStream<InferenceEvent, Error> {
         .init { $0.finish(throwing: ProviderError.transport("The legacy text-only channel runner must not execute")) }
@@ -202,6 +273,20 @@ private struct AppInboundProvider: InteractiveToolProvider {
             let task = Task {
                 do {
                     await probe.request(request)
+                    if let priorityGate {
+                        let incoming = request.messages.contains { $0.role == .system && $0.text == ChannelInboundPrompt.instructions }
+                        let key = priorityGate.enter(incoming: incoming)
+                        if mode != "priority-review" || key != "incoming-0" { try await priorityGate.wait(key) }
+                        var fields = ["type": "text", "content": incoming ? "EXACT_PRIORITY_REMOTE_REPLY" : "EXACT_PRIORITY_HUMAN_REPLY"]
+                        if incoming { fields["channel"] = "slack:C_REMOTE:T_REMOTE" }
+                        else if mode == "priority-human-review" { fields["channel"] = "slack:C_REMOTE" }
+                        let call = try NormalizedToolCall(id: .init(rawValue: "priority-\(key)"), name: "SendMessage",
+                            argumentsJSON: JSONSerialization.data(withJSONObject: fields, options: .sortedKeys))
+                        await probe.result(try await executeTool(call))
+                        continuation.yield(.textDelta("PRIVATE_PRIORITY_DRAFT"))
+                        continuation.yield(.completed(.stop)); continuation.finish()
+                        return
+                    }
                     let reminded = request.messages.contains { $0.role == .system && $0.text.contains("host-bound reply reminder for this incoming channel turn") }
                     if reminded, ["peer", "silent"].contains(mode) {
                         continuation.yield(.textDelta("PRIVATE_INCOMING_DRAFT_MUST_NOT_AUTOSEND"))
@@ -338,6 +423,7 @@ private struct AppInboundProvider: InteractiveToolProvider {
     }
     private func fixture(existing: Bool = true, mode: String = "reply", existingPeer: Bool = false,
                          passBarrier: AppInboundPassBarrier? = nil,
+                         priorityGate: AppInboundPriorityGate? = nil,
                          quotaFaultInjector: @escaping StorageQuotaLedger.FaultInjector = { _ in },
                          channelDeliveryTick: @escaping @Sendable () async throws -> Void = { throw CancellationError() }) async throws -> Fixture {
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-inbound-app-\(UUID())")
@@ -377,7 +463,8 @@ private struct AppInboundProvider: InteractiveToolProvider {
             quotaFaultInjector: quotaFaultInjector,
             channelService: service, channelConnectors: [AppInboundConnector(feed: feed, probe: probe, failsSends: mode.hasPrefix("failure-"))],
             channelDeliveryTick: channelDeliveryTick)
-        await model.registry.register(AppInboundProvider(probe: probe, peerID: peer.id, mode: mode, passBarrier: passBarrier))
+        await model.registry.register(AppInboundProvider(probe: probe, peerID: peer.id, mode: mode,
+            passBarrier: passBarrier, priorityGate: priorityGate))
         await model.bootstrap(); await model.setAutomationRuntimeActive(false); model.setWorkflowRuntimeActive(false)
         try await model.loadAllMessages(for: otherID)
         model.selectRoute(.conversation(otherID))
@@ -397,6 +484,32 @@ private struct AppInboundProvider: InteractiveToolProvider {
         }
         Issue.record("The isolated inbound host did not reach its expected boundary")
         throw CancellationError()
+    }
+    private func priorityBoundary(_ key: String, in f: Fixture, gate: AppInboundPriorityGate) async throws {
+        do { try await eventually { gate.isWaiting(key) } }
+        catch {
+            let runs = await f.service.inboundRuns(), requests = await f.probe.requests, results = await f.probe.results
+            let store = ConversationStore(fileURL: f.root.appending(path: "conversations.json"))
+            let histories = try await store.load()
+            let details = ["Priority boundary \(key): gate \(String(customDumping: gate.snapshot))",
+                "error \(f.model.errorMessage ?? "none"); draft \(f.model.draft)",
+                "configuration \(f.model.selectedConversationConfigurationError ?? "valid"); loading \(f.model.isLoadingModels); catalog \(String(describing: f.model.modelCatalogConversationID))",
+                "runs \(String(customDumping: runs))", "requests \(String(customDumping: requests))",
+                "results \(String(customDumping: results))",
+                "reviews \(String(customDumping: f.model.pendingAutoReviewApprovals))",
+                "canonical \(String(customDumping: histories))", "UI \(String(customDumping: f.model.conversations))"]
+            Issue.record(Comment(rawValue: details.joined(separator: "\n")))
+            throw error
+        }
+    }
+    private func sendHumanInput(_ f: Fixture, conversationID: UUID) async {
+        do {
+            try await eventually {
+                f.model.selection == conversationID && f.model.selectedConversationConfigurationError == nil
+            }
+        } catch { return }
+        #expect(f.model.selectedConversationConfigurationError == nil)
+        await f.model.sendButtonTapped()
     }
     private func review(_ f: Fixture, after id: String? = nil) async throws -> PendingApproval {
         try await eventually {
@@ -556,6 +669,587 @@ private struct AppInboundProvider: InteractiveToolProvider {
         #expect(canonical.messages.contains { $0.id == run.messageID && $0.hasValidExternalChannelSource })
         return (finished, queued, canonical)
     }
+    @Test(arguments: [false, true], [false, true])
+    func humanMessagePreemptsIncomingAndRedrivesOnceWithFreshConsent(existing: Bool, pendingReview: Bool) async throws {
+        let gate = AppInboundPriorityGate()
+        let f = try await fixture(existing: existing, mode: pendingReview ? "priority-review" : "priority", priorityGate: gate)
+        defer { gate.open("incoming-0"); gate.open("human-0"); gate.open("incoming-1"); f.feed.finish(); try? FileManager.default.removeItem(at: f.root) }
+        await f.model.setAutoReviewEnabled(true)
+        let permission = await f.model.localToolPermissionPolicy.effectivePermission(for: .writeFile)
+        let envelope = event(f); f.feed.emit(envelope)
+        try await priorityBoundary("incoming-0", in: f, gate: gate)
+        let original = try #require(await f.service.inboundRuns().first)
+        let store = ConversationStore(fileURL: f.root.appending(path: "conversations.json"))
+        let oldReview = pendingReview ? try await review(f) : nil
+        let before = pendingReview ? try await storedPendingCard(try #require(oldReview), in: store)
+            : try #require(try await store.conversation(id: original.conversationID))
+        let sourceMessage = try #require(before.messages.first { $0.id == original.messageID })
+        let initialRequests = await f.probe.requests
+        expectNoDifference(initialRequests.count, 1)
+        f.model.selectRoute(.conversation(original.conversationID)); await f.model.refreshModels()
+        #expect(f.model.canPrioritizeIncomingWithHumanMessage(original.conversationID))
+        f.model.draft = "EXACT_LOCAL_PRIORITY_TASK"
+        let human = Task { await sendHumanInput(f, conversationID: original.conversationID) }
+        try await priorityBoundary("human-0", in: f, gate: gate)
+        #expect(!f.model.canPrioritizeIncomingWithHumanMessage(original.conversationID))
+        await f.model.sendButtonTapped()
+        var expectedOriginal = original
+        expectedOriginal.status = .cancelled
+        expectedOriginal.finishedAt = try #require(await f.service.inboundRuns().first?.finishedAt)
+        #expect(try #require(expectedOriginal.finishedAt) >= original.startedAt)
+        let interruptedRuns = await f.service.inboundRuns(), unapprovedQueue = await f.service.deliveries()
+        expectNoDifference(interruptedRuns, [expectedOriginal]); expectNoDifference(unapprovedQueue, [])
+        expectNoDifference(f.model.pendingAutoReviewApprovals, [])
+        if let oldReview { f.model.handleTranscriptCardIntent(.approveReview(reviewID: oldReview.id)) }
+        let whileHuman = try #require(try await store.conversation(id: original.conversationID))
+        var expectedPrefix = before.messages
+        let rmi = try #require(expectedPrefix.firstIndex { $0.id == original.id })
+        expectedPrefix[rmi].deliveryStatus = .cancelled
+        for index in expectedPrefix[rmi].toolActivities.indices {
+            expectedPrefix[rmi].toolActivities[index].status = .failed
+            expectedPrefix[rmi].toolActivities[index].result = "Cancelled"
+        }
+        for mi in expectedPrefix.indices {
+            for ki in expectedPrefix[mi].transcriptCards.indices {
+                if case .autoReview = expectedPrefix[mi].transcriptCards[ki].payload {
+                    let terminal = try #require(whileHuman.messages.first { $0.id == expectedPrefix[mi].id }?.transcriptCards.first { $0.id == expectedPrefix[mi].transcriptCards[ki].id })
+                    #expect(terminal.updatedAt >= expectedPrefix[mi].transcriptCards[ki].updatedAt && terminal.updatedAt <= Date())
+                    expectedPrefix[mi].transcriptCards[ki].lifecycle = .cancelled
+                    expectedPrefix[mi].transcriptCards[ki].updatedAt = terminal.updatedAt
+                }
+            }
+        }
+        expectNoDifference(Array(whileHuman.messages.prefix(expectedPrefix.count)), expectedPrefix)
+        let humanMessage = try #require(whileHuman.messages.first { $0.text == "EXACT_LOCAL_PRIORITY_TASK" })
+        var expectedHumanMessage = ChatMessage(id: humanMessage.id, role: .user, text: "EXACT_LOCAL_PRIORITY_TASK", createdAt: humanMessage.createdAt)
+        expectedHumanMessage.shortAddress = humanMessage.shortAddress
+        expectNoDifference(humanMessage, expectedHumanMessage)
+        expectNoDifference(whileHuman.messages.filter { $0.externalChannelSource != nil }, [sourceMessage])
+        f.model.selectRoute(.conversation(otherID))
+        gate.open("human-0")
+        try await priorityBoundary("incoming-1", in: f, gate: gate)
+        await human.value
+        let redrivenRuns = await f.service.inboundRuns()
+        expectNoDifference(redrivenRuns.count, 2)
+        let child = try #require(redrivenRuns.last)
+        #expect(child.id != original.id && child.id != original.messageID)
+        #expect(child.startedAt >= (expectedOriginal.finishedAt ?? original.startedAt))
+        expectNoDifference(child, ChannelInboundRun(id: child.id, receipt: original.receipt, conversationID: original.conversationID,
+            messageID: original.messageID, startedAt: child.startedAt, status: .running))
+        let requests = await f.probe.requests
+        expectNoDifference(requests.count, 3)
+        #expect(diff(Array(requests.prefix(1)), initialRequests) == nil)
+        #expect(!requests[1].messages.contains { $0.text == ChannelInboundPrompt.instructions })
+        #expect(requests[1].messages.contains { $0.text == "EXACT_LOCAL_PRIORITY_TASK" })
+        #expect(requests[2].messages.contains { $0.text == ChannelInboundPrompt.instructions })
+        for request in requests {
+            expectNoDifference(request.conversationID, original.conversationID)
+            #expect(!String(customDumping: request).contains("NEVER_LEAK_UNRELATED_HISTORY"))
+        }
+        gate.open("incoming-1")
+        let freshReview = try await review(f, after: oldReview?.id)
+        expectNoDifference(freshReview.fence.runID, child.id)
+        if let oldReview { #expect(freshReview.id != oldReview.id) }
+        let freshPending = try await storedPendingCard(freshReview, in: store)
+        let beforeApproval = await f.service.deliveries(), sentBefore = await f.probe.sent
+        expectNoDifference(beforeApproval, []); expectNoDifference(sentBefore, [])
+        f.model.selectRoute(.conversation(original.conversationID))
+        f.model.handleTranscriptCardIntent(.approveReview(reviewID: freshReview.id))
+        try await eventually {
+            let values = await f.service.inboundRuns()
+            return values.last?.status == .completed && !f.model.isConversationWorking(original.conversationID)
+        }
+        let queue = await f.service.deliveries(), finalRuns = await f.service.inboundRuns()
+        expectNoDifference(queue.count, 1)
+        let queued = try #require(queue.first)
+        let origin = ChannelDeliveryOrigin(route: .directConversation, conversationID: original.conversationID,
+            senderID: original.conversationID, senderName: f.owner.name, runID: child.id, callID: "priority-incoming-1",
+            intent: .init(kind: .text, text: "EXACT_PRIORITY_REMOTE_REPLY"))
+        expectNoDifference(queued, ChannelDelivery(id: queued.id, connectionID: f.connection.id, address: envelope.address,
+            outbound: .init(text: "EXACT_PRIORITY_REMOTE_REPLY"), idempotencyKey: queued.idempotencyKey,
+            nextAttemptAt: queued.createdAt, createdAt: queued.createdAt,
+            authorization: .init(ownerAccountID: "local", agentID: f.owner.id, configurationRevision: original.receipt.configurationRevision), origin: origin))
+        var expectedChild = child
+        expectedChild.status = .completed; expectedChild.finishedAt = try #require(finalRuns.last?.finishedAt)
+        expectNoDifference(finalRuns, [expectedOriginal, expectedChild])
+        let final = try #require(try await store.conversation(id: original.conversationID))
+        expectNoDifference(final.messages.filter { $0.externalChannelSource != nil }, [sourceMessage])
+        expectNoDifference(final.messages.filter { $0.text == "EXACT_LOCAL_PRIORITY_TASK" }, [humanMessage])
+        expectNoDifference(final.messages.filter { $0.text == "EXACT_PRIORITY_HUMAN_REPLY" }.count, 1)
+        #expect(!final.messages.contains { $0.text.contains("PRIVATE_PRIORITY_DRAFT") })
+        let publication = try #require(final.messages.first { $0.id == queued.id }?.externalChannelPublication)
+        expectNoDifference(publication, ExternalChannelTranscriptPublication(deliveryID: queued.id,
+            connectionID: f.connection.id, owner: .init(accountID: "local", agentID: f.owner.id), route: .directConversation,
+            conversationID: original.conversationID, senderID: original.conversationID, senderName: f.owner.name, runID: child.id,
+            callID: "priority-incoming-1", replyToMessageID: nil, queuedAt: queued.createdAt, kind: .text,
+            text: "EXACT_PRIORITY_REMOTE_REPLY", sources: [], files: [], platform: "slack", channelID: "C_REMOTE", threadID: "T_REMOTE",
+            delivery: .init(status: .queued, attemptCount: 0, deliveredAt: nil)))
+        let ui = try #require(f.model.conversations.first { $0.id == original.conversationID })
+        expectNoDifference(sqliteStoredDates(ui), final)
+        #expect(final.updatedAt >= freshPending.updatedAt)
+        let finalRequests = await f.probe.requests, finalResults = await f.probe.results
+        f.feed.emit(envelope); await f.model.reconcileChannelInbound()
+        f.model.handleTranscriptCardIntent(.approveReview(reviewID: freshReview.id))
+        let replayRequests = await f.probe.requests, replayResults = await f.probe.results
+        let replayQueue = await f.service.deliveries(), replayRuns = await f.service.inboundRuns(), sent = await f.probe.sent
+        #expect(diff(replayRequests, finalRequests) == nil)
+        expectNoDifference(replayResults, finalResults); expectNoDifference(replayQueue, queue)
+        expectNoDifference(replayRuns, finalRuns); expectNoDifference(sent, [])
+        let unchanged = try await store.conversation(id: original.conversationID); expectNoDifference(unchanged, final)
+        let reopened = try ChannelService(storeURL: f.root.appending(path: "channels.json"))
+        let reopenedRuns = await reopened.inboundRuns(), reopenedQueue = await reopened.deliveries()
+        expectNoDifference(reopenedRuns, try persistedChannel(finalRuns)); expectNoDifference(reopenedQueue, try persistedChannel(queue))
+        let currentPermission = await f.model.localToolPermissionPolicy.effectivePermission(for: .writeFile)
+        expectNoDifference(currentPermission, permission)
+        expectNoDifference(f.model.pendingAutoReviewApprovals, []); expectNoDifference(f.model.pendingToolApprovals, [])
+        try await assertUnrelatedUntouched(f)
+    }
+
+    @Test(arguments: [false, true])
+    func navigationDraftRestoreCannotEraseInputTypedBeforeHistoryHydrates(historical: Bool) async throws {
+        let f = try await fixture()
+        defer { f.feed.finish(); try? FileManager.default.removeItem(at: f.root) }
+        let store = ConversationStore(fileURL: f.root.appending(path: "conversations.json"))
+        let before = try await store.load()
+        if historical {
+            f.model.selectRoute(.conversation(chatID))
+            f.model.selectRoute(.conversation(otherID))
+            f.model.goBack()
+        } else { f.model.selectRoute(.conversation(chatID)) }
+        let typed = "NEW_TYPED_PRIORITY_INPUT\nsecond line"
+        f.model.draft = typed
+        try await eventually {
+            f.model.modelCatalogConversationID == chatID && !f.model.isLoadingModels
+        }
+        expectNoDifference(f.model.selection, chatID)
+        expectNoDifference(f.model.draft, typed)
+        var persisted: [String: String]?
+        try await eventually {
+            guard let data = try? Data(contentsOf: f.root.appending(path: "composer-drafts.json")),
+                  let values = try? JSONDecoder().decode([String: String].self, from: data),
+                  values[chatID.uuidString] == typed else { return false }
+            persisted = values
+            return true
+        }
+        expectNoDifference(persisted, [chatID.uuidString: typed])
+        let after = try await store.load(), requests = await f.probe.requests
+        let runs = await f.service.inboundRuns(), sent = await f.probe.sent
+        expectNoDifference(after, before); #expect(diff(requests, [InferenceRequest]()) == nil)
+        expectNoDifference(runs, []); expectNoDifference(sent, [])
+        try await assertUnrelatedUntouched(f)
+    }
+
+    @Test(arguments: ["original", "human", "redrive"])
+    func stopNeverRequeuesIncomingOrRetainsAnOldSendCallback(boundary: String) async throws {
+        let gate = AppInboundPriorityGate(), f = try await fixture(mode: "priority-review", priorityGate: nil)
+        await f.model.registry.register(AppInboundProvider(probe: f.probe, peerID: f.peer.id, mode: "priority-review", priorityGate: gate))
+        defer { gate.open("human-0"); gate.open("incoming-1"); f.feed.finish(); try? FileManager.default.removeItem(at: f.root) }
+        f.feed.emit(event(f))
+        let pending = try await review(f), original = try #require(await f.service.inboundRuns().first)
+        f.model.selectRoute(.conversation(original.conversationID)); await f.model.refreshModels()
+        var human: Task<Void, Never>?
+        if boundary != "original" {
+            f.model.draft = "EXACT_LOCAL_PRIORITY_TASK"
+            human = Task { await sendHumanInput(f, conversationID: original.conversationID) }
+            try await eventually { gate.isWaiting("human-0") }
+            if boundary == "redrive" {
+                gate.open("human-0")
+                try await eventually { gate.isWaiting("incoming-1") }
+                await human?.value
+            }
+        }
+        f.model.cancel()
+        await human?.value
+        try await eventually { !f.model.isConversationWorking(original.conversationID) }
+        f.model.handleTranscriptCardIntent(.approveReview(reviewID: pending.id))
+        let before = try #require(try await ConversationStore(fileURL: f.root.appending(path: "conversations.json")).conversation(id: original.conversationID))
+        let requests = await f.probe.requests, runs = await f.service.inboundRuns()
+        expectNoDifference(runs.count, boundary == "redrive" ? 2 : 1)
+        #expect(runs.allSatisfy { $0.status == .cancelled })
+        let deliveries = await f.service.deliveries(), sent = await f.probe.sent
+        expectNoDifference(deliveries, []); expectNoDifference(sent, [])
+        expectNoDifference(f.model.pendingAutoReviewApprovals, [])
+        f.feed.emit(event(f)); await f.model.reconcileChannelInbound()
+        let replay = await f.probe.requests, sameRuns = await f.service.inboundRuns()
+        #expect(diff(replay, requests) == nil); expectNoDifference(sameRuns, runs)
+        let after = try await ConversationStore(fileURL: f.root.appending(path: "conversations.json")).conversation(id: original.conversationID)
+        expectNoDifference(after, before)
+        try await assertUnrelatedUntouched(f)
+    }
+
+    @Test(arguments: ["old-run", "human-save"])
+    func foregroundPriorityKeepsCapturedModelAndInputWhileNavigatingDuringCleanup(boundary: String) async throws {
+        let save = AppInboundHumanSaveFault(.afterCommitPersist), gate = AppInboundPriorityGate()
+        let f = try await fixture(mode: "priority", priorityGate: gate, quotaFaultInjector: { try save.inject($0) })
+        defer { save.finish(); gate.open("incoming-0"); gate.open("human-0"); gate.open("incoming-1"); f.feed.finish(); try? FileManager.default.removeItem(at: f.root) }
+        if boundary == "old-run" { save.arm() }
+        f.feed.emit(event(f))
+        var oldAttempt: Int?
+        if boundary == "old-run" {
+            for _ in 0..<12 {
+                try await eventually { save.waitingID != nil }
+                let attempt = try #require(save.waitingID)
+                if f.model.conversations.contains(where: { f.model.canPrioritizeIncomingWithHumanMessage($0.id) }) {
+                    oldAttempt = attempt
+                    break
+                }
+                save.resolve(attempt, failing: false)
+            }
+            _ = try #require(oldAttempt)
+        } else { try await priorityBoundary("incoming-0", in: f, gate: gate) }
+        let original = try #require(await f.service.inboundRuns().first)
+        let store = ConversationStore(fileURL: f.root.appending(path: "conversations.json"))
+        f.model.selectRoute(.conversation(original.conversationID)); await f.model.refreshModels()
+        f.model.draft = "EXACT_CAPTURED_PRIORITY_TASK"
+        if boundary == "human-save" { save.arm() }
+        let human = Task { await sendHumanInput(f, conversationID: original.conversationID) }
+        defer { human.cancel() }
+        if boundary == "old-run" {
+            try await eventually { f.model.draft.isEmpty && !f.model.canPrioritizeIncomingWithHumanMessage(original.conversationID) }
+        } else {
+            for _ in 0..<12 {
+                try await eventually { save.waitingID != nil }
+                let attempt = try #require(save.waitingID)
+                if f.model.conversations.first(where: { $0.id == original.conversationID })?.messages.contains(where: {
+                    $0.text == "EXACT_CAPTURED_PRIORITY_TASK"
+                }) == true { break }
+                save.resolve(attempt, failing: false)
+            }
+            _ = try #require(save.waitingID)
+        }
+        let paused = try #require(try await store.conversation(id: original.conversationID))
+        expectNoDifference(paused.messages.filter { $0.text == "EXACT_CAPTURED_PRIORITY_TASK" }.count, boundary == "old-run" ? 0 : 1)
+        let pausedRequests = await f.probe.requests
+        expectNoDifference(pausedRequests.count, boundary == "old-run" ? 0 : 1)
+        f.model.selectRoute(.conversation(otherID)); await f.model.refreshModels()
+        f.model.draft = "UNRELATED_NEW_COMPOSER_DRAFT"
+        if boundary == "human-save" { f.model.conversations.reverse() }
+        save.finish()
+        try await priorityBoundary("human-0", in: f, gate: gate)
+        let accepted = try #require(f.model.conversations.first { $0.id == original.conversationID })
+        let user = try #require(accepted.messages.first { $0.text == "EXACT_CAPTURED_PRIORITY_TASK" })
+        var expectedUser = ChatMessage(id: user.id, role: .user, text: "EXACT_CAPTURED_PRIORITY_TASK", createdAt: user.createdAt)
+        expectedUser.shortAddress = user.shortAddress
+        expectNoDifference(user, expectedUser)
+        expectNoDifference(f.model.selection, otherID); expectNoDifference(f.model.draft, "UNRELATED_NEW_COMPOSER_DRAFT")
+        let foregroundRequests = await f.probe.requests
+        expectNoDifference(foregroundRequests.count, boundary == "old-run" ? 1 : 2)
+        let foregroundRequest = try #require(foregroundRequests.last)
+        expectNoDifference(foregroundRequest.modelID, f.owner.modelID)
+        #expect(foregroundRequest.messages.contains { $0.role == .system && $0.text.contains("INBOUND_OWNER_PERSONA") })
+        #expect(!String(customDumping: foregroundRequest).contains("UNRELATED_NEW_COMPOSER_DRAFT"))
+        #expect(!String(customDumping: foregroundRequest).contains("NEVER_LEAK_UNRELATED_HISTORY"))
+        let whileHuman = try #require(try await store.conversation(id: original.conversationID))
+        expectNoDifference(whileHuman, sqliteStoredDates(accepted))
+        gate.open("human-0")
+        try await priorityBoundary(boundary == "old-run" ? "incoming-0" : "incoming-1", in: f, gate: gate)
+        await human.value
+        expectNoDifference(f.model.selection, otherID); expectNoDifference(f.model.draft, "UNRELATED_NEW_COMPOSER_DRAFT")
+        f.model.selectRoute(.conversation(original.conversationID)); f.model.cancel()
+        try await eventually { !f.model.isConversationWorking(original.conversationID) }
+        let final = try #require(try await store.conversation(id: original.conversationID))
+        expectNoDifference(final.messages.filter { $0.externalChannelSource != nil }, paused.messages.filter { $0.externalChannelSource != nil })
+        expectNoDifference(final.messages.filter { $0.id == user.id }, [sqliteStoredDates(accepted).messages.first { $0.id == user.id }].compactMap { $0 })
+        expectNoDifference(final.messages.filter { $0.text == "EXACT_CAPTURED_PRIORITY_TASK" }.count, 1)
+        #expect(!final.messages.contains { $0.text.contains("UNRELATED_NEW_COMPOSER_DRAFT") })
+        let runs = await f.service.inboundRuns(), requests = await f.probe.requests
+        expectNoDifference(runs.count, 2); #expect(runs.allSatisfy { $0.status == .cancelled })
+        expectNoDifference(requests.count, boundary == "old-run" ? 2 : 3)
+        let queue = await f.service.deliveries(), sent = await f.probe.sent
+        expectNoDifference(queue, []); expectNoDifference(sent, [])
+        await f.model.reconcileChannelInbound()
+        let unchanged = try await store.conversation(id: original.conversationID)
+        let sameRuns = await f.service.inboundRuns(), sameRequests = await f.probe.requests
+        expectNoDifference(unchanged, final); expectNoDifference(sameRuns, runs); #expect(diff(sameRequests, requests) == nil)
+        expectNoDifference(save.timedOut, false)
+        try await assertUnrelatedUntouched(f)
+    }
+
+    @Test(arguments: [(false, "none"), (true, "none"), (false, "stop"), (true, "stop"),
+                      (false, "connection-ABA"), (true, "connection-ABA"),
+                      (false, "task-cancellation"), (true, "task-cancellation")],
+          [StorageQuotaFaultPoint.afterTemporaryWriteBeforeRename, .afterReservationPersist, .afterCommitPersist])
+    func foregroundPrioritySaveFailureDoesNotRedriveOrLeaveUnfinishedAcknowledgment(scenario: (Bool, String),
+                                                                                 point: StorageQuotaFaultPoint) async throws {
+        let (existing, mutation) = scenario
+        let save = AppInboundHumanSaveFault(point), gate = AppInboundPriorityGate()
+        let f = try await fixture(existing: existing, mode: "priority", priorityGate: gate,
+            quotaFaultInjector: { try save.inject($0) })
+        defer { save.finish(); gate.open("incoming-0"); gate.open("human-0"); gate.open("incoming-1"); f.feed.finish(); try? FileManager.default.removeItem(at: f.root) }
+        f.feed.emit(event(f)); try await eventually { gate.isWaiting("incoming-0") }
+        let original = try #require(await f.service.inboundRuns().first)
+        let store = ConversationStore(fileURL: f.root.appending(path: "conversations.json"))
+        let before = try #require(try await store.conversation(id: original.conversationID))
+        let beforeUI = try #require(f.model.conversations.first { $0.id == original.conversationID })
+        expectNoDifference(sqliteStoredDates(beforeUI), before)
+        let initialRequests = await f.probe.requests
+        f.model.selectRoute(.conversation(original.conversationID)); await f.model.refreshModels()
+        f.model.draft = "EXACT_LOCAL_SAVE_FAILURE_TASK"
+        save.arm()
+        let human = Task { await sendHumanInput(f, conversationID: original.conversationID) }
+        defer { human.cancel() }
+        var target: Int?
+        for _ in 0..<12 {
+            try await eventually { save.waitingID != nil }
+            let attempt = try #require(save.waitingID)
+            if f.model.conversations.first(where: { $0.id == original.conversationID })?.messages.contains(where: {
+                $0.role == .user && $0.text == "EXACT_LOCAL_SAVE_FAILURE_TASK"
+            }) == true {
+                target = attempt
+                break
+            }
+            save.resolve(attempt, failing: false)
+        }
+        let attempt = try #require(target)
+        let staged = try #require(f.model.conversations.first { $0.id == original.conversationID })
+        let user = try #require(staged.messages.first { $0.text == "EXACT_LOCAL_SAVE_FAILURE_TASK" })
+        let assistant = try #require(staged.messages.last)
+        var expectedUser = ChatMessage(id: user.id, role: .user, text: "EXACT_LOCAL_SAVE_FAILURE_TASK", createdAt: user.createdAt)
+        expectedUser.shortAddress = user.shortAddress
+        expectNoDifference(user, expectedUser)
+        expectNoDifference(assistant, ChatMessage(id: assistant.id, role: .assistant, text: "",
+            createdAt: assistant.createdAt, deliveryStatus: .queued))
+        var expectedPrefix = beforeUI.messages
+        let old = try #require(expectedPrefix.firstIndex { $0.id == original.id })
+        expectedPrefix[old].deliveryStatus = .cancelled
+        expectNoDifference(Array(staged.messages.prefix(expectedPrefix.count)), expectedPrefix)
+        let whileWaiting = try #require(try await store.conversation(id: original.conversationID))
+        if point == .afterCommitPersist { expectNoDifference(whileWaiting, sqliteStoredDates(staged)) }
+        else {
+            var expectedPending = beforeUI
+            expectedPending.messages = expectedPrefix
+            expectNoDifference(whileWaiting.messages, sqliteStoredDates(expectedPending).messages)
+            #expect(!whileWaiting.messages.contains { $0.id == user.id || $0.id == assistant.id })
+        }
+        var expectedRuns = [original]
+        expectedRuns[0].status = .cancelled
+        expectedRuns[0].finishedAt = try #require(await f.service.inboundRuns().first?.finishedAt)
+        let interrupted = await f.service.inboundRuns(); expectNoDifference(interrupted, expectedRuns)
+        switch mutation {
+        case "stop": f.model.cancel()
+        case "task-cancellation": human.cancel()
+        case "connection-ABA":
+            try await f.service.setConnectionEnabled(id: f.connection.id, enabled: false)
+            try await f.service.setConnectionEnabled(id: f.connection.id, enabled: true)
+        default: break
+        }
+        save.resolve(attempt, failing: true)
+        await human.value
+        try await eventually { !f.model.isConversationWorking(original.conversationID) }
+        expectNoDifference(save.timedOut, false)
+        #expect(!gate.isWaiting("human-0") && !gate.isWaiting("incoming-1"))
+        var expectedUI = staged
+        var expected: Conversation
+        if mutation == "none" {
+            expectedUI.messages.removeAll { $0.id == user.id || $0.id == assistant.id }
+            expected = sqliteStoredDates(expectedUI)
+        } else if point == .afterCommitPersist {
+            let index = try #require(expectedUI.messages.firstIndex { $0.id == assistant.id })
+            expectedUI.messages[index].deliveryStatus = .cancelled
+            expected = sqliteStoredDates(expectedUI)
+        } else {
+            expectedUI.messages.removeAll { $0.id == user.id || $0.id == assistant.id }
+            expected = whileWaiting
+        }
+        let final = try #require(try await store.conversation(id: original.conversationID))
+        let finalUI = try #require(f.model.conversations.first { $0.id == original.conversationID })
+        expectNoDifference(final, expected); expectNoDifference(finalUI, expectedUI)
+        expectNoDifference(f.model.draft, mutation != "none" && point == .afterCommitPersist ? "" : "EXACT_LOCAL_SAVE_FAILURE_TASK")
+        expectNoDifference(f.model.pendingAttachments, []); expectNoDifference(f.model.pendingAutoReviewApprovals, [])
+        expectNoDifference(final.messages.filter { $0.externalChannelSource != nil }, before.messages.filter { $0.externalChannelSource != nil })
+        let ledger = try StorageQuotaLedger.live(dataRoot: f.root), usage = await ledger.usage()
+        expectNoDifference(usage.reservationCount, 0)
+        await f.model.reconcileChannelInbound(); f.feed.emit(event(f)); await f.model.reconcileChannelInbound()
+        let runs = await f.service.inboundRuns(), requests = await f.probe.requests
+        let deliveries = await f.service.deliveries(), sent = await f.probe.sent
+        expectNoDifference(runs, expectedRuns); #expect(diff(requests, initialRequests) == nil)
+        expectNoDifference(deliveries, []); expectNoDifference(sent, [])
+        let reopened = try ChannelService(storeURL: f.root.appending(path: "channels.json"))
+        let storedRuns = await reopened.inboundRuns(); expectNoDifference(storedRuns, try persistedChannel(expectedRuns))
+        let unchanged = try await store.conversation(id: original.conversationID)
+        expectNoDifference(unchanged, final)
+        try await assertUnrelatedUntouched(f)
+    }
+
+    @Test(arguments: ["connection-ABA", "binding-ABA", "persona-ABA", "hidden-ABA", "account", "stop", "task-cancellation"], [false, true])
+    func foregroundPriorityLifetimeCannotReviveRedriveAfterInvalidation(mutation: String, secondPreemption: Bool) async throws {
+        let gate = AppInboundPriorityGate(), f = try await fixture(mode: "priority", priorityGate: gate)
+        defer { gate.open("incoming-0"); gate.open("human-0"); gate.open("incoming-1"); gate.open("human-1"); f.feed.finish(); try? FileManager.default.removeItem(at: f.root) }
+        f.feed.emit(event(f)); try await eventually { gate.isWaiting("incoming-0") }
+        let original = try #require(await f.service.inboundRuns().first)
+        f.model.selectRoute(.conversation(original.conversationID)); await f.model.refreshModels()
+        f.model.draft = "EXACT_LOCAL_PRIORITY_TASK"
+        var human = Task { await sendHumanInput(f, conversationID: original.conversationID) }
+        try await eventually { gate.isWaiting("human-0") }
+        if secondPreemption {
+            gate.open("human-0")
+            try await eventually { gate.isWaiting("incoming-1") }
+            await human.value
+            f.model.draft = "SECOND_LOCAL_PRIORITY_TASK"
+            human = Task { await sendHumanInput(f, conversationID: original.conversationID) }
+            try await eventually { gate.isWaiting("human-1") }
+        }
+        let store = ConversationStore(fileURL: f.root.appending(path: "conversations.json"))
+        let before = try #require(try await store.conversation(id: original.conversationID))
+        let foreground = try #require(before.messages.last)
+        expectNoDifference(foreground.deliveryStatus, .queued)
+        let ci = try #require(f.model.conversations.firstIndex { $0.id == original.conversationID })
+        switch mutation {
+        case "connection-ABA":
+            try await f.service.setConnectionEnabled(id: f.connection.id, enabled: false)
+            try await f.service.setConnectionEnabled(id: f.connection.id, enabled: true)
+        case "binding-ABA":
+            let owner = f.model.conversations[ci].agentBinding
+            f.model.conversations[ci].agentBinding = nil; f.model.conversations[ci].agentBinding = owner
+        case "persona-ABA":
+            let ai = try #require(f.model.agents.firstIndex { $0.id == f.owner.id })
+            let profile = f.model.agents[ai]
+            f.model.agents[ai].instructions = "NEVER_REVIVE_PRIORITY_PERSONA"; f.model.agents[ai] = profile
+        case "hidden-ABA":
+            f.model.conversations[ci].hiddenAt = date; f.model.conversations[ci].hiddenAt = nil
+        case "account": await f.model.cancelAutoReviewApprovals(nextAccountID: "other")
+        case "task-cancellation": human.cancel()
+        default: f.model.cancel()
+        }
+        gate.open(secondPreemption ? "human-1" : "human-0")
+        await human.value
+        try await eventually { !f.model.isConversationWorking(original.conversationID) }
+        await f.model.reconcileChannelInbound()
+        let runs = await f.service.inboundRuns(), requests = await f.probe.requests
+        expectNoDifference(runs.count, secondPreemption ? 2 : 1); #expect(runs.allSatisfy { $0.status == .cancelled })
+        expectNoDifference(requests.count, secondPreemption ? 4 : 2)
+        #expect(!gate.isWaiting(secondPreemption ? "incoming-2" : "incoming-1"))
+        let deliveries = await f.service.deliveries(), sent = await f.probe.sent
+        expectNoDifference(deliveries, []); expectNoDifference(sent, [])
+        expectNoDifference(f.model.pendingAutoReviewApprovals, [])
+        var expected = before
+        let mi = try #require(expected.messages.firstIndex { $0.id == foreground.id })
+        expected.messages[mi].deliveryStatus = .cancelled
+        let after = try #require(try await store.conversation(id: original.conversationID))
+        expectNoDifference(after, expected)
+        #expect(!after.messages.contains { $0.text.contains("PRIVATE_PRIORITY_DRAFT") })
+        let reopen = try ChannelService(storeURL: f.root.appending(path: "channels.json"))
+        let reloaded = await reopen.inboundRuns(); expectNoDifference(reloaded, try persistedChannel(runs))
+        try await assertUnrelatedUntouched(f)
+    }
+
+    @Test(arguments: ["approve", "reject", "stop", "connection-ABA", "persona-ABA", "task-cancellation"], [false, true])
+    func foregroundPriorityReviewKeepsOriginalTurnUntilDurableActionFinishes(action: String, secondPreemption: Bool) async throws {
+        let gate = AppInboundPriorityGate(), f = try await fixture(mode: "priority-human-review", priorityGate: gate)
+        defer { gate.open("incoming-0"); gate.open("human-0"); gate.open("incoming-1"); gate.open("human-1"); f.feed.finish(); try? FileManager.default.removeItem(at: f.root) }
+        await f.model.setAutoReviewEnabled(true)
+        f.feed.emit(event(f)); try await eventually { gate.isWaiting("incoming-0") }
+        let original = try #require(await f.service.inboundRuns().first)
+        f.model.selectRoute(.conversation(original.conversationID)); await f.model.refreshModels()
+        f.model.draft = "EXACT_LOCAL_PRIORITY_TASK"
+        var human = Task { await sendHumanInput(f, conversationID: original.conversationID) }
+        try await eventually { gate.isWaiting("human-0") }; gate.open("human-0")
+        let firstPending = try await review(f)
+        if secondPreemption {
+            f.model.handleTranscriptCardIntent(.rejectReview(reviewID: firstPending.id))
+            try await eventually { gate.isWaiting("incoming-1") }
+            await human.value
+            f.model.draft = "SECOND_LOCAL_PRIORITY_TASK"
+            human = Task { await sendHumanInput(f, conversationID: original.conversationID) }
+            try await eventually { gate.isWaiting("human-1") }; gate.open("human-1")
+        }
+        let pending = secondPreemption ? try await review(f, after: firstPending.id) : firstPending
+        let store = ConversationStore(fileURL: f.root.appending(path: "conversations.json"))
+        let before = try await storedPendingCard(pending, in: store)
+        let originalRequests = await f.probe.requests, originalRuns = await f.service.inboundRuns()
+        let priorQueue = await f.service.deliveries()
+        expectNoDifference(priorQueue, [])
+        expectNoDifference(pending.action.context.toolCallID, secondPreemption ? "priority-human-1" : "priority-human-0")
+        #expect(before.messages.contains { $0.id == pending.fence.runID && $0.role == .assistant })
+        if action == "approve" { f.model.handleTranscriptCardIntent(.approveReview(reviewID: pending.id)) }
+        else if action == "reject" { f.model.handleTranscriptCardIntent(.rejectReview(reviewID: pending.id)) }
+        else if action == "connection-ABA" {
+            try await f.service.setConnectionEnabled(id: f.connection.id, enabled: false)
+            try await f.service.setConnectionEnabled(id: f.connection.id, enabled: true)
+        } else if action == "persona-ABA" {
+            let ai = try #require(f.model.agents.firstIndex { $0.id == f.owner.id }), profile = f.model.agents[ai]
+            f.model.agents[ai].instructions = "INVALIDATE_PENDING_HUMAN_REVIEW"; f.model.agents[ai] = profile
+        } else if action == "task-cancellation" {
+            human.cancel()
+            f.model.handleTranscriptCardIntent(.approveReview(reviewID: pending.id))
+        } else { f.model.cancel() }
+        await human.value
+        let succeeded = action == "approve" || action == "reject"
+        if succeeded && !secondPreemption {
+            try await eventually { gate.isWaiting("incoming-1") }
+            f.model.cancel()
+        }
+        try await eventually { !f.model.isConversationWorking(original.conversationID) }
+        let final = try #require(try await store.conversation(id: original.conversationID))
+        let card = try #require(final.messages.flatMap(\.transcriptCards).first {
+            guard case .autoReview(let review) = $0.payload else { return false }
+            return review.reviewID == pending.id
+        })
+        expectNoDifference(card.lifecycle, action == "approve" ? .approved : action == "reject" ? .denied : .cancelled)
+        let originalCard = try #require(before.messages.flatMap(\.transcriptCards).first { $0.id == card.id })
+        #expect(card.updatedAt >= originalCard.updatedAt)
+        let queue = await f.service.deliveries(), runs = await f.service.inboundRuns(), sent = await f.probe.sent
+        expectNoDifference(sent, [])
+        expectNoDifference(queue.count, action == "approve" ? 1 : 0)
+        expectNoDifference(runs.count, succeeded && !secondPreemption ? 2 : originalRuns.count)
+        #expect(runs.allSatisfy { $0.status == .cancelled })
+        expectNoDifference(final.messages.filter { $0.externalChannelSource != nil }, before.messages.filter { $0.externalChannelSource != nil })
+        #expect(!final.messages.contains { $0.text.contains("PRIVATE_PRIORITY_DRAFT") })
+        if let queued = queue.first {
+            expectNoDifference(queued.origin, ChannelDeliveryOrigin(route: .directConversation,
+                conversationID: original.conversationID, senderID: original.conversationID, senderName: f.owner.name,
+                runID: pending.fence.runID, callID: pending.action.context.toolCallID,
+                intent: .init(kind: .text, text: "EXACT_PRIORITY_HUMAN_REPLY")))
+            expectNoDifference(queued.address, ChannelAddress(platform: "slack", channelID: "C_REMOTE"))
+            expectNoDifference(queued.authorization?.agentID, f.owner.id)
+        }
+        expectNoDifference(f.model.pendingAutoReviewApprovals, [])
+        let requests = await f.probe.requests, results = await f.probe.results
+        expectNoDifference(requests.count, originalRequests.count + (succeeded && !secondPreemption ? 1 : 0))
+        f.model.handleTranscriptCardIntent(.approveReview(reviewID: pending.id))
+        await f.model.reconcileChannelInbound()
+        let unchanged = try await store.conversation(id: original.conversationID)
+        let sameQueue = await f.service.deliveries(), sameRuns = await f.service.inboundRuns()
+        let sameRequests = await f.probe.requests, sameResults = await f.probe.results
+        expectNoDifference(unchanged, final); expectNoDifference(sameQueue, queue); expectNoDifference(sameRuns, runs)
+        #expect(diff(sameRequests, requests) == nil); expectNoDifference(sameResults, results)
+        let reopened = try ChannelService(storeURL: f.root.appending(path: "channels.json"))
+        let storedQueue = await reopened.deliveries(), storedRuns = await reopened.inboundRuns()
+        expectNoDifference(storedQueue, try persistedChannel(queue)); expectNoDifference(storedRuns, try persistedChannel(runs))
+        try await assertUnrelatedUntouched(f)
+    }
+
+    @Test func secondHumanPreemptionDoesNotCreateASecondRedrive() async throws {
+        let gate = AppInboundPriorityGate(), f = try await fixture(mode: "priority", priorityGate: gate)
+        defer { gate.open("incoming-0"); gate.open("human-0"); gate.open("incoming-1"); gate.open("human-1"); f.feed.finish(); try? FileManager.default.removeItem(at: f.root) }
+        f.feed.emit(event(f)); try await eventually { gate.isWaiting("incoming-0") }
+        let original = try #require(await f.service.inboundRuns().first)
+        f.model.selectRoute(.conversation(original.conversationID)); await f.model.refreshModels()
+        f.model.draft = "EXACT_LOCAL_PRIORITY_TASK"
+        let first = Task { await sendHumanInput(f, conversationID: original.conversationID) }
+        try await eventually { gate.isWaiting("human-0") }; gate.open("human-0")
+        try await eventually { gate.isWaiting("incoming-1") }; await first.value
+        f.model.draft = "SECOND_LOCAL_PRIORITY_TASK"
+        let second = Task { await sendHumanInput(f, conversationID: original.conversationID) }
+        try await eventually { gate.isWaiting("human-1") }; gate.open("human-1")
+        await second.value
+        try await eventually { !f.model.isConversationWorking(original.conversationID) }
+        let runs = await f.service.inboundRuns(), requests = await f.probe.requests
+        expectNoDifference(runs.count, 2); #expect(runs.allSatisfy { $0.status == .cancelled })
+        expectNoDifference(requests.count, 4); #expect(!gate.isWaiting("incoming-2"))
+        let canonical = try #require(try await ConversationStore(fileURL: f.root.appending(path: "conversations.json")).conversation(id: original.conversationID))
+        expectNoDifference(canonical.messages.filter { $0.externalChannelSource != nil }.count, 1)
+        expectNoDifference(canonical.messages.filter { $0.text == "EXACT_LOCAL_PRIORITY_TASK" }.count, 1)
+        expectNoDifference(canonical.messages.filter { $0.text == "SECOND_LOCAL_PRIORITY_TASK" }.count, 1)
+        let deliveries = await f.service.deliveries(), sent = await f.probe.sent
+        expectNoDifference(deliveries, []); expectNoDifference(sent, [])
+        let ui = try #require(f.model.conversations.first { $0.id == original.conversationID })
+        expectNoDifference(sqliteStoredDates(ui), canonical)
+        await f.model.reconcileChannelInbound()
+        let replay = await f.probe.requests; #expect(diff(replay, requests) == nil)
+        try await assertUnrelatedUntouched(f)
+    }
+
     @Test(arguments: [false, true])
     func incomingSendRequiresConsentAndPublishesDeliveryOnNativeTick(existing: Bool) async throws {
         let clock = AppInboundDeliveryClock()

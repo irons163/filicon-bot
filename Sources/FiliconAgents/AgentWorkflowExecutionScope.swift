@@ -47,9 +47,23 @@ public final class AgentWorkflowExecutionScope: @unchecked Sendable {
             try commit {}
         }
 
+        public var isActive: Bool {
+            withScopeLocks { tickets.allSatisfy { $0.scope.suspensionCount == 0 && $0.scope.generation == $0.generation } }
+        }
+
         /// Hold all scope locks through a final synchronous state save. The
         /// operation must not call capture, check, or lifecycle mutation again.
         public func commit<Value>(_ operation: () throws -> Value) throws -> Value {
+            try withScopeLocks {
+                try Task.checkCancellation()
+                guard tickets.allSatisfy({ $0.scope.suspensionCount == 0 && $0.scope.generation == $0.generation }) else {
+                    throw CancellationError()
+                }
+                return try operation()
+            }
+        }
+
+        private func withScopeLocks<Value>(_ operation: () throws -> Value) rethrows -> Value {
             var unique: [ObjectIdentifier: AgentWorkflowExecutionScope] = [:]
             for ticket in tickets { unique[ObjectIdentifier(ticket.scope)] = ticket.scope }
             let scopes = unique.values.sorted {
@@ -57,10 +71,6 @@ public final class AgentWorkflowExecutionScope: @unchecked Sendable {
             }
             for scope in scopes { scope.lock.lock() }
             defer { for scope in scopes.reversed() { scope.lock.unlock() } }
-            try Task.checkCancellation()
-            guard tickets.allSatisfy({ $0.scope.suspensionCount == 0 && $0.scope.generation == $0.generation }) else {
-                throw CancellationError()
-            }
             return try operation()
         }
     }

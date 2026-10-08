@@ -264,4 +264,313 @@ struct ChannelInboundTests {
         expectNoDifference(history, [f.envelope]); expectNoDifference(pending, [])
         await #expect(throws: CancellationError.self) { try await reopened.prepareInbound(f.envelope, accountID: "fixture", invalidate: {}) }
     }
+
+    @Test(arguments: [ChannelInboundRun.Status.completed, .cancelled, .failed, .running])
+    func nativeHumanPreemptionRedrivesOnceWithoutAnotherSourceOrConsent(status: ChannelInboundRun.Status) async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let admission = try await f.service.prepareInbound(f.envelope, accountID: "fixture", invalidate: {})
+        let original = try await claim(f, admission)
+        let invalidations = InboundInvalidations()
+        let ticket = try await f.service.reserveInboundRedrive(admission, run: original, invalidate: { invalidations.increment() })
+        await #expect(throws: CancellationError.self) {
+            try await f.service.reserveInboundRedrive(admission, run: original, invalidate: {})
+        }
+        var cancelled = original
+        cancelled.status = .cancelled; cancelled.finishedAt = date.addingTimeInterval(1)
+        try await f.service.finishInbound(original, status: .cancelled, at: date.addingTimeInterval(1))
+        admission.close()
+        try ticket.check()
+        let nextAdmission = try await f.service.prepareInboundRedrive(ticket, accountID: "fixture", invalidate: {})
+        let child = try await f.service.claimInboundRedrive(ticket, admission: nextAdmission, runID: inboundID(6), at: date.addingTimeInterval(2))
+        let expected = ChannelInboundRun(id: inboundID(6), receipt: original.receipt, conversationID: original.conversationID,
+            messageID: original.messageID, startedAt: date.addingTimeInterval(2), status: .running)
+        let liveRuns = await f.service.inboundRuns(), liveEvents = await f.service.inboundEvents()
+        let livePending = await f.service.pendingInbound(accountID: "fixture")
+        let liveDeliveries = await f.service.deliveries(), liveWakes = await f.service.failureWakes()
+        expectNoDifference(child, expected)
+        expectNoDifference(liveRuns, [cancelled, expected])
+        expectNoDifference(liveEvents, [f.envelope])
+        expectNoDifference(livePending, [])
+        expectNoDifference(liveDeliveries, [])
+        expectNoDifference(liveWakes, [])
+        expectNoDifference(invalidations.count, 1)
+        #expect(await f.service.isInboundCurrent(nextAdmission, run: child))
+        let bytes = try Data(contentsOf: f.file)
+        await #expect(throws: CancellationError.self) {
+            try await f.service.claimInboundRedrive(ticket, admission: nextAdmission, runID: inboundID(7), at: date.addingTimeInterval(3))
+        }
+        await #expect(throws: CancellationError.self) {
+            try await f.service.reserveInboundRedrive(nextAdmission, run: child, invalidate: {})
+        }
+        await #expect(throws: CancellationError.self) {
+            try await f.service.prepareInbound(f.envelope, accountID: "fixture", invalidate: {})
+        }
+        expectNoDifference(try Data(contentsOf: f.file), bytes)
+        var finalChild = child
+        finalChild.status = status == .running ? .interrupted : status
+        finalChild.finishedAt = date.addingTimeInterval(status == .running ? 4 : 3)
+        if status != .running { try await f.service.finishInbound(child, status: status, at: date.addingTimeInterval(3)) }
+        let restoredDate = date.addingTimeInterval(4)
+        let reopened = try ChannelService(storeURL: f.file, now: { restoredDate })
+        await reopened.register(InboundOfflineConnector())
+        let loadedRuns = await reopened.inboundRuns(), loadedEvents = await reopened.inboundEvents()
+        let loadedPending = await reopened.pendingInbound(accountID: "fixture"), loadedDeliveries = await reopened.deliveries()
+        expectNoDifference(loadedRuns, [cancelled, finalChild])
+        expectNoDifference(loadedPending, [])
+        expectNoDifference(loadedEvents, [f.envelope])
+        expectNoDifference(loadedDeliveries, [])
+        await #expect(throws: CancellationError.self) {
+            try await reopened.inboundCardEnvelope(runID: original.id, messageID: original.messageID,
+                conversationID: original.conversationID, accountID: "fixture", agentID: original.receipt.agentID)
+        }
+        if status == .completed {
+            let resolved = try await reopened.inboundCardEnvelope(runID: child.id, messageID: child.messageID,
+                conversationID: child.conversationID, accountID: "fixture", agentID: child.receipt.agentID)
+            expectNoDifference(resolved, f.envelope)
+        }
+    }
+
+    @Test(arguments: [false, true])
+    func nativeInterruptionFenceSurvivesOriginalCancellationButNeverGrantsAnotherRun(redriven: Bool) async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        var admission = try await f.service.prepareInbound(f.envelope, accountID: "fixture", invalidate: {})
+        var run = try await claim(f, admission)
+        if redriven {
+            let ticket = try await f.service.reserveInboundRedrive(admission, run: run, invalidate: {})
+            try await f.service.finishInbound(run, status: .cancelled, at: date.addingTimeInterval(1))
+            admission.close()
+            admission = try await f.service.prepareInboundRedrive(ticket, accountID: "fixture", invalidate: {})
+            run = try await f.service.claimInboundRedrive(ticket, admission: admission, runID: inboundID(6), at: date.addingTimeInterval(2))
+        }
+        let invalidations = InboundInvalidations()
+        let fence = try await f.service.prepareInboundInterruption(admission, run: run, invalidate: { invalidations.increment() })
+        let before = await f.service.inboundRuns(), bytes = try Data(contentsOf: f.file)
+        await #expect(throws: CancellationError.self) {
+            try await f.service.claimInbound(fence, conversationID: run.conversationID, runID: inboundID(9),
+                messageID: inboundID(10), at: date.addingTimeInterval(3))
+        }
+        let unchanged = await f.service.inboundRuns()
+        expectNoDifference(unchanged, before); expectNoDifference(try Data(contentsOf: f.file), bytes)
+        try await f.service.finishInbound(run, status: .cancelled, at: date.addingTimeInterval(3))
+        admission.close(); try fence.check()
+        let cancelled = await f.service.inboundRuns()
+        await #expect(throws: CancellationError.self) {
+            try await f.service.prepareInboundInterruption(fence, run: run, invalidate: {})
+        }
+        try await f.service.setConnectionEnabled(id: f.connection.id, enabled: false)
+        try await f.service.setConnectionEnabled(id: f.connection.id, enabled: true)
+        #expect(throws: CancellationError.self) { try fence.check() }
+        fence.close(); expectNoDifference(invalidations.count, 1)
+        let after = await f.service.inboundRuns(), deliveries = await f.service.deliveries()
+        expectNoDifference(after, cancelled); expectNoDifference(deliveries, [])
+    }
+
+    @Test(arguments: [ChannelInboundRun.Status.running, .completed, .failed, .interrupted])
+    func reservedRedriveRequiresActualCancelledOriginal(status: ChannelInboundRun.Status) async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let admission = try await f.service.prepareInbound(f.envelope, accountID: "fixture", invalidate: {})
+        let original = try await claim(f, admission)
+        let ticket = try await f.service.reserveInboundRedrive(admission, run: original, invalidate: {})
+        if status != .running { try await f.service.finishInbound(original, status: status, at: date.addingTimeInterval(1)) }
+        let records = await f.service.inboundRuns(), bytes = try Data(contentsOf: f.file)
+        await #expect(throws: CancellationError.self) {
+            try await f.service.prepareInboundRedrive(ticket, accountID: "fixture", invalidate: {})
+        }
+        let after = await f.service.inboundRuns(), deliveries = await f.service.deliveries()
+        expectNoDifference(after, records)
+        expectNoDifference(try Data(contentsOf: f.file), bytes)
+        expectNoDifference(deliveries, [])
+    }
+
+    @Test(arguments: ["disable-enable", "remove-recreate", "same-save", "connector", "credentials", "stop"], [false, true])
+    func queuedHumanRedriveCannotFollowConfigurationABA(kind: String, prepared: Bool) async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let admission = try await f.service.prepareInbound(f.envelope, accountID: "fixture", invalidate: {})
+        let original = try await claim(f, admission)
+        let invalidations = InboundInvalidations()
+        let ticket = try await f.service.reserveInboundRedrive(admission, run: original, invalidate: { invalidations.increment() })
+        try await f.service.finishInbound(original, status: .cancelled, at: date.addingTimeInterval(1))
+        admission.close()
+        let nextAdmission = prepared ? try await f.service.prepareInboundRedrive(ticket, accountID: "fixture", invalidate: {}) : nil
+        switch kind {
+        case "disable-enable": try await f.service.setConnectionEnabled(id: f.connection.id, enabled: false); try await f.service.setConnectionEnabled(id: f.connection.id, enabled: true)
+        case "remove-recreate": _ = try await f.service.removeConnection(id: f.connection.id); try await f.service.saveConnection(f.connection)
+        case "same-save": try await f.service.saveConnection(f.connection)
+        case "connector": await f.service.register(InboundOfflineConnector())
+        case "credentials": _ = try await f.service.commitCredential(connectionID: f.connection.id) { _ in (result: true, changed: true) }
+        default: await f.service.stop(connectionID: f.connection.id)
+        }
+        let bytes = try Data(contentsOf: f.file), records = await f.service.inboundRuns()
+        expectNoDifference(invalidations.count, 1)
+        #expect(throws: CancellationError.self) { try ticket.check() }
+        await #expect(throws: CancellationError.self) {
+            try await f.service.prepareInboundRedrive(ticket, accountID: "fixture", invalidate: {})
+        }
+        if let nextAdmission {
+            await #expect(throws: CancellationError.self) {
+                try await f.service.claimInboundRedrive(ticket, admission: nextAdmission, runID: inboundID(6), at: date.addingTimeInterval(2))
+            }
+        }
+        let after = await f.service.inboundRuns(), deliveries = await f.service.deliveries()
+        expectNoDifference(after, records)
+        expectNoDifference(deliveries, [])
+        expectNoDifference(try Data(contentsOf: f.file), bytes)
+    }
+
+    @Test func redriveCommitFailureDoesNotConsumeNativeTicketOrDuplicateRows() async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let admission = try await f.service.prepareInbound(f.envelope, accountID: "fixture", invalidate: {})
+        let original = try await claim(f, admission)
+        let ticket = try await f.service.reserveInboundRedrive(admission, run: original, invalidate: {})
+        try await f.service.finishInbound(original, status: .cancelled, at: date.addingTimeInterval(1))
+        admission.close()
+        let nextAdmission = try await f.service.prepareInboundRedrive(ticket, accountID: "fixture", invalidate: {})
+        let records = await f.service.inboundRuns(), bytes = try Data(contentsOf: f.file)
+        await #expect(throws: CocoaError.self) {
+            try await f.service.claimInboundRedrive(ticket, admission: nextAdmission, runID: inboundID(6),
+                at: date.addingTimeInterval(2), commit: { _ in throw CocoaError(.fileWriteUnknown) })
+        }
+        try ticket.check(); try nextAdmission.check()
+        let unchanged = await f.service.inboundRuns()
+        expectNoDifference(unchanged, records)
+        expectNoDifference(try Data(contentsOf: f.file), bytes)
+        let child = try await f.service.claimInboundRedrive(ticket, admission: nextAdmission, runID: inboundID(6), at: date.addingTimeInterval(2))
+        let after = await f.service.inboundRuns(), deliveries = await f.service.deliveries()
+        expectNoDifference(after, records + [child])
+        expectNoDifference(deliveries, [])
+    }
+
+    @Test func redriveAtomicFileFailureRollsBackBookkeepingAndPreservesOriginalTicket() async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let admission = try await f.service.prepareInbound(f.envelope, accountID: "fixture", invalidate: {})
+        let original = try await claim(f, admission)
+        let invalidations = InboundInvalidations()
+        let ticket = try await f.service.reserveInboundRedrive(admission, run: original, invalidate: { invalidations.increment() })
+        try await f.service.finishInbound(original, status: .cancelled, at: date.addingTimeInterval(1))
+        admission.close()
+        let next = try await f.service.prepareInboundRedrive(ticket, accountID: "fixture", invalidate: {})
+        let records = await f.service.inboundRuns(), bytes = try Data(contentsOf: f.file)
+        let backup = f.root.appending(path: "original-channels.json")
+        try FileManager.default.moveItem(at: f.file, to: backup)
+        try FileManager.default.createDirectory(at: f.file, withIntermediateDirectories: false)
+        await #expect(throws: CocoaError.self) {
+            try await f.service.claimInboundRedrive(ticket, admission: next, runID: inboundID(6), at: date.addingTimeInterval(2))
+        }
+        let failed = await f.service.inboundRuns(), deliveries = await f.service.deliveries()
+        expectNoDifference(failed, records); expectNoDifference(deliveries, [])
+        expectNoDifference(try Data(contentsOf: backup), bytes)
+        expectNoDifference(invalidations.count, 0); try ticket.check(); try next.check()
+        try FileManager.default.removeItem(at: f.file)
+        try FileManager.default.moveItem(at: backup, to: f.file)
+        let child = try await f.service.claimInboundRedrive(ticket, admission: next, runID: inboundID(6), at: date.addingTimeInterval(2))
+        let saved = await f.service.inboundRuns()
+        expectNoDifference(saved, records + [child]); expectNoDifference(invalidations.count, 1)
+        try await f.service.finishInbound(child, status: .completed, at: date.addingTimeInterval(3))
+        let final = await f.service.inboundRuns()
+        let reopened = try ChannelService(storeURL: f.file), loaded = await reopened.inboundRuns()
+        expectNoDifference(loaded, final)
+    }
+
+    @Test func redriveRequiresOriginalProcessAndAccount() async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let admission = try await f.service.prepareInbound(f.envelope, accountID: "fixture", invalidate: {})
+        let original = try await claim(f, admission)
+        let ticket = try await f.service.reserveInboundRedrive(admission, run: original, invalidate: {})
+        try await f.service.finishInbound(original, status: .cancelled, at: date.addingTimeInterval(1))
+        admission.close()
+        let bytes = try Data(contentsOf: f.file), records = await f.service.inboundRuns()
+        await #expect(throws: CancellationError.self) {
+            try await f.service.prepareInboundRedrive(ticket, accountID: "foreign", invalidate: {})
+        }
+        let reopened = try ChannelService(storeURL: f.file)
+        await reopened.register(InboundOfflineConnector())
+        await #expect(throws: CancellationError.self) {
+            try await reopened.prepareInboundRedrive(ticket, accountID: "fixture", invalidate: {})
+        }
+        let pending = await reopened.pendingInbound(accountID: "fixture"), loaded = await reopened.inboundRuns()
+        expectNoDifference(pending, [])
+        expectNoDifference(loaded, records)
+        expectNoDifference(try Data(contentsOf: f.file), bytes)
+    }
+
+    @Test(arguments: ["original-run", "original-message", "other-run", "other-message", "backward-time"])
+    func redriveCannotStealTranscriptIdentifierOrMoveBeforeCancellation(fault: String) async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let admission = try await f.service.prepareInbound(f.envelope, accountID: "fixture", invalidate: {})
+        let original = try await claim(f, admission)
+        let ticket = try await f.service.reserveInboundRedrive(admission, run: original, invalidate: {})
+        try await f.service.finishInbound(original, status: .cancelled, at: date.addingTimeInterval(1))
+        admission.close()
+        let other = anotherEnvelope(f)
+        try #require(await f.service.ingest(other))
+        let otherAdmission = try await f.service.prepareInbound(other, accountID: "fixture", invalidate: {})
+        let otherRun = try await f.service.claimInbound(otherAdmission, conversationID: inboundID(3), runID: inboundID(8),
+            messageID: inboundID(9), at: date.addingTimeInterval(1))
+        let nextAdmission = try await f.service.prepareInboundRedrive(ticket, accountID: "fixture", invalidate: {})
+        let id = fault == "original-run" ? original.id : fault == "original-message" ? original.messageID
+            : fault == "other-run" ? otherRun.id : fault == "other-message" ? otherRun.messageID : inboundID(6)
+        let records = await f.service.inboundRuns(), bytes = try Data(contentsOf: f.file)
+        await #expect(throws: CancellationError.self) {
+            try await f.service.claimInboundRedrive(ticket, admission: nextAdmission, runID: id,
+                at: date.addingTimeInterval(fault == "backward-time" ? 0 : 2))
+        }
+        let after = await f.service.inboundRuns(), deliveries = await f.service.deliveries()
+        expectNoDifference(after, records)
+        expectNoDifference(try Data(contentsOf: f.file), bytes)
+        expectNoDifference(deliveries, [])
+    }
+
+    @Test(arguments: ["missing-map", "duplicate-map", "missing-parent", "missing-child", "same-ID", "original-status",
+        "source-ID", "conversation", "receipt", "backward-time", "chain"])
+    func malformedRedriveBookkeepingFailsBeforeRewriting(fault: String) async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let admission = try await f.service.prepareInbound(f.envelope, accountID: "fixture", invalidate: {})
+        let original = try await claim(f, admission)
+        let ticket = try await f.service.reserveInboundRedrive(admission, run: original, invalidate: {})
+        try await f.service.finishInbound(original, status: .cancelled, at: date.addingTimeInterval(1))
+        admission.close()
+        let nextAdmission = try await f.service.prepareInboundRedrive(ticket, accountID: "fixture", invalidate: {})
+        let child = try await f.service.claimInboundRedrive(ticket, admission: nextAdmission, runID: inboundID(6), at: date.addingTimeInterval(2))
+        var json = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: f.file)) as? [String: Any])
+        var runs = try #require(json["inboundRuns"] as? [[String: Any]])
+        var records = try #require(json["inboundRedrives"] as? [[String: Any]])
+        switch fault {
+        case "missing-map": records = []
+        case "duplicate-map": records.append(records[0])
+        case "missing-parent": records[0]["originalRunID"] = inboundID(99).uuidString
+        case "missing-child": records[0]["redriveRunID"] = inboundID(99).uuidString
+        case "same-ID": records[0]["redriveRunID"] = original.id.uuidString
+        case "original-status": runs[0]["status"] = "completed"
+        case "source-ID": runs[1]["messageID"] = inboundID(99).uuidString
+        case "conversation": runs[1]["conversationID"] = inboundID(99).uuidString
+        case "receipt":
+            var receipt = try #require(runs[1]["receipt"] as? [String: Any])
+            receipt["accountID"] = "foreign"; runs[1]["receipt"] = receipt
+        case "backward-time": runs[1]["startedAt"] = date.timeIntervalSince1970 * 1_000
+        default: records.append(["originalRunID": child.id.uuidString, "redriveRunID": inboundID(99).uuidString])
+        }
+        json["inboundRuns"] = runs; json["inboundRedrives"] = records
+        let corrupt = try JSONSerialization.data(withJSONObject: json)
+        try corrupt.write(to: f.file, options: .atomic)
+        #expect(throws: ChannelServiceError.invalidEnvelope) { _ = try ChannelService(storeURL: f.file) }
+        expectNoDifference(try Data(contentsOf: f.file), corrupt)
+    }
+
+    @Test func removingConnectionPrunesRedriveBookkeeping() async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let admission = try await f.service.prepareInbound(f.envelope, accountID: "fixture", invalidate: {})
+        let original = try await claim(f, admission)
+        let ticket = try await f.service.reserveInboundRedrive(admission, run: original, invalidate: {})
+        try await f.service.finishInbound(original, status: .cancelled, at: date.addingTimeInterval(1))
+        let nextAdmission = try await f.service.prepareInboundRedrive(ticket, accountID: "fixture", invalidate: {})
+        _ = try await f.service.claimInboundRedrive(ticket, admission: nextAdmission, runID: inboundID(6), at: date.addingTimeInterval(2))
+        _ = try await f.service.removeConnection(id: f.connection.id)
+        let restored = try ChannelService(storeURL: f.file)
+        let connections = await restored.connections(), runs = await restored.inboundRuns()
+        let events = await restored.inboundEvents(), deliveries = await restored.deliveries()
+        expectNoDifference(connections, [])
+        expectNoDifference(runs, [])
+        expectNoDifference(events, [])
+        expectNoDifference(deliveries, [])
+    }
 }
