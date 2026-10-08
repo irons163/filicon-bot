@@ -218,7 +218,11 @@ private struct HTTPStreamingProvider: AIProvider {
             return ["role": message.role.rawValue, "content": content]
         }
         for exchange in input.toolExchanges {
-            rows.append(["role": "assistant", "content": exchange.assistantText, "tool_calls": exchange.calls.map { ["id": $0.id.rawValue, "type": "function", "function": ["name": $0.name.rawValue, "arguments": String(decoding: $0.argumentsJSON, as: UTF8.self)]] }])
+            var assistant: [String: Any] = ["role": "assistant", "content": exchange.assistantText]
+            if !exchange.calls.isEmpty {
+                assistant["tool_calls"] = exchange.calls.map { ["id": $0.id.rawValue, "type": "function", "function": ["name": $0.name.rawValue, "arguments": String(decoding: $0.argumentsJSON, as: UTF8.self)]] }
+            }
+            if !exchange.assistantText.isEmpty || !exchange.calls.isEmpty { rows.append(assistant) }
             rows += exchange.results.map { ["role": "tool", "tool_call_id": $0.callID.rawValue, "content": $0.wireText] }
         }
         return rows
@@ -241,8 +245,10 @@ private struct HTTPStreamingProvider: AIProvider {
         for exchange in input.toolExchanges {
             var assistant: [[String: Any]] = exchange.assistantText.isEmpty ? [] : [["type": "text", "text": exchange.assistantText]]
             assistant += try exchange.calls.map { call in ["type": "tool_use", "id": call.id.rawValue, "name": call.name.rawValue, "input": try argumentsObject(call)] }
-            rows.append(["role": "assistant", "content": assistant])
-            rows.append(["role": "user", "content": exchange.results.map { ["type": "tool_result", "tool_use_id": $0.callID.rawValue, "content": $0.wireText, "is_error": $0.isError] }])
+            if !assistant.isEmpty { rows.append(["role": "assistant", "content": assistant]) }
+            if !exchange.results.isEmpty {
+                rows.append(["role": "user", "content": exchange.results.map { ["type": "tool_result", "tool_use_id": $0.callID.rawValue, "content": $0.wireText, "is_error": $0.isError] }])
+            }
         }
         return rows
     }
@@ -261,10 +267,10 @@ private struct HTTPStreamingProvider: AIProvider {
         for exchange in input.toolExchanges {
             var parts: [[String: Any]] = exchange.assistantText.isEmpty ? [] : [["text": exchange.assistantText]]
             parts += try exchange.calls.map { call in ["functionCall": ["id": call.id.rawValue, "name": call.name.rawValue, "args": try argumentsObject(call)]] }
-            rows.append(["role": "model", "parts": parts])
-            rows.append(["role": "user", "parts": exchange.results.map { result in
+            if !parts.isEmpty { rows.append(["role": "model", "parts": parts]) }
+            if !exchange.results.isEmpty { rows.append(["role": "user", "parts": exchange.results.map { result in
                 ["functionResponse": ["id": result.callID.rawValue, "name": exchange.calls.first(where: { $0.id == result.callID })?.name.rawValue ?? "tool", "response": ["output": result.wireText, "isError": result.isError]]]
-            }])
+            }]) }
         }
         return rows
     }

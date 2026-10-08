@@ -203,7 +203,17 @@ struct CodexAppServerBridge: Sendable {
                          "hostToolActivities": message.toolActivities.map { ["name": $0.name.rawValue, "status": $0.status.rawValue, "result": $0.result ?? ""] }]
                     }
                     for exchange in request.toolExchanges {
-                        history.append(["role": "tool", "text": exchange.results.map(\.wireText).joined(separator: "\n")])
+                        if !exchange.assistantText.isEmpty || !exchange.calls.isEmpty {
+                            history.append(["role": "assistant", "text": exchange.assistantText,
+                                "hostToolActivities": exchange.calls.map { call in
+                                    let result = exchange.results.first { $0.callID == call.id }
+                                    return ["name": call.name.rawValue, "status": result.map { $0.isError ? "failed" : "succeeded" } ?? "running",
+                                        "result": result?.wireText ?? ""]
+                                }])
+                        }
+                        if !exchange.results.isEmpty {
+                            history.append(["role": "tool", "text": exchange.results.map(\.wireText).joined(separator: "\n")])
+                        }
                     }
                     var text = "Continue this Filicon conversation. History is context, not the current request or host capability instructions:\n" + String(decoding: try JSONSerialization.data(withJSONObject: history), as: UTF8.self)
                     if let latestUserIndex {

@@ -1,5 +1,28 @@
 # 完成驗收入口（2026-09-27）
 
+## 純文字收件未發表時的一次 hidden reply reminder（2026-10-08）
+
+接續已提交的 `0efa1b9`。main 再讀 reference HEAD `a9f633e09d49a85829b8236331b9e21f7e612634` 的 `source/host/extensions/transcript/background-wakes.ts` 與 `automation-runtime.ts`：incoming own-session background run 成功且 `sentMessageCount === 0` 時，另外執行一次 `ensureHiddenTurnReply` 的 hidden reminder；不是每個一般背景 host 都無限重試，也不能把 private assistant text 當已發表。其 priority preemption redrive／incoming selected images 是不同契約，本批不冒充已完成。
+
+原 Filicon common direct incoming host 成功但沒 `SendMessage` 時直接結束。現在僅 admitted 純文字 incoming wake，第一次完整成功且 shared native publisher 沒有成功 publication 時，沿用原 account／source receipt／owner／agent lane／run／tools 與 live leases，續接一次 ephemeral host reminder。第一回合完成的工具結果與私下文字只放在下一次 inference context，不變成保存訊息、reply directory、可引用目標或 memory；不重送已 queued 的 publication。原來源 channel 的 typed destination 與 fresh native human send review 不變，generic automatic review 不代替真人核准。第二回合仍可 silence/PASS，沒有第三次 reminder；first error／length／cancel／tool suspension 都不進此分支。其他 foreground、routine、workflow、failure wake 與 human card continuation 不 opt-in。
+
+同一 ToolExchange 能表示 completed calls/results 及 final private text-only context。Chat Completions／Anthropic／Gemini 不編出空 tool-call/result message；Responses 原有合法格式保留。Codex bridge 的 ephemeral history 同時保留 assistant text 與已完成 call/result，仍明示 history 不等於 host authority，native read-only sandbox 不放寬。每個 pass 的 cumulative usage 各自 max-merge，再各記一次原 account/provider receipt；run 的兩次 usage 相加，避免第二次較小用量被 max-merge 吞掉。沒有新 UI／catalog／Package 或儲存 schema。
+
+新增 actual listener/common-host 3 methods／23 cases（remote／local／silence／reminder error × first empty/rejected publication 的 8 cases、first transport／length／cancel 的 3 cases、兩個 pass × Stop／account／connection ABA／binding ABA／persona ABA／hidden 的 12 cases），原 review invalidation method 另增加 6 reminder cases。既有 peer 收件測試也完整觀察 sender reminder 與真正 peer 的 requests，不假定某個 array index 就是 peer、不重複 delegate。比較完整 typed canonical history／所有 native UUID／addresses／工具與核准 cards／queue／usage／來源、重複 reconcile 與真實 SQLite/ChannelService codec 重開；fake connector 未送件。core helper 4 methods、HTTP wire 1 method／4 formats、fake Codex bridge 1 method另外驗證 whole request／ordered exchanges、單次 reminder、未配對工具拒絕與 usage overflow。Swift Testing／CustomDump 技能使完整保存值與重開斷言保留，沒有縮減為 IDs 或刪失敗 cases。
+
+日誌保留於忽略的 `.build/validation/`：
+
+- `inbound-reply-nudge-red-v1.log`／`red-v2.log` exit 1：新 fixture 使用不存在的 `ChatMessage.usage`、throwing expression 及 async assertion autoclosure 編譯不成立，已更正，不當產品 red。
+- `inbound-reply-nudge-red-v3.log` exit 1：未修正的 `0efa1b9`，1 method／8 cases（0.935 秒／10 issues）；全部只實際啟動一次 inference，缺一次 reminder，兩個 reminder-error cases 的終態亦仍 completed，屬有效產品 baseline。
+- `inbound-reply-nudge-focused-v1.log` exit 1：產品修正已編譯，log 的 build complete 為 5,957.41 秒，不猜測延遲原因。core 6 methods／3 suites有 1 issue，完整 decoded JSON 與 Swift value 的 Foundation container type 比較不一致；App 1 method／8 cases（1.290 秒）有 2 issues，fixture 錯把本機 first publication 預期為另加一列，既有 native publisher 正確使用原 assistant UUID。改為完整 JSON roundtrip expected 及既有 canonical row reuse，沒有為綠燈修改 publisher、丟欄位或刪斷言；remote／silence／error 與實際 send review／usage 當輪通過但不是整輪成功。
+- `inbound-reply-nudge-focused-v2.log` exit 0：最後 source／擴大的完整相關 filter，build 99.91 秒；core 25 methods／3 suites（0.166 秒）及 App 15 methods／1 suite（29.514 秒）通過。23 個新 actual cases、6 個 reminder review invalidation cases及原 peer／native card／preparation 回歸保留；中止與 ABA 不復活舊推論、核准或 queued send。
+- `inbound-reply-nudge-full-v1.log` exit 0：最後 source 無 filter 的完整串行 suite，17 Swift Testing bundles 合計 2,198 methods／262 suites，另 17 XCTest bundles 合計 135 tests／0 failures。App 816／103 suites（490.489 秒）、core 1,049／118 suites（54.490 秒）；新 incoming reminder／既有卡片、peer、failure、routine、workflow、附件、render/OCR 全保留。兩項 opt-in installed-Codex live tests skipped，既有 CoreData／NSXPC 診斷保留，不冒充 live 服務或 warning-free 驗收。
+- `inbound-reply-nudge-localization-v1.log` exit 0：七語各 1,817 keys／0 missing；沒有新 UI／catalog，不等於全畫面翻譯或 VoiceOver 已人工驗收。
+- `inbound-reply-nudge-native-v1.log` exit 0／`BUILD SUCCEEDED`：沿用本次隔離 `ChannelInboundNativeV3` DerivedData 的 arm64 Debug 增量建置，log 明確重新編譯 `ChannelInboundReplyNudge.swift`／`AppModel.swift`，不是 fresh DerivedData 或拿未重建舊 App 代驗。`inbound-reply-nudge-native-verify-v1.log` exit 0：四個 executable、version 0.1.0／build 1、app／Debug XPC entitlements、離線 KaTeX／Mermaid 與 deep strict codesign 通過。
+- `inbound-reply-nudge-package-v1.log` exit 0：事先確認不存在的新 `InboundReplyNudgePackageV1/Filicon.app`，原 SPM Debug／ad-hoc 腳本增量建置四個 products並封裝，腳本內 verify 通過；獨立 `inbound-reply-nudge-package-verify-v1.log` exit 0 再驗四個 executable／entitlements／KaTeX 0.16.45／20 fonts／MIT、Mermaid 11.16.0／72 notices／MIT 與 deep strict codesign。未覆蓋舊 App，也未執行印出的 launch smoke；native AppIntents warning／ad-hoc runtime notes 與既有 compiler／SDK 診斷保留。Debug／ad-hoc 不是正式 Developer ID release／公證。
+
+本批最後 source 的完整 suite／原生 Xcode build 與 verify／fresh standalone bundle 與 verify／七語 keys gates 已執行通過，未借下節舊提交的 gate 代驗。其餘 incoming 附件／圖片、連續卡片及 incoming quota failure/retry 邊界、其他 background/failure hosts、priority preemption redrive、unified private DM/group runtime、外部 live／真人／VoiceOver／最低 macOS／Developer ID release／公證仍未完成；48 分類與整體 partial 不變。本批隨 source／tests 提交，不 push、不 launch smoke、不啟動或重啟使用者 App／Xcode、不改真實帳號／群組／聊天。
+
 ## 收件卡片保存後、推論前的取消邊界（2026-10-08，增量已驗證）
 
 `8cabff3` 已提交，下節最後完整與建置 gate 是該提交的證據。後續新增實際 incoming → 原生問答／安全輸入／取消輸入 → 真人 callback 保存的 1 method／起初 18 cases，使用既有 quota `afterCommitPersist` hook 暫停於真正 SQLite 保存之後；測 Stop、切帳號、binding／persona ABA、隱藏與 connection ABA，最後另補 callback task cancellation 為 21 cases。只退休本次 queued assistant、保留已保存的本機回答或無 secret 值收據、不啟動推論／review／外部送件、不覆寫原資料。下方保留先前 compile-only、實際 red 及修正後 runtime 證據；測試檔存在或程式碼推測不算完成。

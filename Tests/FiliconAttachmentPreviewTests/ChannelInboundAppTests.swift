@@ -52,6 +52,21 @@ private final class AppInboundSecretWriter: @unchecked Sendable {
     var count: Int { lock.withLock { writes } }
     func write(_ value: AgentSecretValue, _ reference: CredentialRef) { lock.withLock { writes += 1 } }
 }
+private final class AppInboundPassBarrier: @unchecked Sendable {
+    private let lock = NSLock()
+    private var entered = false
+    private var released = false
+    let pass: Int
+    init(pass: Int) { self.pass = pass }
+    var isWaiting: Bool { lock.withLock { entered } }
+    func open() { lock.withLock { released = true } }
+    func wait(pass: Int) async throws {
+        guard pass == self.pass else { return }
+        lock.withLock { entered = true }
+        while !lock.withLock({ released }) { try await Task.sleep(for: .milliseconds(5)) }
+        try Task.checkCancellation()
+    }
+}
 /// Holds the real registry actor before the incoming host's provider lookup.
 /// No admission/claim/runner is injected; the actual listener still owns it.
 private final class AppInboundRegistryBarrier: @unchecked Sendable {
@@ -118,6 +133,7 @@ private struct AppInboundProvider: InteractiveToolProvider {
     let probe: AppInboundProbe
     let peerID: UUID
     var mode = "reply"
+    var passBarrier: AppInboundPassBarrier?
     func models() async throws -> [AIModel] { [.init(id: "fixture")] }
     func stream(_ request: InferenceRequest) -> AsyncThrowingStream<InferenceEvent, Error> {
         .init { $0.finish(throwing: ProviderError.transport("The legacy text-only channel runner must not execute")) }
@@ -128,6 +144,40 @@ private struct AppInboundProvider: InteractiveToolProvider {
             let task = Task {
                 do {
                     await probe.request(request)
+                    let reminded = request.messages.contains { $0.role == .system && $0.text.contains("host-bound reply reminder for this incoming channel turn") }
+                    if reminded, ["peer", "silent"].contains(mode) {
+                        continuation.yield(.textDelta("PRIVATE_INCOMING_DRAFT_MUST_NOT_AUTOSEND"))
+                        continuation.yield(.completed(.stop)); continuation.finish()
+                        return
+                    }
+                    if mode.hasPrefix("nudge-") {
+                        if !reminded {
+                            if mode.hasSuffix("-rejected") {
+                                await probe.result(try await executeTool(.init(id: "incoming-nudge-rejected", name: "SendMessage",
+                                    argumentsJSON: JSONSerialization.data(withJSONObject: ["type": "text", "content": "  "], options: .sortedKeys))))
+                            }
+                            let usage = Usage(inputTokens: 14, outputTokens: 8, cacheReadTokens: 6, cacheWriteTokens: 2, costMicros: 50)
+                            continuation.yield(.textDelta("PRIVATE_FIRST_INBOUND_RESULT"))
+                            continuation.yield(.usage(usage)); continuation.yield(.usage(usage))
+                        } else {
+                            let usage = Usage(inputTokens: 9, outputTokens: 5, cacheReadTokens: 1, cacheWriteTokens: 3, costMicros: 20)
+                            continuation.yield(.usage(usage)); continuation.yield(.usage(usage))
+                            if mode.hasPrefix("nudge-throw") { throw ProviderError.transport("Offline hidden reply reminder failed") }
+                            if mode.hasPrefix("nudge-reply") || mode.hasPrefix("nudge-local") {
+                                var fields = ["type": "text", "content": "EXACT_REMINDER_REPLY"]
+                                if mode.hasPrefix("nudge-reply") { fields["channel"] = "slack:C_REMOTE:T_REMOTE" }
+                                await probe.result(try await executeTool(.init(id: "incoming-nudge-send", name: "SendMessage",
+                                    argumentsJSON: JSONSerialization.data(withJSONObject: fields, options: .sortedKeys))))
+                            }
+                            continuation.yield(.textDelta("PRIVATE_SECOND_INBOUND_RESULT"))
+                        }
+                        if mode == "nudge-initial-throw" { throw ProviderError.transport("Offline first incoming pass failed") }
+                        let reason: FinishReason = mode == "nudge-initial-length" ? .length : mode == "nudge-initial-cancel" ? .cancelled : .stop
+                        continuation.yield(.completed(reason))
+                        try await passBarrier?.wait(pass: reminded ? 1 : 0)
+                        continuation.finish()
+                        return
+                    }
                     if mode.hasPrefix("card-") {
                         let answered = request.messages.contains { $0.role == .user && ($0.text == "LOCAL_NATIVE_CARD_CHOICE"
                             || $0.text.contains("securely provided the requested credential")
@@ -212,6 +262,7 @@ private struct AppInboundProvider: InteractiveToolProvider {
         let other: Conversation
     }
     private func fixture(existing: Bool = true, mode: String = "reply", existingPeer: Bool = false,
+                         passBarrier: AppInboundPassBarrier? = nil,
                          quotaFaultInjector: @escaping StorageQuotaLedger.FaultInjector = { _ in }) async throws -> Fixture {
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-inbound-app-\(UUID())")
         let agents = try AgentService(storeURL: root.appending(path: "agents.json"))
@@ -248,7 +299,7 @@ private struct AppInboundProvider: InteractiveToolProvider {
         let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false,
             quotaFaultInjector: quotaFaultInjector,
             channelService: service, channelConnectors: [AppInboundConnector(feed: feed, probe: probe, failsSends: mode.hasPrefix("failure-"))])
-        await model.registry.register(AppInboundProvider(probe: probe, peerID: peer.id, mode: mode))
+        await model.registry.register(AppInboundProvider(probe: probe, peerID: peer.id, mode: mode, passBarrier: passBarrier))
         await model.bootstrap(); await model.setAutomationRuntimeActive(false); model.setWorkflowRuntimeActive(false)
         try await model.loadAllMessages(for: otherID)
         model.selectRoute(.conversation(otherID))
@@ -1096,9 +1147,9 @@ private struct AppInboundProvider: InteractiveToolProvider {
         let afterChat = try await ConversationStore(fileURL: f.root.appending(path: "conversations.json")).conversation(id: run.conversationID)
         expectNoDifference(afterChat, canonical)
     }
-    @Test(arguments: ["stop", "account", "connection-ABA", "binding-ABA", "persona-ABA", "hidden"])
-    func invalidatedIncomingWakeCannotUseOldPublicationReview(kind: String) async throws {
-        let f = try await fixture(); defer { f.feed.finish(); try? FileManager.default.removeItem(at: f.root) }
+    @Test(arguments: ["stop", "account", "connection-ABA", "binding-ABA", "persona-ABA", "hidden"], ["reply", "nudge-reply"])
+    func invalidatedIncomingWakeCannotUseOldPublicationReview(kind: String, mode: String) async throws {
+        let f = try await fixture(mode: mode); defer { f.feed.finish(); try? FileManager.default.removeItem(at: f.root) }
         f.feed.emit(event(f)); let pending = try await review(f), run = try #require(await f.service.inboundRuns().first)
         f.model.selectRoute(.conversation(run.conversationID))
         let ci = try #require(f.model.conversations.firstIndex { $0.id == run.conversationID })
@@ -1117,7 +1168,7 @@ private struct AppInboundProvider: InteractiveToolProvider {
         let finished = try await settle(f)
         #expect([.cancelled, .failed].contains(finished.status))
         let deliveries = await f.service.deliveries(), sent = await f.probe.sent, requests = await f.probe.requests
-        expectNoDifference(deliveries, []); expectNoDifference(sent, []); expectNoDifference(requests.count, 1)
+        expectNoDifference(deliveries, []); expectNoDifference(sent, []); expectNoDifference(requests.count, mode == "reply" ? 1 : 2)
         let own = try #require(try await ConversationStore(fileURL: f.root.appending(path: "conversations.json")).conversation(id: run.conversationID))
         #expect(own.messages.contains { $0.id == run.messageID && $0.hasValidExternalChannelSource })
         #expect(!own.messages.contains { $0.externalChannelPublication != nil })
@@ -1131,6 +1182,189 @@ private struct AppInboundProvider: InteractiveToolProvider {
         expectNoDifference(deliveries, []); expectNoDifference(sent, []); expectNoDifference(f.model.pendingAutoReviewApprovals, [])
         let chat = try #require(try await ConversationStore(fileURL: f.root.appending(path: "conversations.json")).conversation(id: chatID))
         #expect(!chat.messages.contains { $0.text.contains("PRIVATE_INCOMING_DRAFT") })
+        try await assertUnrelatedUntouched(f)
+    }
+
+    @Test(arguments: ["reply", "local", "silent", "throw"], [false, true])
+    func successfulHiddenIncomingWakeGetsOneReviewedReplyReminder(behavior: String, rejectedFirstSend: Bool) async throws {
+        let mode = "nudge-\(behavior)" + (rejectedFirstSend ? "-rejected" : "")
+        let f = try await fixture(mode: mode)
+        defer { f.feed.finish(); try? FileManager.default.removeItem(at: f.root) }
+        await f.model.setAutoReviewEnabled(true)
+        let store = ConversationStore(fileURL: f.root.appending(path: "conversations.json"))
+        let before = try #require(try await store.conversation(id: chatID))
+        f.feed.emit(event(f))
+        try await eventually {
+            let runs = await f.service.inboundRuns()
+            return !f.model.pendingAutoReviewApprovals.isEmpty || runs.first?.status == .completed || runs.first?.status == .failed
+        }
+        var pendingSnapshot: Conversation?, approval: PendingApproval?
+        if behavior == "reply", let pending = f.model.pendingAutoReviewApprovals.first {
+            approval = pending
+            pendingSnapshot = try await storedPendingCard(pending, in: store)
+            let beforeApproval = await f.service.deliveries(), sent = await f.probe.sent
+            expectNoDifference(beforeApproval, []); expectNoDifference(sent, [])
+            expectNoDifference(pending.action.context.toolCallID, "incoming-nudge-send")
+            f.model.selectRoute(.conversation(chatID))
+            f.model.handleTranscriptCardIntent(.approveReview(reviewID: pending.id))
+        }
+        let finished = try await settle(f)
+        let requests = await f.probe.requests, results = await f.probe.results
+        expectNoDifference(requests.count, 2)
+        expectNoDifference(finished.status, behavior == "throw" ? .failed : .completed)
+        guard requests.count == 2 else { return }
+        let first = requests[0], retry = requests[1]
+        expectNoDifference(retry.conversationID, first.conversationID); expectNoDifference(retry.modelID, first.modelID)
+        expectNoDifference(retry.reasoningEffort, first.reasoningEffort)
+        #expect(retry.messages.contains { $0.role == .system && $0.text.contains("host-bound reply reminder for this incoming channel turn") })
+        #expect(retry.messages.contains { $0.text.contains("INBOUND_OWNER_PERSONA") })
+        #expect(!retry.messages.contains { $0.text.contains("NEVER_LEAK_UNRELATED_HISTORY") })
+        expectNoDifference(retry.attachmentsByMessageID, [:])
+        #expect(!retry.tools.contains { $0.name == "SearchMemory" })
+        let expectedExchanges: [ToolExchange]
+        if rejectedFirstSend {
+            let failed = try #require(results.first)
+            #expect(failed.isError)
+            expectedExchanges = [.init(calls: [try .init(id: "incoming-nudge-rejected", name: "SendMessage",
+                argumentsJSON: JSONSerialization.data(withJSONObject: ["type": "text", "content": "  "], options: .sortedKeys))], results: [failed]),
+                .init(assistantText: "PRIVATE_FIRST_INBOUND_RESULT", calls: [], results: [])]
+        } else { expectedExchanges = [.init(assistantText: "PRIVATE_FIRST_INBOUND_RESULT", calls: [], results: [])] }
+        expectNoDifference(retry.toolExchanges, expectedExchanges)
+        let deliveries = await f.service.deliveries(), sent = await f.probe.sent
+        expectNoDifference(sent, []); expectNoDifference(deliveries.count, behavior == "reply" ? 1 : 0)
+        let after = try #require(try await store.conversation(id: chatID))
+        #expect(!after.messages.contains { $0.text.contains("PRIVATE_FIRST_INBOUND_RESULT") || $0.text.contains("PRIVATE_SECOND_INBOUND_RESULT")
+            || $0.text.contains("host-bound reply reminder") })
+        if behavior == "silent", !rejectedFirstSend {
+            #expect(!after.messages.contains { $0.id == finished.id })
+        }
+        var expected = before
+        let source = ExternalChannelMessageSource(connectionID: f.connection.id, externalEventID: event(f).externalEventID,
+            owner: .init(accountID: "local", agentID: f.owner.id), conversationID: chatID,
+            platform: "slack", channelID: "C_REMOTE", threadID: "T_REMOTE", senderID: "U_REMOTE", senderName: "Remote human", receivedAt: date)
+        expected.messages.append(.init(id: finished.messageID, role: .user, text: event(f).text, createdAt: date, externalChannelSource: source))
+        var expectedRun = ChatMessage(id: finished.id, role: .assistant, text: "", createdAt: finished.startedAt,
+            deliveryStatus: behavior == "throw" ? .failed : .succeeded,
+            deliveryError: behavior == "throw" ? ProviderError.transport("Offline hidden reply reminder failed").localizedDescription : nil)
+        if rejectedFirstSend {
+            expectedRun.toolActivities.append(.init(id: "incoming-nudge-rejected", name: "SendMessage",
+                argumentsJSON: String(decoding: expectedExchanges[0].calls[0].argumentsJSON, as: UTF8.self), status: .failed, result: results[0].wireText))
+        }
+        if ["reply", "local"].contains(behavior) {
+            if behavior == "local" { expectedRun.text = "EXACT_REMINDER_REPLY" }
+            var fields = ["type": "text", "content": "EXACT_REMINDER_REPLY"]
+            if behavior == "reply" { fields["channel"] = "slack:C_REMOTE:T_REMOTE" }
+            expectedRun.toolActivities.append(.init(id: "incoming-nudge-send", name: "SendMessage",
+                argumentsJSON: String(decoding: try JSONSerialization.data(withJSONObject: fields, options: .sortedKeys), as: UTF8.self),
+                status: .succeeded, result: try #require(results.last).wireText))
+        }
+        if behavior != "silent" || rejectedFirstSend { expected.messages.append(expectedRun) }
+        if behavior == "reply" {
+            let pending = try #require(approval), waiting = try #require(pendingSnapshot)
+            var reviewRow = try #require(waiting.messages.first { $0.transcriptCards.contains { card in
+                if case .autoReview(let review) = card.payload { return review.reviewID == pending.id }; return false
+            } })
+            let terminal = try #require(after.messages.first { $0.id == reviewRow.id }?.transcriptCards.first)
+            #expect(terminal.updatedAt >= reviewRow.transcriptCards[0].updatedAt && terminal.updatedAt <= Date())
+            reviewRow.transcriptCards[0].lifecycle = .approved; reviewRow.transcriptCards[0].updatedAt = terminal.updatedAt
+            expected.messages.append(reviewRow)
+            let queued = try #require(deliveries.first)
+            expectNoDifference(queued.address, event(f).address); expectNoDifference(queued.status, .queued)
+            expectNoDifference(queued.origin?.runID, finished.id); expectNoDifference(queued.origin?.callID, "incoming-nudge-send")
+            expectNoDifference(queued.authorization?.agentID, f.owner.id)
+            let publication = ExternalChannelTranscriptPublication(deliveryID: queued.id, connectionID: f.connection.id,
+                owner: .init(accountID: "local", agentID: f.owner.id), route: .directConversation,
+                conversationID: chatID, senderID: chatID, senderName: f.owner.name, runID: finished.id, callID: "incoming-nudge-send",
+                replyToMessageID: nil, queuedAt: queued.createdAt, kind: .text, text: "EXACT_REMINDER_REPLY", sources: [], files: [],
+                platform: "slack", channelID: "C_REMOTE", threadID: "T_REMOTE", delivery: .init(status: .queued, attemptCount: 0, deliveredAt: nil))
+            expected.messages.append(publication.directMessage)
+        }
+        let finishedAt = try #require(finished.finishedAt)
+        #expect(after.updatedAt >= finished.startedAt && after.updatedAt <= finishedAt.addingTimeInterval(0.001))
+        expected.updatedAt = after.updatedAt; DirectMessageAddressing.assignMissing(in: &expected)
+        expectNoDifference(after, sqliteStoredDates(expected))
+        try await eventually { f.model.settings.usageByAccount["local"]?.providers["app-inbound-fixture"]?.requests == 2 }
+        expectNoDifference(f.model.settings.usageByAccount, ["local": .init(providers: ["app-inbound-fixture": .init(
+            requests: 2, inputTokens: 23, outputTokens: 13, cacheReadTokens: 7, cacheWriteTokens: 5, costMicros: 70)])])
+        f.feed.emit(event(f)); await f.model.reconcileChannelInbound()
+        let notReplayed = await f.probe.requests; #expect(diff(notReplayed, requests) == nil)
+        let reopened = try ChannelService(storeURL: f.root.appending(path: "channels.json"))
+        let reopenedRuns = await reopened.inboundRuns(), reopenedDeliveries = await reopened.deliveries()
+        expectNoDifference(reopenedRuns, [try persistedChannel(finished)]); expectNoDifference(reopenedDeliveries, try persistedChannel(deliveries))
+        let reopenedChat = try await ConversationStore(fileURL: f.root.appending(path: "conversations.json")).conversation(id: chatID)
+        expectNoDifference(reopenedChat, after)
+        try await assertUnrelatedUntouched(f)
+    }
+
+    @Test(arguments: ["throw", "length", "cancel"])
+    func unsuccessfulFirstIncomingPassCannotStartAReplyReminder(reason: String) async throws {
+        let f = try await fixture(mode: "nudge-initial-\(reason)")
+        defer { f.feed.finish(); try? FileManager.default.removeItem(at: f.root) }
+        let store = ConversationStore(fileURL: f.root.appending(path: "conversations.json"))
+        let before = try #require(try await store.conversation(id: chatID))
+        f.feed.emit(event(f)); let run = try await settle(f)
+        expectNoDifference(run.status, reason == "cancel" ? .cancelled : .failed)
+        let requests = await f.probe.requests, deliveries = await f.service.deliveries(), sent = await f.probe.sent
+        expectNoDifference(requests.count, 1); expectNoDifference(deliveries, []); expectNoDifference(sent, [])
+        let after = try #require(try await store.conversation(id: chatID))
+        let source = ExternalChannelMessageSource(connectionID: f.connection.id, externalEventID: event(f).externalEventID,
+            owner: .init(accountID: "local", agentID: f.owner.id), conversationID: chatID,
+            platform: "slack", channelID: "C_REMOTE", threadID: "T_REMOTE", senderID: "U_REMOTE", senderName: "Remote human", receivedAt: date)
+        let error: String? = reason == "cancel" ? nil : (reason == "length"
+            ? ProviderError.truncated("length").localizedDescription : ProviderError.transport("Offline first incoming pass failed").localizedDescription)
+        var expected = before
+        expected.messages.append(.init(id: run.messageID, role: .user, text: event(f).text, createdAt: date, externalChannelSource: source))
+        expected.messages.append(.init(id: run.id, role: .assistant, text: "", createdAt: run.startedAt,
+            deliveryStatus: reason == "cancel" ? .cancelled : .failed, deliveryError: error))
+        expected.updatedAt = after.updatedAt; DirectMessageAddressing.assignMissing(in: &expected)
+        expectNoDifference(after, sqliteStoredDates(expected))
+        f.feed.emit(event(f)); await f.model.reconcileChannelInbound()
+        let notReplayed = await f.probe.requests; #expect(diff(notReplayed, requests) == nil)
+        try await assertUnrelatedUntouched(f)
+    }
+
+    @Test(arguments: [0, 1], ["stop", "account", "connection-ABA", "binding-ABA", "persona-ABA", "hidden"])
+    func nativeIncomingScopeInvalidationStillCancelsBothHiddenPasses(pass: Int, mutation: String) async throws {
+        let gate = AppInboundPassBarrier(pass: pass)
+        let f = try await fixture(mode: "nudge-silent", passBarrier: gate)
+        defer { gate.open(); f.feed.finish(); try? FileManager.default.removeItem(at: f.root) }
+        let store = ConversationStore(fileURL: f.root.appending(path: "conversations.json"))
+        f.feed.emit(event(f)); try await eventually { gate.isWaiting }
+        let initialRun = try #require(await f.service.inboundRuns().first)
+        let before = try #require(try await store.conversation(id: chatID))
+        let mi = try #require(before.messages.firstIndex { $0.id == initialRun.id })
+        expectNoDifference(before.messages[mi].text, ""); expectNoDifference(before.messages[mi].toolActivities, [])
+        let ci = try #require(f.model.conversations.firstIndex { $0.id == chatID })
+        let original = f.model.conversations[ci]
+        f.model.selectRoute(.conversation(chatID))
+        switch mutation {
+        case "stop": f.model.cancel()
+        case "account":
+            await f.model.cancelAutoReviewApprovals(nextAccountID: "foreign")
+            f.model.settings.accountScope = "foreign"
+        case "connection-ABA":
+            try await f.service.setConnectionEnabled(id: f.connection.id, enabled: false)
+            try await f.service.setConnectionEnabled(id: f.connection.id, enabled: true)
+            await f.model.reconcileChannelInbound()
+        case "binding-ABA": f.model.conversations[ci].agentBinding = nil; f.model.conversations[ci].agentBinding = original.agentBinding
+        case "persona-ABA":
+            let ai = try #require(f.model.agents.firstIndex { $0.id == f.owner.id })
+            f.model.agents[ai].instructions = "Retired incoming persona"; f.model.agents[ai].instructions = f.owner.instructions
+        default: f.model.conversations[ci].hiddenAt = date
+        }
+        gate.open(); let terminal = try await settle(f)
+        expectNoDifference(terminal.status, .cancelled)
+        let requests = await f.probe.requests, deliveries = await f.service.deliveries(), sent = await f.probe.sent
+        expectNoDifference(requests.count, pass + 1); expectNoDifference(deliveries, []); expectNoDifference(sent, [])
+        let after = try #require(try await store.conversation(id: chatID))
+        var expected = before; expected.messages[mi].deliveryStatus = .cancelled
+        expectNoDifference(after, expected)
+        expectNoDifference(f.model.pendingAutoReviewApprovals, []); expectNoDifference(f.model.pendingWorkspaceFolders, [])
+        expectNoDifference(f.model.running, [])
+        let reopened = try ChannelService(storeURL: f.root.appending(path: "channels.json"))
+        let savedRuns = await reopened.inboundRuns(); expectNoDifference(savedRuns, [try persistedChannel(terminal)])
+        let reopenedChat = try await ConversationStore(fileURL: f.root.appending(path: "conversations.json")).conversation(id: chatID)
+        expectNoDifference(reopenedChat, after)
         try await assertUnrelatedUntouched(f)
     }
 
@@ -1177,7 +1411,7 @@ private struct AppInboundProvider: InteractiveToolProvider {
         // A still-unclaimed event can be admitted afresh by the next listener
         // reconciliation, but never by resurrecting this old captured scope.
         let finished = try await settle(f); expectNoDifference(finished.status, .completed)
-        let requests = await f.probe.requests; expectNoDifference(requests.count, 1)
+        let requests = await f.probe.requests; expectNoDifference(requests.count, 2)
         let afterDeliveries = await f.service.deliveries(), afterSent = await f.probe.sent
         expectNoDifference(afterDeliveries, []); expectNoDifference(afterSent, [])
         try await assertUnrelatedUntouched(f)
@@ -1203,8 +1437,10 @@ private struct AppInboundProvider: InteractiveToolProvider {
         let incoming = try #require(f.model.agentMessages.first { $0.recipientID == f.peer.id })
         expectNoDifference(incoming.senderID, f.owner.id); expectNoDifference(incoming.text, "EXACT_INBOUND_PEER_TASK")
         let requests = await f.probe.requests
-        expectNoDifference(requests.count, 2)
-        let request = requests[1], peerContext = request.messages.map(\.text).joined(separator: "\n")
+        expectNoDifference(requests.count, 3)
+        let peerRequests = requests.filter { $0.messages.contains { $0.role == .system && $0.text.contains("INBOUND_PEER_PERSONA") } }
+        expectNoDifference(peerRequests.count, 1)
+        let request = try #require(peerRequests.first), peerContext = request.messages.map(\.text).joined(separator: "\n")
         #expect(peerContext.contains("INBOUND_PEER_PERSONA") && peerContext.contains("EXACT_INBOUND_PEER_TASK"))
         #expect(!peerContext.contains("REMOTE_DATA") && !peerContext.contains("OWN_LOCAL_HISTORY")
             && !peerContext.contains("NEVER_LEAK_UNRELATED_HISTORY") && !peerContext.contains("NEVER_BORROW_PEER_PRIVATE_HISTORY"))

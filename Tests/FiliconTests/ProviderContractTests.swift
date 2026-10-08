@@ -68,6 +68,45 @@ private func collect(_ provider: any AIProvider, request: InferenceRequest) asyn
 
 @Suite(.serialized)
 struct ProviderContractTests {
+    @Test(arguments: ["responses", "chat", "anthropic", "gemini"])
+    func privateTextOnlyExchangeDoesNotInventEmptyToolCallsOrResultMessages(format: String) async throws {
+        ContractURLProtocol.handler = { request in
+            let body = try jsonBody(request)
+            let rowKey = format == "responses" ? "input" : format == "gemini" ? "contents" : "messages"
+            let rows = try #require(body[rowKey] as? [[String: Any]])
+            expectNoDifference(rows.count, 2)
+            let last = try #require(rows.last)
+            expectNoDifference(last["role"] as? String, format == "gemini" ? "model" : "assistant")
+            #expect(last["tool_calls"] == nil)
+            if format == "anthropic" {
+                let content = try #require(last["content"] as? [[String: String]])
+                expectNoDifference(content, [["type": "text", "text": "PRIVATE_EPHEMERAL_RESULT"]])
+            } else if format == "gemini" {
+                let parts = try #require(last["parts"] as? [[String: String]])
+                expectNoDifference(parts, [["text": "PRIVATE_EPHEMERAL_RESULT"]])
+            } else { expectNoDifference(last["content"] as? String, "PRIVATE_EPHEMERAL_RESULT") }
+            let completion: String
+            switch format {
+            case "responses": completion = "data: {\"type\":\"response.completed\",\"response\":{\"usage\":{}}}\n\ndata: [DONE]\n\n"
+            case "chat": completion = "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"
+            case "anthropic": completion = "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"}}\n\ndata: {\"type\":\"message_stop\"}\n\n"
+            default: completion = "data: {\"candidates\":[{\"finishReason\":\"STOP\"}]}\n\n"
+            }
+            return (200, Data(completion.utf8))
+        }
+        let provider: any AIProvider
+        switch format {
+        case "responses": provider = OpenAIProvider(credential: { "FAKE_KEY" }, session: contractSession())
+        case "chat": provider = OpenRouterProvider(credential: { "FAKE_KEY" }, session: contractSession())
+        case "anthropic": provider = AnthropicProvider(credential: { "FAKE_KEY" }, session: contractSession())
+        default: provider = GeminiProvider(credential: { "FAKE_KEY" }, session: contractSession())
+        }
+        let request = InferenceRequest(conversationID: UUID(), modelID: "fixture", messages: [.init(role: .user, text: "Isolated initial input")],
+            toolExchanges: [.init(assistantText: "PRIVATE_EPHEMERAL_RESULT", calls: [], results: []), .init(calls: [], results: [])])
+        let events = try await collect(provider, request: request)
+        #expect(events.contains(.completed(.stop)))
+    }
+
     @Test func providerUsageIncludesCacheAndCostWithoutDoubleCountingCumulativeFrames() async throws {
         ContractURLProtocol.handler = { _ in
             let fixture = """

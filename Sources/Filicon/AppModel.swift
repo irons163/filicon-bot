@@ -3098,6 +3098,7 @@ final class AppModel: ObservableObject {
             var publisher: AgentUserMessageTool?
             var messaging: AgentMessagingSession?
             var channelBindingLease: ConversationBindingLease?
+            var priorPassUsage: Usage?
             defer {
                 closeDirectChannelCardContinuation(cardContinuation)
                 channelLifetime?.close()
@@ -3381,30 +3382,49 @@ final class AppModel: ObservableObject {
                     tools += session.tools(for: agentIdentity.agentID,
                         memoryQuery: requestMessages.last(where: { $0.role == .user })?.text ?? "")
                 }
-                try await coordinator.send(request: request, providerID: providerID, additionalTools: tools,
-                    toolContext: routine.map { .init(conversationID: id, runID: $0.runID) }
-                        ?? cardContinuation.map { _ in .init(conversationID: id, runID: assistantID) },
-                    agentID: agentIdentity?.agentID,
-                    agentLane: routine?.isManual == true || routine == nil ? .user : .background,
-                    executionTimeout: routine == nil ? nil : .seconds(180), onStart: { [weak self] in
-                        guard let self else { throw CancellationError() }
-                        if let routine { try await self.validateBackgroundDirectExecution(routine) }
-                        if let cardContinuation { try await self.validateDirectChannelCardContinuation(cardContinuation) }
-                        let liveIdentity = try await self.directTurnAgentIdentity(conversationID: id,
-                            binding: agentBinding, accountScope: accountScope, generation: publicationGeneration,
-                            providerID: providerID, modelID: requestModelID)
-                        guard liveIdentity == agentIdentity else { throw CancellationError() }
-                        if let routine { try await self.validateBackgroundDirectExecution(routine) }
-                    }) { [weak self] event in
-                    if let routine {
-                        guard let self else { throw CancellationError() }
-                        try await self.validateBackgroundDirectExecution(routine)
+                let replyNudge = routine?.channelInbound == nil ? nil
+                    : ChannelInboundReplyNudge(createdAt: request.messages.last?.createdAt ?? Date())
+                var passRequest = request
+                for pass in 0...1 {
+                    let trace = pass == 0 ? replyNudge : nil
+                    try await coordinator.send(request: passRequest, providerID: providerID, additionalTools: tools,
+                        toolContext: routine.map { .init(conversationID: id, runID: $0.runID) }
+                            ?? cardContinuation.map { _ in .init(conversationID: id, runID: assistantID) },
+                        agentID: agentIdentity?.agentID,
+                        agentLane: routine?.isManual == true || routine == nil ? .user : .background,
+                        executionTimeout: routine == nil ? nil : .seconds(180), onStart: { [weak self] in
+                            guard let self else { throw CancellationError() }
+                            if let routine { try await self.validateBackgroundDirectExecution(routine) }
+                            if let cardContinuation { try await self.validateDirectChannelCardContinuation(cardContinuation) }
+                            let liveIdentity = try await self.directTurnAgentIdentity(conversationID: id,
+                                binding: agentBinding, accountScope: accountScope, generation: publicationGeneration,
+                                providerID: providerID, modelID: requestModelID)
+                            guard liveIdentity == agentIdentity else { throw CancellationError() }
+                            if let routine { try await self.validateBackgroundDirectExecution(routine) }
+                        }) { [weak self] event in
+                        if let routine {
+                            guard let self else { throw CancellationError() }
+                            try await self.validateBackgroundDirectExecution(routine)
+                        }
+                        if let cardContinuation {
+                            guard let self else { throw CancellationError() }
+                            try await self.validateDirectChannelCardContinuation(cardContinuation)
+                        }
+                        await trace?.record(event)
+                        await self?.consume(event, conversationID: id, assistantID: assistantID)
                     }
-                    if let cardContinuation {
-                        guard let self else { throw CancellationError() }
-                        try await self.validateDirectChannelCardContinuation(cardContinuation)
-                    }
-                    await self?.consume(event, conversationID: id, assistantID: assistantID)
+                    guard pass == 0, let replyNudge, let publisher, let routine,
+                          await publisher.publishedTexts.isEmpty else { break }
+                    try Task.checkCancellation()
+                    try await validateBackgroundDirectExecution(routine)
+                    passRequest = try await replyNudge.request(after: request)
+                    // The first pass incurred usage even if the reminder is later
+                    // cancelled. Keep its original account/provider receipt; only
+                    // the next pass's cumulative frames remain for finishTurn.
+                    priorPassUsage = pendingTurnUsage.removeValue(forKey: assistantID)
+                    if let priorPassUsage { await recordUsage(accountID: accountScope, providerID: providerID.rawValue, usage: priorPassUsage) }
+                    try Task.checkCancellation()
+                    try await validateBackgroundDirectExecution(routine)
                 }
                 // send has released the foreground agent lane. Draining inside
                 // that lane would deadlock when a peer replies to the sender.
@@ -3443,7 +3463,7 @@ final class AppModel: ObservableObject {
                 errorMessage = error.localizedDescription
                 setDeliveryStatus(.failed, error: error.localizedDescription, conversationID: id, assistantID: assistantID)
             }
-            routine?.usage = pendingTurnUsage[assistantID]
+            routine?.usage = ChannelInboundReplyNudge.combinedUsage(priorPassUsage, pendingTurnUsage[assistantID])
             await publisher?.close()
             if let messaging {
                 do { try await messaging.close(preservingMemorySynthesis: succeeded) }

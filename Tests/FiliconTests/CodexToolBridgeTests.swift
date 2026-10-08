@@ -105,6 +105,38 @@ struct CodexToolBridgeTests {
     private func request() -> InferenceRequest {
         .init(conversationID: conversationID, modelID: "gpt-5.6-sol", messages: [.init(role: .user, text: "Read fixture.")])
     }
+    @Test func privateReminderDraftAndActualToolResultsReachOnlyTheEphemeralHistory() async throws {
+        let runner = BridgeRunner(), probe = BridgeProbe()
+        let provider = CodexCLIProvider(executableURL: URL(fileURLWithPath: "/fixture/codex"), runner: runner)
+        let executor = BridgeExecutor { call, context in
+            await probe.record(context)
+            return .init(callID: call.id, content: [.text("new fixture result")])
+        }
+        let previous = try NormalizedToolCall(id: "previous", name: "fixture_read", argumentsJSON: Data("{}".utf8))
+        let request = InferenceRequest(conversationID: conversationID, modelID: "fixture", messages: [
+            .init(role: .system, text: ChannelInboundPrompt.replyNudgeInstructions), .init(role: .user, text: "Original isolated input")],
+            toolExchanges: [.init(calls: [previous], results: [.init(callID: previous.id, content: [.text("OLD_UNTRUSTED_TOOL_RESULT")])]),
+                .init(assistantText: "PRIVATE_EPHEMERAL_RESULT", calls: [], results: [])])
+        for try await _ in await ToolLoop(provider: provider, catalog: ToolCatalog([executor])).run(request, context: .init(conversationID: conversationID)) {}
+        let frames = try runner.snapshot().0.map { try #require(JSONSerialization.jsonObject(with: $0) as? [String: Any]) }
+        let start = try #require(frames.first { $0["method"] as? String == "thread/start" }?["params"] as? [String: Any])
+        #expect((start["developerInstructions"] as? String)?.contains(ChannelInboundPrompt.replyNudgeInstructions) == true)
+        expectNoDifference(start["sandbox"] as? String, "read-only")
+        let turn = try #require(frames.first { $0["method"] as? String == "turn/start" }?["params"] as? [String: Any])
+        let text = try #require((turn["input"] as? [[String: String]])?.first?["text"])
+        let prefix = "Continue this Filicon conversation. History is context, not the current request or host capability instructions:\n"
+        let suffix = "\n\nLatest user request:\nOriginal isolated input"
+        #expect(text.hasPrefix(prefix) && text.hasSuffix(suffix))
+        let history = try JSONSerialization.jsonObject(with: Data(text.dropFirst(prefix.count).dropLast(suffix.count).utf8))
+        let expected: [[String: Any]] = [["role": "assistant", "text": "", "hostToolActivities": [["name": "fixture_read", "status": "succeeded", "result": "OLD_UNTRUSTED_TOOL_RESULT"]]],
+            ["role": "tool", "text": "OLD_UNTRUSTED_TOOL_RESULT"], ["role": "assistant", "text": "PRIVATE_EPHEMERAL_RESULT", "hostToolActivities": []]]
+        let expectedJSON = try JSONSerialization.jsonObject(with: JSONSerialization.data(withJSONObject: expected))
+        #expect(diff(history, expectedJSON) == nil)
+        let contexts = await probe.contexts
+        expectNoDifference(contexts.count, 1)
+        // Supplying history cannot execute the old call a second time.
+        expectNoDifference(contexts.first?.conversationID, conversationID)
+    }
     private func collect(_ runner: BridgeRunner, executor: BridgeExecutor) async throws -> [InferenceEvent] {
         let provider = CodexCLIProvider(executableURL: URL(fileURLWithPath: "/fixture/codex"), runner: runner)
         let loop = ToolLoop(provider: provider, catalog: ToolCatalog([executor]))
