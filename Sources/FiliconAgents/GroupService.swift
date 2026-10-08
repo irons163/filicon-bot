@@ -14,16 +14,71 @@ public struct GroupMemberIdentity: Codable, Equatable, Sendable {
     }
 }
 
+/// Process-local attestation of one native member attempt. A public context or
+/// a provider error cannot construct it, and it grants no tool permissions.
+public final class GroupMemberExecutionAttempt: @unchecked Sendable {
+    public let number: Int
+    let agentID: UUID
+    private let scope = AgentWorkflowExecutionScope()
+    private let lease: AgentWorkflowExecutionScope.Lease
+    private let admissionLease: AgentWorkflowExecutionScope.Lease
+    private let validateSource: @Sendable () async throws -> Void
+    private let reactionLock = NSLock()
+    private var reacted = false
+    private var started = false
+
+    fileprivate init(number: Int, agentID: UUID, inherited: AgentWorkflowExecutionScope.Lease,
+                     admissionLease: AgentWorkflowExecutionScope.Lease,
+                     validateSource: @escaping @Sendable () async throws -> Void) throws {
+        self.number = number; self.agentID = agentID
+        self.lease = try scope.capture(inheriting: inherited)
+        self.admissionLease = admissionLease
+        self.validateSource = validateSource
+    }
+
+    public func validate() async throws {
+        try lease.check()
+        if !reactionLock.withLock({ started }) { try admissionLease.check() }
+        try await validateSource()
+        if !reactionLock.withLock({ started }) { try admissionLease.check() }
+        try lease.check()
+    }
+
+    /// Only the native scheduler calls this after actual lane admission. A
+    /// queued attempt must retain its original complete public/private persona;
+    /// an admitted turn may finish after a reviewed public name/summary edit.
+    func beginExecution() async throws {
+        try await validate()
+        try admissionLease.commit { reactionLock.withLock { started = true } }
+        try await validate()
+    }
+
+    func commit<Value>(_ operation: () throws -> Value) throws -> Value { try lease.commit(operation) }
+    func close() { scope.invalidate() }
+    fileprivate func markReaction() { reactionLock.withLock { reacted = true } }
+    fileprivate var hasReacted: Bool { reactionLock.withLock { reacted } }
+    fileprivate var hasBegun: Bool { reactionLock.withLock { started } }
+}
+
 public struct GroupTurnContext: Sendable {
     public let group: AgentGroup
     public let members: [GroupMemberIdentity]
     public let respondingMemberIDs: [UUID]
     public let round: Int
     public let newMessageIDs: Set<UUID>
+    public let executionAttempt: GroupMemberExecutionAttempt?
 
     public init(group: AgentGroup, members: [GroupMemberIdentity], respondingMemberIDs: [UUID], round: Int, newMessageIDs: Set<UUID>) {
         self.group = group; self.members = members; self.respondingMemberIDs = respondingMemberIDs
         self.round = round; self.newMessageIDs = newMessageIDs
+        self.executionAttempt = nil
+    }
+
+    fileprivate init(group: AgentGroup, members: [GroupMemberIdentity], respondingMemberIDs: [UUID],
+                     round: Int, newMessageIDs: Set<UUID>, executionAttempt: GroupMemberExecutionAttempt) {
+        self.group = group; self.members = members; self.respondingMemberIDs = respondingMemberIDs
+        self.round = round; self.newMessageIDs = newMessageIDs
+        self.executionAttempt = executionAttempt
     }
 }
 
@@ -182,6 +237,7 @@ public actor GroupService {
     public static let maximumRounds = 3
     public static let maximumMemberMessages = 10
     public static let maximumMessagesPerMemberTurn = 2
+    public static let maximumMemberPreemptionAttempts = 3
     private let agents: AgentService
     private let storeURL: URL
     private let activityDate: @Sendable () -> Date
@@ -191,6 +247,8 @@ public actor GroupService {
     private var persistedState: AgentPersistentState
     private var epochs: [UUID: UInt64] = [:]
     private var activeResponses: [UUID: Task<[String], any Error>] = [:]
+    private var groupExecutionScopes: [UUID: AgentWorkflowExecutionScope] = [:]
+    private var activeAttempts: [UUID: GroupMemberExecutionAttempt] = [:]
     private var explicitReplies: [UUID: [RoomMessage]] = [:]
 
     public init(agents: AgentService, storeURL: URL, activityDate: @escaping @Sendable () -> Date = { Date() }) throws {
@@ -317,6 +375,8 @@ public actor GroupService {
         try persist()
         if previous.memberIDs != memberIDs {
             groupReadScopes[groupID]?.invalidate()
+        }
+        if previous.name != updated.name || previous.summary != updated.summary || previous.memberIDs != memberIDs {
             stop(groupID: groupID)
         }
     }
@@ -375,6 +435,7 @@ public actor GroupService {
         retireQuestions(groupID: groupID, onlyMoveOn: true)
         state.roomMessages.append(message)
         try persist()
+        stop(groupID: groupID)
         return state.roomMessages.last(where: { $0.id == message.id }) ?? message
     }
 
@@ -420,6 +481,7 @@ public actor GroupService {
         responder: any GroupAgentResponder,
         delegatedAudience: AgentGroupAudience? = nil,
         delegatedSenderID: UUID? = nil,
+        executionLease: AgentWorkflowExecutionScope.Lease? = nil,
         onAgentChange: @escaping @Sendable (UUID?) async -> Void = { _ in },
         onMessage: @escaping @Sendable (RoomMessage) async -> Void = { _ in }
     ) async throws -> [RoomMessage] {
@@ -429,10 +491,18 @@ public actor GroupService {
             guard group.id == delegatedAudience.id, group.memberIDs == delegatedAudience.memberIDs else { throw AgentGroupPostError.changed }
         }
         guard !group.memberIDs.isEmpty else { return [] }
+        try executionLease?.check()
+        activeAttempts.removeValue(forKey: groupID)?.close()
         activeResponses[groupID]?.cancel()
+        let groupScope = groupExecutionScopes[groupID] ?? AgentWorkflowExecutionScope()
+        groupExecutionScopes[groupID] = groupScope
+        groupScope.invalidate()
+        let groupLease = try groupScope.capture(inheriting: executionLease)
         epochs[groupID, default: 0] &+= 1
         let epoch = epochs[groupID]!
         let members = await resolveMembers(group.memberIDs)
+        try groupLease.check()
+        try validateMemberSource(group: group, epoch: epoch)
         var produced: [RoomMessage] = []
         var total = 0
         var successfulTurns = 0
@@ -480,53 +550,94 @@ public actor GroupService {
                    !unread.contains(where: { $0.senderID != memberID && (!$0.text.isEmpty || !($0.images ?? []).isEmpty || !($0.files ?? []).isEmpty || $0.remoteAttachment != nil || !$0.toolActivities.isEmpty) }) {
                     continue
                 }
-                let context = GroupTurnContext(
-                    group: group, members: currentMembers.map(GroupMemberIdentity.init),
-                    respondingMemberIDs: responderIDs, round: round,
-                    newMessageIDs: Set(unread.map(\.id))
-                )
-                let responses: [String]
-                var activity = RoomMessage(groupID: groupID, senderID: memberID, text: "")
-                activity.replyToMessageID = threadTarget
-                let activityMessage = activity
+                let personaLease = try await agents.captureGroupMemberIdentity(agent)
+                let memberLease = try groupLease.inheriting(personaLease)
+                let turnPersonaLease = try await agents.captureGroupMemberTurnIdentity(agent)
+                let turnLease = try groupLease.inheriting(turnPersonaLease)
+                var responses: [String] = []
+                var responseSucceeded = false
+                var activityMessage = RoomMessage(groupID: groupID, senderID: memberID, text: "")
+                var attemptActivities: [UUID] = []
+                var attemptTickets: [GroupMemberExecutionAttempt] = []
                 let remainingBudget = Self.maximumMemberMessages - total
                 let previousTexts = publishedTexts[memberID, default: []]
-                defer { explicitReplies[activityMessage.id] = nil }
-                await onAgentChange(agent.id)
-                guard epochs[groupID] == epoch, !Task.isCancelled else {
-                    await onAgentChange(nil)
-                    return produced
+                defer {
+                    for id in attemptActivities { explicitReplies[id] = nil }
+                    for ticket in attemptTickets { ticket.close() }
+                    if attemptTickets.contains(where: { activeAttempts[groupID] === $0 }) { activeAttempts[groupID] = nil }
                 }
-                let responseTask = Task {
-                    try Task.checkCancellation()
-                    return try await responder.respond(agent: agent, history: history, context: context, onTools: { tools in
-                        try await self.recordTools(tools, message: activityMessage, epoch: epoch, onMessage: onMessage)
-                    }, onSavedPublication: { publication in
-                        try await self.recordExplicitReply(publication, activity: activityMessage, epoch: epoch,
-                                                           remainingBudget: remainingBudget, previousTexts: previousTexts, onMessage: onMessage)
-                    })
+                for attempt in 1...Self.maximumMemberPreemptionAttempts {
+                    try memberLease.check()
+                    let ticket = try GroupMemberExecutionAttempt(number: attempt, agentID: agent.id, inherited: turnLease,
+                        admissionLease: memberLease) {
+                        try await self.validateMemberSource(group: group, epoch: epoch)
+                    }
+                    attemptTickets.append(ticket)
+                    activeAttempts[groupID] = ticket
+                    let context = GroupTurnContext(group: group, members: currentMembers.map(GroupMemberIdentity.init),
+                        respondingMemberIDs: responderIDs, round: round, newMessageIDs: Set(unread.map(\.id)), executionAttempt: ticket)
+                    let attemptHistory = state.roomMessages.filter { $0.groupID == groupID }
+                    var activity = RoomMessage(groupID: groupID, senderID: memberID, text: "")
+                    activity.replyToMessageID = threadTarget
+                    let currentActivity = activity
+                    activityMessage = currentActivity
+                    attemptActivities.append(currentActivity.id)
+                    await onAgentChange(agent.id)
+                    guard epochs[groupID] == epoch, !Task.isCancelled, memberLease.isActive else {
+                        await onAgentChange(nil)
+                        return produced
+                    }
+                    let responseTask = Task {
+                        try await ticket.validate()
+                        return try await responder.respond(agent: agent, history: attemptHistory, context: context, onTools: { tools in
+                            try await self.recordTools(tools, message: currentActivity, epoch: epoch, attempt: ticket, onMessage: onMessage)
+                        }, onSavedPublication: { publication in
+                            try await self.recordExplicitReply(publication, activity: currentActivity, epoch: epoch, attempt: ticket,
+                                remainingBudget: remainingBudget, previousTexts: previousTexts, onMessage: onMessage)
+                        })
+                    }
+                    activeResponses[groupID] = responseTask
+                    do {
+                        responses = try await withTaskCancellationHandler {
+                            try await responseTask.value
+                        } onCancel: { responseTask.cancel() }
+                        try await ticket.validate()
+                        successfulTurns += 1
+                        responseSucceeded = true
+                        break
+                    } catch {
+                        let published = explicitReplies[currentActivity.id] ?? []
+                        let priorityInterruption = (error as? AgentExecutionSuperseded)?.groupMemberAttempt === ticket
+                        ticket.close()
+                        try await finishPendingTools(messageID: currentActivity.id,
+                            cancelled: error is CancellationError || error is AgentExecutionSuperseded || epochs[groupID] != epoch || Task.isCancelled,
+                            onMessage: onMessage)
+                        await onAgentChange(nil)
+                        guard epochs[groupID] == epoch, !Task.isCancelled, turnLease.isActive,
+                              ticket.hasBegun || memberLease.isActive else { return produced + published }
+                        activeResponses[groupID] = nil
+                        if priorityInterruption {
+                            // Only the scheduler's exact native attempt can resume.
+                            // Fresh contexts/publishers/tools are created on every
+                            // retry, never replaying an old approval or callback.
+                            if published.isEmpty, !ticket.hasReacted, memberLease.isActive,
+                               attempt < Self.maximumMemberPreemptionAttempts { continue }
+                            successfulTurns += 1
+                            responseSucceeded = true
+                            responses = []
+                            break
+                        }
+                        produced += published
+                        total += published.count
+                        messagesThisRound += published.count
+                        if published.contains(where: { $0.question != nil }) { return produced }
+                        failedMemberIDs.insert(memberID)
+                        try await recordOutcome(.failed, message: currentActivity, onMessage: onMessage)
+                        if firstFailure == nil { firstFailure = error }
+                        break
+                    }
                 }
-                activeResponses[groupID] = responseTask
-                do {
-                    responses = try await withTaskCancellationHandler {
-                        try await responseTask.value
-                    } onCancel: { responseTask.cancel() }
-                    successfulTurns += 1
-                } catch {
-                    let published = explicitReplies[activityMessage.id] ?? []
-                    produced += published
-                    total += published.count
-                    messagesThisRound += published.count
-                    try await finishPendingTools(messageID: activityMessage.id, cancelled: error is CancellationError || error is AgentExecutionSuperseded || epochs[groupID] != epoch || Task.isCancelled, onMessage: onMessage)
-                    await onAgentChange(nil)
-                    guard epochs[groupID] == epoch, !Task.isCancelled else { return produced }
-                    activeResponses[groupID] = nil
-                    if published.contains(where: { $0.question != nil }) { return produced }
-                    failedMemberIDs.insert(memberID)
-                    try await recordOutcome(.failed, message: activityMessage, onMessage: onMessage)
-                    if firstFailure == nil { firstFailure = error }
-                    continue
-                }
+                guard responseSucceeded else { continue }
                 guard epochs[groupID] == epoch, !Task.isCancelled else {
                     try await finishPendingTools(messageID: activityMessage.id, cancelled: true, onMessage: onMessage)
                     return produced
@@ -556,10 +667,14 @@ public actor GroupService {
                     var message = RoomMessage(groupID: groupID, senderID: memberID, text: boundedText)
                     message.replyToMessageID = threadTarget
                     if sentThisTurn == 0, let index = state.roomMessages.firstIndex(where: { $0.id == activityMessage.id }) {
-                        state.roomMessages[index].text = message.text
-                        message = state.roomMessages[index]
-                    } else { state.roomMessages.append(message) }
-                    try persist()
+                        try attemptTickets.last?.commit {
+                            state.roomMessages[index].text = message.text
+                            message = state.roomMessages[index]
+                            try persist()
+                        }
+                    } else {
+                        try attemptTickets.last?.commit { state.roomMessages.append(message); try persist() }
+                    }
                     message = state.roomMessages.last(where: { $0.id == message.id }) ?? message
                     produced.append(message)
                     await onMessage(message)
@@ -589,7 +704,17 @@ public actor GroupService {
 
     public func stop(groupID: UUID) {
         epochs[groupID, default: 0] &+= 1
+        groupExecutionScopes[groupID]?.invalidate()
+        activeAttempts.removeValue(forKey: groupID)?.close()
         activeResponses.removeValue(forKey: groupID)?.cancel()
+    }
+
+    private func validateMemberSource(group: AgentGroup, epoch: UInt64) throws {
+        try Task.checkCancellation()
+        guard epochs[group.id] == epoch,
+              let current = state.groups.first(where: { $0.id == group.id }),
+              current.name == group.name, current.summary == group.summary,
+              current.memberIDs == group.memberIDs else { throw CancellationError() }
     }
 
     private struct GalleryImageFingerprint: Hashable {
@@ -626,7 +751,8 @@ public actor GroupService {
         return normalized.isEmpty ? .imageIDs(images.map(\.id)) : .text(normalized)
     }
 
-    private func recordExplicitReply(_ publication: GroupAgentPublication, activity: RoomMessage, epoch: UInt64, remainingBudget: Int,
+    private func recordExplicitReply(_ publication: GroupAgentPublication, activity: RoomMessage, epoch: UInt64,
+                                     attempt: GroupMemberExecutionAttempt, remainingBudget: Int,
                                      previousTexts: Set<ReplyFingerprint>, onMessage: @Sendable (RoomMessage) async -> Void) async throws -> RoomMessage {
         try Task.checkCancellation()
         guard epochs[activity.groupID] == epoch else { throw CancellationError() }
@@ -732,8 +858,10 @@ public actor GroupService {
             let saved = self.state.roomMessages.last(where: { $0.id == message.id }) ?? message
             self.explicitReplies[activity.id, default: []].append(saved)
         }
-        if let lifetime = publication.remoteImages?.lifetime ?? publication.remoteAttachment?.lifetime ?? publication.file?.lifetime ?? publication.lifetime { try lifetime.commit(commit) }
-        else { try commit() }
+        try attempt.commit {
+            if let lifetime = publication.remoteImages?.lifetime ?? publication.remoteAttachment?.lifetime ?? publication.file?.lifetime ?? publication.lifetime { try lifetime.commit(commit) }
+            else { try commit() }
+        }
         // Capture the durable identity before yielding to UI callbacks. Never
         // acknowledge the pre-save draft, which has no assigned short address.
         let saved = state.roomMessages.last(where: { $0.id == message.id }) ?? message
@@ -766,16 +894,19 @@ public actor GroupService {
         return message
     }
 
-    private func recordTools(_ tools: [RoomToolActivity], message: RoomMessage, epoch: UInt64, onMessage: @Sendable (RoomMessage) async -> Void) async throws {
+    private func recordTools(_ tools: [RoomToolActivity], message: RoomMessage, epoch: UInt64,
+                             attempt: GroupMemberExecutionAttempt, onMessage: @Sendable (RoomMessage) async -> Void) async throws {
         try Task.checkCancellation()
         guard epochs[message.groupID] == epoch else { throw CancellationError() }
         var updated = message
         updated.toolActivities = tools
-        if let index = state.roomMessages.firstIndex(where: { $0.id == message.id }) {
-            updated.shortAddress = state.roomMessages[index].shortAddress
-            state.roomMessages[index] = updated
-        } else { state.roomMessages.append(updated) }
-        try persist()
+        try attempt.commit {
+            if let index = state.roomMessages.firstIndex(where: { $0.id == message.id }) {
+                updated.shortAddress = state.roomMessages[index].shortAddress
+                state.roomMessages[index] = updated
+            } else { state.roomMessages.append(updated) }
+            try persist()
+        }
         await onMessage(state.roomMessages.last(where: { $0.id == updated.id }) ?? updated)
     }
 
@@ -805,9 +936,19 @@ public actor GroupService {
         let emoji = emoji.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !emoji.isEmpty, emoji.count <= 32, state.roomMessages.contains(where: { $0.id == messageID }) else { throw AgentServiceError.invalidReaction }
         if let index = state.reactions.firstIndex(where: { $0.messageID == messageID && $0.actorID == actorID && $0.emoji == emoji }) {
-            state.reactions.remove(at: index); try persist(); return false
+            state.reactions.remove(at: index); try persist()
+            markMemberReaction(messageID: messageID, actorID: actorID)
+            return false
         }
-        state.reactions.append(.init(messageID: messageID, actorID: actorID, emoji: emoji)); try persist(); return true
+        state.reactions.append(.init(messageID: messageID, actorID: actorID, emoji: emoji)); try persist()
+        markMemberReaction(messageID: messageID, actorID: actorID)
+        return true
+    }
+
+    private func markMemberReaction(messageID: UUID, actorID: UUID) {
+        guard let message = state.roomMessages.first(where: { $0.id == messageID }),
+              let attempt = activeAttempts[message.groupID], attempt.agentID == actorID else { return }
+        attempt.markReaction()
     }
 
     public func messages(groupID: UUID) -> [RoomMessage] { state.roomMessages.filter { $0.groupID == groupID } }

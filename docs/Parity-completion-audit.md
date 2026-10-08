@@ -1,5 +1,47 @@
 # 完成驗收入口（2026-09-27）
 
+## 群組成員優先中斷與有界續接（2026-10-08，最後必要 gate 全部通過，隨本批提交）
+
+最後 v9 來源已通過聚焦／完整相關／無 filter 全套、native Debug build／verify、全新 standalone Debug 封裝／獨立 verify 與七語 keys。下方較早的「尚待／未 commit」段落保留當時失敗歷史，不是最新狀態；本節末尾列出最後 gate，不以舊 incoming 或早期 v7 的成功代替新來源。
+
+本輪基線為 `02eeb07`；下方 incoming 的全綠 gate 是該已提交來源的證據，不證明本輪新 source 完成。重新核對 reconstructed HEAD `a9f633e09d49a85829b8236331b9e21f7e612634` 的 `group-chat-glue.ts:315–483`、`send-turn-dispatch.ts:123–142` 與 `agent-to-agent-messaging.ts:100–150`：正常成員工作可被真正人類 Send 或明確核准的 priority peer 打斷；已公開回覆／反應不重排，未公開且原 room／member 仍有效才建立 fresh attempt，合計最多三次。人類回合仍受保護，普通 peer／Stop／一般錯誤不是續接權限。
+
+目前正常群組成員走 native background lane；真正 typed human Send 明確 priority，先等待原工具清理，沒有把 private DM inference 帶進群組。GroupService 自己建立不可由公開 context／模型錯誤建構的 attempt，scheduler 僅替實際中斷的 exact native attempt 背書；每次續接建立新的 ToolContext、publisher、工具快照及核准。原 room／member persona／account lease 失效後不復活；Stop、改名／成員／persona／archive／帳號修改後還原、新群組人類訊息都撤銷舊續接。已公開的 native 回覆或已保存的本人 reaction（包含移除反應）阻止本次 member 重排。私訊結果不自動公開，也不放寬檔案或外部送件權限。
+
+初輪核心新增 6 methods／16 cases，scheduler 新增 1 method／2 cases；實際 App 新增 3 methods／11 cases，涵蓋真正 Send、普通／priority peer、舊工具 late callback、已公開／Stop／persona／account ABA，以及 native auto-review 與 local write permission 各兩個等待點的 fresh allow／deny。當時只是案例庫，不是已全部通過數。App v1 為測試 API 編譯錯誤，v2 成功編譯但 19 issues：其中 9 是 seed legacy address 尚未配置造成的完整值 baseline 差異；另外 10 找到產品的舊核准提示殘留。舊 native broker 已拒絕執行，不代表 UI 正確，不能放寬斷言掩蓋。
+
+已改為用真正 `DirectMessageAddressing` 在 fixture baseline 前配置 seed 的地址，保留全部欄位／無關聊天斷言。產品修正只退休被中斷 ToolContext 的 exact run 核准，不會 cancelAll 同 origin 的新人工核准；bounded retired-context 記錄及 native pending membership 用來防止晚到的 UI registration 恢復舊提示，實際授權仍由 native broker 的 fence／single-use claim 決定。正常、delegated 及 routine 群組入口都接入清理；仍待 actual App／相關回歸／full／native build／package gate。
+
+`group-member-redrive-app-v3.log` exit 1：新 source 編譯成功，core 26 methods／2 suites 通過，但 App 11 cases 全在初始群組／核准等待點超時，沒有進入推論。獨立 `group-member-redrive-app-diagnostic-v4.log` exit 1 的真正 protected profile probe 也失敗：剛寫入的 `agents.json` 重新讀取得到 Cocoa 257／POSIX 1 `Operation not permitted`；App 診斷為 requests／lane／room 皆空。不能將此環境拒絕當作修正通過，也不能取代 v2 找到的產品缺陷。已請使用者解鎖 Mac；沒有移除 `.completeFileProtectionUnlessOpen` 或改用繞過保護的儲存。
+
+`group-member-redrive-core-ui-v5.log` exit 0 使用 v4 剛編譯的同產品 binary：core 26 methods／2 suites（0.872 秒）及七語 notice 1 method／1 suite（0.299 秒）通過；七張 native PNG 已逐張目視，360 pt 寬度無截字。七語各 1,817 keys／0 missing 通過。v5 後另補 retired-context 檢查於 group／direct 分流前，避免 delegated origin 已離開 scope 時晚到 callback 進 direct UI；此最後 source 尚待重新編譯。低磁碟曾降至約 2.4 GiB，先不加跑大型 native 建置，未清理檔案。最後 actual App、相關／全套回歸、native build／package 尚未通過，因此本輪未 commit。
+
+使用者回覆解鎖後，`group-member-protection-unlocked-v6.log` exit 0：原保護探針通過（0.009 秒）。`group-member-redrive-app-v7.log` 重新編譯上述 retired-context 分流修正，exit 0：core 26 methods／2 suites（0.874 秒），App 5 methods／3 suites（1.507 秒，包含新 actual App 的全部 11 cases、原 notice render 與原 protected probe）。此為真正修正後 gate，但不證明後續新增 source 通過。
+
+相關 `group-member-redrive-regression-v1.log` exit 1：合計 355 methods／53 suites，5 issues。其中 remote/gallery 的四個 new-user cases 原本預期工具 error result；新 native human post 正確退休舊 room attempt，現在直接 CancellationError，更新精確允許取消的情境，另追加原 human row 的完整值與兩則人類內容檢查，仍不得保存旧附件。另一個 issue 是 `ownProfileChangeRefreshesTheNextGroupTurnWithoutChangingMembership`：已核准自己的公開名稱／description 變更被過度當成 private persona 撤銷，原當前回覆及後續團隊推論未完成。這是產品回歸，不能刪除測試或把少了兩個推論改成成功。
+
+已分開完整 persona 的排隊／redrive admission 與 admitted-turn 身分：native scheduler 真正取得 lane 時，在原完整 persona lease 下標記開始；排隊中的 name／summary edit-and-restore 仍失效。已開始的 current prompt 可以在公開 name／summary 改變後完成，下一次 inference 重新取 profile；私有 instructions／role／provider／model／archive 及 group／account lifetime 仍即刻拒絕舊 publication。ordinary error 在 admitted public edit 後也不會被誤吞。新增 queued name／summary／model ABA 三案及 admitted private identity 四案，core 案例庫現在 7 methods／23 cases，scheduler 1／2、actual App 3／11，合計新增 11 methods／36 cases；新案例尚未驗證。
+
+`group-member-profile-boundary-v8.log` exit 1 為新增測試在 CustomDump autoclosure 直接 await actor 的編譯錯誤，沒有 runtime gate；已改先 await 成 local value，但未重跑。該輪結束磁碟僅約 435–446 MiB 可用；已請使用者釋放至少 5 GiB 或明確同意列出可清建置產物，沒有擅自刪除／解除保護。最新 persona admission／remote assertions／測試修正仍待重新編譯及完整 gate。本輪仍未 commit。
+
+再次收到解鎖回覆後，唯讀狀態明確為 `IOConsoleLocked=No`。`group-member-protection-unlocked-v10.log` exit 1 是 `--skip-build` discovery 載入既有 `FiliconAgentsTests.xctest` 時的 Cocoa 3588／unsigned-library 拒絕；原生 codesign 唯讀檢查確認上次不完整建置留下的測試 bundle 未簽章，探針本身尚未執行，不能稱為新的檔案保護失敗或通過。空間從 2.6 GiB 再降至 212 MiB 後回復至 11 GiB 以上；沒有清理檔案、改簽章權限或重啟 App／Xcode。現在以既有快取重新建置最新 source 的 v9 聚焦 gate，正常建置負責重建測試產物；remote 原 human row 的完整比對亦改套實際 milliseconds 日期 codec，保留全部欄位，不省略日期或使用寬鬆 tolerance。
+
+最後 source 的 `group-member-profile-boundary-v9.log` exit 0：真正重編譯完成（1,022.33 秒），core 33 methods／3 suites（3.270 秒）及 actual App 5 methods／3 suites（9.939 秒），共 38 methods／6 suites 通過。包含 native member 23 cases、scheduler 正常／delegated lane、actual App 全部 11 cases、原已核准 own-profile 群組流程、remote/gallery 全部取消／持久化 assertions 與原 protected probe（0.009 秒）。不是 `--skip-build` 的 v10 失敗產物或只宣告測試存在；當時最新實作通過聚焦，完整相關／無 filter full／native build／standalone package 仍待，沒有先 commit。`group-member-priority-localization-v1.log` exit 0：七語各 1,817 keys／0 missing，v5 七語 native notice 圖片的 UI／文案 source 此後未變。
+
+`group-member-redrive-regression-v2.log` exit 0，明確 `--skip-build` 使用 v9 的最後產物：core 141 methods／24 suites（34.897 秒）、其他 bundle 2／1（2.635 秒）及 21／1（7.332 秒）、App 192／27（1,426.294 秒），合計 356 methods／53 suites 通過；前輪 remote new-user 與 own-profile 的五項 issues 不再出現，全部原相關案例保留。1 項 opt-in live 群組測試 skipped，不當真實服務驗收；既有 compiler／CoreGraphics／CoreData／NSXPC 診斷保留。無 filter 全套 v1 已開始，native／standalone gates 仍待。
+
+上述相關 gate 後的最後驗收均完成，覆蓋當時仍在進行中的狀態（忽略的 `.build/validation/` 日誌／artifacts）：
+
+- `group-member-redrive-full-v1.log` exit 0：同一 v9 最後來源／明確 `--skip-build`，無 filter／串行／live opt-in 關閉。17 Swift Testing bundles 合計 2,231 methods／264 suites，17 XCTest bundles 合計 135 tests／0 failures；App 830／104 suites（527.515 秒），core 1,057／119 suites（56.438 秒）。兩項 opt-in installed Codex tests skipped，compiler／CoreGraphics／CoreData／NSXPC 診斷保留，不算 live 或 warning-free。
+- `group-member-priority-native-v1.log` exit 0／`BUILD SUCCEEDED`：arm64 native Debug 增量建置，重用本任務隔離 `ChannelInboundNativeV3` DerivedData，明確重新編譯本批 AppModel／group 來源；不是 clean build。只指定此次 `DEVELOPER_DIR`，沒有更改系統 Xcode 選擇、啟動或重啟使用者 App／Xcode。
+- `group-member-priority-native-verify-v1.log` exit 0：上述 `ChannelInboundNativeV3/Build/Products/Debug/Filicon.app` 的 version 0.1.0／build 1、四個 executable、app／XPC entitlements、KaTeX 0.16.45／20 fonts／MIT、Mermaid 11.16.0／72 notices／MIT 與 deep strict codesign 通過。
+- `group-member-priority-package-v1.log` exit 0：事先確認不存在的新 `GroupMemberPriorityPackageV1/Filicon.app`，SPM Debug 依序建置四個 products（11.47／0.81／0.68／0.62 秒）後封裝，腳本內 verify 通過；`group-member-priority-package-verify-v1.log` exit 0 再獨立驗證 version／四個 executable／entitlements／offline resources／deep strict 簽章。沒有覆蓋既有 App，沒有執行印出的 launch smoke；Debug／ad-hoc 不算 Developer ID release／公證或 packaged XPC live 驗收。
+- `group-member-priority-localization-v1.log` exit 0：七語各 1,817 keys／0 missing；`group-member-priority-ui-v1/priority-warning-{language}.png` 七張 360 pt 原生 notice 圖已逐張目視，最後 UI／文案 source 未變。不代表整個 App 真人畫面／VoiceOver／最低 macOS 已驗收。
+
+Swift Testing／CustomDump 技能用於保留完整 native 保存 codec 往返及所有欄位比較，沒有刪日期、放寬差異或降低核准斷言；App 測試使用隔離資料與 native in-process local host／broker，不借真實群組或 external account。全部必要 gate 通過後才提交。空間最後唯讀約 60 GiB，沒有清理檔案或解除保護；先前容量波動原因未診斷。
+
+只處理 native group-member priority 增量；本人 reaction 的核心紀錄保護不等於已補齊原版模型 `ReactToMessage` 工具。incoming images、private DM context sharing、hidden common fallback／unified runtime、其他 hosts、真實帳號／外部平台、真人／VoiceOver／最低 macOS／release／公證仍保留。48 分類的 42 個歷史 complete／5 個 partial／1 個 NA 與整體 partial 不變。未 push、啟動／重啟使用者 App 或 Xcode，未變更真實帳號／群組／聊天。
+
 ## Incoming 人類訊息優先／單次 redrive（2026-10-08，最後必要 gate 全部通過，隨本批提交）
 
 本批以 `a07a899` 為基線；下節成功紀錄只證明該來源，**不是本節修改的 gate**。本批最後 source 已由 v11 重新編譯，全部聚焦、完整相關回歸、無 filter 全套、原生 Debug build／verify、fresh standalone Debug 封裝／獨立 verify 及七語 keys gates 均通過。只關閉下述已測增量，不冒充全部 parity／live／真人／release 完成。

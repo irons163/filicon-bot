@@ -229,7 +229,7 @@ private struct ScriptedPlainBackgroundProvider: AIProvider {
     }
 
     @Test func priorityWarningRendersInSevenLanguages() async throws {
-        let key = "Priority messages may stop background work after the current response ends. User turns are protected; interrupted work is not automatically resumed."
+        let key = "Priority messages can interrupt background work, but not human turns. Group turns with no reply or reaction may resume; other work is not automatically replayed."
         let output = ProcessInfo.processInfo.environment["FILICON_UI_REVIEW_OUTPUT"].map { URL(fileURLWithPath: $0) }
         for language in ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"] {
             try await withUIRenderTurn(language: language) {

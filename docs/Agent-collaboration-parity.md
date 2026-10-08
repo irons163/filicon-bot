@@ -1,5 +1,15 @@
 # 協作能力核對紀錄（更新至 2026-10-08）
 
+## 群組成員 priority 中斷／fresh attempt（最後必要 gate 全部通過，隨本批提交）
+
+接續 `02eeb07`，依 reconstructed `group-chat-glue.ts`／`send-turn-dispatch.ts`／`agent-to-agent-messaging.ts` 補正常群組成員的 priority 中斷與最多三次 native attempt。真正人類 Send 及已核准 priority peer 可打斷 background member，普通 peer 不打斷、人工回合保持保護；等工具清理後續接原 room。只有 exact native scheduler 背書、尚無房間回覆／本人 reaction、原 group／persona／account lifetime 仍有效才續接，Stop／錯誤／ABA 不重跑。fresh ToolContext／publisher／工具與重新核准取代舊 callbacks，DM 私有內容不帶入 shared inference，也不視為群組結果。
+
+新增 core 7 methods／23 cases、scheduler 1 method／2 cases 與 App 3 methods／11 cases。actual App 初輪抓到舊核准 UI 殘留，現在只退休 exact run，不誤清新人工核准或恢復晚到舊提示。相關回歸另找到已核准自己的公開 name／description 變更過度撤銷 current group turn 的真缺陷；已分離 queued complete-persona admission 與 admitted private-turn identity。公開變更可完成目前推論，下次重新取 profile；private changes、queued public edit-and-restore、group／account lifetime 仍撤銷舊票據。普通錯誤／公開建構的 superseded error 不能取得 native redrive 權限。
+
+最後 source 的 `group-member-profile-boundary-v9.log` 真正重編譯，38 methods／6 suites 通過（含 actual App 全部 11 cases）；相關回歸 356 methods／53 suites 通過。無 filter／串行／明確 `--skip-build` full v1 exit 0，17 Swift Testing bundles 合計 2,231 methods／264 suites，另 17 XCTest bundles 合計 135 tests／0 failures。arm64 native Debug build／verify、全新 standalone SPM Debug 封裝／獨立 verify、七語各 1,817 keys／0 missing 均通過；七語 native notice 的七張 360 pt PNG 已逐張目視，UI／文案 source 此後未變。兩項 opt-in live Codex tests skipped，既有診斷保留；Debug／ad-hoc 不算 Developer ID release／公證、真人全畫面／VoiceOver 或 packaged XPC live 驗收。
+
+精確日誌／artifact 與完整失敗歷史見 [完成驗收入口](Parity-completion-audit.md) 最上方本輪紀錄。保護拒絕、低磁碟及上次未完成建置的 unsigned test bundle 均保留，不冒充成功；解鎖並恢復空間後由正常建置修復測試產物，未刪檔、解除檔案保護或改系統 Xcode 選擇。native reaction 的紀錄保護不等於已補齊模型 `ReactToMessage`。private DM context sharing、incoming images、hidden common fallback／unified host、其他 host、外部平台／live／真人／VoiceOver／最低 macOS／release 仍保留，48 分類與整體 partial 不變；未 push／launch／重啟 App 或 Xcode／操作真實資料。
+
 ## Incoming 人類訊息優先與原來源單次重排（最後必要 gate 全部通過，隨本批提交）
 
 最後驗收覆蓋下方保留的 v10 舊狀態：`focused-v11` 重編譯最後 source，38 methods／3 suites（含 App 8 methods／全部 62 cases）通過；完整相關回歸 117 methods／11 suites 通過。無 filter／串行／明確 `--skip-build` 的 full v1 exit 0，17 Swift Testing bundles 合計 2,220 methods／262 suites，另 17 XCTest bundles 合計 135 tests／0 failures；App 827／103 suites（527.253 秒）。同一最後產品 source 的 arm64 native Debug build／verify、事先不存在的 standalone SPM Debug 封裝／獨立 verify、七語各 1,817 keys／0 missing 均通過。兩項 opt-in live Codex tests skipped，既有診斷保留，Debug／ad-hoc 不算 Developer ID release／公證、真人全畫面或 VoiceOver 驗收；精確日誌與 artifact 見 [完成驗收入口](Parity-completion-audit.md) 最上方章節。磁碟最後約 19 GiB，沒有清理；本批隨 source／tests 提交。

@@ -1465,8 +1465,8 @@
 "Group audience" = "群组收件成员";
 "This posts to the shared room and wakes its other active members. Replies appear there. Tool actions still need approval." = "消息会发送到共享聊天室，并唤醒其他启用中的成员。回复将显示在该群组；工具操作仍须批准。";
 "Group reply stopped or failed. The posted message was kept." = "群组回复已停止或失败。已发送的消息会保留。";
-"Priority messages may stop background work after the current response ends. User turns are protected; interrupted work is not automatically resumed." = "优先消息可能在当前回复结束后停止后台工作。用户回合不受影响；被中断的工作不会自动继续。";
-"Interrupted by an approved priority agent message. Work was not resumed automatically." = "已被获准的优先代理消息中断。任务未自动继续。";
+"Priority messages can interrupt background work, but not human turns. Group turns with no reply or reaction may resume; other work is not automatically replayed." = "优先消息可中断后台工作，但不会中断人类回合。尚未回复或回应的群组回合可继续；其他任务不会自动重跑。";
+"Interrupted by higher-priority work." = "已被更高优先级的任务中断。";
 /* Approved image publication */
 "User in this conversation" = "此对话的用户";
 "Publish these images in this conversation?" = "要在此对话中发布这些图片吗？";

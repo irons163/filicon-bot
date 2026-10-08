@@ -23,6 +23,8 @@ public actor AgentService {
     private var persistedState: AgentPersistentState
     private var revision: UInt64 = 0
     private var snapshotListeners: [UUID: AsyncStream<AgentServiceSnapshot>.Continuation] = [:]
+    private var memberIdentityScopes: [UUID: AgentWorkflowExecutionScope] = [:]
+    private var memberTurnIdentityScopes: [UUID: AgentWorkflowExecutionScope] = [:]
     private var episodeRuns: [UUID: AgentMemoryEpisodeProgress] = [:]
     private struct EpisodeCleanup: Codable, Equatable {
         let accountID: String
@@ -85,6 +87,42 @@ public actor AgentService {
 
     public func list(includeArchived: Bool = false) -> [AgentProfile] {
         state.agents.filter { includeArchived || $0.archivedAt == nil }.sorted { $0.createdAt < $1.createdAt }
+    }
+
+    /// Group redrives retain the original persona lifetime. Restoring identical
+    /// values after an edit/archive cannot revive an already captured lease.
+    func captureGroupMemberIdentity(_ profile: AgentProfile) throws -> AgentWorkflowExecutionScope.Lease {
+        guard let current = state.agents.first(where: { $0.id == profile.id }),
+              let expected = Self.memberExecutionIdentity(profile),
+              Self.memberExecutionIdentity(current) == expected else { throw CancellationError() }
+        let scope = memberIdentityScopes[profile.id] ?? AgentWorkflowExecutionScope()
+        memberIdentityScopes[profile.id] = scope
+        return try scope.capture()
+    }
+
+    /// A reviewed own public-name/description edit affects future inference,
+    /// not the current system prompt. Private persona/model/archive changes
+    /// still revoke the active turn, including edit-and-restore.
+    func captureGroupMemberTurnIdentity(_ profile: AgentProfile) throws -> AgentWorkflowExecutionScope.Lease {
+        guard let current = state.agents.first(where: { $0.id == profile.id }),
+              let expected = Self.memberTurnIdentity(profile),
+              Self.memberTurnIdentity(current) == expected else { throw CancellationError() }
+        let scope = memberTurnIdentityScopes[profile.id] ?? AgentWorkflowExecutionScope()
+        memberTurnIdentityScopes[profile.id] = scope
+        return try scope.capture()
+    }
+
+    private static func memberTurnIdentity(_ profile: AgentProfile) -> DirectAgentExecutionIdentity? {
+        var currentPromptIdentity = profile
+        currentPromptIdentity.name = "native-group-member"
+        currentPromptIdentity.summary = ""
+        return memberExecutionIdentity(currentPromptIdentity)
+    }
+
+    private static func memberExecutionIdentity(_ profile: AgentProfile) -> DirectAgentExecutionIdentity? {
+        try? DirectAgentExecutionIdentity.resolve(
+            binding: .init(accountID: "native-group-member", agentID: profile.id), accountID: "native-group-member",
+            profile: profile, providerID: profile.providerID, modelID: profile.modelID)
     }
 
     @discardableResult
@@ -968,6 +1006,16 @@ public actor AgentService {
     private func persist() throws {
         do { try Self.saveSynchronously(state, url: storeURL) }
         catch { state = persistedState; throw error }
+        for (id, scope) in memberIdentityScopes {
+            let previous = persistedState.agents.first(where: { $0.id == id }).flatMap(Self.memberExecutionIdentity)
+            let current = state.agents.first(where: { $0.id == id }).flatMap(Self.memberExecutionIdentity)
+            if previous != current { scope.invalidate() }
+        }
+        for (id, scope) in memberTurnIdentityScopes {
+            let previous = persistedState.agents.first(where: { $0.id == id }).flatMap(Self.memberTurnIdentity)
+            let current = state.agents.first(where: { $0.id == id }).flatMap(Self.memberTurnIdentity)
+            if previous != current { scope.invalidate() }
+        }
         persistedState = state
         revision &+= 1
         let value = snapshot()

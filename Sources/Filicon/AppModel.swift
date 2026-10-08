@@ -1076,6 +1076,9 @@ final class AppModel: ObservableObject {
     private let autoReviewBroker = PendingApprovalBroker()
     private var skillPublishService: SkillPublishService?
     private var pendingAutoReviewByID: [String: PendingApproval] = [:]
+    // UI hygiene only: actual permission remains fenced by the native broker.
+    // Keep delayed registration callbacks from restoring an interrupted card.
+    private var interruptedGroupApprovalContexts: [ToolContext] = []
     private var autoReviewAccountGeneration: UInt64 = 1
     private lazy var mcpService = MCPService(factory: DefaultMCPConnectionFactory { [credentials] reference in
         try await credentials.value(for: CredentialRef(providerID: ProviderID(rawValue: "mcp.\(reference)")))
@@ -2530,7 +2533,8 @@ final class AppModel: ObservableObject {
                     modelID: current.modelID,
                     providerID: current.providerID,
                     reasoningEffort: current.reasoningEffort,
-                    humanTurn: humanTurn
+                    humanTurn: humanTurn,
+                    humanInitiatedSend: true
                 )
                 await withTaskCancellationHandler { await turn.value } onCancel: { inputScope?.invalidate(); turn.cancel() }
                 return true
@@ -3337,7 +3341,8 @@ final class AppModel: ObservableObject {
         reasoningEffort: ReasoningEffort,
         routine: BackgroundDirectExecution? = nil,
         cardContinuation: DirectChannelCardContinuation? = nil,
-        humanTurn: ChannelInboundHumanTurn? = nil
+        humanTurn: ChannelInboundHumanTurn? = nil,
+        humanInitiatedSend: Bool = false
     ) -> Task<Void, Never> {
         cardContinuation?.runID = assistantID
         humanTurn?.runID = assistantID
@@ -3662,6 +3667,7 @@ final class AppModel: ObservableObject {
                             ?? humanTurn.map { _ in .init(conversationID: id, runID: assistantID) },
                         agentID: agentIdentity?.agentID,
                         agentLane: routine?.isManual == true || routine == nil ? .user : .background,
+                        priority: humanInitiatedSend && routine == nil && cardContinuation == nil,
                         executionTimeout: routine == nil ? nil : .seconds(180), onStart: { [weak self] in
                             guard let self else { throw CancellationError() }
                             if let humanTurn { try await self.checkChannelInboundHumanTurn(humanTurn) }
@@ -7915,7 +7921,8 @@ final class AppModel: ObservableObject {
                 messaging: session, delegatedMessage: dispatch.message, toolScopeID: originID,
                 backgroundFileServices: backgroundFiles, backgroundRemoteServices: backgroundRemote,
                 backgroundGalleryServices: backgroundGallery,
-                backgroundChannelServices: makeBackgroundGroupChannelServices(dispatch, originID: originID, generation: generation)),
+                backgroundChannelServices: makeBackgroundGroupChannelServices(dispatch, originID: originID, generation: generation),
+                onExecutionInterrupted: { [weak self] context in await self?.retireInterruptedGroupApprovals(context) }),
             delegatedAudience: dispatch.audience, delegatedSenderID: dispatch.message.senderID,
             onAgentChange: { [weak self] agentID in
                 await MainActor.run { self?.thinkingGroupMembers[groupID] = agentID }
@@ -9434,6 +9441,9 @@ final class AppModel: ObservableObject {
               let group = groups.first(where: { $0.id == groupID }), !group.memberIDs.isEmpty else { return }
         guard questionReply == nil || (images.isEmpty && replyToMessageID == nil) else { return }
         let generation = autoReviewAccountGeneration
+        let executionLease: AgentWorkflowExecutionScope.Lease
+        do { executionLease = try workflowExecutionScope.capture() }
+        catch { return }
         let questionLifetime = AgentPublicationLifetime()
         groupQuestionLifetimes[groupID] = questionLifetime
         // Reserve before the first suspension so two sends cannot race.
@@ -9493,7 +9503,9 @@ final class AppModel: ObservableObject {
                 groupID: groupID,
                 responder: GroupConversationResponder(groupID: groupID, registry: registry, coordinator: coordinator, messaging: messaging,
                     userMessageID: posted.id, userImages: loadedImages, imageRecipientIDs: imageRecipientIDs,
-                    questionAccountID: settings.accountScope ?? "local", questionLifetime: questionLifetime),
+                    questionAccountID: settings.accountScope ?? "local", questionLifetime: questionLifetime,
+                    onExecutionInterrupted: { [weak self] context in await self?.retireInterruptedGroupApprovals(context) }),
+                executionLease: executionLease,
                 onAgentChange: { [weak self] agentID in
                     await MainActor.run { self?.thinkingGroupMembers[groupID] = agentID }
                 }
@@ -11085,6 +11097,7 @@ final class AppModel: ObservableObject {
                 responder: GroupConversationResponder(groupID: groupID, registry: registry, coordinator: coordinator,
                     messaging: messaging, userMessageID: seed.id, questionAccountID: binding.accountID,
                     questionLifetime: questionLifetime, agentLane: request.run.trigger == .manual ? .user : .background,
+                    onExecutionInterrupted: { [weak self] context in await self?.retireInterruptedGroupApprovals(context) },
                     validateExecution: validator),
                 onAgentChange: { [weak self] agentID in
                     await MainActor.run {
@@ -12922,10 +12935,45 @@ final class AppModel: ObservableObject {
         )
     }
 
+    private func retireInterruptedGroupApprovals(_ context: ToolContext) async {
+        if !interruptedGroupApprovalContexts.contains(context) {
+            interruptedGroupApprovalContexts.append(context)
+            if interruptedGroupApprovalContexts.count > 4_096 {
+                interruptedGroupApprovalContexts.removeFirst()
+            }
+        }
+        let requests = pendingAutoReviewByID.values.filter {
+            $0.action.context.conversationID == context.conversationID && $0.fence.runID == context.runID
+        }
+        // Never cancel all approvals for the shared conversation scope: a new
+        // human turn may already be running there while old cleanup completes.
+        for request in requests {
+            await autoReviewBroker.cancel(reviewID: request.id, fence: request.fence)
+            if pendingAutoReviewByID[request.id] == request {
+                pendingAutoReviewByID.removeValue(forKey: request.id)
+            }
+        }
+        pendingAutoReviewApprovals = pendingAutoReviewByID.values.sorted { $0.createdAt < $1.createdAt }
+    }
+
     private func registerAutoReviewApproval(_ pending: PendingApproval) async {
         let conversationID = pending.action.context.conversationID
+        let context = ToolContext(conversationID: conversationID, runID: pending.fence.runID)
+        guard !interruptedGroupApprovalContexts.contains(context) else {
+            await autoReviewBroker.cancel(reviewID: pending.id, fence: pending.fence)
+            return
+        }
         if groups.contains(where: { $0.id == conversationID }) || runningAgentMessageScopes.contains(conversationID) {
             guard isAgentMessagingScopeActive(conversationID),
+                  pendingAutoReviewByID[pending.id] == nil else {
+                await autoReviewBroker.cancel(reviewID: pending.id, fence: pending.fence)
+                return
+            }
+            // The registration task may arrive after its native waiter was
+            // cancelled. A still-running room alone is not this run's identity.
+            let nativePending = await autoReviewBroker.pendingApprovals.contains(pending)
+            guard nativePending, isAgentMessagingScopeActive(conversationID),
+                  !interruptedGroupApprovalContexts.contains(context),
                   pendingAutoReviewByID[pending.id] == nil else {
                 await autoReviewBroker.cancel(reviewID: pending.id, fence: pending.fence)
                 return

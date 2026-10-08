@@ -1465,8 +1465,8 @@
 "Group audience" = "Group audience";
 "This posts to the shared room and wakes its other active members. Replies appear there. Tool actions still need approval." = "This posts to the shared room and wakes its other active members. Replies appear there. Tool actions still need approval.";
 "Group reply stopped or failed. The posted message was kept." = "Group reply stopped or failed. The posted message was kept.";
-"Priority messages may stop background work after the current response ends. User turns are protected; interrupted work is not automatically resumed." = "Priority messages may stop background work after the current response ends. User turns are protected; interrupted work is not automatically resumed.";
-"Interrupted by an approved priority agent message. Work was not resumed automatically." = "Interrupted by an approved priority agent message. Work was not resumed automatically.";
+"Priority messages can interrupt background work, but not human turns. Group turns with no reply or reaction may resume; other work is not automatically replayed." = "Priority messages can interrupt background work, but not human turns. Group turns with no reply or reaction may resume; other work is not automatically replayed.";
+"Interrupted by higher-priority work." = "Interrupted by higher-priority work.";
 /* Approved image publication */
 "User in this conversation" = "User in this conversation";
 "Publish these images in this conversation?" = "Publish these images in this conversation?";

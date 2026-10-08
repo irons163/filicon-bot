@@ -1,5 +1,9 @@
 # Filicon / Grok Bot 0.18 功能 parity matrix（current implementation）
 
+最新增量（2026-10-08，最後必要 gate 全部通過，隨本批提交）：接續 `02eeb07` 補 native group-member priority 中斷／最多三次 fresh attempt，保持真正人類回合、Stop／ABA、private DM 與 fresh permission 邊界；修正舊核准 UI 殘留及已核准公開自己改名過度撤銷 current group turn。queued complete-persona admission 與 admitted private-turn identity 分離，private changes 與 queued name／summary ABA 不放寬。最後 v9 重編譯／聚焦 38 methods／6 suites、相關回歸 356 methods／53 suites、無 filter 串行 full v1 的 2,231 Swift Testing methods／264 suites＋135 XCTest／0 failures 均通過。arm64 native Debug build／verify、全新 standalone SPM Debug 封裝／獨立 verify、七語各 1,817 keys／0 missing 通過；七張七語 native notice PNG 已目視，UI source 此後未變。兩項 opt-in live tests skipped、既有診斷保留，Debug／ad-hoc 不算 release／公證或 packaged XPC live；沒有啟動 App。
+
+精確來源／gates／artifact 與早期 compile／runtime／環境失敗見 [完成驗收入口](Parity-completion-audit.md) 最上方；下段全綠屬先前 incoming 增量。解鎖／空間恢復後以正常建置驗證，未清理檔案或解除保護。native 本人 reaction 保護不是已補齊模型 `ReactToMessage`；private DM context sharing、incoming images、hidden common fallback／unified host、其他 host 與真人／live／VoiceOver／最低 macOS／release／公證仍未完成。48 分類／整體 partial 不變，未 push／launch／重啟 App 或 Xcode／操作真實資料。
+
 本批最後驗收（2026-10-08，覆蓋下一段保留的 v10 舊狀態，隨本批提交）：`focused-v11` 重編譯最後 source，38 methods／3 suites 通過（App 全部 62 cases）；相關回歸 117 methods／11 suites 通過。無 filter 串行 `inbound-human-priority-full-v1.log` exit 0，17 Swift Testing bundles 合計 2,220 methods／262 suites，另 17 XCTest bundles 合計 135 tests／0 failures；App 827／103 suites（527.253 秒）、core 1,049／118 suites（62.312 秒）。同一最後產品 source 的 arm64 native Debug build／verify、fresh standalone SPM Debug 封裝／独立 verify、七語各 1,817 keys／0 missing 均通過。兩項 opt-in live Codex tests skipped，既有診斷保留，Debug／ad-hoc 不是 Developer ID release／公證。native 首次呼叫因 active developer directory 是 CommandLineTools 而未建置；重試僅指定本次 Xcode 路徑，不改系統設定。精確失敗歷史／gate／artifact 見 [完成驗收入口](Parity-completion-audit.md) 最上方章節；48 分類／整體 partial 與其餘未完成邊界不變，未 push／launch／重啟 App 或 Xcode／改真實資料，沒有清理檔案。
 
 以下 v10 段落為較早的未通過紀錄，不是最後 source 的目前狀態：

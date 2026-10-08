@@ -1018,7 +1018,7 @@ struct AgentSettingsApprovalDetails: View {
 
 struct AgentPriorityMessageNotice: View {
     var body: some View {
-        Label(l10n("Priority messages may stop background work after the current response ends. User turns are protected; interrupted work is not automatically resumed."), systemImage: "exclamationmark.triangle")
+        Label(l10n("Priority messages can interrupt background work, but not human turns. Group turns with no reply or reaction may resume; other work is not automatically replayed."), systemImage: "exclamationmark.triangle")
             .font(.caption).foregroundStyle(FiliconTheme.textSecondary)
             .fixedSize(horizontal: false, vertical: true)
     }

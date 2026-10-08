@@ -52,6 +52,7 @@ public actor TurnCoordinator {
         let agentID: UUID?
         let agentLane: AgentExecutionLane
         let priority: Bool
+        let groupMemberAttempt: GroupMemberExecutionAttempt?
         let executionTimeout: Duration?
         let onStart: @Sendable () async throws -> Void
         let onEvent: @Sendable (InferenceEvent) async throws -> Void
@@ -85,6 +86,7 @@ public actor TurnCoordinator {
         agentID: UUID? = nil,
         agentLane: AgentExecutionLane = .user,
         priority: Bool = false,
+        groupMemberAttempt: GroupMemberExecutionAttempt? = nil,
         executionTimeout: Duration? = nil,
         onStart: @escaping @Sendable () async throws -> Void = {},
         onEvent: @escaping @Sendable (InferenceEvent) async throws -> Void
@@ -109,6 +111,7 @@ public actor TurnCoordinator {
                     agentID: agentID,
                     agentLane: agentLane,
                     priority: priority,
+                    groupMemberAttempt: groupMemberAttempt,
                     executionTimeout: executionTimeout,
                     onStart: onStart,
                     onEvent: onEvent,
@@ -158,7 +161,8 @@ public actor TurnCoordinator {
         let scheduler = agentScheduler
         let task = Task {
             if let agentID = submission.agentID {
-                try await scheduler.withExclusiveAccess(agentID: agentID, lane: submission.agentLane, priority: submission.priority) {
+                try await scheduler.withExclusiveAccess(agentID: agentID, lane: submission.agentLane, priority: submission.priority,
+                    groupMemberAttempt: submission.groupMemberAttempt) {
                     try await Self.execute(submission, catalog: catalog)
                 }
             } else {

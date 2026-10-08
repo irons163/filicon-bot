@@ -75,6 +75,17 @@ private actor ExecutionLog {
     }
 }
 
+private struct ExecutionLaneState: Equatable {
+    let isActive: Bool
+    let queuedCount: Int
+    init(_ snapshot: AgentExecutionScheduler.Snapshot) {
+        isActive = snapshot.isActive; queuedCount = snapshot.queuedCount
+    }
+    init(isActive: Bool, queuedCount: Int) {
+        self.isActive = isActive; self.queuedCount = queuedCount
+    }
+}
+
 private struct ScheduledProvider: AIProvider {
     let descriptor = ProviderDescriptor(id: "scheduled-test", displayName: "Scheduled test", requiresAPIKey: false, supportsToolCalling: false)
     let log: ExecutionLog
@@ -113,6 +124,7 @@ private struct CleanupProvider: InteractiveToolProvider {
     let descriptor = ProviderDescriptor(id: "cleanup-test", displayName: "Cleanup test", requiresAPIKey: false)
     let log: ExecutionLog
     var late: LateToolCallback?
+    var heldConversationID: UUID?
     func models() async throws -> [AIModel] { [.init(id: "test")] }
     func stream(_ request: InferenceRequest) -> AsyncThrowingStream<InferenceEvent, Error> {
         AsyncThrowingStream { $0.finish(throwing: ProviderError.invalidResponse) }
@@ -122,7 +134,7 @@ private struct CleanupProvider: InteractiveToolProvider {
             let task = Task {
                 do {
                     if let late { await late.save(executeTool) }
-                    else if request.messages.last?.text == "first" {
+                    else if request.messages.last?.text == "first" || request.conversationID == heldConversationID {
                         _ = try await executeTool(.init(id: "slow", name: "slow-cleanup", argumentsJSON: Data("{}".utf8)))
                     } else { await log.append("next provider") }
                     continuation.yield(.completed(.stop)); continuation.finish()
@@ -422,6 +434,58 @@ struct AgentExecutionSchedulerTests {
         try await next.value
         let entries = await log.values
         expectNoDifference(entries.filter { $0 != "transport cancelled" }, ["tool cleanup finished", "next provider"])
+    }
+
+    @Test(arguments: [false, true]) func humanPriorityPreemptsGroupMemberOnlyAfterHostToolCleanup(delegated: Bool) async throws {
+        let scheduler = AgentExecutionScheduler(), gate = ExecutionGate(), log = ExecutionLog()
+        let registry = ProviderRegistry()
+        await registry.register(CleanupProvider(log: log, heldConversationID: otherID))
+        let coordinator = TurnCoordinator(registry: registry,
+            toolCatalog: ToolCatalog([SlowCleanupTool(gate: gate, log: log)]), agentScheduler: scheduler)
+        let profile = AgentProfile(id: agentID, name: "Worker", providerID: "cleanup-test", modelID: "test",
+            createdAt: Date(timeIntervalSince1970: 100))
+        let user = RoomMessage(id: UUID(uuidString: "33333333-3333-3333-3333-333333333333")!,
+            groupID: otherID, senderID: nil, text: "first", createdAt: Date(timeIntervalSince1970: 101))
+        let peer = RoomMessage(id: UUID(uuidString: "44444444-4444-4444-4444-444444444444")!,
+            groupID: otherID, senderID: UUID(uuidString: "55555555-5555-5555-5555-555555555555")!,
+            text: "peer task", createdAt: Date(timeIntervalSince1970: 102))
+        let room = AgentGroup(id: otherID, name: "Room", memberIDs: [agentID])
+        let context = GroupTurnContext(group: room, members: [.init(profile)], respondingMemberIDs: [agentID],
+            round: 0, newMessageIDs: [user.id])
+        let responder = GroupConversationResponder(groupID: otherID, registry: registry, coordinator: coordinator,
+            delegatedMessage: delegated ? peer : nil)
+        let group = Task {
+            try await responder.respond(agent: profile, history: [user], context: context, onTools: { _ in })
+        }
+        var human: Task<Void, any Error>?
+        do {
+            try await waitUntil { await gate.isWaiting }
+            human = Task {
+                try await coordinator.send(request: .init(conversationID: agentID, modelID: "test",
+                    messages: [.init(role: .user, text: "human request")]), providerID: "cleanup-test",
+                    agentID: agentID, agentLane: .user, priority: true) { _ in }
+            }
+            try await waitUntil { await scheduler.snapshot(agentID: agentID).queuedCount == 1 }
+            try await waitUntil { await log.values.contains("transport cancelled") }
+            let blocked = await scheduler.snapshot(agentID: agentID)
+            expectNoDifference(ExecutionLaneState(blocked), .init(isActive: true, queuedCount: 1))
+            let beforeCleanup = await log.values
+            expectNoDifference(beforeCleanup, ["transport cancelled"])
+            await gate.open()
+            await #expect(throws: AgentExecutionSuperseded.self) { try await group.value }
+            try await human?.value
+            let completed = await log.values
+            expectNoDifference(completed, ["transport cancelled", "tool cleanup finished", "next provider"])
+            try await waitUntil { await scheduler.snapshot(agentID: agentID).isActive == false }
+            let idle = await scheduler.snapshot(agentID: agentID)
+            expectNoDifference(ExecutionLaneState(idle), .init(isActive: false, queuedCount: 0))
+        } catch {
+            group.cancel(); human?.cancel()
+            await gate.open()
+            _ = await group.result
+            _ = await human?.result
+            throw error
+        }
     }
 
     @Test func providerCannotExecuteToolsAfterItsTurnHasFinished() async throws {

@@ -6,9 +6,11 @@ public enum AgentExecutionLane: Sendable {
 }
 
 public struct AgentExecutionSuperseded: LocalizedError, Sendable {
-    public init() {}
+    let groupMemberAttempt: GroupMemberExecutionAttempt?
+    public init() { groupMemberAttempt = nil }
+    init(groupMemberAttempt: GroupMemberExecutionAttempt?) { self.groupMemberAttempt = groupMemberAttempt }
     public var errorDescription: String? {
-        "Interrupted by an approved priority agent message. Work was not resumed automatically."
+        "Interrupted by higher-priority work."
     }
 }
 
@@ -25,6 +27,7 @@ public actor AgentExecutionScheduler {
         let token: UUID
         let lane: AgentExecutionLane
         let priority: Bool
+        let groupMemberAttempt: GroupMemberExecutionAttempt?
         let run: @Sendable () async -> Void
         let reject: @Sendable () -> Void
     }
@@ -32,6 +35,7 @@ public actor AgentExecutionScheduler {
         let token: UUID
         let task: Task<Void, Never>
         let lane: AgentExecutionLane
+        let groupMemberAttempt: GroupMemberExecutionAttempt?
         var superseded = false
     }
     private var active: [UUID: Active] = [:]
@@ -44,8 +48,13 @@ public actor AgentExecutionScheduler {
         agentID: UUID,
         lane: AgentExecutionLane = .user,
         priority: Bool = false,
+        groupMemberAttempt: GroupMemberExecutionAttempt? = nil,
         operation: @escaping @Sendable () async throws -> Value
     ) async throws -> Value {
+        if let groupMemberAttempt {
+            guard groupMemberAttempt.agentID == agentID else { throw CancellationError() }
+            try await groupMemberAttempt.validate()
+        }
         let token = makeID()
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
@@ -53,15 +62,17 @@ public actor AgentExecutionScheduler {
                     continuation.resume(throwing: CancellationError())
                     return
                 }
-                let submission = Submission(token: token, lane: lane, priority: priority, run: {
+                let submission = Submission(token: token, lane: lane, priority: priority, groupMemberAttempt: groupMemberAttempt, run: {
                     do {
                         try Task.checkCancellation()
+                        try await groupMemberAttempt?.beginExecution()
                         let result = try await operation()
                         try Task.checkCancellation()
                         continuation.resume(returning: result)
                     } catch {
-                        let superseded = await self.wasSuperseded(agentID: agentID, token: token)
-                        continuation.resume(throwing: superseded ? AgentExecutionSuperseded() : error)
+                        let superseded = await self.supersession(agentID: agentID, token: token)
+                        if let superseded { continuation.resume(throwing: superseded) }
+                        else { continuation.resume(throwing: error) }
                     }
                 }, reject: { continuation.resume(throwing: CancellationError()) })
                 if priority {
@@ -69,8 +80,9 @@ public actor AgentExecutionScheduler {
                     // messages. Only ordinary background entries are bypassed.
                     let index = pending[agentID]?.lastIndex(where: { $0.lane == .user || $0.priority }).map { $0 + 1 } ?? 0
                     pending[agentID, default: []].insert(submission, at: index)
-                    if active[agentID]?.lane == .background {
+                    if active[agentID]?.lane == .background, active[agentID]?.task.isCancelled == false {
                         active[agentID]?.superseded = true
+                        active[agentID]?.groupMemberAttempt?.close()
                         active[agentID]?.task.cancel()
                     }
                 } else { pending[agentID, default: []].append(submission) }
@@ -91,7 +103,11 @@ public actor AgentExecutionScheduler {
         let queued = pending.values.flatMap { $0 }
         pending.removeAll()
         for submission in queued { submission.reject() }
-        for running in active.values { running.task.cancel() }
+        for id in Array(active.keys) {
+            active[id]?.superseded = false
+            active[id]?.groupMemberAttempt?.close()
+            active[id]?.task.cancel()
+        }
     }
 
     private func startNext(agentID: UUID) {
@@ -102,11 +118,13 @@ public actor AgentExecutionScheduler {
             await submission.run()
             finish(agentID: agentID, token: submission.token)
         }
-        active[agentID] = .init(token: submission.token, task: task, lane: submission.lane)
+        active[agentID] = .init(token: submission.token, task: task, lane: submission.lane,
+            groupMemberAttempt: submission.groupMemberAttempt)
     }
 
-    private func wasSuperseded(agentID: UUID, token: UUID) -> Bool {
-        active[agentID]?.token == token && active[agentID]?.superseded == true
+    private func supersession(agentID: UUID, token: UUID) -> AgentExecutionSuperseded? {
+        guard let current = active[agentID], current.token == token, current.superseded else { return nil }
+        return .init(groupMemberAttempt: current.groupMemberAttempt)
     }
 
     private func finish(agentID: UUID, token: UUID) {
@@ -117,6 +135,8 @@ public actor AgentExecutionScheduler {
 
     private func cancel(agentID: UUID, token: UUID) {
         if let running = active[agentID], running.token == token {
+            active[agentID]?.superseded = false
+            running.groupMemberAttempt?.close()
             running.task.cancel()
         } else if let index = pending[agentID]?.firstIndex(where: { $0.token == token }),
                   let submission = pending[agentID]?.remove(at: index) {

@@ -20,6 +20,14 @@ private struct RemoteGroupResponder: GroupAgentResponder {
 
 @Suite("Reviewed group remote attachment persistence")
 struct GroupRemotePublicationTests {
+    /// Compare every persisted field using the store's actual date codec.
+    /// A milliseconds roundtrip may change an in-memory sub-microsecond Date.
+    private func durable(_ message: RoomMessage) throws -> RoomMessage {
+        let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .millisecondsSince1970
+        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .millisecondsSince1970
+        return try decoder.decode(RoomMessage.self, from: encoder.encode(message))
+    }
+
     @Test(arguments: [false, true])
     func localGalleryReimportCannotBypassDuplicateFence(mixed: Bool) async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-gallery-duplicate-\(UUID())")
@@ -120,15 +128,21 @@ struct GroupRemotePublicationTests {
                 let result = try await tool.execute(call, context: .init(conversationID: origin))
                 expectNoDifference(result.isError, mode != "approve")
             } catch is CancellationError {
-                // Membership updates cancel the active group run immediately.
-                #expect(["members", "revoked"].contains(mode))
+                // A new human request now retires the original native room
+                // attempt as well; it must not publish the old preview.
+                #expect(["members", "revoked", "new-user"].contains(mode))
             }
             return ["PASS"]
         }
         _ = try await groups.run(groupID: group.id, responder: responder)
         try await session.close()
         let reopened = try GroupService(agents: agents, storeURL: store)
-        let saved = await reopened.messages(groupID: group.id).filter { $0.remoteImages != nil }
+        let history = await reopened.messages(groupID: group.id)
+        expectNoDifference(history.filter { $0.senderID == nil }.map(\.text),
+            mode == "new-user" ? [user.text, "Changed request"] : [user.text])
+        let persistedUser = try durable(user)
+        expectNoDifference(history.first { $0.id == user.id }, persistedUser)
+        let saved = history.filter { $0.remoteImages != nil }
         expectNoDifference(saved.count, mode == "approve" ? 1 : 0)
         if let message = saved.first {
             expectNoDifference(message.remoteImages, gallery)
@@ -244,7 +258,7 @@ struct GroupRemotePublicationTests {
                 let result = try await tool.execute(call, context: .init(conversationID: origin))
                 expectNoDifference(result.isError, mode != "approve")
             } catch is CancellationError {
-                expectNoDifference(mode, "revoked")
+                #expect(["revoked", "new-user"].contains(mode))
             }
             return ["PASS"]
         }
@@ -252,6 +266,10 @@ struct GroupRemotePublicationTests {
         try await session.close()
         let reopened = try GroupService(agents: agents, storeURL: store)
         let history = await reopened.messages(groupID: group.id)
+        expectNoDifference(history.filter { $0.senderID == nil }.map(\.text),
+            mode == "new-user" ? [user.text, "Changed request"] : [user.text])
+        let persistedUser = try durable(user)
+        expectNoDifference(history.first { $0.id == user.id }, persistedUser)
         let saved = history.filter { $0.remoteAttachment != nil }
         expectNoDifference(saved.count, mode == "approve" ? 1 : 0)
         if let message = saved.first {
