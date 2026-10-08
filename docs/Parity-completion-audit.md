@@ -1,5 +1,28 @@
 # 完成驗收入口（2026-09-27）
 
+## 純文字 incoming 連續卡片（2026-10-08，既有實作驗收）
+
+接續 `58a019c`，本批只有測試／文件變更，沒有產品執行 source、UI、catalog、Package 或儲存 schema 變更。common direct host 已透過 `directChannelCardScopes` 將原 incoming receipt／source locators 帶到後續卡片；這批驗證該現有流程，不將增加測試稱為新的產品修正。
+
+新增 actual listener → 第一張 saved card → 真人回答／安全輸入 → 第二張 saved card → 真人回答／安全輸入 → fresh external SendMessage review 的 1 method／32 cases：question→question／question→secret／secret→question／secret→secret × 新／既有 own DM × approve／deny／Stop／connection ABA。generic automatic review 開啟仍須真人核准送件；每次 human callback 都使用新 run，第二張卡片保留原 source receipt／thread，而不是回用第一次 execution／grant。native tool suspension 不觸發上一批 incoming hidden reply reminder；只有核准 case 留下 typed queued receipt，fake connector 未送件。
+
+完整比對每張卡片 payload／lifecycle、所有 native message／card／review／run／delivery／idempotency UUID、真人回答 backlink、工具 arguments／results／review actions、canonical prefix 與每次新增的全部 rows、原 owner／thread／authorization、地址 reservation、重複點擊／reconcile 及真實 SQLite／ChannelService codec 重開。secret writer 僅記隔離假輸入的次數；逐一檢查 input draft 清空、整個 inference request（含 exchanges）與保存／重開 transcript 無 secret 值或其他對話資料。首次隱藏 wake 的 ephemeral user-role row 另外驗證整列及完整 typed source JSON，不能與本機真人回答混為一談，也不變成 canonical 訊息。使用 Swift Testing／CustomDump 技能保留全值斷言；`@testable FiliconChannels` 只用於建立比較用的 credential-free authorization 值，不注入 proposal、lease 或產品權限。
+
+忽略的 `.build/validation/` 日誌：
+
+- `inbound-continuous-cards-baseline-v1.log`／`baseline-v2.log` exit 1：新 fixture 的 initializer arguments 順序，以及 internal `ChannelDeliveryAuthorization` 缺 testable import，尚未有效執行產品案例；只修測試，不更改產品公開 API。
+- `inbound-continuous-cards-baseline-v3.log` exit 1：32 cases（23.247 秒／2 issues）；同一 secret→secret case 被檢查兩次，fixture 錯假定 `TranscriptCard` 的兩次原生 `Date()` 相等。保留不同的真實時間並驗區間，不改 native initializer、round 掉 timestamp 或刪欄位；不當產品 red。
+- `inbound-continuous-cards-focused-v4.log` exit 1：32 cases（18.376 秒／105 issues）。新增嚴格 inference 比對時，fixture 錯把 canonical external-source user row 與首次 ephemeral hidden-data user row 當本機回答；已按原 host 行為分别完整驗證來源資料與真正 saved human rows。另有 review timestamp 對 SQLite REAL `updatedAt` 的比較，按既有精確 Unix-seconds write/read codec 修正，沒有放寬產品核准或省略非時間欄位。原記錄保留，不冒充新產品缺陷。
+- `inbound-continuous-cards-focused-v5.log` exit 0：最後 Swift source 新 method／32 cases（10.987 秒），build 16.24 秒。四種連續卡片、fresh review、停止／拒絕／連線 ABA、完整保存值與防洩漏通過。
+- `inbound-continuous-cards-regression-v1.log` exit 0：最後 source 已編譯後，以 `--skip-build` 串行跑同一完整 filter，50 methods／4 suites（149.348 秒）通過；incoming／failure follow-up／background direct／mailbox 的原 cases（含既有連續 routine／manual cards）全保留，不以只選新 method 的結果代替相關回歸。
+
+- `inbound-continuous-cards-full-v1.log` exit 0：完整無 filter 串行 suite，17 Swift Testing bundles 合計 2,199 methods／262 suites，另 17 XCTest bundles 合計 135 tests／0 failures。App 817／103 suites（503.442 秒）、core 1,049／118 suites（60.306 秒）；兩項 opt-in installed-Codex live tests skipped，既有 CoreData／NSXPC 診斷保留，不冒充 live 服務或 warning-free gate。提交前移除測試中一行重複 import，沒有更改測試行為或產品 source。
+- `inbound-continuous-cards-full-v2.log` build complete 14.59 秒，但最後完整 gate **未通過／未跑完**：本批最後 Swift source 的新 method／全部 32 cases 通過（13.140 秒），actual inbound host suite 通過（44.537 秒），core 1,049／118 suites 通過（54.996 秒）。其後既有 mailbox routine tests 明確出現 Cocoa 640／POSIX 28 `No space left on device`、SQLite 13 `database or disk is full`；附近另有等待核准與原生狀態期待失敗，沒有逐項確認就不能將全部語意 issues 一概歸因為磁碟。唯讀可用空間曾降至約 416／363 MB。只中止本輪 testing session，exit 130，避免繼續造成寫入失敗；使用者 App／Xcode 未動。失敗與中止日誌保留，沒有移除 cases／檔案保護或修改產品以取得綠燈；先前 v1 完整成功不能冒充 v2 最後 gate 成功。這批可按 v5／相關回歸／v1 與最後 32 cases 的實測證據提交 test-only checkpoint，清理重複 import 後的最後完整 suite 仍待足夠空間重驗。
+
+曾觀察磁碟降至約 230 MB，相關回歸完成後實測一度恢復約 2.8 GB，v2 期間再降至上述範圍；停止本次 session 後重測約 1.9 GB，不猜測原因。沒有清理或刪除任何資料；已重新詢問是否可清除本任務隔離 `ChannelInboundNativeV3` 的四個快取目錄（246／170／110／60 MB，合計約 586 MB），尚未取得答覆，不能視為已同意。原始碼、已建置的 App、全部日誌／截圖與真實帳號／群組／聊天均保留；下一批 incoming quota failure／retry 測試尚未編輯或執行，不能將已做的唯讀流程核對列為完成。
+
+本批沒有新增 binary／UI／Package source，故 native Xcode Debug build／verify、fresh standalone SPM Debug bundle／verify、七語各 1,817 keys 的最後產品 source 證據仍是下節 `58a019c` 當輪 gates，沒有重新建置，也不將其稱為本批新 gate。只補足上述四組已測連續卡片驗收；incoming quota failure／retry 入口、更多接續組合、incoming 附件／圖片、priority preemption redrive、其他未 opt-in background hosts、unified private DM/group runtime，以及 live／真人／VoiceOver／最低 macOS／Developer ID release／公證仍未完成。48 分類與整體 partial 不變；未 push、launch、重啟使用者 App／Xcode 或改真實帳號／群組／聊天。
+
 ## 純文字收件未發表時的一次 hidden reply reminder（2026-10-08）
 
 接續已提交的 `0efa1b9`。main 再讀 reference HEAD `a9f633e09d49a85829b8236331b9e21f7e612634` 的 `source/host/extensions/transcript/background-wakes.ts` 與 `automation-runtime.ts`：incoming own-session background run 成功且 `sentMessageCount === 0` 時，另外執行一次 `ensureHiddenTurnReply` 的 hidden reminder；不是每個一般背景 host 都無限重試，也不能把 private assistant text 當已發表。其 priority preemption redrive／incoming selected images 是不同契約，本批不冒充已完成。

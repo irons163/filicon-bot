@@ -4,7 +4,7 @@ import CustomDump
 import FiliconAgents
 import FiliconAppServices
 import FiliconAutoReview
-import FiliconChannels
+@testable import FiliconChannels
 import FiliconDomain
 import FiliconProviderKit
 @testable import Filicon
@@ -128,6 +128,25 @@ private struct AppInboundConnector: ChannelConnector {
         if failsSends { throw ChannelServiceError.authExpired("PRIVATE_INBOUND_CONNECTOR_TOKEN") }
     }
 }
+private enum AppInboundChain {
+    static func fields(kind: Character, step: Int) -> [String: Any] {
+        if kind == "q" {
+            return ["type": "widget", "widget": ["prompt": "INBOUND_CHAIN_QUESTION_\(step)",
+                "options": [["label": "Continue \(step)", "value": "LOCAL_NATIVE_CHAIN_CHOICE_\(step)"]]]]
+        }
+        return ["type": "secret-request", "secret": ["label": "INBOUND_CHAIN_CREDENTIAL_\(step)",
+            "connector": "slack", "field": "token"]]
+    }
+    static func arguments(kind: Character, step: Int) throws -> Data {
+        try JSONSerialization.data(withJSONObject: fields(kind: kind, step: step), options: .sortedKeys)
+    }
+    static var sendArguments: Data {
+        get throws {
+            try JSONSerialization.data(withJSONObject: ["type": "text", "content": "EXACT_NATIVE_CHAIN_REPLY",
+                "channel": "slack:C_REMOTE:T_REMOTE"], options: .sortedKeys)
+        }
+    }
+}
 private struct AppInboundProvider: InteractiveToolProvider {
     let descriptor = ProviderDescriptor(id: "app-inbound-fixture", displayName: "Offline inbound inference", requiresAPIKey: false)
     let probe: AppInboundProbe
@@ -176,6 +195,23 @@ private struct AppInboundProvider: InteractiveToolProvider {
                         continuation.yield(.completed(reason))
                         try await passBarrier?.wait(pass: reminded ? 1 : 0)
                         continuation.finish()
+                        return
+                    }
+                    if mode.hasPrefix("card-chain-") {
+                        let kinds = Array(mode.suffix(2))
+                        let step = request.messages.filter { message in
+                            message.role == .user && message.replyToMessageID != nil && (
+                                message.text.hasPrefix("LOCAL_NATIVE_CHAIN_CHOICE_")
+                                || message.text.contains("securely provided the requested credential")
+                                || message.text.contains("dismissed the credential request"))
+                        }.count
+                        guard kinds.count == 2, step <= 2 else { throw ProviderError.transport("Invalid isolated card chain") }
+                        let call = try NormalizedToolCall(id: .init(rawValue: step == 2 ? "incoming-chain-fresh-send" : "incoming-chain-card-\(step)"),
+                            name: "SendMessage", argumentsJSON: step == 2 ? AppInboundChain.sendArguments
+                                : AppInboundChain.arguments(kind: kinds[step], step: step))
+                        await probe.result(try await executeTool(call))
+                        continuation.yield(.textDelta("PRIVATE_NATIVE_CHAIN_DRAFT"))
+                        continuation.yield(.completed(.stop)); continuation.finish()
                         return
                     }
                     if mode.hasPrefix("card-") {
@@ -288,7 +324,8 @@ private struct AppInboundProvider: InteractiveToolProvider {
         let service = try ChannelService(storeURL: root.appending(path: "channels.json"))
         let connectionID = UUID()
         let connection = ChannelConnection(id: connectionID, connectorID: "slack", displayName: "Original inbound connection",
-            secretReference: mode == "card-secret" ? "keychain://channels/\(connectionID)" : "keychain://channels/TEST-only-never-read",
+            secretReference: mode == "card-secret" || mode.hasPrefix("card-chain-")
+                ? "keychain://channels/\(connectionID)" : "keychain://channels/TEST-only-never-read",
             agentID: owner.id, ownerAccountID: "local")
         try await service.saveConnection(connection)
         if mode == "peer" {
@@ -750,6 +787,311 @@ private struct AppInboundProvider: InteractiveToolProvider {
         expectNoDifference(reloaded, after)
         try await assertUnrelatedUntouched(f)
     }
+    /// Native suspension receipts contain a randomly allocated saved message
+    /// ID. Validate the entire decoded receipt, then retain its original wire
+    /// text in the full canonical expectation (JSON key order is unspecified).
+    private func chainPauseResult(_ message: ChatMessage, kind: Character, step: Int,
+                                  conversationID: UUID) throws -> String {
+        let result = try #require(message.toolActivities.first?.result)
+        if kind == "s" {
+            expectNoDifference(result, "Secure credential request saved. The turn is paused. No credential has been provided yet.")
+        } else {
+            let prefix = "Question saved. The turn is paused for the user's response. Saved message receipt: "
+            let suffix = ". This receipt does not resume the paused turn or grant approval."
+            #expect(result.hasPrefix(prefix) && result.hasSuffix(suffix))
+            struct Receipt: Decodable, Equatable { let messageID: UUID; let shortAddress: String? }
+            let json = result.dropFirst(prefix.count).dropLast(suffix.count)
+            let actual = try JSONDecoder().decode(Receipt.self, from: Data(json.utf8))
+            let room = RoomMessage(id: message.id, groupID: conversationID, senderID: conversationID,
+                text: "INBOUND_CHAIN_QUESTION_\(step)")
+            let address = message.shortAddress.flatMap { GroupMessageAddressing.isValid($0, for: room) ? $0 : nil }
+            expectNoDifference(actual, Receipt(messageID: message.id, shortAddress: address))
+        }
+        return result
+    }
+    private func assertPendingChainCard(_ card: TranscriptCard, message: ChatMessage,
+                                       kind: Character, step: Int, run: ChannelInboundRun, f: Fixture) throws {
+        let origin = ChannelInboundCardOrigin(runID: run.id, messageID: run.messageID)
+        let arguments = try AppInboundChain.arguments(kind: kind, step: step)
+        let object = try #require(try JSONSerialization.jsonObject(with: arguments) as? [String: Any])
+        let payload: TranscriptCardPayload
+        if kind == "q" {
+            let raw = try #require(object["widget"] as? [String: Any])
+            let question = try AgentQuestion.parse(JSONSerialization.data(withJSONObject: raw))
+            payload = .widget(.init(title: question.prompt, widgetKind: "choice",
+                question: .init(question: question, accountID: "local", memberIDs: []), channelInboundOrigin: origin))
+        } else {
+            let raw = try #require(object["secret"] as? [String: Any])
+            let request = try AgentSecretRequest.parse(JSONSerialization.data(withJSONObject: raw))
+            let metadata = DirectSecretRequest(requestID: card.id, request: request,
+                binding: .init(accountID: "local", agentID: f.owner.id), conversationID: run.conversationID,
+                connectionID: f.connection.id)
+            payload = .secretRequest(.init(requestID: card.id.uuidString, service: "slack", directRequest: metadata,
+                channelInboundOrigin: origin))
+        }
+        #expect(card.id != run.id && card.id != run.messageID)
+        #expect(card.createdAt >= message.createdAt && card.createdAt <= Date())
+        // The native initializer takes Date() twice. Keep both real values and
+        // bound them, rather than assuming an incidental equal clock sample.
+        #expect(card.updatedAt >= card.createdAt && card.updatedAt <= Date())
+        expectNoDifference(card, TranscriptCard(id: card.id, lifecycle: .waiting, createdAt: card.createdAt,
+            updatedAt: card.updatedAt, payload: payload))
+        let result = try chainPauseResult(message, kind: kind, step: step, conversationID: run.conversationID)
+        expectNoDifference(message.toolActivities, [.init(id: .init(rawValue: "incoming-chain-card-\(step)"), name: "SendMessage",
+            argumentsJSON: String(decoding: arguments, as: UTF8.self), status: .succeeded, result: result)])
+    }
+
+    @Test(arguments: [("qq", false), ("qs", false), ("sq", false), ("ss", false),
+                      ("qq", true), ("qs", true), ("sq", true), ("ss", true)],
+          ["approve", "deny", "stop", "connection-aba"])
+    func continuousIncomingCardsUseFreshCallbacksAndOneOriginalThread(scenario: (String, Bool), terminal: String) async throws {
+        let (pair, existing) = scenario, kinds = Array(pair)
+        let f = try await fixture(existing: existing, mode: "card-chain-\(pair)")
+        defer { f.model.cancel(); f.feed.finish(); try? FileManager.default.removeItem(at: f.root) }
+        let writer = AppInboundSecretWriter(); f.model.secretCredentialWriter = writer.write
+        // Generic automatic review must not approve the later remote send.
+        await f.model.setAutoReviewEnabled(true)
+        f.feed.emit(event(f)); let run = try await settle(f)
+        expectNoDifference(run.status, .completed)
+        let store = ConversationStore(fileURL: f.root.appending(path: "conversations.json"))
+        var current = try #require(try await store.conversation(id: run.conversationID))
+        expectNoDifference(current.agentBinding, .init(accountID: "local", agentID: f.owner.id))
+        #expect(current.messages.contains { $0.id == run.messageID && $0.hasValidExternalChannelSource })
+        expectNoDifference(current.messages.filter { $0.text == "OWN_LOCAL_HISTORY" }.count, existing ? 1 : 0)
+        f.model.selectRoute(.conversation(run.conversationID))
+        var pending: PendingApproval?
+        var answered: [(UUID, UUID)] = []
+        var priorRequests: [InferenceRequest] = []
+        for (step, kind) in kinds.enumerated() {
+            let message = try #require(current.messages.first { message in
+                message.transcriptCards.contains { ($0.directQuestion != nil || $0.directSecretRequest != nil) && $0.lifecycle == .waiting }
+            })
+            let card = try #require(message.transcriptCards.first {
+                ($0.directQuestion != nil || $0.directSecretRequest != nil) && $0.lifecycle == .waiting
+            })
+            try assertPendingChainCard(card, message: message, kind: kind, step: step, run: run, f: f)
+            if step == 1 { #expect(message.id != run.id && !answered.contains { $0.0 == message.id || $0.1 == card.id }) }
+            let requests = await f.probe.requests, deliveries = await f.service.deliveries(), sent = await f.probe.sent
+            expectNoDifference(requests.count, step + 1)
+            #expect(diff(Array(requests.prefix(priorRequests.count)), priorRequests) == nil)
+            expectNoDifference(deliveries, []); expectNoDifference(sent, [])
+            expectNoDifference(f.model.pendingAutoReviewApprovals, [])
+            expectNoDifference(writer.count, kinds.prefix(step).filter { $0 == "s" }.count)
+            priorRequests = requests
+            if kind == "q" {
+                #expect(f.model.canAnswerDirectQuestion(conversationID: run.conversationID, messageID: message.id, cardID: card.id))
+                await f.model.directQuestionAnswered(conversationID: run.conversationID, messageID: message.id, cardID: card.id, answer: .option(0))
+            } else {
+                let input = try #require(f.model.directSecretCard(conversationID: run.conversationID, messageID: message.id, cardID: card.id))
+                input.draft = "FAKE_INBOUND_CHAIN_SECRET_\(step)"; await input.submitButtonTapped()
+                expectNoDifference(input.draft, "")
+            }
+            let next: Conversation
+            if step == 0 {
+                let unchangedRun = try await settle(f)
+                expectNoDifference(unchangedRun, run)
+                next = try #require(try await store.conversation(id: run.conversationID))
+            } else {
+                let review = try await review(f); pending = review
+                expectNoDifference(review.action.context.conversationID, run.conversationID)
+                expectNoDifference(review.action.context.toolCallID, "incoming-chain-fresh-send")
+                #expect(review.fence.runID != run.id && review.fence.runID != message.id)
+                next = try await storedPendingCard(review, in: store)
+            }
+            let resolved = try #require(next.messages.first { $0.id == message.id }?.transcriptCards.first { $0.id == card.id })
+            let responseID = kind == "q" ? resolved.directQuestion?.responseMessageID : resolved.directSecretRequest?.responseMessageID
+            let response = try #require(next.messages.first { $0.id == responseID })
+            var expectedCard = card
+            #expect(resolved.updatedAt >= card.updatedAt && resolved.updatedAt <= next.updatedAt)
+            expectedCard.updatedAt = resolved.updatedAt
+            let expectedText: String
+            if kind == "q" {
+                var question = try #require(card.directQuestion)
+                question.answer = .option(0); question.responseMessageID = response.id
+                expectedCard.lifecycle = .succeeded
+                expectedCard.payload = .widget(.init(title: question.question.prompt, widgetKind: "choice", question: question,
+                    channelInboundOrigin: card.directChannelInboundOrigin))
+                expectedText = "LOCAL_NATIVE_CHAIN_CHOICE_\(step)"
+            } else {
+                var request = try #require(card.directSecretRequest)
+                try request.resolve(provided: true, responseMessageID: response.id)
+                expectedCard.lifecycle = .provided
+                expectedCard.payload = .secretRequest(.init(requestID: request.requestID.uuidString, service: "slack",
+                    directRequest: request, channelInboundOrigin: card.directChannelInboundOrigin))
+                expectedText = try #require(request.acknowledgement)
+            }
+            expectNoDifference(resolved, expectedCard)
+            expectNoDifference(response, ChatMessage(id: response.id, role: .user, text: expectedText,
+                createdAt: response.createdAt, replyToMessageID: message.id, shortAddress: response.shortAddress))
+            var expected = current
+            let mi = try #require(expected.messages.firstIndex { $0.id == message.id })
+            let ki = try #require(expected.messages[mi].transcriptCards.firstIndex { $0.id == card.id })
+            expected.messages[mi].transcriptCards[ki] = expectedCard
+            expected.messages.append(.init(id: response.id, role: .user, text: expectedText,
+                createdAt: response.createdAt, replyToMessageID: message.id))
+            let freshRun = try #require(next.messages.dropFirst(current.messages.count + 1).first)
+            #expect(freshRun.id != run.id && freshRun.id != message.id)
+            if step == 0 {
+                let nextCard = try #require(freshRun.transcriptCards.first)
+                try assertPendingChainCard(nextCard, message: freshRun, kind: kinds[1], step: 1, run: run, f: f)
+                let result = try chainPauseResult(freshRun, kind: kinds[1], step: 1, conversationID: run.conversationID)
+                let arguments = try AppInboundChain.arguments(kind: kinds[1], step: 1)
+                expected.messages.append(ChatMessage(id: freshRun.id, role: .assistant,
+                    text: kinds[1] == "q" ? "INBOUND_CHAIN_QUESTION_1" : "", createdAt: freshRun.createdAt,
+                    toolActivities: [.init(id: "incoming-chain-card-1", name: "SendMessage",
+                        argumentsJSON: String(decoding: arguments, as: UTF8.self), status: .succeeded, result: result)],
+                    transcriptCards: [nextCard]))
+            } else {
+                let review = try #require(pending)
+                expectNoDifference(freshRun.id, review.fence.runID)
+                expected.messages.append(ChatMessage(id: freshRun.id, role: .assistant, text: "", createdAt: freshRun.createdAt,
+                    deliveryStatus: .streaming, toolActivities: [.init(id: "incoming-chain-fresh-send", name: "SendMessage",
+                        argumentsJSON: String(decoding: try AppInboundChain.sendArguments, as: UTF8.self), status: .running)]))
+                let reviewMessage = try #require(next.messages.last)
+                let reviewCard = try #require(reviewMessage.transcriptCards.first)
+                let details = try #require(review.action.context.metadata["agentMessage"])
+                #expect(details.contains("slack:C_REMOTE:T_REMOTE") && details.contains("EXACT_NATIVE_CHAIN_REPLY"))
+                #expect(reviewCard.createdAt >= freshRun.createdAt && reviewCard.updatedAt >= reviewCard.createdAt
+                    && Date(timeIntervalSince1970: reviewCard.updatedAt.timeIntervalSince1970) <= next.updatedAt)
+                let expectedReviewCard = TranscriptCard(id: reviewCard.id, lifecycle: .waiting, createdAt: reviewCard.createdAt,
+                    updatedAt: reviewCard.updatedAt, payload: .autoReview(.init(reviewID: review.id, title: "Approval required",
+                        summary: review.action.summary, findings: [review.reason, "Target: \(review.action.target.searchableText)", details])),
+                    actions: [.init(id: "approve", label: "Approve", intent: .approveReview(reviewID: review.id)),
+                              .init(id: "reject", label: "Reject", role: "destructive", intent: .rejectReview(reviewID: review.id))])
+                expected.messages.append(ChatMessage(id: reviewMessage.id, role: .assistant, text: "",
+                    createdAt: reviewMessage.createdAt, transcriptCards: [expectedReviewCard]))
+            }
+            #expect(next.updatedAt >= current.updatedAt && next.updatedAt <= Date())
+            expected.updatedAt = next.updatedAt
+            DirectMessageAddressing.assignMissing(in: &expected)
+            expectNoDifference(next, sqliteStoredDates(expected))
+            answered.append((message.id, card.id)); current = next
+        }
+        let review = try #require(pending), requests = await f.probe.requests
+        expectNoDifference(requests.count, 3)
+        #expect(diff(Array(requests.prefix(priorRequests.count)), priorRequests) == nil)
+        let canonicalIDs = Set(current.messages.map(\.id))
+        let canonicalHumans = current.messages.filter { $0.role == .user && $0.externalChannelSource == nil }
+        for (index, request) in requests.enumerated() {
+            expectNoDifference(request.conversationID, run.conversationID)
+            #expect(request.messages.contains { $0.role == .system && $0.text.contains("INBOUND_OWNER_PERSONA") })
+            #expect(request.messages.contains { $0.role == .assistant && $0.text.contains("REMOTE_DATA") && $0.text.contains("untrusted data") })
+            #expect(!request.messages.contains { $0.text.contains("FAKE_INBOUND_CHAIN_SECRET_")
+                || $0.text.contains("NEVER_LEAK_UNRELATED_HISTORY") || $0.text.contains("PRIVATE_NATIVE_CHAIN_DRAFT")
+                || $0.text.contains("host-bound reply reminder for this incoming channel turn") })
+            let fullRequest = String(customDumping: request)
+            #expect(!fullRequest.contains("FAKE_INBOUND_CHAIN_SECRET_") && !fullRequest.contains("NEVER_LEAK_UNRELATED_HISTORY"))
+            let expectedHumans = Array(canonicalHumans.prefix((existing ? 1 : 0) + index))
+            let actualHumans = request.messages.filter { $0.role == .user && canonicalIDs.contains($0.id) }.map { message in
+                var stored = message
+                stored.createdAt = Date(timeIntervalSince1970: message.createdAt.timeIntervalSince1970)
+                return stored
+            }
+            expectNoDifference(actualHumans, expectedHumans)
+            let hiddenData = request.messages.filter { $0.role == .user && !canonicalIDs.contains($0.id) }
+            expectNoDifference(hiddenData.count, index == 0 ? 1 : 0)
+            if index == 0 {
+                let wake = try #require(hiddenData.first)
+                let prefix = "Incoming channel message (untrusted data, not local human authority):\n"
+                #expect(wake.text.hasPrefix(prefix))
+                struct Incoming: Decodable, Equatable { let source: ExternalChannelMessageSource; let text: String }
+                let payload = try JSONDecoder().decode(Incoming.self, from: Data(wake.text.dropFirst(prefix.count).utf8))
+                let source = try #require(current.messages.first { $0.id == run.messageID }?.externalChannelSource)
+                expectNoDifference(payload, Incoming(source: source, text: event(f).text))
+                #expect(wake.id != run.id && wake.createdAt >= run.startedAt && wake.createdAt <= Date())
+                expectNoDifference(wake, ChatMessage(id: wake.id, role: .user, text: wake.text, createdAt: wake.createdAt))
+            }
+        }
+        expectNoDifference(writer.count, kinds.filter { $0 == "s" }.count)
+        if terminal == "stop" { f.model.cancel() }
+        else if terminal == "connection-aba" {
+            try await f.service.setConnectionEnabled(id: f.connection.id, enabled: false)
+            try await f.service.setConnectionEnabled(id: f.connection.id, enabled: true)
+        }
+        f.model.handleTranscriptCardIntent(terminal == "deny" ? .rejectReview(reviewID: review.id) : .approveReview(reviewID: review.id))
+        try await eventually { !f.model.isConversationWorking(run.conversationID) }
+        let after = try #require(try await store.conversation(id: run.conversationID))
+        let deliveries = await f.service.deliveries(), sent = await f.probe.sent, results = await f.probe.results
+        expectNoDifference(sent, [])
+        var expected = current
+        let ri = try #require(expected.messages.firstIndex { $0.id == review.fence.runID })
+        if terminal == "approve" || terminal == "deny" {
+            expectNoDifference(results.count, 1)
+            let result = try #require(results.first)
+            expectNoDifference(result.callID, "incoming-chain-fresh-send")
+            expectNoDifference(result.isError, terminal == "deny")
+            if terminal == "deny" {
+                expectNoDifference(result, NormalizedToolResult(callID: "incoming-chain-fresh-send",
+                    content: [.text(PendingApprovalError.denied(review.id).localizedDescription)], isError: true))
+            } else { #expect(result.wireText.contains("durably queued, not confirmed delivered")) }
+            expected.messages[ri].deliveryStatus = .succeeded
+            expected.messages[ri].toolActivities[0].status = result.isError ? .failed : .succeeded
+            expected.messages[ri].toolActivities[0].result = result.wireText
+        } else {
+            expectNoDifference(results, [])
+            expected.messages[ri].deliveryStatus = .cancelled
+            expected.messages[ri].toolActivities[0].status = .failed
+            expected.messages[ri].toolActivities[0].result = "Cancelled"
+        }
+        let terminalCard = try #require(after.messages.flatMap(\.transcriptCards).first {
+            guard case .autoReview(let value) = $0.payload else { return false }
+            return value.reviewID == review.id
+        })
+        let rmi = try #require(expected.messages.firstIndex { $0.transcriptCards.contains { $0.id == terminalCard.id } })
+        #expect(terminalCard.updatedAt >= expected.messages[rmi].transcriptCards[0].updatedAt && terminalCard.updatedAt <= Date())
+        expected.messages[rmi].transcriptCards[0].lifecycle = terminal == "approve" ? .approved : terminal == "deny" ? .denied : .cancelled
+        expected.messages[rmi].transcriptCards[0].updatedAt = terminalCard.updatedAt
+        if terminal == "approve" {
+            expectNoDifference(deliveries.count, 1)
+            let queued = try #require(deliveries.first)
+            #expect(![queued.id, run.id, run.messageID, review.fence.runID].contains(queued.idempotencyKey))
+            #expect(queued.createdAt >= current.messages[ri].createdAt && queued.createdAt <= after.updatedAt)
+            let origin = ChannelDeliveryOrigin(route: .directConversation, conversationID: run.conversationID,
+                senderID: run.conversationID, senderName: f.owner.name, runID: review.fence.runID,
+                callID: "incoming-chain-fresh-send", intent: .init(kind: .text, text: "EXACT_NATIVE_CHAIN_REPLY"))
+            expectNoDifference(queued, ChannelDelivery(id: queued.id, connectionID: f.connection.id, address: event(f).address,
+                outbound: .init(text: "EXACT_NATIVE_CHAIN_REPLY"), idempotencyKey: queued.idempotencyKey,
+                nextAttemptAt: queued.createdAt, createdAt: queued.createdAt,
+                authorization: ChannelDeliveryAuthorization(ownerAccountID: "local", agentID: f.owner.id,
+                    configurationRevision: run.receipt.configurationRevision), origin: origin))
+            let publication = ExternalChannelTranscriptPublication(deliveryID: queued.id, connectionID: f.connection.id,
+                owner: .init(accountID: "local", agentID: f.owner.id), route: .directConversation,
+                conversationID: run.conversationID, senderID: run.conversationID, senderName: f.owner.name,
+                runID: review.fence.runID, callID: "incoming-chain-fresh-send", replyToMessageID: nil,
+                queuedAt: queued.createdAt, kind: .text, text: "EXACT_NATIVE_CHAIN_REPLY", sources: [], files: [],
+                platform: "slack", channelID: "C_REMOTE", threadID: "T_REMOTE",
+                delivery: .init(status: .queued, attemptCount: 0, deliveredAt: nil))
+            expected.messages.append(publication.directMessage)
+        } else { expectNoDifference(deliveries, []) }
+        #expect(after.updatedAt >= current.updatedAt && after.updatedAt <= Date())
+        expected.updatedAt = after.updatedAt; DirectMessageAddressing.assignMissing(in: &expected)
+        expectNoDifference(after, sqliteStoredDates(expected))
+        expectNoDifference(Set(after.messages.map(\.id)).count, after.messages.count)
+        #expect(!String(decoding: try JSONEncoder().encode(after), as: UTF8.self).contains("FAKE_INBOUND_CHAIN_SECRET_"))
+        expectNoDifference(f.model.pendingAutoReviewApprovals, [])
+        for (messageID, cardID) in answered {
+            #expect(!f.model.canAnswerDirectQuestion(conversationID: run.conversationID, messageID: messageID, cardID: cardID))
+            #expect(f.model.directSecretCard(conversationID: run.conversationID, messageID: messageID, cardID: cardID) == nil)
+            await f.model.directQuestionAnswered(conversationID: run.conversationID, messageID: messageID, cardID: cardID, answer: .option(0))
+        }
+        for _ in 0..<2 {
+            f.model.handleTranscriptCardIntent(.approveReview(reviewID: review.id))
+            f.feed.emit(event(f)); await f.model.reconcileChannelInbound()
+        }
+        let replayRequests = await f.probe.requests, replayRuns = await f.service.inboundRuns(), replayDeliveries = await f.service.deliveries()
+        #expect(diff(replayRequests, requests) == nil)
+        expectNoDifference(replayRuns, [run]); expectNoDifference(replayDeliveries, deliveries)
+        expectNoDifference(writer.count, kinds.filter { $0 == "s" }.count)
+        let reopened = ConversationStore(fileURL: f.root.appending(path: "conversations.json"))
+        let reopenedHistory = try await reopened.conversation(id: run.conversationID)
+        expectNoDifference(reopenedHistory, after)
+        let reopenedChannels = try ChannelService(storeURL: f.root.appending(path: "channels.json"))
+        let reopenedRuns = await reopenedChannels.inboundRuns(), reopenedDeliveries = await reopenedChannels.deliveries()
+        expectNoDifference(reopenedRuns, [try persistedChannel(run)])
+        expectNoDifference(reopenedDeliveries, try deliveries.map { try persistedChannel($0) })
+        try await assertUnrelatedUntouched(f)
+    }
+
     @Test(arguments: ["question", "secret"], ["account", "hidden", "duplicate", "foreign-binding", "archived", "connection-aba", "run-locator", "source-locator"])
     func incomingCardsRejectChangedOwnerOrUnprovedSourceBeforeHumanCommit(kind: String, mutation: String) async throws {
         let f = try await fixture(mode: "card-\(kind)")
