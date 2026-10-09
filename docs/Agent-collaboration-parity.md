@@ -4,6 +4,10 @@
 
 ### Delegated mailbox 接線前的實際地址／權限核對
 
+共享目的地 admission 抽取：`acquireMailboxPublicationScope` 現在獨立取得原 native delivery 的 destination／account／persona／membership／inherited execution scope，既有 channel publisher 再使用它建立 transaction。這個 helper 不查 connector 是否存在；重用同 delivery scope 前仍核對 active origin session、chainID、direct binding、完整 incoming、generation 與 scope validity，不借用選取聊天或重新捕捉 routine consent。尚未新增 App reaction factory，不能稱反應已可保存。
+
+`mailbox-publication-scope-extraction-v1.log` 重編譯及 session factory smoke 通過；最後 v2 把 cached-scope 分支移到原 session/chain/owner guard 後並移除抽取後未用的 local。`mailbox-publication-scope-extraction-regression-v2.log` 重編譯 exit 0，actual App direct/group-origin peer channel publication 全 suite 21 methods（95.911 秒）通過，包含原 manual／routine card／attachment／failure／Stop／ABA 案例，不縮減 filter 或斷言。這只是共享 host admission 抽取的相關回歸，尚未取得全專案／native／release gate；未 push／launch／改真實資料。
+
 2026-10-10 解鎖後保留原案例重驗：`mailbox-reaction-unlocked-regression-v1.log` exit 0，core 50 methods／3 suites＋App routine 32 methods／1 suite，全數通過；先前 3 個 EPERM 與 85 個 App issues 在此輪未重現，原失敗 log 不刪除，不宣稱已證明每個歷史 issue 的根因。
 
 新增 `AgentPublicationLifetime.withValidPublication`，讓 native destination storage commit 能在同一把 lifetime lock 內同步核對 active／Task cancellation 並回傳真正 receipt。既有 internal commit 使用同一實作，read-only check 不取代 atomic commit；不得在 closure 內 await 或重入此 lifetime／messenger publication，也不授予 binding/account/外部權限。新增正常 receipt、operation error 傳遞、closed callback 完全不寫入測試。最後 `mailbox-reaction-atomic-regression-v1.log` 重編譯 exit 0，core 51 methods／3 suites＋App routine 32 methods／1 suite通過。尚未接 App mailbox reaction destination/binding/quota factory，不稱完整 mailbox parity、全專案／native／release gates；未 push／重啟或改真實資料。

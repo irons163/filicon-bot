@@ -6885,10 +6885,11 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func makeMailboxChannelPublication(_ incoming: AgentMessage, sender: AgentProfile, originID: UUID,
+    /// Shared native destination admission, independent of any connector.
+    private func acquireMailboxPublicationScope(_ incoming: AgentMessage, sender: AgentProfile, originID: UUID,
         generation: UInt64, binding: DirectConversationAgentBinding?, originGroup: AgentGroup?, manualOrigin: ManualMailboxOrigin?,
         inheritedExecutionLease: AgentWorkflowExecutionScope.Lease?,
-        parent: ChannelPublicationLifetime) async throws -> AgentChannelPublicationTransaction? {
+        parent: ChannelPublicationLifetime) async throws -> MailboxChannelScope {
         try parent.check()
         try inheritedExecutionLease?.check()
         let account = binding?.accountID ?? (settings.accountScope ?? "local")
@@ -6898,6 +6899,12 @@ final class AppModel: ObservableObject {
               incoming.delivery?.chainID == agentMessagingSessions[originID]?.id,
               incoming.delivery?.directOriginBinding == binding,
               agentConversations != nil else { throw AgentMessagingError.scopeMismatch }
+        if let existing = mailboxChannelScopes[incoming.id] {
+            guard existing.originID == originID, existing.account == account, existing.generation == generation,
+                  existing.incoming == incoming, mailboxChannelScopeIsCurrent(existing) else { throw CancellationError() }
+            try existing.executionLease.check(); try existing.lifetime.check()
+            return existing
+        }
         let origin: Conversation?
         let membership: GroupReadStateLease?
         if let binding {
@@ -6953,10 +6960,6 @@ final class AppModel: ObservableObject {
         let executionLease = try executionScope.capture(inheriting:
             inheritedExecutionLease ?? manualOrigin?.groupResponse?.accountLease ?? workflowExecutionScope.capture())
         let bindings = MailboxChannelBindings()
-        let bindingGuard: ConversationCommitGuard = { operation in
-            if let membership { return try membership.withValidMembership { try bindings.withValid(operation) } }
-            return try bindings.withValid(operation)
-        }
         let lifetime = ChannelPublicationLifetime(parent: parent, commitGuard: { operation in
             try executionLease.commit {
                 if let membership { return try membership.withValidMembership { try bindings.withValid(operation) } }
@@ -6973,6 +6976,23 @@ final class AppModel: ObservableObject {
         guard mailboxChannelScopes[incoming.id] == nil else { scope.close(); throw AgentMessagingError.scopeMismatch }
         mailboxChannelScopes[incoming.id] = scope
         handedOff = true
+        return scope
+    }
+
+    private func makeMailboxChannelPublication(_ incoming: AgentMessage, sender: AgentProfile, originID: UUID,
+        generation: UInt64, binding: DirectConversationAgentBinding?, originGroup: AgentGroup?, manualOrigin: ManualMailboxOrigin?,
+        inheritedExecutionLease: AgentWorkflowExecutionScope.Lease?,
+        parent: ChannelPublicationLifetime) async throws -> AgentChannelPublicationTransaction? {
+        let scope = try await acquireMailboxPublicationScope(incoming, sender: sender, originID: originID,
+            generation: generation, binding: binding, originGroup: originGroup, manualOrigin: manualOrigin,
+            inheritedExecutionLease: inheritedExecutionLease, parent: parent)
+        let account = scope.account, destinationID = scope.destinationID
+        let lifetime = scope.lifetime, executionLease = scope.executionLease
+        let membership = scope.membership, bindings = scope.bindings
+        let bindingGuard: ConversationCommitGuard = { operation in
+            if let membership { return try membership.withValidMembership { try bindings.withValid(operation) } }
+            return try bindings.withValid(operation)
+        }
         let validate: @Sendable () async throws -> Void = { [weak self] in
             guard let self else { throw CancellationError() }
             try await self.validateMailboxChannelScope(incoming.id)
