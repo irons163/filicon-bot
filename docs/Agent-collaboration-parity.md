@@ -1,5 +1,11 @@
 # 協作能力核對紀錄（更新至 2026-10-09）
 
+## Direct 反應入口與下一步 host 驗收
+
+`c3e68cc` 已接 foreground bound direct ReactToMessage，原 canonical user 目錄、真正 repository binding lease、account／persona／run lease 和 reasoning edit-and-restore 撤銷、durable quota receipt、bare-tap 與作者 pills 均通過最後必要 gates。完整回歸 2,261 Swift Testing／267 suites＋135 XCTest／0 failures、兩種 Debug 封裝／獨立 verify、七語目錄與 native render 證據見 [完成驗收入口](Parity-completion-audit.md)。下節 group-only 的「direct 尚未接線」屬歷史，不再代表 foreground 的現況；整體 partial 及其他缺口不變。
+
+提交後唯讀 host 核對：routine、incoming、failure follow-up 和 card continuation 皆存在 `AppModel.startTurn` 呼叫，該共用入口可建立 reaction executor，但不能由 foreground 測試推定每個 host 的 inherited lease、原 user target、quota、Stop／ABA 和 bare-tap 都通過。下一批應優先補實際 routine own-DM 的正反驗收，再逐一核對 incoming／failure／resume。`AgentMessagingSession` 的 delegated mailbox 是另一套 inference tools 組裝，目前列出 SendToAgent、publisher、management，沒有 reaction executor；其 peer envelope 保持 assistant context，不能為了支援反應而改成人類指令或借用 sender 私有聊天。這項獨立 host 缺口仍保留，不能套用 c3e68cc green 關閉。
+
 ## Native 群組 ReactToMessage／人類反應歸屬（最後必要 gate 全部通過，隨本批提交）
 
 接續 `110b4a0`，重新核對 reconstructed reaction tool、group-chat-glue 與 direct turn-runtime。模型僅輸入 message_address／單一 emoji，真正 native admitted member attempt 綁定 actor／group／run；最後 40 筆同群組 canonical 目錄排除本人、host outcomes／routine seeds、空白、重複 ID／位址，不匯入其他 room 或 private DM。最終保存再次核對完整原目標與 epoch／account／persona／membership lease，跨 room 重複 ID 既不顯示也不能反應，不刪原損壞資料。公開合成 context 沒有 capability；Stop／ABA 拒絕舊 callback。
