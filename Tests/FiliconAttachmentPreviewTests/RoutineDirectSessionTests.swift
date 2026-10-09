@@ -662,7 +662,7 @@ private struct RoutineDirectProvider: InteractiveToolProvider {
         expectNoDifference(acknowledgment.messages.last?.text, SpendGuardAnswer.keep.modelAcknowledgmentReminder)
     }
 
-    @Test func reviewedRoutineReactionSavesOnlyOriginalHumanTarget() async throws {
+    @Test(arguments: [false, true]) func reviewedRoutineReactionSavesOnlyOriginalHumanTarget(manual: Bool) async throws {
         let (root, model, automation, id, probe) = try await fixture(reacts: true)
         defer { try? FileManager.default.removeItem(at: root) }
         try await approve(model, automation: automation, id: id)
@@ -670,7 +670,11 @@ private struct RoutineDirectProvider: InteractiveToolProvider {
         let before = try #require(try await store.conversation(id: id))
         let original = try #require(before.messages.first { $0.text == "REVIEWED_HISTORY" })
         let binding = try #require(before.agentBinding)
-        await model.runAutomationNow(id: automation.id)
+        if manual { await model.runAutomationNow(id: automation.id) }
+        else {
+            let due = try #require(model.automations.first { $0.id == automation.id }?.nextRunAt)
+            await model.runAutomationScheduleTick(at: due)
+        }
         let results = await probe.reactionResults
         expectNoDifference(results.count, 1)
         #expect(try #require(results.first).isError == false)
@@ -680,6 +684,7 @@ private struct RoutineDirectProvider: InteractiveToolProvider {
         expectNoDifference(saved.messages.first { $0.id == original.id }, expected)
         #expect(!saved.messages.contains { $0.text.contains("PRIVATE_ASSISTANT_TEXT") })
         expectNoDifference(model.automationHistory[automation.id]?.first?.status, .ok)
+        expectNoDifference(model.automationHistory[automation.id]?.first?.trigger, manual ? .manual : .schedule)
         #expect(!model.running.contains(id))
     }
 
