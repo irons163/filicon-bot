@@ -2,6 +2,14 @@
 
 ## Direct 反應入口與下一步 host 驗收
 
+### Delegated mailbox 接線前的實際地址／權限核對
+
+2026-10-09，`a94ee2a` 後唯讀核對產品與 reference：`AgentMessagingSession.drain` 的 inference `conversationID` 來自 origin 隔離的 `AgentConversationStore.Context.conversationID`，coordinator 的 `ToolContext.conversationID` 卻是 origin；畫面目的地則可能是 `Context.projectionConversationID`。`makeMailboxChannelPublication`／session 的 transaction 檢查已有第三個目的地驗證：sender 是原 direct binding owner 時用 origin，否則用 recipient 的 `transcriptConversationID`。這三個 ID 不能互換，亦不能把 selected chat 當目的地。
+
+現有 `AgentMessageReactionTool` direct initializer 明確要求 directory 的 conversationID 等於執行 context 的 conversationID；因此直接把 own-DM directory 塞入 mailbox 的 origin ToolContext 會拒絕，換成 origin directory 則可能反應到錯誤聊天。`commitDirectModelReaction` 亦要求目的地在 foreground `running`，而 mailbox 的 lifetime 是原 delegation session／publication scope，不滿足此條件。接線需獨立 host adapter：保持 origin 核准 context，同時由 host 捕捉 recipient canonical destination／unique binding lease，將 reaction execution 映射到 exact native destination，並在 quota／SQL commit 組合原 session、account、persona、membership／inherited routine lease；不得用放寬 foreground running guard 解決。
+
+`AgentConversationStore.appendExchange` 把 peer 私有歷史一律保存為 assistant context，包含輸入原為 system 的既有隔離測試；`drain` 的 image transport user block 也明確不是人類訊息。因此不能從私有推論 history 或 image transport 推導 reaction user directory。原版 `turn-runtime.ts` 的 react-to-message 分支則以 runSession 的 transcript 找 exact USER entry；此差異仍未實作，不能因前景與 routine green 稱 mailbox parity。下一步須以 recipient canonical user directory 的最小公開 excerpt 接線，保留 peer envelope assistant role及私有 history 隔離，並測試 origin／recipient／selection 三者不同、空 user directory、晚到 callback、quota durable receipt 與 bare-tap不產生公開文字。
+
 後續帳號／visibility fence 驗收：晚到實際工具呼叫拒絕矩陣擴為 12 cases，新增手動／schedule 的帳號切換與 hiddenAt 修改後還原，canonical target 完整資料與全部聊天 reactions 均保持原狀。`routine-reaction-focused-v8.log` 因新測試使用不存在的 `isHidden` 欄位而編譯失敗，已改用既有 `hiddenAt`，不是產品缺陷；最後 v9 重編譯 exit 0，32 methods／1 suite（9.070 秒）。其他 host 缺口不因本增量關閉。
 
 Routine own-DM 增量：實際手動／schedule tick 的反應入口已驗證，包含 Stop、binding／private persona／reasoning 修改後還原的 8 個晚到工具呼叫拒絕案例。另補手動／排程 × 保持原聊天／推論期間導航的 4 個成功案例；比對原 canonical human target 的完整資料，只增加原 binding 作者反應，其他既有聊天完整值不變。`routine-reaction-focused-v7.log` 重編譯後 exit 0，32 methods／1 suite（6.602 秒）。這是測試增量，不是新的全套、live 或其他 host 證据；delegated mailbox／incoming／failure／resume 等未驗證部分仍保留。
