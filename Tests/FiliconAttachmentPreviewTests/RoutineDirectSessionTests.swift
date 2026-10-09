@@ -667,7 +667,7 @@ private struct RoutineDirectProvider: InteractiveToolProvider {
         expectNoDifference(acknowledgment.messages.last?.text, SpendGuardAnswer.keep.modelAcknowledgmentReminder)
     }
 
-    @Test(arguments: [false, true], ["stop", "rebind", "persona", "reasoning"])
+    @Test(arguments: [false, true], ["stop", "account", "hidden", "rebind", "persona", "reasoning"])
     func lateRoutineReactionCannotReviveAfterAuthorityChanges(manual: Bool, change: String) async throws {
         let gate = RoutineDirectGate()
         let (root, model, automation, id, probe) = try await fixture(gate: gate, reacts: true, ignoresReactionCancellation: true)
@@ -684,6 +684,10 @@ private struct RoutineDirectProvider: InteractiveToolProvider {
         let index = try #require(model.conversations.firstIndex { $0.id == id })
         switch change {
         case "stop": model.cancel()
+        case "account": await model.cancelAutoReviewApprovals(nextAccountID: "another-account")
+        case "hidden":
+            model.conversations[index].hiddenAt = Date(timeIntervalSince1970: 1_000)
+            model.conversations[index].hiddenAt = nil
         case "rebind":
             let binding = model.conversations[index].agentBinding
             model.conversations[index].agentBinding = nil

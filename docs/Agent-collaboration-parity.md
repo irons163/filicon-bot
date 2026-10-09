@@ -2,6 +2,8 @@
 
 ## Direct 反應入口與下一步 host 驗收
 
+後續帳號／visibility fence 驗收：晚到實際工具呼叫拒絕矩陣擴為 12 cases，新增手動／schedule 的帳號切換與 hiddenAt 修改後還原，canonical target 完整資料與全部聊天 reactions 均保持原狀。`routine-reaction-focused-v8.log` 因新測試使用不存在的 `isHidden` 欄位而編譯失敗，已改用既有 `hiddenAt`，不是產品缺陷；最後 v9 重編譯 exit 0，32 methods／1 suite（9.070 秒）。其他 host 缺口不因本增量關閉。
+
 Routine own-DM 增量：實際手動／schedule tick 的反應入口已驗證，包含 Stop、binding／private persona／reasoning 修改後還原的 8 個晚到工具呼叫拒絕案例。另補手動／排程 × 保持原聊天／推論期間導航的 4 個成功案例；比對原 canonical human target 的完整資料，只增加原 binding 作者反應，其他既有聊天完整值不變。`routine-reaction-focused-v7.log` 重編譯後 exit 0，32 methods／1 suite（6.602 秒）。這是測試增量，不是新的全套、live 或其他 host 證据；delegated mailbox／incoming／failure／resume 等未驗證部分仍保留。
 
 `c3e68cc` 已接 foreground bound direct ReactToMessage，原 canonical user 目錄、真正 repository binding lease、account／persona／run lease 和 reasoning edit-and-restore 撤銷、durable quota receipt、bare-tap 與作者 pills 均通過最後必要 gates。完整回歸 2,261 Swift Testing／267 suites＋135 XCTest／0 failures、兩種 Debug 封裝／獨立 verify、七語目錄與 native render 證據見 [完成驗收入口](Parity-completion-audit.md)。下節 group-only 的「direct 尚未接線」屬歷史，不再代表 foreground 的現況；整體 partial 及其他缺口不變。
