@@ -92,6 +92,26 @@ private func prioritySendCall(_ target: UUID, _ text: String, id: ToolCallID = "
 
 @Suite("SendToAgent messaging session", .timeLimit(.minutes(1)))
 struct AgentMessagingSessionTests {
+    @Test func nativeMailboxCommitReturnsReceiptAndRejectsClosedWrites() throws {
+        let lifetime = AgentPublicationLifetime()
+        var values: [String] = []
+        let receipt = try lifetime.withValidPublication {
+            values.append("committed")
+            return "durable receipt"
+        }
+        expectNoDifference(receipt, "durable receipt")
+        expectNoDifference(values, ["committed"])
+        #expect(throws: ProviderError.self) {
+            try lifetime.withValidPublication { throw ProviderError.invalidResponse }
+        }
+        try lifetime.check()
+        lifetime.close()
+        #expect(throws: CancellationError.self) {
+            try lifetime.withValidPublication { values.append("late") }
+        }
+        expectNoDifference(values, ["committed"])
+    }
+
     @Test func nativeMailboxFactoryLifetimeCheckCannotReviveAfterClose() throws {
         let lifetime = AgentPublicationLifetime()
         try lifetime.check()

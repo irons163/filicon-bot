@@ -780,10 +780,18 @@ public final class AgentPublicationLifetime: @unchecked Sendable {
     /// publication or replace the atomic lifetime fence at the final commit.
     public func check() throws { try commit {} }
     func commit(_ operation: () throws -> Void) throws {
+        try withValidPublication(operation)
+    }
+
+    /// Compose a native storage transaction with this delivery lifetime.
+    /// The synchronous operation must not re-enter this lifetime (including
+    /// messenger publication) or suspend. This is not a tool approval: callers
+    /// must separately hold the destination binding/account/host permissions.
+    public func withValidPublication<Value>(_ operation: () throws -> Value) throws -> Value {
         try lock.withLock {
             guard active else { throw CancellationError() }
             try Task.checkCancellation()
-            try operation()
+            return try operation()
         }
     }
 }

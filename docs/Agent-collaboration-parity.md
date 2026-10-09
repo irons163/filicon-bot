@@ -4,6 +4,10 @@
 
 ### Delegated mailbox 接線前的實際地址／權限核對
 
+2026-10-10 解鎖後保留原案例重驗：`mailbox-reaction-unlocked-regression-v1.log` exit 0，core 50 methods／3 suites＋App routine 32 methods／1 suite，全數通過；先前 3 個 EPERM 與 85 個 App issues 在此輪未重現，原失敗 log 不刪除，不宣稱已證明每個歷史 issue 的根因。
+
+新增 `AgentPublicationLifetime.withValidPublication`，讓 native destination storage commit 能在同一把 lifetime lock 內同步核對 active／Task cancellation 並回傳真正 receipt。既有 internal commit 使用同一實作，read-only check 不取代 atomic commit；不得在 closure 內 await 或重入此 lifetime／messenger publication，也不授予 binding/account/外部權限。新增正常 receipt、operation error 傳遞、closed callback 完全不寫入測試。最後 `mailbox-reaction-atomic-regression-v1.log` 重編譯 exit 0，core 51 methods／3 suites＋App routine 32 methods／1 suite通過。尚未接 App mailbox reaction destination/binding/quota factory，不稱完整 mailbox parity、全專案／native／release gates；未 push／重啟或改真實資料。
+
 2026-10-10 信箱 session 基礎接線：新增 optional native MailboxReactionFactory，只有支持工具的實際 delivery 才取得獨立 executor，保持原 origin ToolContext；沒有 factory／回 nil 不註冊工具，也不選 fallback 聊天。factory await 前後檢查 session，成功及錯誤 cleanup 都關閉 executor；公開 lifetime read-only check 不代替最終 atomic commit。實際 session → coordinator → fake provider → executor 的 1 method／2 cases，驗證 host 指定不同目的地、peer envelope 仍 assistant、私人 draft 不公開、completed delivery 與關閉後拒絕重用；另測 lifetime close 不可復活。App 尚未提供具真正 binding／quota commit 的 factory，產品 mailbox reaction 功能仍未完成。
 
 最後 `mailbox-reaction-session-focused-v3.log` 重編譯 exit 0，21 methods／3 suites（0.521 秒），含工具與 canonical persistence。初版 v1 為新測試誤用 lifetime 尚無公開 check、optional publications 編譯失敗，已修整合；v2 新 session 兩 cases 通過。較廣 `mailbox-reaction-session-regression-v1.log` exit 1，49 methods／3 suites 的既有 recall 三 routes 均在直接讀取隔離 `agents.json` 時遭 NSCocoaErrorDomain Code=257／EPERM；其餘案例通過。當輪 ioreg 仍明確鎖屏，未變更保護／刪除失敗案例／重啟 App，待解鎖再跑原完整 scope；不以 focused green 取代該失敗或先前 App 85 issues，也未取得新完整／native／release gates。
