@@ -226,6 +226,9 @@ struct GroupConversationView: View {
             },
             onPreviewRemote: { reference, review in try await model.previewRemoteAttachment(reference, at: .group(group.id, message.id), approveRedirect: review) },
             onThumbnail: { reference, review in try await model.remoteGalleryPreview(reference, at: .group(group.id, message.id), approveRedirect: review) },
+            reactions: (model.groupReactions[group.id] ?? []).filter { $0.messageID == message.id },
+            reactionAuthors: Dictionary(model.agents.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first }),
+            onRemoveReaction: { emoji in Task { await model.toggleGroupReaction(groupID: group.id, messageID: message.id, emoji: emoji) } },
             onReaction: { Task { await model.toggleGroupReaction(groupID: group.id, messageID: message.id, emoji: "👍") } }
         )
     }
@@ -572,6 +575,9 @@ struct GroupMessageBubble: View {
     var onPreviewExternalAttachment: ((ExternalChannelTranscriptPublication.File) -> Void)? = nil
     var onPreviewRemote: ((RemoteAttachmentReference, @escaping RemoteRedirectReview) async throws -> Void)?
     var onThumbnail: ((RemoteAttachmentReference, @escaping RemoteRedirectReview) async throws -> RemoteGalleryPreview)?
+    var reactions: [MessageReaction] = []
+    var reactionAuthors: [UUID: String] = [:]
+    var onRemoveReaction: ((String) -> Void)?
     let onReaction: () -> Void
     @State private var hovering = false
     private var isUser: Bool { message.senderID == nil }
@@ -693,6 +699,9 @@ struct GroupMessageBubble: View {
                 .foregroundStyle(FiliconTheme.textTertiary)
                 .opacity(hovering ? 1 : 0)
                 .accessibilityHidden(!hovering)
+                if !reactions.isEmpty {
+                    GroupReactionPills(reactions: reactions, authors: reactionAuthors, onRemove: onRemoveReaction)
+                }
             }
             .frame(maxWidth: 500, alignment: isUser ? .trailing : .leading)
             if !isUser { Spacer(minLength: 50) }
@@ -718,6 +727,39 @@ struct GroupMessageBubble: View {
         case .failed: l10n("Failed")
         case .cancelled: l10n("Cancelled")
         }
+    }
+}
+
+struct GroupReactionPills: View {
+    let reactions: [MessageReaction]
+    let authors: [UUID: String]
+    var onRemove: ((String) -> Void)?
+
+    var body: some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 100, maximum: 200), alignment: .leading)], alignment: .leading, spacing: 4) {
+            ForEach(reactions) { reaction in
+                let human = reaction.actorID == GroupService.localUserReactionActorID
+                let author = human ? l10n("You") : authors[reaction.actorID] ?? l10n("Agent")
+                Group {
+                    if human, let onRemove {
+                        Button { onRemove(reaction.emoji) } label: { pill(reaction, author: author) }
+                            .buttonStyle(.plain)
+                    } else { pill(reaction, author: author) }
+                }
+                .accessibilityLabel(l10n("Reaction") + ": " + reaction.emoji + " · " + author)
+                .accessibilityIdentifier("group-reaction-\(reaction.id)")
+            }
+        }
+    }
+
+    private func pill(_ reaction: MessageReaction, author: String) -> some View {
+        HStack(spacing: 4) {
+            Text(verbatim: reaction.emoji)
+            Text(verbatim: author).lineLimit(2)
+        }
+        .font(.system(size: 11)).foregroundStyle(FiliconTheme.textSecondary)
+        .padding(.horizontal, 7).padding(.vertical, 4)
+        .background(FiliconTheme.input, in: Capsule())
     }
 }
 

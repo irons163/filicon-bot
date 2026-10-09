@@ -316,6 +316,8 @@ final class AppModel: ObservableObject {
         }
     }
     @Published private(set) var groupUnreadStates: [UUID: ConversationUnreadState] = [:]
+    @Published private(set) var groupReactions: [UUID: [MessageReaction]] = [:]
+    private var groupReactionLoadEpochs: [UUID: UInt64] = [:]
     private var groupReadLeases: [UUID: GroupReadStateLease] = [:]
     private var groupReadContexts: [UUID: GroupReadContext] = [:]
     private var groupUnreadLoadEpochs: [UUID: UInt64] = [:]
@@ -5358,13 +5360,20 @@ final class AppModel: ObservableObject {
         }
         await reloadAgentMessages()
         if let groupService {
+            let generation = autoReviewAccountGeneration
             groups = await groupService.list()
             if selectedGroupID == nil || !groups.contains(where: { $0.id == selectedGroupID }) {
                 selectedGroupID = groups.first?.id
             }
             var values: [UUID: [RoomMessage]] = [:]
-            for group in groups { values[group.id] = await groupService.messages(groupID: group.id) }
-            groupMessages = values
+            for group in groups {
+                values[group.id] = await groupService.messages(groupID: group.id)
+                await reloadGroupReactions(groupID: group.id, generation: generation)
+            }
+            if generation == autoReviewAccountGeneration {
+                groupMessages = values
+                groupReactions = groupReactions.filter { values[$0.key] != nil }
+            }
         }
         if let automationService { automations = await automationService.list() }
         await reloadConversationUnreadStates()
@@ -7890,6 +7899,7 @@ final class AppModel: ObservableObject {
         guard let groupService, delegatedGroupOrigins[groupID] == originID,
               delegatedGroupPosts[groupID]?.message.id == dispatch.message.id,
               generation == autoReviewAccountGeneration, isAgentMessagingScopeActive(originID) else { throw CancellationError() }
+        let executionLease = try workflowExecutionScope.capture()
         let backgroundFiles = makeGroupFileServices(originID: originID, generation: generation,
             destinationID: groupID, dispatchID: dispatch.message.id).map { services in
             AgentBackgroundGroupFileServices(originID: originID, groupID: groupID, services: services,
@@ -7924,6 +7934,11 @@ final class AppModel: ObservableObject {
                 backgroundChannelServices: makeBackgroundGroupChannelServices(dispatch, originID: originID, generation: generation),
                 onExecutionInterrupted: { [weak self] context in await self?.retireInterruptedGroupApprovals(context) }),
             delegatedAudience: dispatch.audience, delegatedSenderID: dispatch.message.senderID,
+            executionLease: executionLease,
+            onReaction: { [weak self] _ in
+                guard let self, await self.delegatedGroupOrigins[groupID] == originID else { return }
+                await self.reloadGroupReactions(groupID: groupID, generation: generation)
+            },
             onAgentChange: { [weak self] agentID in
                 await MainActor.run { self?.thinkingGroupMembers[groupID] = agentID }
             }, onMessage: { [weak self] message in
@@ -9506,6 +9521,9 @@ final class AppModel: ObservableObject {
                     questionAccountID: settings.accountScope ?? "local", questionLifetime: questionLifetime,
                     onExecutionInterrupted: { [weak self] context in await self?.retireInterruptedGroupApprovals(context) }),
                 executionLease: executionLease,
+                onReaction: { [weak self] _ in
+                    await self?.reloadGroupReactions(groupID: groupID, generation: generation)
+                },
                 onAgentChange: { [weak self] agentID in
                     await MainActor.run { self?.thinkingGroupMembers[groupID] = agentID }
                 }
@@ -9659,9 +9677,28 @@ final class AppModel: ObservableObject {
     }
 
     func toggleGroupReaction(groupID: UUID, messageID: UUID, emoji: String) async {
-        guard let groupService, let actor = groups.first(where: { $0.id == groupID })?.memberIDs.first else { return }
-        do { _ = try await groupService.toggleReaction(messageID: messageID, actorID: actor, emoji: emoji) }
-        catch { errorMessage = error.localizedDescription }
+        guard let groupService, !agentMessagingAccountTransition,
+              groups.contains(where: { $0.id == groupID }) else { return }
+        let generation = autoReviewAccountGeneration
+        do {
+            let lease = try workflowExecutionScope.capture()
+            _ = try await groupService.toggleUserReaction(groupID: groupID, messageID: messageID,
+                emoji: emoji, executionLease: lease)
+            guard generation == autoReviewAccountGeneration, lease.isActive else { return }
+            await reloadGroupReactions(groupID: groupID, generation: generation)
+        } catch is CancellationError { }
+        catch { if generation == autoReviewAccountGeneration { errorMessage = error.localizedDescription } }
+    }
+
+    private func reloadGroupReactions(groupID: UUID, generation: UInt64) async {
+        guard let groupService, generation == autoReviewAccountGeneration, !agentMessagingAccountTransition,
+              groups.contains(where: { $0.id == groupID }) else { return }
+        let epoch = (groupReactionLoadEpochs[groupID] ?? 0) &+ 1
+        groupReactionLoadEpochs[groupID] = epoch
+        let reactions = await groupService.reactions(groupID: groupID)
+        guard generation == autoReviewAccountGeneration, !agentMessagingAccountTransition,
+              groupReactionLoadEpochs[groupID] == epoch, groups.contains(where: { $0.id == groupID }) else { return }
+        groupReactions[groupID] = reactions
     }
 
     func createChannelConnection(connectorID: String, displayName: String, channelIDs: String, token: String, agentID: UUID?) async {
@@ -11099,6 +11136,12 @@ final class AppModel: ObservableObject {
                     questionLifetime: questionLifetime, agentLane: request.run.trigger == .manual ? .user : .background,
                     onExecutionInterrupted: { [weak self] context in await self?.retireInterruptedGroupApprovals(context) },
                     validateExecution: validator),
+                executionLease: lease,
+                onReaction: { [weak self] _ in
+                    guard let self, lease.isActive,
+                          await self.routineGroupExecutions[request.run.id]?.lease == lease else { return }
+                    await self.reloadGroupReactions(groupID: groupID, generation: generation)
+                },
                 onAgentChange: { [weak self] agentID in
                     await MainActor.run {
                         guard let self, self.routineGroupExecutions[request.run.id]?.lease == lease,
@@ -13137,6 +13180,8 @@ final class AppModel: ObservableObject {
         for lease in groupReadLeases.values { lease.close() }
         groupReadLeases.removeAll()
         groupUnreadStates.removeAll()
+        groupReactions.removeAll()
+        groupReactionLoadEpochs.removeAll()
         groupUnreadLoadEpochs.removeAll()
         cancelVisibleGroupRead()
         workflowExecutionScope.suspend()

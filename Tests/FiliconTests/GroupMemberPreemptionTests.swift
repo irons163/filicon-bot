@@ -126,7 +126,8 @@ struct GroupMemberPreemptionTests {
     }
 
     private func fixture(interruptions: Int = 1, publishBeforeInterruption: Bool = false,
-                         holdHuman: Bool = false) async throws -> Fixture {
+                         holdHuman: Bool = false, reactionBeforeInterruption: Int = 0,
+                         invalidReactionBeforeInterruption: Bool = false) async throws -> Fixture {
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-member-preemption-\(UUID())")
         let agents = try AgentService(storeURL: root.appending(path: "agents.json"))
         let agent = try await agents.create(name: "Worker", instructions: "MEMBER_PERSONA",
@@ -150,6 +151,18 @@ struct GroupMemberPreemptionTests {
             if publishBeforeInterruption && attempt == 1 {
                 _ = try await execute(.init(id: "progress", name: "SendMessage",
                     argumentsJSON: JSONEncoder().encode(["text": "Visible progress"])))
+            }
+            if attempt == 1 {
+                if invalidReactionBeforeInterruption {
+                    let result = try await execute(.init(id: "rejected-reaction", name: "ReactToMessage",
+                        argumentsJSON: JSONEncoder().encode(["message_address": "t999u", "emoji": "👍"])))
+                    #expect(result.isError)
+                }
+                for index in 0..<reactionBeforeInterruption {
+                    let result = try await execute(.init(id: ToolCallID(rawValue: "react-\(index)"), name: "ReactToMessage",
+                        argumentsJSON: JSONEncoder().encode(["message_address": try #require(user.shortAddress), "emoji": "👍"])))
+                    #expect(!result.isError)
+                }
             }
             if attempt <= interruptions {
                 _ = try await execute(.init(id: ToolCallID(rawValue: "cleanup-\(attempt)"), name: "member-cleanup",
@@ -445,5 +458,97 @@ struct GroupMemberPreemptionTests {
         if reason == "unattested priority" { return AgentExecutionSuperseded() }
         if reason == "cancellation" { return CancellationError() }
         return ProviderError.transport("Interrupted by priority; redrive me")
+    }
+
+    @Test(arguments: [1, 2])
+    func actualModelReactionAddOrRemovalPreventsPriorityRedrive(reactionCount: Int) async throws {
+        let f = try await fixture(reactionBeforeInterruption: reactionCount)
+        defer { f.lifetime.close(); try? FileManager.default.removeItem(at: f.root) }
+        let group = try f.groupTurn()
+        var human: Task<Void, any Error>?
+        do {
+            try await waitUntil { await f.gates[0].isWaiting }
+            let saved = await f.groups.reactions(groupID: f.room.id)
+            expectNoDifference(saved, reactionCount == 1 ? [.init(messageID: f.user.id, actorID: f.agent.id, emoji: "👍")] : [])
+            let before = await f.groups.messages(groupID: f.room.id)
+            human = f.humanTurn()
+            try await waitUntil { await f.scheduler.snapshot(agentID: f.agent.id).queuedCount == 1 }
+            await f.gates[0].open(); try await human?.value
+            let produced = try await group.value, events = await f.probe.events
+            expectNoDifference(produced, [])
+            expectNoDifference(events, ["group 1", "tool 1", "cleanup 1", "human"])
+            let actual = await f.groups.messages(groupID: f.room.id)
+            var expected = before
+            for index in expected.indices {
+                for tool in expected[index].toolActivities.indices where expected[index].toolActivities[tool].status == .pending {
+                    expected[index].toolActivities[tool].status = .cancelled
+                }
+            }
+            expectNoDifference(actual, expected)
+            let reactions = await f.groups.reactions(groupID: f.room.id)
+            expectNoDifference(reactions, saved)
+            let reopened = try GroupService(agents: f.agents, storeURL: f.root.appending(path: "groups.json"))
+            let restored = await reopened.messages(groupID: f.room.id), restoredReactions = await reopened.reactions(groupID: f.room.id)
+            expectNoDifference(restored, try durable(expected))
+            expectNoDifference(restoredReactions, saved)
+        } catch {
+            group.cancel(); human?.cancel(); await f.groups.stop(groupID: f.room.id); await f.release()
+            _ = await group.result; _ = await human?.result
+            throw error
+        }
+    }
+
+    @Test func rejectedReactionDoesNotSuppressAttestedNativePriorityRedrive() async throws {
+        let f = try await fixture(invalidReactionBeforeInterruption: true)
+        defer { f.lifetime.close(); try? FileManager.default.removeItem(at: f.root) }
+        let group = try f.groupTurn()
+        var human: Task<Void, any Error>?
+        do {
+            try await waitUntil { await f.gates[0].isWaiting }
+            let before = await f.groups.messages(groupID: f.room.id)
+            #expect(before.flatMap(\.toolActivities).contains { $0.name == "ReactToMessage" && $0.status == .failed })
+            let saved = await f.groups.reactions(groupID: f.room.id)
+            expectNoDifference(saved, [])
+            human = f.humanTurn()
+            try await waitUntil { await f.scheduler.snapshot(agentID: f.agent.id).queuedCount == 1 }
+            await f.gates[0].open(); try await human?.value
+            let produced = try await group.value, events = await f.probe.events
+            expectNoDifference(produced.map(\.text), ["Recovered group result"])
+            expectNoDifference(events, ["group 1", "tool 1", "cleanup 1", "human", "group 2"])
+            let history = await f.groups.messages(groupID: f.room.id), reactions = await f.groups.reactions(groupID: f.room.id)
+            expectNoDifference(reactions, saved)
+            #expect(!history.contains { $0.memberOutcome == .failed || $0.text.contains("PRIVATE_") })
+            let reopened = try GroupService(agents: f.agents, storeURL: f.root.appending(path: "groups.json"))
+            let restored = await reopened.messages(groupID: f.room.id)
+            expectNoDifference(restored, try durable(history))
+        } catch {
+            group.cancel(); human?.cancel(); await f.groups.stop(groupID: f.room.id); await f.release()
+            _ = await group.result; _ = await human?.result
+            throw error
+        }
+    }
+
+    @Test func publicSyntheticRoomContextCannotConstructReactionCapability() async throws {
+        let f = try await fixture()
+        defer { f.lifetime.close(); try? FileManager.default.removeItem(at: f.root) }
+        await f.registry.register(MemberPreemptionProvider { request, execute in
+            _ = await f.probe.record(request, groupID: f.room.id)
+            #expect(!request.tools.contains { $0.name == "ReactToMessage" })
+            #expect(!request.messages.contains { $0.text.contains("ReactToMessage directory") })
+            await #expect(throws: ToolLoopError.unknownTool("ReactToMessage")) {
+                try await execute(.init(id: "synthetic", name: "ReactToMessage",
+                    argumentsJSON: JSONEncoder().encode(["message_address": try #require(f.user.shortAddress), "emoji": "👍"])))
+            }
+            return "PASS"
+        })
+        let context = GroupTurnContext(group: f.room, members: [.init(f.agent)], respondingMemberIDs: [f.agent.id],
+            round: 0, newMessageIDs: [f.user.id])
+        #expect(context.executionAttempt == nil && context.reactToMessage == nil)
+        let history = await f.groups.messages(groupID: f.room.id)
+        let produced = try await f.responder.respond(agent: f.agent, history: history, context: context, onTools: { _ in },
+            onMessage: { _ in Issue.record("Synthetic reaction must not publish") })
+        expectNoDifference(produced, [])
+        let after = await f.groups.messages(groupID: f.room.id), reactions = await f.groups.reactions(groupID: f.room.id)
+        expectNoDifference(after, history); expectNoDifference(reactions, [])
     }
 }

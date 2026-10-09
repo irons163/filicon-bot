@@ -67,18 +67,22 @@ public struct GroupTurnContext: Sendable {
     public let round: Int
     public let newMessageIDs: Set<UUID>
     public let executionAttempt: GroupMemberExecutionAttempt?
+    public let reactToMessage: (@Sendable (UUID, String) async throws -> Bool)?
 
     public init(group: AgentGroup, members: [GroupMemberIdentity], respondingMemberIDs: [UUID], round: Int, newMessageIDs: Set<UUID>) {
         self.group = group; self.members = members; self.respondingMemberIDs = respondingMemberIDs
         self.round = round; self.newMessageIDs = newMessageIDs
         self.executionAttempt = nil
+        self.reactToMessage = nil
     }
 
     fileprivate init(group: AgentGroup, members: [GroupMemberIdentity], respondingMemberIDs: [UUID],
-                     round: Int, newMessageIDs: Set<UUID>, executionAttempt: GroupMemberExecutionAttempt) {
+                     round: Int, newMessageIDs: Set<UUID>, executionAttempt: GroupMemberExecutionAttempt,
+                     reactToMessage: @escaping @Sendable (UUID, String) async throws -> Bool) {
         self.group = group; self.members = members; self.respondingMemberIDs = respondingMemberIDs
         self.round = round; self.newMessageIDs = newMessageIDs
         self.executionAttempt = executionAttempt
+        self.reactToMessage = reactToMessage
     }
 }
 
@@ -238,6 +242,7 @@ public actor GroupService {
     public static let maximumMemberMessages = 10
     public static let maximumMessagesPerMemberTurn = 2
     public static let maximumMemberPreemptionAttempts = 3
+    public static let localUserReactionActorID = UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0))
     private let agents: AgentService
     private let storeURL: URL
     private let activityDate: @Sendable () -> Date
@@ -482,6 +487,7 @@ public actor GroupService {
         delegatedAudience: AgentGroupAudience? = nil,
         delegatedSenderID: UUID? = nil,
         executionLease: AgentWorkflowExecutionScope.Lease? = nil,
+        onReaction: @escaping @Sendable ([MessageReaction]) async -> Void = { _ in },
         onAgentChange: @escaping @Sendable (UUID?) async -> Void = { _ in },
         onMessage: @escaping @Sendable (RoomMessage) async -> Void = { _ in }
     ) async throws -> [RoomMessage] {
@@ -574,9 +580,16 @@ public actor GroupService {
                     }
                     attemptTickets.append(ticket)
                     activeAttempts[groupID] = ticket
-                    let context = GroupTurnContext(group: group, members: currentMembers.map(GroupMemberIdentity.init),
-                        respondingMemberIDs: responderIDs, round: round, newMessageIDs: Set(unread.map(\.id)), executionAttempt: ticket)
                     let attemptHistory = state.roomMessages.filter { $0.groupID == groupID }
+                    let context = GroupTurnContext(group: group, members: currentMembers.map(GroupMemberIdentity.init),
+                        respondingMemberIDs: responderIDs, round: round, newMessageIDs: Set(unread.map(\.id)), executionAttempt: ticket,
+                        reactToMessage: { messageID, emoji in
+                            let applied = try await self.toggleMemberReaction(messageID: messageID, emoji: emoji,
+                                group: group, epoch: epoch, attempt: ticket, history: attemptHistory)
+                            let reactions = await self.reactions(groupID: groupID)
+                            await onReaction(reactions)
+                            return applied
+                        })
                     var activity = RoomMessage(groupID: groupID, senderID: memberID, text: "")
                     activity.replyToMessageID = threadTarget
                     let currentActivity = activity
@@ -945,14 +958,46 @@ public actor GroupService {
         return true
     }
 
+    private func toggleMemberReaction(messageID: UUID, emoji: String, group: AgentGroup, epoch: UInt64,
+                                      attempt: GroupMemberExecutionAttempt, history: [RoomMessage]) throws -> Bool {
+        try validateMemberSource(group: group, epoch: epoch)
+        guard activeAttempts[group.id] === attempt, attempt.hasBegun,
+              attempt.agentID != Self.localUserReactionActorID,
+              group.memberIDs.contains(attempt.agentID),
+              let expected = history.first(where: { $0.id == messageID && $0.groupID == group.id }),
+              GroupReactionDirectory(history: history, groupID: group.id, actorID: attempt.agentID).contains(messageID),
+              state.roomMessages.filter({ $0.id == messageID }).count == 1,
+              state.roomMessages.filter({ $0.id == messageID && $0.groupID == group.id }) == [expected]
+        else { throw AgentServiceError.invalidReaction }
+        return try attempt.commit { try toggleReaction(messageID: messageID, actorID: attempt.agentID, emoji: emoji) }
+    }
+
+    public func toggleUserReaction(groupID: UUID, messageID: UUID, emoji: String,
+                                   executionLease: AgentWorkflowExecutionScope.Lease) throws -> Bool {
+        try executionLease.commit {
+            guard state.groups.contains(where: { $0.id == groupID }),
+                  state.roomMessages.filter({ $0.id == messageID }).count == 1,
+                  state.roomMessages.filter({ $0.id == messageID && $0.groupID == groupID }).count == 1,
+                  state.roomMessages.contains(where: { $0.id == messageID && $0.groupID == groupID && $0.memberOutcome == nil })
+            else { throw AgentServiceError.invalidReaction }
+            return try toggleReaction(messageID: messageID, actorID: Self.localUserReactionActorID, emoji: emoji)
+        }
+    }
+
     private func markMemberReaction(messageID: UUID, actorID: UUID) {
         guard let message = state.roomMessages.first(where: { $0.id == messageID }),
+              actorID != Self.localUserReactionActorID,
               let attempt = activeAttempts[message.groupID], attempt.agentID == actorID else { return }
         attempt.markReaction()
     }
 
     public func messages(groupID: UUID) -> [RoomMessage] { state.roomMessages.filter { $0.groupID == groupID } }
     public func reactions(messageID: UUID) -> [MessageReaction] { state.reactions.filter { $0.messageID == messageID } }
+    public func reactions(groupID: UUID) -> [MessageReaction] {
+        let counts = Dictionary(grouping: state.roomMessages, by: \.id).mapValues(\.count)
+        let ids = Set(state.roomMessages.filter { $0.groupID == groupID && counts[$0.id] == 1 }.map(\.id))
+        return state.reactions.filter { ids.contains($0.messageID) }
+    }
 
     public func unreadState(groupID: UUID) throws -> ConversationUnreadState {
         guard state.groups.contains(where: { $0.id == groupID }),

@@ -1,4 +1,14 @@
-# 協作能力核對紀錄（更新至 2026-10-08）
+# 協作能力核對紀錄（更新至 2026-10-09）
+
+## Native 群組 ReactToMessage／人類反應歸屬（最後必要 gate 全部通過，隨本批提交）
+
+接續 `110b4a0`，重新核對 reconstructed reaction tool、group-chat-glue 與 direct turn-runtime。模型僅輸入 message_address／單一 emoji，真正 native admitted member attempt 綁定 actor／group／run；最後 40 筆同群組 canonical 目錄排除本人、host outcomes／routine seeds、空白、重複 ID／位址，不匯入其他 room 或 private DM。最終保存再次核對完整原目標與 epoch／account／persona／membership lease，跨 room 重複 ID 既不顯示也不能反應，不刪原損壞資料。公開合成 context 沒有 capability；Stop／ABA 拒絕舊 callback。
+
+工具成功 receipt 只在實際 native save 後回傳，same-emoji 新 call 可撤回，既有 ToolLoop 仍直接拒絕 duplicateCallID。成功新增或撤回 reaction 保護該 exact attempt 的 priority redrive；無效或失敗 reaction 不妨礙合法續接。bare-tap 不強制添加文字／PASS，private draft 不公開，reaction 不是工作成果、核准或外部權限。UI 使用真正本機人類身分而非第一位 member，原 normal／delegated／routine paths 重讀 native projection；generation／refresh epoch 拒收晚到舊列表，帳號切換同步清空。
+
+最後 focused v4 重編譯通過 18 methods／3 suites，相關 reaction／priority／unread 回歸 44 methods／4 suites 通過；七語各 1,817 keys／0 missing。完整 SQLite 聊天、native 非 reaction 欄位及 reopened state 比對，保留 initial fixture failures 與實際跨 room ID corruption 紅燈。七語 × 明暗 × 320／560 pt 共 28 張 native PNG／OCR 通過；最後 v4 七語 dark 窄版代表與四張 light 寬版已目視，兩行截斷的公開姓名在 accessibility label 保留全文。無 filter／串行／明確 skip-build 全套 exit 0，2,249 Swift Testing methods／266 suites＋135 XCTest／0 failures；arm64 native Debug build／verify、fresh standalone SPM Debug 封裝／獨立 verify 也已通過，65 個 app sources 與 native project 接線一致。兩項 opt-in live tests skipped，既有 warnings 保留，Debug／ad-hoc 不算 release／公證或 packaged XPC live。精確歷史與最新結果見 [完成驗收入口](Parity-completion-audit.md)。
+
+這是 group-only，不關閉 direct 模型 ReactToMessage、incoming images、private DM context sharing、hidden fallback／unified host、其他 host 或 live／真人／VoiceOver／最低 macOS／release／公證。48 分類與整體 partial 不變；未 push／launch／重啟 App 或 Xcode／操作真實資料。以下群組 priority 紀錄是前一批已提交歷史，不以其成功代替本批最後 source gates。
 
 ## 群組成員 priority 中斷／fresh attempt（最後必要 gate 全部通過，隨本批提交）
 

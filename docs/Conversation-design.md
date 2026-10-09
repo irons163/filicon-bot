@@ -53,6 +53,34 @@ durable group callback, with a two-message turn limit and the existing ten-messa
 group budget. Once it publishes, final text is not posted again. Providers that
 do not use it retain the final-response compatibility fallback.
 
+### Native group message reactions (October 9 increment)
+
+Actual native group member turns now offer `ReactToMessage` with only
+`message_address` and one emoji (at most 16 UTF-16 units). The host fixes the
+reacting member and accepts only unique, current-group short addresses from the
+last 40 saved entries, excluding that member's own messages and host-only
+outcomes/routine seeds. Publicly constructed room contexts cannot mint the
+capability. Canonical targets and account/group/member lifetimes are rechecked
+at the native atomic save; duplicate message identities across rooms fail
+closed without deleting or repairing the original data.
+
+A sparse tapback can be the entire response when prose would be unnecessary;
+it does not replace requested work, grant tools, answer a question or approve an
+action. Repeating the same emoji with a new call removes that member's reaction.
+The existing tool loop rejects duplicate call IDs; the scoped reaction executor
+also retains successful-call receipts without toggling again. A saved addition
+or removal prevents priority redelivery of that already-published member turn.
+
+Reaction pills remain visible without hovering, identify the actual member or
+the local user, wrap in narrower bubbles and support the seven existing UI
+languages. Human reactions no longer impersonate the first group member;
+clicking the user's own pill takes it back. Reopening loads native reactions,
+and failed saves or revoked old callbacks cannot publish a success projection.
+This increment is group-only: direct-chat model `ReactToMessage`, incoming images,
+unified private context and external/live/VoiceOver/release acceptance remain
+separate gaps. Focused, related and final gate status is recorded in
+`Parity-completion-audit.md`, not implied by this design description.
+
 ### Cross-agent SendToAgent
 
 Group inference now receives a real, request-scoped `SendToAgent` executor. The

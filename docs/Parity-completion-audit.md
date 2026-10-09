@@ -1,5 +1,31 @@
 # 完成驗收入口（2026-09-27）
 
+## 原生群組 ReactToMessage 與反應歸屬（2026-10-09，最後必要 gate 全部通過，隨本批提交）
+
+基線 `110b4a0`；下節群組 priority 的成功紀錄只證明前一批。重新唯讀核對 reconstructed HEAD `a9f633e09d49a85829b8236331b9e21f7e612634` 的 `source/host/runner/tools/sand-reaction-tool.ts:6–54`、`source/host/extensions/transcript/group-chat-glue.ts:524–554` 及 `source/host/extensions/transcript/turn-runtime.ts:803–825`：模型工具只輸入 message_address／emoji，稀疏 tapback 可代替不必要的文字，不得取代工作；相同表情可撤回。群組實際 host 接受人類或其他成員訊息、拒絕自己的 send；direct host 僅接受真正 user entry。這批只補前者，不以一般 UI reaction 宣稱 direct 模型工具已完成。
+
+`GroupService` 僅替真正 native admitted member attempt 建立反應 callback；公開合成 context 不具 capability。`GroupReactionDirectory` 保留最後 40 筆同群組、唯一 canonical 身分／持久短位址，排除本人、host outcome／routine seed、空白與錯誤 role；只匯出短位址、公開 sender 與 240 字元 excerpt，不借 UUID alias／其他群組／私訊。模型不能輸入 actor／group／run identity；emoji 嚴格為單一 grapheme 且最多 16 UTF-16 units，拒絕一般字串。native commit 重驗完整目標、原 room epoch／membership／persona／account lease；跨 room 重複 message ID 不寫入／不顯示，原資料保留。
+
+真正 human reaction 使用保留的本機使用者身分，不再冒充第一位 member。App 原 normal／delegated／routine group callbacks 重讀 authoritative reactions，generation／refresh epoch 避免晚到舊 projection；帳號切換同步清除，Stop／persona／membership／account ABA 拒絕舊工具。native 保存成功後才呈現；失敗回滾完整 envelope，不發布假的成功。same-emoji 新 call 可撤回；既有 ToolLoop 直接拒絕重複 call ID，reaction executor 另保存成功 receipt 防二次 toggle。成功新增或移除的真正 reaction 都阻止該 native attempt 的 priority redrive，錯誤 target／未成功反應不妨礙合法續接。稀疏 bare-tap 不新增 forced prose／PASS；不公開 private assistant draft，也不擴張其他核准或對外權限。
+
+Swift Testing／CustomDump 技能用於完整 native codec／聊天／非 reaction 欄位比較與可控 actor gates；SwiftUI 技能用於泡泡外持續可見的反應 pills、窄版換行、公開作者／本機使用者與完整 accessibility label。人類可點自己的 pill 撤回；native NSHostingView／Vision render 沒有啟動使用者 App。七語 × 明暗 × 320／560 pt 共 28 張 PNG，窄版長公開名稱維持兩行截斷且 accessibility label 保留全文。最後 `.build/validation/group-reactions-ui-v4/` 的七語 dark 320 pt 與 en／zh-Hant／fr／ja light 560 pt 已逐張目視；不是所有 28 張人工目視或全 App／真人／VoiceOver／最低 macOS 驗收。
+
+失敗歷史保留於忽略的 `.build/validation/`：
+
+- `group-reactions-focused-v1.log` exit 1：產品／新測試成功編譯，core 9 methods／2 suites 通過；App 3 issues 是 fixture 仍讀不存在的 legacy conversations.json，尚未測到 bare-tap 斷言。已改比較真正 SQLite ConversationStore 的完整聊天值，未降級為只比文字。
+- `group-reactions-focused-v2.log` exit 1：synthetic callback 正確拋 unknownTool、真正工具流程正確拒絕 duplicateCallID，但 fixture 沒有攔住預期錯誤，導致一項 core issue／六項 App issues；不是放寬產品工具重送機制。v3 改用精確 error assertions、fixture 成員只作一次 tap；exit 0 的 16 methods／3 suites 通過，但早於後續損壞資料防護，不作最後 source gate。
+- `group-reactions-cross-room-red-v1.log` exit 1：真實 damaged native log 重現跨 room ID 混淆，directory／UI／human write／native member write 都未拒絕；新增全 canonical log 身分唯一性防護，而非改測試接受串群組或刪除原資料。
+- `group-reactions-focused-v4.log` exit 0：重新編譯最後產品 source（13.53 秒），core 12 methods／2 suites（0.113 秒）、actual App 6 methods／1 suite（5.883 秒），合計 18 methods／3 suites 通過。涵蓋正確 native member、人類歸屬／撤回、SQLite 私訊完整保留、停止及三種 ABA、保存失敗、跨群組重複身分、合成 context、正確 priority redrive 與七語 28 張 render。
+- `group-reactions-related-v1.log` exit 0：明確 `--skip-build` 使用 v4 最新產物，完整 reaction／member priority／group unread suites，core 38 methods／3 suites（0.959 秒）、App 6／1（3.554 秒），合計 44 methods／4 suites 通過。
+
+`group-reactions-full-v1.log` 無 filter／串行／明確 `--skip-build` 使用 v4 最後產物，exit 0：17 Swift Testing bundles 合計 2,249 methods／266 suites，另 17 XCTest bundles 合計 135 tests／0 failures；core 1,069／120（53.239 秒）、App 836／105（751.145 秒）。兩項 opt-in live Codex tests skipped，既有 CoreData／系統診斷保留，不當成外部驗收。`group-reactions-localization-v1.log` exit 0，七語各 1,817 keys／0 missing。
+
+`group-reactions-native-v1.log` exit 0，使用本次明確 Xcode developer directory／arm64 Debug，重用隔離 `.build/validation/ChannelInboundNativeV3` 並重新編譯最後 source，未改系統 developer selection。65 個 native app sources 與 project membership 相符；新 Agents／AppServices 檔案經原本 local SPM product 納入，不需再複製 app sources。`group-reactions-native-verify-v1.log` exit 0，驗證 `ChannelInboundNativeV3/Build/Products/Debug/Filicon.app` 的四個 executable、版本 0.1.0／build 1、offline resources、Support 對應 app／XPC entitlements 與 deep strict 簽章；僅此 native Debug 允許既有 Xcode debug 例外。既有 Keychain deprecated／AppIntents warnings 和 ad-hoc notes 保留。
+
+`group-reactions-package-v1.log` exit 0，在事先確認不存在的 `.build/validation/GroupReactionPackageV1/Filicon.app` 產生全新 standalone SPM Debug 封裝，四個 executable 都由 script 明確建置。`group-reactions-package-verify-v1.log` exit 0，再次獨立驗證版本、資源、entitlements 與 deep strict 簽章，沒有 native Debug entitlement 例外。沒有執行 script 印出的 launch-smoke 指令，未 launch App／packaged XPC；Debug／ad-hoc 不等於 Developer ID release／公證。沒有刪除舊 app／log／artifact 或改真實資料；本批 source、tests 與文件隨此增量提交，不借前一批成功代替。
+
+這只是 native group 模型反應增量。direct 模型 ReactToMessage、incoming images、private DM context sharing、hidden common fallback／unified host、其他 host 與真實帳號／外部平台／真人／VoiceOver／最低 macOS／release／公證仍保留。48 分類的 42 個歷史 complete／5 個 partial／1 個 NA 與整體 partial 不變。未 push／launch／重啟 App 或 Xcode／修改真實資料；使用者已解鎖後才恢復本批驗證，沒有解除檔案保護或清理檔案。
+
 ## 群組成員優先中斷與有界續接（2026-10-08，最後必要 gate 全部通過，隨本批提交）
 
 最後 v9 來源已通過聚焦／完整相關／無 filter 全套、native Debug build／verify、全新 standalone Debug 封裝／獨立 verify 與七語 keys。下方較早的「尚待／未 commit」段落保留當時失敗歷史，不是最新狀態；本節末尾列出最後 gate，不以舊 incoming 或早期 v7 的成功代替新來源。
