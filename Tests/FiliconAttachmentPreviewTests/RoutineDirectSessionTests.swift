@@ -18,6 +18,8 @@ private actor RoutineDirectProbe {
     var acknowledgmentWriteResults: [NormalizedToolResult] = []
     var acknowledgmentWriteErrors: [String] = []
     var activityCardsAtInference: [Bool] = []
+    var reactionResults: [NormalizedToolResult] = []
+    func recordReaction(_ result: NormalizedToolResult) { reactionResults.append(result) }
     func recordPlain(_ request: InferenceRequest) { plain.append(request) }
     func recordAcknowledgment(_ request: InferenceRequest) { acknowledgments.append(request) }
     func recordAcknowledgmentResult(_ succeeded: Bool) { acknowledgmentResults.append(succeeded) }
@@ -57,6 +59,7 @@ private struct RoutineDirectProvider: InteractiveToolProvider {
     var gate: RoutineDirectGate? = nil
     var question = false
     var silent = false
+    var reacts = false
     var writeRoot: URL? = nil
     var peerID: UUID? = nil
     var activityStoreURL: URL? = nil
@@ -111,6 +114,16 @@ private struct RoutineDirectProvider: InteractiveToolProvider {
                     } else { activityCardExists = nil }
                     let index = await probe.recordShared(request, activityCardExists: activityCardExists)
                     try await gate?.wait()
+                    if reacts {
+                        #expect(request.tools.contains { $0.name == "ReactToMessage" })
+                        let target = try #require(request.messages.first { $0.role == .user && $0.text == "REVIEWED_HISTORY" })
+                        let address = try #require(target.shortAddress)
+                        let result = try await executeTool(.init(id: "routine-reaction", name: "ReactToMessage",
+                            argumentsJSON: JSONEncoder().encode(["message_address": address, "emoji": "👍"])))
+                        await probe.recordReaction(result)
+                        continuation.yield(.completed(.stop)); continuation.finish()
+                        return
+                    }
                     let owner = request.messages.first?.text.contains("DIRECT_PERSONA") == true
                     if owner, index == 1, let peerID {
                         _ = try await executeTool(.init(id: "routine-peer", name: "SendToAgent",
@@ -144,7 +157,7 @@ private struct RoutineDirectProvider: InteractiveToolProvider {
     // Fixed future answer prevents a wall-clock scheduler run when the isolated
     // resumed fixture is bootstrapped again to check non-replay.
     private let acknowledgmentAt = Date(timeIntervalSince1970: 1_900_000_000)
-    private func fixture(gate: RoutineDirectGate? = nil, question: Bool = false, silent: Bool = false, write: Bool = false, peer: Bool = false, activityProbe: Bool = false) async throws -> (URL, AppModel, Automation, UUID, RoutineDirectProbe) {
+    private func fixture(gate: RoutineDirectGate? = nil, question: Bool = false, silent: Bool = false, write: Bool = false, peer: Bool = false, activityProbe: Bool = false, reacts: Bool = false) async throws -> (URL, AppModel, Automation, UUID, RoutineDirectProbe) {
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-routine-direct-\(UUID())")
         let service = try AgentService(storeURL: root.appending(path: "agents.json"))
         let agent = try await service.create(name: "Reviewed agent", instructions: "DIRECT_PERSONA",
@@ -163,6 +176,9 @@ private struct RoutineDirectProvider: InteractiveToolProvider {
         var conversation = Conversation(id: UUID(uuidString: "00000000-0000-0000-0000-000000000051")!, title: "Reviewed conversation",
             providerID: agent.providerID, modelID: agent.modelID, messages: [.init(role: .user, text: "REVIEWED_HISTORY", createdAt: base)], updatedAt: base)
         conversation.agentBinding = .init(accountID: "local", agentID: agent.id)
+        // Reaction targets are canonical addressed history before admission;
+        // don't compare address allocation against an unaddressed import.
+        if reacts { DirectMessageAddressing.assignMissing(in: &conversation) }
         let unrelated = Conversation(title: "Other chat", messages: [.init(role: .user, text: "UNRELATED_PRIVATE_HISTORY", createdAt: base)])
         let store = ConversationStore(fileURL: root.appending(path: "conversations.json"))
         try await store.save([conversation, unrelated])
@@ -179,7 +195,7 @@ private struct RoutineDirectProvider: InteractiveToolProvider {
             try await model.localToolPermissionPolicy.setChoice(.ask, for: .writeFile)
         } else { model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false) }
         let probe = RoutineDirectProbe()
-        await model.registry.register(RoutineDirectProvider(probe: probe, gate: gate, question: question, silent: silent, writeRoot: write ? root : nil,
+        await model.registry.register(RoutineDirectProvider(probe: probe, gate: gate, question: question, silent: silent, reacts: reacts, writeRoot: write ? root : nil,
             activityStoreURL: activityProbe ? root.appending(path: "conversations.json") : nil))
         await model.bootstrap()
         // Bootstrap must not fire a wall-clock overdue fixture or race account
@@ -644,6 +660,27 @@ private struct RoutineDirectProvider: InteractiveToolProvider {
         let acknowledgment = try #require(await probe.acknowledgments.first)
         #expect(acknowledgment.messages.contains { $0.role == .user && $0.text == "Inspect only" })
         expectNoDifference(acknowledgment.messages.last?.text, SpendGuardAnswer.keep.modelAcknowledgmentReminder)
+    }
+
+    @Test func reviewedRoutineReactionSavesOnlyOriginalHumanTarget() async throws {
+        let (root, model, automation, id, probe) = try await fixture(reacts: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try await approve(model, automation: automation, id: id)
+        let store = ConversationStore(fileURL: root.appending(path: "conversations.json"))
+        let before = try #require(try await store.conversation(id: id))
+        let original = try #require(before.messages.first { $0.text == "REVIEWED_HISTORY" })
+        let binding = try #require(before.agentBinding)
+        await model.runAutomationNow(id: automation.id)
+        let results = await probe.reactionResults
+        expectNoDifference(results.count, 1)
+        #expect(try #require(results.first).isError == false)
+        let saved = try #require(try await store.conversation(id: id))
+        var expected = original
+        expected.reactions = [.init(emoji: "👍", actorID: "agent:\(binding.agentID.uuidString)")]
+        expectNoDifference(saved.messages.first { $0.id == original.id }, expected)
+        #expect(!saved.messages.contains { $0.text.contains("PRIVATE_ASSISTANT_TEXT") })
+        expectNoDifference(model.automationHistory[automation.id]?.first?.status, .ok)
+        #expect(!model.running.contains(id))
     }
 
     @Test(arguments: [false, true]) func reviewedRoutineUsesExistingHistoryAndSharedToolsWithIndependentMemoryConsent(memory: Bool) async throws {
