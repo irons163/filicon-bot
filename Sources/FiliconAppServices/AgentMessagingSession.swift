@@ -104,6 +104,11 @@ public actor AgentMessagingSession {
     /// group's foreground factory or SendToAgent's already-consumed approval.
     public typealias MailboxChannelPublisherFactory = @Sendable (AgentMessage, AgentProfile, ChannelPublicationLifetime) async throws -> AgentChannelPublicationTransaction?
     private let mailboxChannelPublisherFactory: MailboxChannelPublisherFactory?
+    /// A fresh native executor for one admitted delivery. The host must acquire
+    /// its recipient destination/binding and fence commits with this lifetime;
+    /// absence never falls back to the origin or selected conversation.
+    public typealias MailboxReactionFactory = @Sendable (AgentMessage, AgentProfile, ToolContext, AgentPublicationLifetime) async throws -> AgentMessageReactionTool?
+    private let mailboxReactionFactory: MailboxReactionFactory?
     private let publicationLifetime = AgentPublicationLifetime()
     private let onChange: @Sendable () async -> Void
     private let turnTimeout: Duration
@@ -168,6 +173,7 @@ public actor AgentMessagingSession {
                 mailboxRemote: (@Sendable (AgentMessage) -> AgentMailboxRemoteServices?)? = nil,
                 mailboxGallery: (@Sendable (AgentMessage) -> AgentMailboxGalleryServices?)? = nil,
                 mailboxChannelPublisherFactory: MailboxChannelPublisherFactory? = nil,
+                mailboxReactionFactory: MailboxReactionFactory? = nil,
                 authorize: @escaping Authorizer = { _, _, _, _, _ in throw AgentMessagingError.approvalRequired },
                 onChange: @escaping @Sendable () async -> Void = {}) {
         self.id = id; self.originConversationID = originConversationID
@@ -198,6 +204,7 @@ public actor AgentMessagingSession {
         self.mailboxRemote = mailboxRemote
         self.mailboxGallery = mailboxGallery
         self.mailboxChannelPublisherFactory = mailboxChannelPublisherFactory
+        self.mailboxReactionFactory = mailboxReactionFactory
     }
 
     public nonisolated func tool(for senderID: UUID, groupUserMessageID: UUID? = nil) -> any ToolExecutor {
@@ -1122,6 +1129,7 @@ public actor AgentMessagingSession {
             let remotePublication = makeMailboxRemotePublication(inbound: inbound, sender: agent, output: output)
             let galleryPublication = makeMailboxGalleryPublication(inbound: inbound, sender: agent, output: output)
             var activePublisher: AgentUserMessageTool?
+            var activeReaction: AgentMessageReactionTool?
             do {
                 let channelPublication = try await makeMailboxChannelPublication(inbound: inbound, sender: agent)
                 let publisher = AgentUserMessageTool(conversationID: originConversationID,
@@ -1194,8 +1202,17 @@ public actor AgentMessagingSession {
                 }
                 let request = InferenceRequest(conversationID: conversationID, modelID: agent.modelID, messages: transportMessages, attachmentsByMessageID: attachments)
                 let tool = SendToAgentTool(session: self, senderID: agent.id, replyTo: inbound)
+                let toolContext = ToolContext(conversationID: originConversationID)
+                if capability, let mailboxReactionFactory {
+                    try checkOpen()
+                    activeReaction = try await mailboxReactionFactory(inbound, agent, toolContext, publicationLifetime)
+                    try checkOpen()
+                }
+                var additionalTools: [any ToolExecutor] = [tool, publisher]
+                if let activeReaction { additionalTools.append(activeReaction) }
+                additionalTools += management?.tools(for: agent.id, memoryQuery: inbound.text) ?? []
                 do { try await coordinator.send(request: request, providerID: agent.providerID,
-                    additionalTools: [tool, publisher] + (management?.tools(for: agent.id, memoryQuery: inbound.text) ?? []), toolContext: ToolContext(conversationID: originConversationID),
+                    additionalTools: additionalTools, toolContext: toolContext,
                     agentID: agent.id, agentLane: inbound.id == userMessageID ? .user : .background,
                     priority: inbound.priority == .priority, executionTimeout: turnTimeout, onStart: { [messenger, onChange, accountID, originConversationID] in
                         try await self.checkOpen()
@@ -1222,6 +1239,7 @@ public actor AgentMessagingSession {
                 try checkOpen()
                 try await output.recordExternalPublications(publisher.savedExternalMessages())
                 await publisher.close()
+                await activeReaction?.close()
                 let text = await output.report
                 if let conversations {
                     try await conversations.appendExchange(accountID: accountID, originID: originConversationID, agentID: agent.id, incoming: incoming, response: text)
@@ -1240,6 +1258,7 @@ public actor AgentMessagingSession {
                     try await projectPublication(report)
                 }
             } catch {
+                await activeReaction?.close()
                 if let activePublisher {
                     try? await output.recordExternalPublications(activePublisher.savedExternalMessages())
                     await activePublisher.close()

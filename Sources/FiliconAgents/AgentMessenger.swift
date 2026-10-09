@@ -776,6 +776,9 @@ public final class AgentPublicationLifetime: @unchecked Sendable {
     private var active = true
     public init() {}
     public func close() { lock.withLock { active = false } }
+    /// Read-only validity check for native host factories. This does not grant
+    /// publication or replace the atomic lifetime fence at the final commit.
+    public func check() throws { try commit {} }
     func commit(_ operation: () throws -> Void) throws {
         try lock.withLock {
             guard active else { throw CancellationError() }

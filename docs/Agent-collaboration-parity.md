@@ -4,6 +4,10 @@
 
 ### Delegated mailbox 接線前的實際地址／權限核對
 
+2026-10-10 信箱 session 基礎接線：新增 optional native MailboxReactionFactory，只有支持工具的實際 delivery 才取得獨立 executor，保持原 origin ToolContext；沒有 factory／回 nil 不註冊工具，也不選 fallback 聊天。factory await 前後檢查 session，成功及錯誤 cleanup 都關閉 executor；公開 lifetime read-only check 不代替最終 atomic commit。實際 session → coordinator → fake provider → executor 的 1 method／2 cases，驗證 host 指定不同目的地、peer envelope 仍 assistant、私人 draft 不公開、completed delivery 與關閉後拒絕重用；另測 lifetime close 不可復活。App 尚未提供具真正 binding／quota commit 的 factory，產品 mailbox reaction 功能仍未完成。
+
+最後 `mailbox-reaction-session-focused-v3.log` 重編譯 exit 0，21 methods／3 suites（0.521 秒），含工具與 canonical persistence。初版 v1 為新測試誤用 lifetime 尚無公開 check、optional publications 編譯失敗，已修整合；v2 新 session 兩 cases 通過。較廣 `mailbox-reaction-session-regression-v1.log` exit 1，49 methods／3 suites 的既有 recall 三 routes 均在直接讀取隔離 `agents.json` 時遭 NSCocoaErrorDomain Code=257／EPERM；其餘案例通過。當輪 ioreg 仍明確鎖屏，未變更保護／刪除失敗案例／重啟 App，待解鎖再跑原完整 scope；不以 focused green 取代該失敗或先前 App 85 issues，也未取得新完整／native／release gates。
+
 地址轉接基礎增量：direct reaction tool 新增 explicit native `destinationConversationID` initializer；既有 initializer 仍固定 context 的原 conversation。directory 只在 exact destination 匹配時公開／解析，執行仍要求原 ToolContext（含 runID）；這不是 binding lease 或保存授權，host validate／canonical commit 必須另外提供。新增 1 method／2 cases 驗證不同 origin／destination、錯 destination 拒絕、外來 context 拒絕、same-call receipt 與 close。尚未接入 `AgentMessagingSession` 或 App factory，不稱 mailbox 功能完成。
 
 `mailbox-reaction-routing-v1.log` 重編譯 exit 0，11 methods／1 suite；相關 `mailbox-reaction-routing-regression-v1.log` 的 core 19 methods／2 suites（工具＋canonical persistence）通過，但整個命令 exit 1：App routine 32 methods／85 issues（workflow storage unavailable、review admission 拒絕等）。唯讀 ioreg 確認該輪末端 `CGSSessionScreenIsLocked=Yes`、磁碟仍有 53 GiB；不能推定 85 issues 全是鎖屏或聲稱產品回歸已修復。保留失敗，待解鎖後重跑同 scope；未降低斷言／改保護／重啟 App。這是未完成產品基礎，舊完整／native gates 不證明本 source 最後驗收。

@@ -32,6 +32,11 @@ private actor MessagingProbe {
     var messages: [RoomMessage] = []
     var contexts: [ToolContext] = []
     var peerMessages: [(AgentMessageSource, RoomMessage)] = []
+    var reactionTool: AgentMessageReactionTool?
+    var reactionContext: ToolContext?
+    var reactionTargets: [UUID] = []
+    func reaction(_ tool: AgentMessageReactionTool, context: ToolContext) { reactionTool = tool; reactionContext = context }
+    func react(_ target: UUID) -> Bool { reactionTargets.append(target); return true }
     func request(_ value: InferenceRequest) -> Int { requests.append(value); return requests.count }
     func authorize(_ sender: AgentProfile, _ recipient: AgentProfile, _ text: String) { authorizations.append((sender.id, recipient.id, text)) }
     func update(_ message: RoomMessage) { messages.append(message) }
@@ -87,6 +92,64 @@ private func prioritySendCall(_ target: UUID, _ text: String, id: ToolCallID = "
 
 @Suite("SendToAgent messaging session", .timeLimit(.minutes(1)))
 struct AgentMessagingSessionTests {
+    @Test func nativeMailboxFactoryLifetimeCheckCannotReviveAfterClose() throws {
+        let lifetime = AgentPublicationLifetime()
+        try lifetime.check()
+        lifetime.close()
+        #expect(throws: CancellationError.self) { try lifetime.check() }
+        lifetime.close()
+        #expect(throws: CancellationError.self) { try lifetime.check() }
+    }
+
+    @Test(arguments: [false, true])
+    func mailboxAcquiresReactionOnlyFromExplicitHostAndClosesAfterDelivery(available: Bool) async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let destination = UUID(uuidString: "00000000-0000-0000-0000-000000000081")!
+        let target = UUID(uuidString: "00000000-0000-0000-0000-000000000082")!
+        var chat = Conversation(id: destination, title: "Recipient", messages: [
+            .init(id: target, role: .user, text: "Recipient public human excerpt", createdAt: Date(timeIntervalSince1970: 1_000))])
+        DirectMessageAddressing.assignMissing(in: &chat)
+        let directory = DirectReactionDirectory(conversation: chat, historyComplete: true)
+        let session = AgentMessagingSession(originConversationID: f.origin, agents: f.agents,
+            messenger: f.messenger, registry: f.registry, coordinator: f.coordinator,
+            mailboxReactionFactory: { incoming, profile, context, lifetime in
+                expectNoDifference(incoming.recipientID, f.recipient.id)
+                expectNoDifference(profile.id, f.recipient.id)
+                expectNoDifference(context.conversationID, f.origin)
+                try lifetime.check()
+                guard available else { return nil }
+                let tool = AgentMessageReactionTool(context: context, directory: directory,
+                    destinationConversationID: destination, validate: { try lifetime.check() },
+                    react: { id, _ in try lifetime.check(); return await f.probe.react(id) })
+                await f.probe.reaction(tool, context: context)
+                return tool
+            }, authorize: { _, _, _, _, _ in })
+        await f.registry.register(MessagingProvider { request, execute in
+            #expect(request.conversationID != f.origin)
+            expectNoDifference(request.tools.contains { $0.name == "ReactToMessage" }, available)
+            #expect(request.messages.contains { $0.role == .assistant && $0.text.contains("Incoming peer message") })
+            if available {
+                let result = try await execute(.init(id: "tap", name: "ReactToMessage",
+                    argumentsJSON: Data(#"{"message_address":"t0u","emoji":"👍"}"#.utf8)))
+                #expect(!result.isError)
+            }
+            return "PRIVATE_REACTION_DRAFT"
+        })
+        _ = try await session.tool(for: f.sender.id).execute(sendCall(f.recipient.id), context: .init(conversationID: f.origin))
+        try await session.drain()
+        let targets = await f.probe.reactionTargets
+        expectNoDifference(targets, available ? [target] : [])
+        let deliveries = await f.messenger.allMessages()
+        expectNoDifference(deliveries.count, 1)
+        expectNoDifference(deliveries.first?.delivery?.state, .completed)
+        #expect(deliveries.first?.delivery?.publications?.isEmpty != false)
+        if available {
+            let tool = try #require(await f.probe.reactionTool)
+            let context = try #require(await f.probe.reactionContext)
+            await #expect(throws: CancellationError.self) { try await tool.runtimeContext(for: context) }
+        }
+    }
+
     @Test(arguments: ["duplicate", "author", "scope"])
     func recoveryTranscriptRejectsAmbiguousOrMisattributedStoredRecords(mode: String) async throws {
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
