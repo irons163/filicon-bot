@@ -19,6 +19,8 @@ private actor RoutineDirectProbe {
     var acknowledgmentWriteErrors: [String] = []
     var activityCardsAtInference: [Bool] = []
     var reactionResults: [NormalizedToolResult] = []
+    var reactionAttempts = 0
+    func recordReactionAttempt() { reactionAttempts += 1 }
     func recordReaction(_ result: NormalizedToolResult) { reactionResults.append(result) }
     func recordPlain(_ request: InferenceRequest) { plain.append(request) }
     func recordAcknowledgment(_ request: InferenceRequest) { acknowledgments.append(request) }
@@ -60,6 +62,7 @@ private struct RoutineDirectProvider: InteractiveToolProvider {
     var question = false
     var silent = false
     var reacts = false
+    var ignoresReactionCancellation = false
     var writeRoot: URL? = nil
     var peerID: UUID? = nil
     var activityStoreURL: URL? = nil
@@ -113,11 +116,13 @@ private struct RoutineDirectProvider: InteractiveToolProvider {
                         } == true
                     } else { activityCardExists = nil }
                     let index = await probe.recordShared(request, activityCardExists: activityCardExists)
-                    try await gate?.wait()
+                    do { try await gate?.wait() }
+                    catch { if !reacts || !ignoresReactionCancellation { throw error } }
                     if reacts {
                         #expect(request.tools.contains { $0.name == "ReactToMessage" })
                         let target = try #require(request.messages.first { $0.role == .user && $0.text == "REVIEWED_HISTORY" })
                         let address = try #require(target.shortAddress)
+                        await probe.recordReactionAttempt()
                         let result = try await executeTool(.init(id: "routine-reaction", name: "ReactToMessage",
                             argumentsJSON: JSONEncoder().encode(["message_address": address, "emoji": "👍"])))
                         await probe.recordReaction(result)
@@ -157,7 +162,7 @@ private struct RoutineDirectProvider: InteractiveToolProvider {
     // Fixed future answer prevents a wall-clock scheduler run when the isolated
     // resumed fixture is bootstrapped again to check non-replay.
     private let acknowledgmentAt = Date(timeIntervalSince1970: 1_900_000_000)
-    private func fixture(gate: RoutineDirectGate? = nil, question: Bool = false, silent: Bool = false, write: Bool = false, peer: Bool = false, activityProbe: Bool = false, reacts: Bool = false) async throws -> (URL, AppModel, Automation, UUID, RoutineDirectProbe) {
+    private func fixture(gate: RoutineDirectGate? = nil, question: Bool = false, silent: Bool = false, write: Bool = false, peer: Bool = false, activityProbe: Bool = false, reacts: Bool = false, ignoresReactionCancellation: Bool = false) async throws -> (URL, AppModel, Automation, UUID, RoutineDirectProbe) {
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-routine-direct-\(UUID())")
         let service = try AgentService(storeURL: root.appending(path: "agents.json"))
         let agent = try await service.create(name: "Reviewed agent", instructions: "DIRECT_PERSONA",
@@ -195,7 +200,7 @@ private struct RoutineDirectProvider: InteractiveToolProvider {
             try await model.localToolPermissionPolicy.setChoice(.ask, for: .writeFile)
         } else { model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false) }
         let probe = RoutineDirectProbe()
-        await model.registry.register(RoutineDirectProvider(probe: probe, gate: gate, question: question, silent: silent, reacts: reacts, writeRoot: write ? root : nil,
+        await model.registry.register(RoutineDirectProvider(probe: probe, gate: gate, question: question, silent: silent, reacts: reacts, ignoresReactionCancellation: ignoresReactionCancellation, writeRoot: write ? root : nil,
             activityStoreURL: activityProbe ? root.appending(path: "conversations.json") : nil))
         await model.bootstrap()
         // Bootstrap must not fire a wall-clock overdue fixture or race account
@@ -660,6 +665,49 @@ private struct RoutineDirectProvider: InteractiveToolProvider {
         let acknowledgment = try #require(await probe.acknowledgments.first)
         #expect(acknowledgment.messages.contains { $0.role == .user && $0.text == "Inspect only" })
         expectNoDifference(acknowledgment.messages.last?.text, SpendGuardAnswer.keep.modelAcknowledgmentReminder)
+    }
+
+    @Test(arguments: [false, true], ["stop", "rebind", "persona", "reasoning"])
+    func lateRoutineReactionCannotReviveAfterAuthorityChanges(manual: Bool, change: String) async throws {
+        let gate = RoutineDirectGate()
+        let (root, model, automation, id, probe) = try await fixture(gate: gate, reacts: true, ignoresReactionCancellation: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try await approve(model, automation: automation, id: id)
+        let store = ConversationStore(fileURL: root.appending(path: "conversations.json"))
+        let original = try #require(try await store.conversation(id: id)?.messages.first { $0.text == "REVIEWED_HISTORY" })
+        let due = try #require(model.automations.first { $0.id == automation.id }?.nextRunAt)
+        let work = Task {
+            if manual { await model.runAutomationNow(id: automation.id) }
+            else { await model.runAutomationScheduleTick(at: due) }
+        }
+        try await eventually { await gate.started }
+        let index = try #require(model.conversations.firstIndex { $0.id == id })
+        switch change {
+        case "stop": model.cancel()
+        case "rebind":
+            let binding = model.conversations[index].agentBinding
+            model.conversations[index].agentBinding = nil
+            model.conversations[index].agentBinding = binding
+        case "persona":
+            let profile = try #require(model.agents.first { $0.id == automation.agentID })
+            var edited = profile; edited.instructions = "REVOKED_PERSONA"
+            #expect(await model.updateAgent(edited))
+            #expect(await model.updateAgent(profile))
+        default:
+            let effort = model.conversations[index].reasoningEffort
+            model.conversations[index].reasoningEffort = effort == .high ? .low : .high
+            model.conversations[index].reasoningEffort = effort
+        }
+        await gate.release()
+        await work.value
+        let attempts = await probe.reactionAttempts
+        expectNoDifference(attempts, 1)
+        let saved = try #require(try await store.conversation(id: id))
+        expectNoDifference(saved.messages.first { $0.id == original.id }, original)
+        for chat in try await store.load() {
+            for message in chat.messages { expectNoDifference(message.reactions, []) }
+        }
+        #expect(!model.running.contains(id))
     }
 
     @Test(arguments: [false, true]) func reviewedRoutineReactionSavesOnlyOriginalHumanTarget(manual: Bool) async throws {

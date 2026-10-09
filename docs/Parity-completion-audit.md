@@ -2,6 +2,8 @@
 
 ## Routine own-DM manual 模型反應驗收（2026-10-09，隨本批提交）
 
+010d092 後補 routine manual／scheduled × Stop、binding edit-and-restore、private persona edit-and-restore、reasoning edit-and-restore 共八 cases。provider gate 允許測試刻意忽略 cancellation，再以原 canonical shortAddress 真正呼叫 reaction executor；最後比對完整原人類 target 未改動、所有保存聊天無反應、running 已清理。focused v5 exit 0（32 methods／1 suite，6.434 秒）；其後新增每案真實 reactionAttempts 恰好一次，排除 provider 根本没呼叫工具的假綠。fresh focused v6 重編譯、terminal exit 0（32 methods／1 suite，6.314 秒），八 cases 與既有整個 routine suite 通過。本批只改 tests／文件，沒有產品 source／新的全套與封裝聲稱；account／hide／definition／target mutation／quota 與其他 host 尚待，不宣稱全部 parity。未 push／重啟 App／Xcode／改真實資料。
+
 cedb05d 後新增 scheduled 正案：由已核准 routine 的真正 nextRunAt 觸發 App schedule tick，不呼叫 private executor 或捏造 run；完整原 target 保存比對與 native 作者沿用 manual 案，另外核對 .manual／.schedule 真實 trigger。fresh focused v4 terminal exit 0，RoutineDirectSessionTests 31 methods／1 suite（5.235 秒），reaction 方法的 manual／scheduled 兩 cases 通過。本增量只改 tests／文件，產品 source 未變；沒有新 full／封裝聲稱，Stop／ABA／quota／其他 host 的独立驗收仍待。依持續目標本輪只本機 commit，不再 push。
 
 focused v2 terminal exit 1、1 issue：初始測試匯入未配置 shortAddress，而正式 admission 配置 t0u，完整 target 比對因此失敗；reaction tool 成功與 reaction 保存均已發生。fixture 僅在 reacts 正案預先以既有 DirectMessageAddressing.assignMissing 配置 canonical history，沒有忽略 target 欄位或放寬完整比對。fresh focused v3 重編譯、terminal exit 0，整個 RoutineDirectSessionTests 31 methods／1 suite（4.942 秒）通過，manual reaction 新案通過（0.066 秒）。本批只有 tests／文件、產品 source 不變；未宣稱新全套／封裝 gates。scheduled／各 ABA 與其他 host 仍待，不把這一案當全部 routine parity。使用者本次明確要求 commit 後 push，取代原本不 push 的限制；未重啟 App／Xcode、未改真實資料。
