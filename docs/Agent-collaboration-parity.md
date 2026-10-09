@@ -2,6 +2,8 @@
 
 ## Direct 反應入口與下一步 host 驗收
 
+Routine own-DM 增量：實際手動／schedule tick 的反應入口已驗證，包含 Stop、binding／private persona／reasoning 修改後還原的 8 個晚到工具呼叫拒絕案例。另補手動／排程 × 保持原聊天／推論期間導航的 4 個成功案例；比對原 canonical human target 的完整資料，只增加原 binding 作者反應，其他既有聊天完整值不變。`routine-reaction-focused-v7.log` 重編譯後 exit 0，32 methods／1 suite（6.602 秒）。這是測試增量，不是新的全套、live 或其他 host 證据；delegated mailbox／incoming／failure／resume 等未驗證部分仍保留。
+
 `c3e68cc` 已接 foreground bound direct ReactToMessage，原 canonical user 目錄、真正 repository binding lease、account／persona／run lease 和 reasoning edit-and-restore 撤銷、durable quota receipt、bare-tap 與作者 pills 均通過最後必要 gates。完整回歸 2,261 Swift Testing／267 suites＋135 XCTest／0 failures、兩種 Debug 封裝／獨立 verify、七語目錄與 native render 證據見 [完成驗收入口](Parity-completion-audit.md)。下節 group-only 的「direct 尚未接線」屬歷史，不再代表 foreground 的現況；整體 partial 及其他缺口不變。
 
 提交後唯讀 host 核對：routine、incoming、failure follow-up 和 card continuation 皆存在 `AppModel.startTurn` 呼叫，該共用入口可建立 reaction executor，但不能由 foreground 測試推定每個 host 的 inherited lease、原 user target、quota、Stop／ABA 和 bare-tap 都通過。下一批應優先補實際 routine own-DM 的正反驗收，再逐一核對 incoming／failure／resume。`AgentMessagingSession` 的 delegated mailbox 是另一套 inference tools 組裝，目前列出 SendToAgent、publisher、management，沒有 reaction executor；其 peer envelope 保持 assistant context，不能為了支援反應而改成人類指令或借用 sender 私有聊天。這項獨立 host 缺口仍保留，不能套用 c3e68cc green 關閉。

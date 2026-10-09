@@ -710,19 +710,25 @@ private struct RoutineDirectProvider: InteractiveToolProvider {
         #expect(!model.running.contains(id))
     }
 
-    @Test(arguments: [false, true]) func reviewedRoutineReactionSavesOnlyOriginalHumanTarget(manual: Bool) async throws {
-        let (root, model, automation, id, probe) = try await fixture(reacts: true)
+    @Test(arguments: [false, true], [false, true]) func reviewedRoutineReactionSavesOnlyOriginalHumanTarget(manual: Bool, navigates: Bool) async throws {
+        let gate = RoutineDirectGate()
+        let (root, model, automation, id, probe) = try await fixture(gate: gate, reacts: true)
         defer { try? FileManager.default.removeItem(at: root) }
         try await approve(model, automation: automation, id: id)
         let store = ConversationStore(fileURL: root.appending(path: "conversations.json"))
         let before = try #require(try await store.conversation(id: id))
         let original = try #require(before.messages.first { $0.text == "REVIEWED_HISTORY" })
         let binding = try #require(before.agentBinding)
-        if manual { await model.runAutomationNow(id: automation.id) }
-        else {
-            let due = try #require(model.automations.first { $0.id == automation.id }?.nextRunAt)
-            await model.runAutomationScheduleTick(at: due)
+        let unrelated = try await store.load().filter { $0.id != id }
+        let due = try #require(model.automations.first { $0.id == automation.id }?.nextRunAt)
+        let work = Task {
+            if manual { await model.runAutomationNow(id: automation.id) }
+            else { await model.runAutomationScheduleTick(at: due) }
         }
+        try await eventually { await gate.started }
+        if navigates { model.addConversation() }
+        await gate.release()
+        await work.value
         let results = await probe.reactionResults
         expectNoDifference(results.count, 1)
         #expect(try #require(results.first).isError == false)
@@ -730,6 +736,10 @@ private struct RoutineDirectProvider: InteractiveToolProvider {
         var expected = original
         expected.reactions = [.init(emoji: "👍", actorID: "agent:\(binding.agentID.uuidString)")]
         expectNoDifference(saved.messages.first { $0.id == original.id }, expected)
+        for chat in unrelated {
+            let after = try await store.conversation(id: chat.id)
+            expectNoDifference(after, chat)
+        }
         #expect(!saved.messages.contains { $0.text.contains("PRIVATE_ASSISTANT_TEXT") })
         expectNoDifference(model.automationHistory[automation.id]?.first?.status, .ok)
         expectNoDifference(model.automationHistory[automation.id]?.first?.trigger, manual ? .manual : .schedule)
