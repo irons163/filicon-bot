@@ -4,6 +4,10 @@
 
 ### Delegated mailbox 接線前的實際地址／權限核對
 
+地址轉接基礎增量：direct reaction tool 新增 explicit native `destinationConversationID` initializer；既有 initializer 仍固定 context 的原 conversation。directory 只在 exact destination 匹配時公開／解析，執行仍要求原 ToolContext（含 runID）；這不是 binding lease 或保存授權，host validate／canonical commit 必須另外提供。新增 1 method／2 cases 驗證不同 origin／destination、錯 destination 拒絕、外來 context 拒絕、same-call receipt 與 close。尚未接入 `AgentMessagingSession` 或 App factory，不稱 mailbox 功能完成。
+
+`mailbox-reaction-routing-v1.log` 重編譯 exit 0，11 methods／1 suite；相關 `mailbox-reaction-routing-regression-v1.log` 的 core 19 methods／2 suites（工具＋canonical persistence）通過，但整個命令 exit 1：App routine 32 methods／85 issues（workflow storage unavailable、review admission 拒絕等）。唯讀 ioreg 確認該輪末端 `CGSSessionScreenIsLocked=Yes`、磁碟仍有 53 GiB；不能推定 85 issues 全是鎖屏或聲稱產品回歸已修復。保留失敗，待解鎖後重跑同 scope；未降低斷言／改保護／重啟 App。這是未完成產品基礎，舊完整／native gates 不證明本 source 最後驗收。
+
 2026-10-09，`a94ee2a` 後唯讀核對產品與 reference：`AgentMessagingSession.drain` 的 inference `conversationID` 來自 origin 隔離的 `AgentConversationStore.Context.conversationID`，coordinator 的 `ToolContext.conversationID` 卻是 origin；畫面目的地則可能是 `Context.projectionConversationID`。`makeMailboxChannelPublication`／session 的 transaction 檢查已有第三個目的地驗證：sender 是原 direct binding owner 時用 origin，否則用 recipient 的 `transcriptConversationID`。這三個 ID 不能互換，亦不能把 selected chat 當目的地。
 
 現有 `AgentMessageReactionTool` direct initializer 明確要求 directory 的 conversationID 等於執行 context 的 conversationID；因此直接把 own-DM directory 塞入 mailbox 的 origin ToolContext 會拒絕，換成 origin directory 則可能反應到錯誤聊天。`commitDirectModelReaction` 亦要求目的地在 foreground `running`，而 mailbox 的 lifetime 是原 delegation session／publication scope，不滿足此條件。接線需獨立 host adapter：保持 origin 核准 context，同時由 host 捕捉 recipient canonical destination／unique binding lease，將 reaction execution 映射到 exact native destination，並在 quota／SQL commit 組合原 session、account、persona、membership／inherited routine lease；不得用放寬 foreground running guard 解決。

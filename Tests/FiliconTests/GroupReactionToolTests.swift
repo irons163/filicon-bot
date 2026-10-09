@@ -83,6 +83,39 @@ struct GroupReactionToolTests {
         await #expect(throws: CancellationError.self) { try await tool.execute(call("closed"), context: context) }
     }
 
+    @Test(arguments: [false, true])
+    func mappedDirectDirectoryRetainsOriginContextAndExactDestination(mismatchedDestination: Bool) async throws {
+        var chat = Conversation(id: peer, title: "Recipient own DM", messages: [
+            .init(id: reactionID(10), role: .user, text: "Recipient human", createdAt: date)])
+        DirectMessageAddressing.assignMissing(in: &chat)
+        let origin = ToolContext(conversationID: group, runID: reactionID(7))
+        let probe = ReactionToolProbe()
+        let tool = AgentMessageReactionTool(context: origin,
+            directory: DirectReactionDirectory(conversation: chat, historyComplete: true),
+            destinationConversationID: mismatchedDestination ? actor : peer,
+            validate: {}, react: { await probe.toggle($0, emoji: $1) })
+        let foreign = ToolContext(conversationID: peer, runID: origin.runID)
+        await #expect(throws: CancellationError.self) { try await tool.runtimeContext(for: foreign) }
+        await #expect(throws: CancellationError.self) { try await tool.execute(call(), context: foreign) }
+        if mismatchedDestination {
+            await #expect(throws: CancellationError.self) { try await tool.runtimeContext(for: origin) }
+            #expect(try await tool.execute(call(), context: origin).isError)
+            let calls = await probe.calls
+            expectNoDifference(calls, [])
+        } else {
+            let runtime = try await tool.runtimeContext(for: origin)
+            #expect(runtime.contains("Recipient human"))
+            let result = try await tool.execute(call(), context: origin)
+            expectNoDifference(result, .init(callID: "tap", content: [.text("Added 👍 on t0u.")]))
+            let replay = try await tool.execute(call(), context: origin)
+            expectNoDifference(replay, result)
+            let calls = await probe.calls
+            expectNoDifference(calls, [.init(messageID: reactionID(10), actorID: actor, emoji: "👍")])
+        }
+        await tool.close()
+        await #expect(throws: CancellationError.self) { try await tool.runtimeContext(for: origin) }
+    }
+
     @Test func directoryContainsOnlyVisibleNativeHumanAndOtherMemberAddresses() throws {
         let human = message(10, address: "t0u", text: String(repeating: "a", count: 500))
         let teammate = message(11, sender: peer, address: "t0s0")

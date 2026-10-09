@@ -32,11 +32,22 @@ public actor AgentMessageReactionTool: ToolExecutor, ToolRuntimeContextProviding
     public init(context: ToolContext, directory: DirectReactionDirectory,
                 validate: @escaping @Sendable () async throws -> Void,
                 react: @escaping @Sendable (UUID, String) async throws -> Bool) {
+        self.init(context: context, directory: directory, destinationConversationID: context.conversationID,
+                  validate: validate, react: react)
+    }
+
+    /// Native host routing only. The approval context remains the original
+    /// delivery context while the directory belongs to its leased destination.
+    /// This mapping is not a binding lease or permission to save a reaction;
+    /// validate/react must still fence the actual host and canonical commit.
+    public init(context: ToolContext, directory: DirectReactionDirectory, destinationConversationID: UUID,
+                validate: @escaping @Sendable () async throws -> Void,
+                react: @escaping @Sendable (UUID, String) async throws -> Bool) {
         self.context = context; self.validate = validate; self.react = react
         descriptor = Self.descriptor(direct: true); scope = "direct"
-        resolve = { directory.messageID(for: $0, in: context.conversationID) }
+        resolve = { directory.messageID(for: $0, in: destinationConversationID) }
         encodeDirectory = {
-            guard context.conversationID == directory.conversationID else { throw CancellationError() }
+            guard destinationConversationID == directory.conversationID else { throw CancellationError() }
             return try JSONEncoder().encode(directory.entries)
         }
     }
