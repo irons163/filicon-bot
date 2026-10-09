@@ -198,6 +198,10 @@ public enum DirectMessageAddressing {
         guard let turn = number(parts[0]) else { return nil }
         return (turn, response)
     }
+    public static func isValid(_ address: String, for message: ChatMessage) -> Bool {
+        guard let parsed = parse(address), message.role == .user || message.role == .assistant else { return false }
+        return (parsed.response == nil) == (message.role == .user)
+    }
     public static func assignMissing(in conversation: inout Conversation) {
         // Reserve imports first, even when invalid or ambiguous. Resolution
         // rejects ambiguity; allocation must not silently repair identity.

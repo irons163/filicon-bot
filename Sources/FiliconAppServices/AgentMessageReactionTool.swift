@@ -42,7 +42,7 @@ public actor AgentMessageReactionTool: ToolExecutor, ToolRuntimeContextProviding
         else { return failure(call.id, "ReactToMessage requires only message_address and emoji. Nothing changed.") }
         let input = Input(address: address.trimmingCharacters(in: .whitespacesAndNewlines),
             emoji: emoji.trimmingCharacters(in: .whitespacesAndNewlines))
-        guard let messageID = directory.messageID(for: input.address), Self.validEmoji(input.emoji) else {
+        guard let messageID = directory.messageID(for: input.address), MessageReactionEmoji.isValid(input.emoji) else {
             return failure(call.id, "Use one emoji and an exact address from this turn's reaction directory. Nothing changed.")
         }
         if let previous = completed[call.id] {
@@ -61,9 +61,4 @@ public actor AgentMessageReactionTool: ToolExecutor, ToolRuntimeContextProviding
         .init(callID: id, content: [.text(text)], isError: true)
     }
 
-    private static func validEmoji(_ value: String) -> Bool {
-        guard value.count == 1, value.utf16.count <= 16 else { return false }
-        return value.unicodeScalars.contains { $0.properties.isEmojiPresentation }
-            || (value.unicodeScalars.contains { $0.value == 0xFE0F } && value.unicodeScalars.contains { $0.properties.isEmoji })
-    }
 }

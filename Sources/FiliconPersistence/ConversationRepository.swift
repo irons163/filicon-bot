@@ -195,6 +195,15 @@ public actor ConversationRepository {
         var values = try load()
         var conversation = conversation
         if let canonical = values.first(where: { $0.id == conversation.id }) {
+            for row in conversation.messages.indices {
+                guard let existing = canonical.messages.first(where: { $0.id == conversation.messages[row].id }) else { continue }
+                var remaining = existing.reactions.filter(Self.isNativeModelReaction)
+                conversation.messages[row].reactions = conversation.messages[row].reactions.compactMap { reaction in
+                    guard Self.isNativeModelReaction(reaction) else { return reaction }
+                    guard let index = remaining.firstIndex(of: reaction) else { return nil }
+                    return remaining.remove(at: index)
+                } + remaining
+            }
             for message in conversation.messages {
                 guard let existing = canonical.messages.first(where: { $0.id == message.id }),
                       existing.externalChannelSource != nil else { continue }
@@ -247,8 +256,47 @@ public actor ConversationRepository {
         } else { try commit { try save(values, activityAt: activityAt) } }
     }
 
+    private static func isNativeModelReaction(_ reaction: ChatReaction) -> Bool {
+        reaction.actorID.hasPrefix("agent:") && UUID(uuidString: String(reaction.actorID.dropFirst(6))) != nil
+    }
+
     public func delete(id: UUID) throws {
         try save(load().filter { $0.id != id })
+    }
+
+    public func toggleModelReaction(expectedMessage: ChatMessage, emoji: String,
+                                    bindingLease: ConversationBindingLease,
+                                    commit: ConversationCommitGuard) throws -> DirectReactionMutation {
+        guard bindingLeases.contains(where: { $0 === bindingLease }), bindingLease.legacyHiddenAt == nil,
+              MessageReactionEmoji.isValid(emoji) else { throw CancellationError() }
+        var result: DirectReactionMutation?
+        try commit {
+            guard result == nil else { throw CancellationError() }
+            try bindingLease.withValidBinding {
+                result = try database.transaction("toggle native model reaction") {
+                    guard let owner = try uniqueBoundConversation(accountID: bindingLease.binding.accountID,
+                        agentID: bindingLease.binding.agentID), owner.id == bindingLease.conversationID,
+                          owner.hiddenAt == nil, let canonical = try conversation(id: owner.id),
+                          DirectReactionDirectory(conversation: canonical, historyComplete: true).contains(expectedMessage.id),
+                          let target = canonical.messages.first(where: { $0.id == expectedMessage.id }) else { throw CancellationError() }
+                    var old = target, expected = expectedMessage
+                    old.reactions = []; expected.reactions = []
+                    guard old == expected else { throw CancellationError() }
+                    var updated = target
+                    let applied = updated.toggleReaction(emoji: emoji,
+                        actorID: "agent:\(bindingLease.binding.agentID.uuidString)")
+                    let statement = try database.prepare("UPDATE messages SET reactions_json = ? WHERE id = ? AND conversation_id = ?", operation: "save native model reaction")
+                    try statement.bind(String(decoding: JSONEncoder().encode(updated.reactions), as: UTF8.self), at: 1)
+                    try statement.bind(updated.id.uuidString, at: 2)
+                    try statement.bind(owner.id.uuidString, at: 3)
+                    _ = try statement.step()
+                    guard database.changes == 1 else { throw CancellationError() }
+                    return DirectReactionMutation(message: updated, applied: applied)
+                }
+            }
+        }
+        guard let result else { throw CancellationError() }
+        return result
     }
 
     /// Native cancellation cleanup, not a publication grant. The host supplies

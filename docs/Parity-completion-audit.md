@@ -1,5 +1,29 @@
 # 完成驗收入口（2026-09-27）
 
+## 單獨聊天模型反應保存層（2026-10-09，最後必要 gates 通過，隨本批提交）
+
+基線 `2889a54`，不沿用下節群組增量的全綠 gate 作本批成功證據。重新唯讀核對 reconstructed `source/host/extensions/transcript/turn-runtime.ts:803–825`：direct reaction 只接受 user entry，歸屬原 run session 而不是目前選中的聊天；相同 emoji 可撤回。本批先補 canonical 保存層，尚未向 direct 模型註冊工具，不稱 direct parity 已完成。
+
+`DirectReactionDirectory` 只由完整 canonical Conversation 建立，保留最後 40 筆真正 user target 的短位址、user sender 與有界 excerpt。全歷史 ID／位址及完整 deleted-address reservations 都參與唯一性檢查；partial page、assistant／tool、host cards／tool activity／reasoning、queued／空白／錯誤 role 位址與其他 conversation／UUID alias 拒絕。共用單一 grapheme／16 UTF-16 emoji 檢查，未放寬群組工具契約。
+
+`ConversationRepository.toggleModelReaction` 要求同一 repository 真正核發的 active binding lease，不接受同值合成 lease。最終 host guard／binding lock 與 SQLite transaction 內重驗唯一 unhidden owner、最新 directory 及完整原 target（只忽略 reactions），actor 由 native binding 決定，僅更新原 row 的 reactions_json；沒有增刪訊息、分配短位址、改 metadata／ordinal／FTS／未讀。closed／綁定或隱藏後還原／delete／duplicate owner／foreign target／canonical content 變動／目標被刪或不在最後 40 筆／reservation 或位址衝突／final guard 拒絕／SQL failure 都沒有成功 receipt 或後續 mutation。這是同 repository lease 與單次 SQL transaction，不是跨 process exactly-once。
+
+實際舊 snapshot 紅燈已重現並修正：ordinary repository upsert 對既有 target 的 native `agent:<UUID>` 反應採 canonical 為準，full／paged 舊畫面不能抹掉新增、復活撤回或寫入偽造／重複 native 作者；local-user 的新增／撤回仍保存。重新綁定也不改寫歷史反應作者。這不更改 full replacement／historical import 的既有契約，也不代表 direct UI 或所有 host 路徑已完成。
+
+ConversationStore 直接回傳 SQL durable receipt；成功後不再 await replica read，以免副本故障把已成功的 toggle 誤報為失敗，未來 tool retry 反而撤回。測試用自己建立的暫存 root 搬存 replicas 並以 regular file 阻擋，確認 canonical reload 真正拒絕，再確認 typed mutation 仍成功、SQL 完整資料正確；恢復原副本後正常 reload／subscription 精確重建。沒有碰真實資料或刪除舊 artifacts。
+
+`.build/validation/` 保存本批證據：
+
+- `direct-reactions-foundation-focused-v1.log` exit 1：測試 fixture 的 TranscriptCard 缺 lifecycle，尚未執行；補齊 waiting 狀態，不改產品。
+- `direct-reactions-foundation-focused-v2.log` exit 0：21 Swift Testing methods／3 suites，早於 stale-save 修正，不作最後 source gate。
+- `direct-reactions-stale-red-v1.log` exit 1：12 full／paged cases，native state／replica／reopen 合計 36 issues；真實 native reaction 新增被抹、撤回復活及偽造作者被接受。阻擋 replica 的兩 cases 則通過。
+- `direct-reactions-foundation-focused-v3.log` exit 0：22 Swift Testing methods／3 suites＋4 XCTest／0 failures，stale save 修正通過；之後只增強四種 target 失效測試及去除 fixture force unwrap。
+- `direct-reactions-foundation-focused-v4.log` exit 0：重新編譯最後 source，22 Swift Testing methods／3 suites（0.720 秒）＋4 XCTest／0 failures；新 foundation 7 methods／59 cases，全 Conversation／receipt／未讀／FTS／reopen／replica 比對，不只文字。
+
+最後 source 的無 filter 串行 `direct-reactions-foundation-full-v1.log` exit 0：17 bundles，2,256 Swift Testing methods／267 suites，135 XCTest／0 failures。兩項 opt-in live Codex tests skipped，不當真實服務驗收。`direct-reactions-foundation-native-v1.log` arm64 Debug build、`direct-reactions-foundation-native-verify-v1.log`、全新 standalone Debug 的 `direct-reactions-foundation-package-v1.log`／`direct-reactions-foundation-package-verify-v1.log` 均 exit 0；沒有執行 launch smoke。`direct-reactions-foundation-localization-v1.log` exit 0，七語各 1,817 keys／0 missing。既有診斷保留，Debug／ad-hoc 不算 release／公證或 live XPC；本批沒有 UI 改動，不冒充新的畫面／VoiceOver 驗收。
+
+模型 direct executor／call-ID receipts／tool context／account-persona-run lifetime／quota／bare-tap finalization／UI 作者呈現尚未接線；unbound chats、peer mailbox／其他 host 的對應能力仍待。incoming images、private DM context sharing、hidden fallback／unified host、外部／真人／VoiceOver／最低 macOS／release／公證保留。48 分類及整體 partial 不變；未 push／launch／重啟 App 或 Xcode／改真實資料。
+
 ## 原生群組 ReactToMessage 與反應歸屬（2026-10-09，最後必要 gate 全部通過，隨本批提交）
 
 基線 `110b4a0`；下節群組 priority 的成功紀錄只證明前一批。重新唯讀核對 reconstructed HEAD `a9f633e09d49a85829b8236331b9e21f7e612634` 的 `source/host/runner/tools/sand-reaction-tool.ts:6–54`、`source/host/extensions/transcript/group-chat-glue.ts:524–554` 及 `source/host/extensions/transcript/turn-runtime.ts:803–825`：模型工具只輸入 message_address／emoji，稀疏 tapback 可代替不必要的文字，不得取代工作；相同表情可撤回。群組實際 host 接受人類或其他成員訊息、拒絕自己的 send；direct host 僅接受真正 user entry。這批只補前者，不以一般 UI reaction 宣稱 direct 模型工具已完成。

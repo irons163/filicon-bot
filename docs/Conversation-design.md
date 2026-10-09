@@ -53,6 +53,30 @@ durable group callback, with a two-message turn limit and the existing ten-messa
 group budget. Once it publishes, final text is not posted again. Providers that
 do not use it retain the final-response compatibility fallback.
 
+### Direct model reaction storage foundation (October 9 increment)
+
+Direct reactions have a native persistence foundation, not a registered model
+tool yet. A complete canonical conversation supplies up to 40 recent user
+targets; partial UI histories, duplicate IDs/addresses, deleted-address
+reservations, assistant sends and host bookkeeping cannot establish a target.
+Only the original conversation's short addresses are exposed.
+
+The repository requires its own issued, active, unique unhidden agent-binding
+lease. Inside the final host fence and SQLite transaction it rechecks the
+canonical target, ignores only its current reactions when comparing the
+captured message, derives the actor from the native binding, and changes only
+`reactions_json`. The receipt follows the durable commit with no subsequent
+replica read that could misreport success as failure. Canonical reload repairs
+the derived transcript replica.
+
+Ordinary full and paged upserts preserve canonical native model reactions on
+existing rows. A stale UI cannot erase an addition, resurrect a removal or
+forge another native actor's reaction; human reaction edits remain possible.
+This is not a rewrite of historical import/full replacement APIs. Model tool
+registration, run/persona/account/quota integration, direct bare-tap finalization
+and visible author presentation still need actual host wiring and tests. These
+storage tests do not close direct `ReactToMessage` parity.
+
 ### Native group message reactions (October 9 increment)
 
 Actual native group member turns now offer `ReactToMessage` with only

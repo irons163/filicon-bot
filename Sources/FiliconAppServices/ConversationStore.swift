@@ -91,6 +91,15 @@ public actor ConversationStore {
         return try await repository.leaseUniqueBinding(accountID: accountID, agentID: agentID, conversationID: conversationID)
     }
 
+    public func toggleModelReaction(expectedMessage: ChatMessage, emoji: String,
+                                    bindingLease: ConversationBindingLease,
+                                    commit: @escaping ConversationCommitGuard) async throws -> DirectReactionMutation {
+        let repository = try resolveRepository()
+        try await importLegacyIfNeeded(into: repository)
+        return try await repository.toggleModelReaction(expectedMessage: expectedMessage, emoji: emoji,
+            bindingLease: bindingLease, commit: commit)
+    }
+
     public func resolveInboundOwner(_ candidate: Conversation, commit: @escaping ConversationCommitGuard) async throws -> Conversation {
         let repository = try resolveRepository()
         try await importLegacyIfNeeded(into: repository)
