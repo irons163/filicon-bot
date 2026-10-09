@@ -283,6 +283,55 @@ private struct AppReactionProvider: InteractiveToolProvider {
     }
 
     @Test(arguments: ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"])
+    func directReactionAuthorsRenderInActualTranscriptWithoutHover(language: String) async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "filicon-direct-reaction-render-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+        let memberID = try #require(UUID(uuidString: "00000000-0000-0000-0000-000000000001"))
+        let messageID = try #require(UUID(uuidString: "00000000-0000-0000-0000-000000000002"))
+        let chatID = try #require(UUID(uuidString: "00000000-0000-0000-0000-000000000004"))
+        let member = AgentProfile(id: memberID, name: "Designer with a longer public name", providerID: "fixture", modelID: "test")
+        model.agents = [member]
+        let message = ChatMessage(id: messageID, role: .user,
+            text: "Acknowledged result", createdAt: Date(timeIntervalSince1970: 1_000),
+            reactions: [.init(emoji: "👍", actorID: "agent:\(member.id.uuidString)"),
+                .init(emoji: "🎉", actorID: "agent:00000000-0000-0000-0000-000000000003"),
+                .init(emoji: "❤️", actorID: "local-user")])
+        let chat = Conversation(id: chatID, messages: [message], updatedAt: message.createdAt)
+        let output = ProcessInfo.processInfo.environment["FILICON_UI_REVIEW_OUTPUT"].map { URL(fileURLWithPath: $0) }
+        for dark in [false, true] {
+            for width in [320.0, 560.0] {
+                try await withUIRenderTurn(language: language) {
+                    let host = NSHostingView(rootView: TranscriptMessageView(message: message, conversation: chat,
+                        onJumpToMessage: { _ in Issue.record("Rendering must not navigate") })
+                        .padding(16).frame(width: width).background(FiliconTheme.canvas)
+                        .environmentObject(model).environment(\.locale, Locale(identifier: language))
+                        .environment(\.colorScheme, dark ? .dark : .light))
+                    host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+                    let size = host.fittingSize
+                    expectNoDifference(size.width, width)
+                    #expect(size.height > 80 && size.height < 500)
+                    host.frame = .init(origin: .zero, size: size)
+                    host.layoutSubtreeIfNeeded()
+                    let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                    host.cacheDisplay(in: host.bounds, to: bitmap)
+                    let recognition = VNRecognizeTextRequest(); recognition.recognitionLevel = .accurate
+                    try VNImageRequestHandler(cgImage: try #require(bitmap.cgImage)).perform([recognition])
+                    let text = recognition.results?.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ") ?? ""
+                    #expect(text.contains("Designer"), "Direct reaction attribution must be visible: \(text)")
+                    if let output {
+                        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+                        try #require(bitmap.representation(using: .png, properties: [:]))
+                            .write(to: output.appending(path: "direct-reactions-\(language)-\(dark ? "dark" : "light")-\(Int(width)).png"))
+                    }
+                }
+            }
+        }
+        expectNoDifference(model.conversations, [])
+        expectNoDifference(chat.messages, [message])
+    }
+
+    @Test(arguments: ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"])
     func visibleReactionPillsRenderWithoutHoverInNarrowAndWideLightAndDarkBubbles(language: String) async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-reaction-render-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }

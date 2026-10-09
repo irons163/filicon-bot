@@ -7,12 +7,30 @@ import FiliconProviderKit
 import FiliconAgents
 @testable import Filicon
 
+private final class DirectReactionQuotaFault: @unchecked Sendable {
+    private let lock = NSLock()
+    private var armed = false
+    private var count = 0
+    func arm() { lock.withLock { armed = true } }
+    func inject(_ point: StorageQuotaFaultPoint) throws {
+        try lock.withLock {
+            if armed, point == .afterCommitPersist {
+                armed = false; count += 1
+                throw CocoaError(.fileWriteUnknown)
+            }
+        }
+    }
+    func injectedCount() -> Int { lock.withLock { count } }
+}
+
 private struct DirectPublicationProvider: AIProvider {
     let publishes: Bool
     let toolSupport: Bool
     var replyMode: String? = nil
     var cloudID: String? = nil
     var expectedAgentInstructions: String? = nil
+    var reacts = false
+    var armReaction: @Sendable () -> Void = {}
     var descriptor: ProviderDescriptor {
         .init(id: "direct-publication-test", displayName: "Direct publication test",
               requiresAPIKey: false, supportsToolCalling: toolSupport)
@@ -37,7 +55,16 @@ private struct DirectPublicationProvider: AIProvider {
                 }
                 continuation.yield(.textDelta(toolSupport ? "PRIVATE DRAFT" : "Plain answer"))
                 if toolSupport { continuation.yield(.reasoningDelta("PRIVATE REASONING")) }
-                if toolSupport && publishes && request.toolExchanges.count < 2 {
+                if reacts && request.toolExchanges.isEmpty {
+                    armReaction()
+                    #expect(tools.contains("ReactToMessage"))
+                    let address = try #require(request.messages.last(where: { $0.role == .user })?.shortAddress)
+                    let call = try NormalizedToolCall(id: "direct-tap", name: "ReactToMessage",
+                        argumentsJSON: JSONEncoder().encode(["message_address": address, "emoji": "👍"]))
+                    continuation.yield(.toolCallStarted(id: call.id, name: call.name))
+                    continuation.yield(.toolCallCompleted(call))
+                    continuation.yield(.completed(.toolUse))
+                } else if toolSupport && publishes && request.toolExchanges.count < 2 {
                     let index = request.toolExchanges.count
                     var arguments = ["type": "text", "content": index == 0 ? "Progress" : "Result"]
                     if let cloudID, index == 0 {
@@ -61,7 +88,14 @@ private struct DirectPublicationProvider: AIProvider {
                     continuation.yield(.toolCallStarted(id: call.id, name: call.name))
                     continuation.yield(.toolCallCompleted(call))
                     continuation.yield(.completed(.toolUse))
-                } else { continuation.yield(.completed(.stop)) }
+                } else {
+                    if reacts {
+                        let result = try #require(request.toolExchanges.last?.results.first)
+                        #expect(!result.isError)
+                        #expect(result.wireText.contains("Added 👍"))
+                    }
+                    continuation.yield(.completed(.stop))
+                }
                 continuation.finish()
             } catch { continuation.finish(throwing: error) }
         }
@@ -72,6 +106,7 @@ private struct DelayedDirectPublicationProvider: AIProvider {
     let entered: AsyncStream<Void>.Continuation
     let release: AsyncStream<Void>
     var replyToUser = false
+    var reacts = false
     let descriptor = ProviderDescriptor(id: "delayed-direct-test", displayName: "Delayed direct test", requiresAPIKey: false)
     func models() async throws -> [AIModel] { [.init(id: "test")] }
     func stream(_ request: InferenceRequest) -> AsyncThrowingStream<InferenceEvent, Error> {
@@ -83,7 +118,10 @@ private struct DelayedDirectPublicationProvider: AIProvider {
                         for await _ in release { break }
                         var arguments = ["text": "LATE MESSAGE"]
                         if replyToUser { arguments["reply_to"] = request.messages.last(where: { $0.role == .user })?.id.uuidString }
-                        let call = try NormalizedToolCall(id: "late-publication", name: "SendMessage",
+                        if reacts {
+                            arguments = ["message_address": try #require(request.messages.last(where: { $0.role == .user })?.shortAddress), "emoji": "👍"]
+                        }
+                        let call = try NormalizedToolCall(id: "late-publication", name: reacts ? "ReactToMessage" : "SendMessage",
                             argumentsJSON: JSONEncoder().encode(arguments))
                         continuation.yield(.toolCallStarted(id: call.id, name: call.name))
                         continuation.yield(.toolCallCompleted(call))
@@ -98,6 +136,104 @@ private struct DelayedDirectPublicationProvider: AIProvider {
 
 @Suite("Direct conversation publications")
 struct DirectPublicationAppTests {
+    @Test(.timeLimit(.minutes(1)), arguments: ["stop", "account", "private-aba", "rebind-aba", "reasoning-aba", "navigate"])
+    @MainActor func lateDirectReactionsCannotOutliveOriginalRun(action: String) async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "filicon-direct-reaction-fence-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let entered = AsyncStream<Void>.makeStream(), release = AsyncStream<Void>.makeStream()
+        defer { entered.continuation.finish(); release.continuation.finish() }
+        let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
+        await model.bootstrap()
+        await model.registry.register(DelayedDirectPublicationProvider(entered: entered.continuation,
+            release: release.stream, reacts: true))
+        let originalProfile = try #require(await model.createAgent(name: "Designer", summary: "", instructions: "Original",
+            providerID: "delayed-direct-test", modelID: "test"))
+        let id = try #require(model.selection)
+        let ci = try #require(model.conversations.firstIndex(where: { $0.id == id }))
+        let binding = DirectConversationAgentBinding(accountID: "local", agentID: originalProfile.id)
+        model.conversations[ci].providerID = originalProfile.providerID
+        model.conversations[ci].modelID = originalProfile.modelID
+        model.conversations[ci].agentBinding = binding
+        await model.refreshModels()
+        model.draft = "Thank you"
+        model.send()
+        for await _ in entered.stream { break }
+        switch action {
+        case "stop": model.cancel()
+        case "account": await model.cancelAutoReviewApprovals(nextAccountID: "another-account")
+        case "private-aba":
+            var changed = originalProfile; changed.instructions = "Changed"
+            #expect(await model.updateAgent(changed))
+            #expect(await model.updateAgent(originalProfile))
+        case "navigate": model.addConversation()
+        case "reasoning-aba":
+            let original = model.conversations[ci].reasoningEffort
+            model.conversations[ci].reasoningEffort = original == .high ? .low : .high
+            model.conversations[ci].reasoningEffort = original
+        default:
+            model.conversations[ci].agentBinding = nil
+            model.conversations[ci].agentBinding = binding
+        }
+        release.continuation.yield(())
+        for _ in 0..<1000 {
+            if !model.running.contains(id) { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(!model.running.contains(id))
+        let store = ConversationStore(fileURL: root.appending(path: "conversations.json"))
+        let saved = try #require(try await store.conversation(id: id))
+        if action == "navigate" {
+            #expect(model.selection != id)
+            let user = try #require(saved.messages.last(where: { $0.role == .user }))
+            expectNoDifference(user.reactions, [.init(emoji: "👍", actorID: "agent:\(originalProfile.id.uuidString)")])
+            let projected = try #require(model.conversations.first { $0.id == id })
+            expectNoDifference(projected.messages.first(where: { $0.id == user.id })?.reactions, user.reactions)
+            for chat in model.conversations where chat.id != id {
+                for message in chat.messages { expectNoDifference(message.reactions, []) }
+            }
+        } else {
+            for message in saved.messages { expectNoDifference(message.reactions, []) }
+            for message in model.conversations.flatMap(\.messages) { expectNoDifference(message.reactions, []) }
+        }
+    }
+
+    @Test(arguments: [false, true]) @MainActor
+    func boundDirectModelActuallySavesReactionInOriginalConversation(postCommitQuotaFailure: Bool) async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "filicon-direct-reaction-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fault = DirectReactionQuotaFault()
+        let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false,
+            quotaFaultInjector: { try fault.inject($0) })
+        await model.bootstrap()
+        await model.registry.register(DirectPublicationProvider(publishes: false, toolSupport: true, reacts: true,
+            armReaction: { if postCommitQuotaFailure { fault.arm() } }))
+        let agent = try #require(await model.createAgent(name: "Designer", summary: "", instructions: "React sparingly",
+            providerID: "direct-publication-test", modelID: "test"))
+        let id = try #require(model.selection)
+        let ci = try #require(model.conversations.firstIndex(where: { $0.id == id }))
+        model.conversations[ci].providerID = agent.providerID
+        model.conversations[ci].modelID = agent.modelID
+        model.conversations[ci].agentBinding = .init(accountID: "local", agentID: agent.id)
+        await model.refreshModels()
+        model.draft = "Thank you"
+        model.send()
+        for _ in 0..<1000 {
+            if !model.running.contains(id) { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(!model.running.contains(id))
+        #expect(postCommitQuotaFailure ? model.errorMessage != nil : model.errorMessage == nil)
+        expectNoDifference(fault.injectedCount(), postCommitQuotaFailure ? 1 : 0)
+        let store = ConversationStore(fileURL: root.appending(path: "conversations.json"))
+        let saved = try #require(try await store.conversation(id: id))
+        let user = try #require(saved.messages.last(where: { $0.role == .user }))
+        expectNoDifference(user.reactions, [.init(emoji: "👍", actorID: "agent:\(agent.id.uuidString)")])
+        expectNoDifference(model.conversations.first(where: { $0.id == id })?.messages.first(where: { $0.id == user.id })?.reactions,
+            user.reactions)
+        #expect(!saved.messages.contains { $0.text.contains("PRIVATE DRAFT") || $0.reasoningText.contains("PRIVATE REASONING") })
+        #expect(!saved.messages.contains { $0.role == .assistant })
+    }
+
     @Test(arguments: ["instructions", "archive", "unbind"])
     @MainActor func queuedBoundTurnRevalidatesBeforeProviderStarts(change: String) async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-bound-queue-\(UUID())")

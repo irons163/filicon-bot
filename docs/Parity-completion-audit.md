@@ -1,5 +1,45 @@
 # 完成驗收入口（2026-09-27）
 
+## 單獨聊天 ReactToMessage executor（2026-10-09，最後必要 gates 通過，隨本批提交）
+
+最後 standalone Debug package 與獨立 verify 均 terminal exit 0（direct-reaction-app-package-v1.log／direct-reaction-app-package-verify-v1.log），新 bundle 四個 executable、offline resources、app／XPC entitlements、deep strict codesign 檢查通過。連同 fresh focused v8、full v2（2,261 Swift Testing／267 suites＋135 XCTest／0 failures）、native arm64 Debug／獨立 verify、七語各 1,817 keys／0 missing，本批最後必要 gates 通過。四張作者畫面人工目視與 28 張 native render／OCR 證據保留；兩项 opt-in live skipped，非 release／公證或真人外部服務验收。下列段落依時間保留各階段待驗狀態與先前紅燈，不代表目前仍未通過。本批只驗收 foreground bound direct 反應入口，其他 host 的獨立 authority／quota／callback 驗收與廣義 parity 缺口仍待，48 分類／整體 partial 不變。未 push／launch／重啟 App 或 Xcode／改真實資料／清理 artifacts。
+
+同一最後 source 的 arm64 native Debug build terminal exit 0／BUILD SUCCEEDED，native verify（--xcode-debug）獨立 exit 0，日誌 direct-reaction-app-native-v1.log／direct-reaction-app-native-verify-v1.log。已開始事先確認不存在的新 standalone Debug bundle DirectReactionAppPackageV1/Filicon.app；內建及獨立 verify 尚待。沒有執行 script 提示的 launch smoke，也沒有覆寫／刪除舊 bundles；Debug ad-hoc 不算 release／Developer ID／公證或 packaged XPC live 驗收。
+
+full v2 全 bundles 統計：17 Swift Testing bundles 共 2,261 methods／267 suites，17 XCTest bundles 共 135 tests、0 failures；兩項 installed Codex opt-in live tests 仍 skipped。這些離線／actual isolated App 測試不等於真實外部帳號、真人 VoiceOver、最低 macOS 或 release／公證驗收。fresh standalone 目的路徑 DirectReactionAppPackageV1/Filicon.app 已唯讀確認不存在，後續不覆寫歷史 bundle。
+
+full v2 已 terminal exit 0：App 839 methods／105 suites、1095.933 秒、0 issues；captured-preview 十二 cases 在無 filter full 中全部通過，其他 bundles 結束且沒有 failed-target summary。此為 focused v8 同一最後產品 artifacts 的正式回歸成功，不抹除 full v1 紅燈。已開始 arm64 native Debug build（direct-reaction-app-native-v1.log），原使用者 App／Xcode 未重啟；native verify／fresh standalone／獨立 verify 尚待，不提交。
+
+最後 source 的 localization audit 已獨立 exit 0（direct-reaction-app-localization-v1.log），七語各 1,817 keys、0 missing。這僅證明字串目錄完整，不取代七語 native render／真人可用性或尚在執行的 full v2；產品 source 自 focused v8 後未再修改。
+
+full v2 執行期間另目視既有日文 dark 320 與法文 light 560 作者 PNG：未知歷史作者與本機人類使用對應語言，public name 保留原文，窄版換列、長名兩行截斷沒有相互覆蓋。連同前述繁中／英文共四張目視，不宣稱全部 28 張或真人 VoiceOver 驗收；未變更 UI source，亦未啟動使用者 App。
+
+fresh focused v8 terminal exit 0：core 18 methods／2 suites，App 11 methods／3 suites（15.203 秒）。captured-preview 全 12 cases 通過（4.007 秒）；late reaction 全六 cases（包括 reasoning ABA 和 navigation 正案）通過；quota 正常／afterCommitPersist 故障兩 cases 都通過，真實注入次數與 Added receipt、唯一 SQL／UI reaction／無 assistant 空殼比對保留。七語 render 七 cases 通過（6.812 秒）。已接續同一 compiled artifacts 的無 filter 串行 full v2，尚無 terminal；不是將 full v1 的七個 issues 刪除或計成成功。native／standalone final gates 仍待，不提交、不 push、不啟動 App。
+
+原 full v1 已 terminal exit 1：FiliconAttachmentPreviewTests 839 methods／105 suites，7 issues，1177.073 秒；失敗均為下述 captured-preview fixture，不能當作本批 full green。其餘 bundles 的通過不抵銷此失敗。已開始 fresh focused v8，重新編譯 quota receipt／reasoning ABA／preview tick 隔離最後 source，涵蓋 executor、canonical persistence、actual direct App、12 種 captured-preview 及作者 render；尚待 terminal 結果。
+
+等待原 full v1 期間補齊 reasoningEffort edit-and-restore 的同步撤銷，與其他 direct channel 原 run fence 一致；actual delayed provider 增加 reasoning-aba 第六種 case，保留 navigation 正案。新 case 仍待最後 source 重新編譯，不借舊 full v1 結果。
+
+full v1 尚未結束，但已記錄附件預覽 7 個失敗：forged-card 的 context 無法取得，以及 navigation／archive／hide ABA 的 queue／send 比對。檢查確認該離線 fixture 仍使用 production 兩秒自動 flush，而測試要求 preview 不傳送、只有 delivery-progress 明確 flush；因此背景 worker 可在取 snapshot 或驗證間合法送出，破壞測試的固定 queued 前提。已透過既有 channelDeliveryTick 注入點停止此 fixture 的自動 tick，保留真實 ChannelService、所有原完整比對及 delivery-progress 的明確 flush。此修改尚待重新編譯重現驗證，不先宣稱七案修好，也不改 production cadence。
+
+基線 `5bc5eb3`。重新核對 reconstructed turn-runtime.ts:803–825，direct 只允許原 run session 的 user entry。共用 executor 已新增 DirectReactionDirectory constructor，模型 schema 說明只列人類 target，沿用原 context／close／validation／八次額度／call-ID receipts；不同原 conversation 的 directory 不解析 target，runtime context 不洩漏該 directory。group constructor、schema 與原測試保留。
+
+新增 direct executor 原聊天／錯聊天兩 cases，以及真正 repository-issued lease／SQLite toggle／call replay／lease revoke 全 canonical chats 比對。`.build/validation/direct-reaction-tool-focused-v1.log` exit 1 是新測試未 unwrap optional description；v2 exit 0 的 17 methods／2 suites 早於實際 SQL replay 新案。v3 exit 1 是新案漏寫 throwing call constructor 的 try；v4 重新編譯最後 source，exit 0，18 Swift Testing methods／2 suites（0.608 秒）。沒有弱化 runtime 邊界或資料比對。
+
+App startTurn 現已新增工具註冊與明確原 run ToolContext、canonical full-history directory；取得 repository binding lease、account execution lease、可撤銷的 private-persona lease、獨立 run scope，最後 SQL commit 仍持有上述 lease。Stop／原聊天 route ABA 同步撤銷 run scope。quota 寫入按原 conversation key 記錄，成功 SQL receipt 後只投影同帳號／原 binding 的 reactions，不從目前 selection 推測 target，也不在成功後重新讀取 replica 而誤報失敗。公開 name／summary 更新沿用已開始 prompt；private instructions／title／provider／model／archive 變更撤銷 persona lease。
+
+`direct-reaction-app-focused-v1.log` exit 0，但其開始後才新增 actual App provider call／SQL／畫面 projection 案例，不作新案 gate。v2 exit 0：core 18 methods／2 suites，App 8 methods／1 suite，actual bound reaction case 通過，模型原始草稿／reasoning 不落入 transcript。作者 UI 此後新增 DirectReactionPills，顯示 emoji＋作者／七語 You 或 Agent fallback，adaptive grid／兩行名字、accessibility label／identifier，只有 local-user 反應可撤回；action 使用原 conversation.id，不依 selection。v3 exit 0：同樣 18＋8 methods，但開始後才新增 late provider 的 Stop／account／private persona ABA／rebind ABA 四 cases；v4 已開始重新編譯最後 source，不宣稱這四案通過。
+
+v4 exit 0：core 18 methods／2 suites，App 9 methods／1 suite（2.443 秒），上述四種 late reaction cases 通過。其後補 reaction-only finalization：只有成功反應 receipt、沒有公開 SendMessage／其他工具／host card 的原 assistant placeholder 可移除，失敗與其他真實工具紀錄保留；actual App 新增完整反應-only transcript 無 assistant assertion。v5 已開始重新编譯驗證，尚無 terminal 結果。
+
+v5 exit 0：core 18 methods／2 suites，App 9 methods／1 suite（14.403 秒），reaction-only 無 assistant assertion 通過。新增 actual navigation 正案後 v6 重新編譯、exit 0：core 18／2，App 9／1（3.166 秒）；provider 等待期間建立並選擇其他聊天，原聊天 canonical user 仍收到原 binding 作者反應，其他畫面聊天沒有反應，原 target UI projection 與 canonical 相符。
+
+新增實際 TranscriptMessageView 的七語×兩種主題×兩種寬度原生 render／OCR 作者可見測試，固定 fixture UUID／Date，包含長 public name、local-user 及未知歷史作者 fallback，render 不允許導航或寫入。`direct-reaction-app-focused-v7.log` 與 `DirectReactionUIV1/` PNG 輸出驗證已開始；尚未有 terminal 結果或手動目視，不宣稱畫面驗收通過。完整 quota race 與作者畫面 render 驗收仍待。full／native／standalone 最後 gates 尚未執行，不借上一保存層的 green。48 分類和整體 partial 不變；未 push／launch／重啟 App 或 Xcode／修改真實帳號或聊天。
+
+v7 terminal exit 0：core 18 methods／2 suites，App 10 methods／2 suites（7.704 秒），七語 render 共 28 PNG 的 OCR／尺寸檢查通過。已實際目視繁中 dark 320、英文 light 560 兩張，標籤可見且自適應換列，長名採兩行截斷；不稱 28 張全部目視或真人 VoiceOver 通過。無 filter 串行 `direct-reaction-app-full-v1.log` 已開始，使用 v7 最後 artifacts，未有結果；native／standalone 及各自 verify 仍待。
+
+full v1 執行期間複查發現 quota post-commit 的失敗邊界：一般 quotaWrite 在 SQL 已成功後仍可能丟出 ledger commit 錯誤，不能讓模型將成功 toggle 當作失敗重試。本批新增獨立 actor 保存實際 SQL typed receipt；僅當 receipt 真正存在才回傳成功並在原帳號顯示 quota 診斷，SQL 前失敗仍 throw，不重讀 replica／不做第二次 toggle。新增 actual provider 在 reaction 前才 arm afterCommitPersist 故障，要求工具收到 Added 成功、canonical 與 UI 保留唯一反應、無私人草稿／assistant 空殼，且故障必須恰好注入一次。最後修改仍待重新編譯／聚焦驗證，不能借 v7 full v1 的 artifacts 宣稱已通過。full v1 原 handle 持續執行，沒有因等待而重跑另一份 suite。
+
 ## 單獨聊天模型反應保存層（2026-10-09，最後必要 gates 通過，隨本批提交）
 
 基線 `2889a54`，不沿用下節群組增量的全綠 gate 作本批成功證據。重新唯讀核對 reconstructed `source/host/extensions/transcript/turn-runtime.ts:803–825`：direct reaction 只接受 user entry，歸屬原 run session 而不是目前選中的聊天；相同 emoji 可撤回。本批先補 canonical 保存層，尚未向 direct 模型註冊工具，不稱 direct parity 已完成。

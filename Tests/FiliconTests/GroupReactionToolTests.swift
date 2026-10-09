@@ -48,6 +48,41 @@ struct GroupReactionToolTests {
         try .init(id: id, name: "ReactToMessage", argumentsJSON: JSONEncoder().encode(["message_address": address, "emoji": emoji]))
     }
 
+    @Test(arguments: [false, true])
+    func directDirectoryIsBoundToOriginalChatAndCachesToggleReceipt(foreignContext: Bool) async throws {
+        var chat = Conversation(id: group, title: "Direct fixture", messages: [
+            .init(id: reactionID(10), role: .user, text: "Human", createdAt: date),
+            .init(id: reactionID(11), role: .assistant, text: "Assistant", createdAt: date)])
+        DirectMessageAddressing.assignMissing(in: &chat)
+        let context = ToolContext(conversationID: foreignContext ? peer : group, runID: reactionID(7))
+        let probe = ReactionToolProbe()
+        let tool = AgentMessageReactionTool(context: context,
+            directory: DirectReactionDirectory(conversation: chat, historyComplete: true),
+            validate: {}, react: { await probe.toggle($0, emoji: $1) })
+        let description = try #require(tool.descriptor.description)
+        #expect(description.contains("direct conversation"))
+        #expect(!description.contains("other member"))
+        let first = try await tool.execute(call(), context: context)
+        if foreignContext {
+            #expect(first.isError)
+            await #expect(throws: CancellationError.self) { try await tool.runtimeContext(for: context) }
+            let calls = await probe.calls
+            expectNoDifference(calls, [])
+            return
+        }
+        expectNoDifference(first, .init(callID: "tap", content: [.text("Added 👍 on t0u.")]))
+        let replay = try await tool.execute(call(), context: context)
+        expectNoDifference(replay, first)
+        #expect(try await tool.execute(call("assistant", address: "t0s0"), context: context).isError)
+        let removed = try await tool.execute(call("remove"), context: context)
+        expectNoDifference(removed, .init(callID: "remove", content: [.text("Removed 👍 on t0u.")]))
+        let calls = await probe.calls, reactions = await probe.reactions
+        let expected = MessageReaction(messageID: reactionID(10), actorID: actor, emoji: "👍")
+        expectNoDifference(calls, [expected, expected]); expectNoDifference(reactions, [])
+        await tool.close()
+        await #expect(throws: CancellationError.self) { try await tool.execute(call("closed"), context: context) }
+    }
+
     @Test func directoryContainsOnlyVisibleNativeHumanAndOtherMemberAddresses() throws {
         let human = message(10, address: "t0u", text: String(repeating: "a", count: 500))
         let teammate = message(11, sender: peer, address: "t0s0")

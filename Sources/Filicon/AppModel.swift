@@ -119,6 +119,14 @@ struct GroupReadContext: Sendable {
 final class AppModel: ObservableObject {
     @Published var conversations: [Conversation] = [] {
         didSet {
+            for (id, scope) in directReactionScopes {
+                let before = oldValue.first { $0.id == id }, after = conversations.first { $0.id == id }
+                if after == nil || before?.agentBinding != after?.agentBinding
+                    || before?.hiddenAt != after?.hiddenAt || before?.providerID != after?.providerID
+                    || before?.modelID != after?.modelID || before?.reasoningEffort != after?.reasoningEffort {
+                    scope.invalidate()
+                }
+            }
             invalidateDelegatedChannelScopes()
             invalidateChannelInboundExecutions()
             invalidateChannelInboundPreparations(changedConversationsFrom: oldValue)
@@ -1096,6 +1104,7 @@ final class AppModel: ObservableObject {
     private var turnTasks: [UUID: Task<Void, Never>] = [:]
     private var directPublicationIDs: [UUID: [UUID]] = [:]
     private var directChannelLifetimes: [UUID: ChannelPublicationLifetime] = [:]
+    private var directReactionScopes: [UUID: AgentWorkflowExecutionScope] = [:]
     private struct DelegatedChannelScope {
         struct OriginConversation: Equatable {
             let id: UUID
@@ -2851,6 +2860,16 @@ final class AppModel: ObservableObject {
         Task { await persist(conversationID: conversationID) }
     }
 
+    func toggleReaction(conversationID: UUID, messageID: UUID, emoji: String) {
+        guard MessageReactionEmoji.isValid(emoji),
+              conversations.filter({ $0.id == conversationID }).count == 1,
+              let index = conversations.firstIndex(where: { $0.id == conversationID }),
+              conversations[index].messages.filter({ $0.id == messageID }).count == 1 else { return }
+        _ = conversations[index].toggleReaction(messageID: messageID, emoji: emoji, actorID: "local-user")
+        conversations[index].updatedAt = Date()
+        Task { await persist(conversationID: conversationID) }
+    }
+
     func beginReply(to messageID: UUID) { replyingToMessageID = messageID }
 
     func handleTranscriptCardIntent(_ intent: TranscriptCardActionIntent) {
@@ -3353,6 +3372,10 @@ final class AppModel: ObservableObject {
         let accountScope = settings.accountScope ?? "local"
         let publicationGeneration = autoReviewAccountGeneration
         let agentBinding = conversations.first(where: { $0.id == id })?.agentBinding
+        let reactionScope = AgentWorkflowExecutionScope()
+        directReactionScopes[id]?.invalidate()
+        directReactionScopes[id] = reactionScope
+        let reactionContext = ToolContext(conversationID: id, runID: routine?.runID ?? assistantID)
         // Reviewed background tasks use the same original bound destination as
         // foreground turns. Bound notices and unbound chats get no capability.
         let channelLifetime: ChannelPublicationLifetime? = agentBinding != nil
@@ -3364,10 +3387,15 @@ final class AppModel: ObservableObject {
         let turnTask = Task { [self] in
             var succeeded = false
             var publisher: AgentUserMessageTool?
+            var reactionTool: AgentMessageReactionTool?
+            var reactionBindingLease: ConversationBindingLease?
             var messaging: AgentMessagingSession?
             var channelBindingLease: ConversationBindingLease?
             var priorPassUsage: Usage?
             defer {
+                reactionScope.invalidate()
+                reactionBindingLease?.close()
+                if directReactionScopes[id] === reactionScope { directReactionScopes[id] = nil }
                 closeDirectChannelCardContinuation(cardContinuation)
                 channelLifetime?.close()
                 channelBindingLease?.close()
@@ -3548,6 +3576,39 @@ final class AppModel: ObservableObject {
                         }, publish: { _, _ in throw CancellationError() })
                 }
                 var tools: [any ToolExecutor] = publisher.map { [$0] } ?? []
+                if publisher != nil, let agentIdentity, let agentBinding, let agentService,
+                   let profile = await agentService.profile(id: agentIdentity.agentID) {
+                    let bindingLease = try await store.leaseUniqueBinding(accountID: accountScope,
+                        agentID: agentIdentity.agentID, conversationID: id)
+                    reactionBindingLease = bindingLease
+                    let accountLease = try workflowExecutionScope.capture()
+                    let personaLease = try await agentService.captureDirectTurnIdentity(profile)
+                    var lease = try reactionScope.capture(inheriting: accountLease).inheriting(personaLease)
+                    if let inherited = routine?.lease ?? cardContinuation?.lease ?? humanTurn?.lease {
+                        lease = try lease.inheriting(inherited)
+                    }
+                    let admittedLease = lease
+                    guard let canonical = try await store.load().first(where: { $0.id == id }),
+                          canonical.agentBinding == agentBinding, canonical.hiddenAt == nil else { throw CancellationError() }
+                    let directory = DirectReactionDirectory(conversation: canonical, historyComplete: true)
+                    let targets = Dictionary(canonical.messages.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+                    let tool = AgentMessageReactionTool(context: reactionContext, directory: directory,
+                        validate: { [weak self] in
+                            try admittedLease.check()
+                            guard let self else { throw CancellationError() }
+                            _ = try await self.directTurnAgentIdentity(conversationID: id, binding: agentBinding,
+                                accountScope: accountScope, generation: publicationGeneration,
+                                providerID: providerID, modelID: requestModelID)
+                            try admittedLease.check()
+                        }, react: { [weak self] messageID, emoji in
+                            guard let self, let target = targets[messageID] else { throw CancellationError() }
+                            return try await self.commitDirectModelReaction(target: target, emoji: emoji,
+                                conversationID: id, account: accountScope, generation: publicationGeneration,
+                                bindingLease: bindingLease, executionLease: admittedLease)
+                        })
+                    reactionTool = tool
+                    tools.append(tool)
+                }
                 if publisher != nil, let agentIdentity, let agentService, let agentMessenger, let agentConversations {
                     // A routine wake is ephemeral host data, not a durable
                     // human request or an implicit image-publication grant.
@@ -3664,9 +3725,7 @@ final class AppModel: ObservableObject {
                 for pass in 0...1 {
                     let trace = pass == 0 ? replyNudge : nil
                     try await coordinator.send(request: passRequest, providerID: providerID, additionalTools: tools,
-                        toolContext: routine.map { .init(conversationID: id, runID: $0.runID) }
-                            ?? cardContinuation.map { _ in .init(conversationID: id, runID: assistantID) }
-                            ?? humanTurn.map { _ in .init(conversationID: id, runID: assistantID) },
+                        toolContext: reactionContext,
                         agentID: agentIdentity?.agentID,
                         agentLane: routine?.isManual == true || routine == nil ? .user : .background,
                         priority: humanInitiatedSend && routine == nil && cardContinuation == nil,
@@ -3751,6 +3810,8 @@ final class AppModel: ObservableObject {
             }
             routine?.usage = ChannelInboundReplyNudge.combinedUsage(priorPassUsage, pendingTurnUsage[assistantID])
             await publisher?.close()
+            await reactionTool?.close()
+            let reacted = await reactionTool?.hasSuccessfulReaction ?? false
             if let messaging {
                 do { try await messaging.close(preservingMemorySynthesis: succeeded) }
                 catch { errorMessage = error.localizedDescription }
@@ -3886,7 +3947,10 @@ final class AppModel: ObservableObject {
             if succeeded, directPublicationIDs[assistantID]?.isEmpty == true,
                let ci = conversations.firstIndex(where: { $0.id == id }),
                let mi = conversations[ci].messages.firstIndex(where: { $0.id == assistantID }),
-               conversations[ci].messages[mi].toolActivities.isEmpty,
+               conversations[ci].messages[mi].toolActivities.isEmpty
+                    || (reacted && conversations[ci].messages[mi].toolActivities.allSatisfy {
+                        $0.name == "ReactToMessage" && $0.status == .succeeded
+                    }),
                conversations[ci].messages[mi].transcriptCards.isEmpty {
                 // Silence is not an indefinitely waiting ellipsis. Keep actual
                 // tool activity, but remove the unused streaming placeholder.
@@ -3955,6 +4019,7 @@ final class AppModel: ObservableObject {
 
     @discardableResult private func cancelConversationWork(_ selection: UUID,
                                                           preservingHumanTurn humanTurn: ChannelInboundHumanTurn? = nil) -> Task<Void, Never> {
+        directReactionScopes[selection]?.invalidate()
         if let current = channelInboundHumanTurns[selection], current !== humanTurn { current.close() }
         queuedChannelInboundRedrives[selection]?.close()
         queuedChannelInboundRedrives.removeValue(forKey: selection)
@@ -4551,6 +4616,50 @@ final class AppModel: ObservableObject {
         receipt.images = images.isEmpty ? nil : images
         receipt.shortAddress = conversations.first(where: { $0.id == conversationID })?.messages.first(where: { $0.id == messageID })?.shortAddress
         return receipt
+    }
+
+    private actor DirectReactionCommitReceipt {
+        private(set) var value: DirectReactionMutation?
+        func record(_ receipt: DirectReactionMutation) { value = receipt }
+    }
+
+    private func commitDirectModelReaction(target: ChatMessage, emoji: String,
+        conversationID: UUID, account: String, generation: UInt64,
+        bindingLease: ConversationBindingLease, executionLease: AgentWorkflowExecutionScope.Lease) async throws -> Bool {
+        try executionLease.check()
+        guard generation == autoReviewAccountGeneration, account == (settings.accountScope ?? "local"),
+              !agentMessagingAccountTransition, running.contains(conversationID),
+              conversations.first(where: { $0.id == conversationID })?.agentBinding == bindingLease.binding,
+              var canonical = try await store.load().first(where: { $0.id == conversationID }),
+              canonical.agentBinding == bindingLease.binding,
+              let index = canonical.messages.firstIndex(where: { $0.id == target.id }) else { throw CancellationError() }
+        try executionLease.check()
+        _ = canonical.messages[index].toggleReaction(emoji: emoji, actorID: "agent:\(bindingLease.binding.agentID.uuidString)")
+        let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .secondsSince1970
+        let committed = DirectReactionCommitReceipt()
+        let receipt: DirectReactionMutation
+        do {
+            receipt = try await quotaWrite(scope: "conversation", key: conversationID.uuidString,
+                data: encoder.encode(canonical)) { [store] in
+                    let result = try await store.toggleModelReaction(expectedMessage: target, emoji: emoji,
+                        bindingLease: bindingLease, commit: { operation in try executionLease.commit(operation) })
+                    await committed.record(result)
+                    return result
+                }
+        } catch {
+            guard let result = await committed.value else { throw error }
+            receipt = result
+            if generation == autoReviewAccountGeneration, account == (settings.accountScope ?? "local") {
+                errorMessage = Self.quotaMessage(error)
+            }
+        }
+        if generation == autoReviewAccountGeneration, account == (settings.accountScope ?? "local"),
+           !agentMessagingAccountTransition,
+           let ci = conversations.firstIndex(where: { $0.id == conversationID && $0.agentBinding == bindingLease.binding }),
+           let mi = conversations[ci].messages.firstIndex(where: { $0.id == target.id }) {
+            conversations[ci].messages[mi].reactions = receipt.message.reactions
+        }
+        return receipt.applied
     }
 
     private func finishTurn(conversationID: UUID, assistantID: UUID, succeeded: Bool,

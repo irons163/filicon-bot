@@ -33,6 +33,43 @@ struct DirectReactionPersistenceTests {
         return value
     }
 
+    @Test func actualToolReceiptReplayDoesNotToggleDurableReactionTwice() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "direct-reaction-tool-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let repository = try ConversationRepository(databaseURL: root.appending(path: "conversations.sqlite3"))
+        try await repository.save([chat(), foreign()], activityAt: now)
+        let before = try await repository.load()
+        let original = try #require(before.first { $0.id == chat().id }), target = original.messages[0]
+        let address = try #require(target.shortAddress)
+        let lease = try await repository.leaseUniqueBinding(accountID: binding.accountID,
+            agentID: binding.agentID, conversationID: original.id)
+        defer { lease.close() }
+        let context = ToolContext(conversationID: original.id, runID: directReactionID(9))
+        let tool = AgentMessageReactionTool(context: context,
+            directory: DirectReactionDirectory(conversation: original, historyComplete: true), validate: {
+                try lease.withValidBinding {}
+            }, react: { id, emoji in
+                guard id == target.id else { throw CancellationError() }
+                return try await repository.toggleModelReaction(expectedMessage: target, emoji: emoji,
+                    bindingLease: lease, commit: { try $0() }).applied
+            })
+        let firstCall = try NormalizedToolCall(id: "native-tap", name: "ReactToMessage",
+            argumentsJSON: try JSONEncoder().encode(["message_address": address, "emoji": "👍"]))
+        let first = try await tool.execute(firstCall, context: context)
+        let repeated = try await tool.execute(firstCall, context: context)
+        expectNoDifference(repeated, first)
+        expectNoDifference(first, .init(callID: "native-tap", content: [.text("Added 👍 on \(address).")]))
+        var expected = before
+        let index = try #require(expected.firstIndex { $0.id == original.id })
+        expected[index].messages[0].reactions.append(.init(emoji: "👍", actorID: "agent:\(binding.agentID.uuidString)"))
+        let after = try await repository.load()
+        expectNoDifference(after, expected)
+        lease.close()
+        await #expect(throws: CancellationError.self) { try await tool.execute(firstCall, context: context) }
+        let revoked = try await repository.load()
+        expectNoDifference(revoked, expected)
+    }
+
     @Test(arguments: ["valid", "partial", "assistant", "tool", "wrong-role-address", "duplicate-id",
         "duplicate-address", "reservation-mismatch", "deleted-reservation", "host-card", "tool-activity", "reasoning", "queued", "empty"])
     func onlyFullCanonicalUniqueHumanAddressesEnterTheDirectory(boundary: String) throws {

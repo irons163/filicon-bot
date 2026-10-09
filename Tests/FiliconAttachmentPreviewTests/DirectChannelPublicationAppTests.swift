@@ -727,7 +727,11 @@ private struct DirectChannelProvider: AIProvider {
         runtime: LocalToolRuntime? = nil) async throws -> Fixture {
         let probe = DirectChannelProbe(), channels = try ChannelService(storeURL: root.appending(path: "channels.json"))
         let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false, localToolRuntime: runtime,
-            channelService: channels, channelConnectors: [DirectChannelConnector(supportsAttachments: supportsAttachments, probe: probe)])
+            channelService: channels, channelConnectors: [DirectChannelConnector(supportsAttachments: supportsAttachments, probe: probe)],
+            // These fixtures assert that preview actions do not send queued
+            // publications. Advance the real delivery worker explicitly in
+            // delivery-progress, instead of racing its production timer.
+            channelDeliveryTick: { throw CancellationError() })
         model.remoteAttachmentDownloader = DirectChannelDownloader(probe: probe)
         await model.bootstrap()
         await model.registry.register(DirectChannelProvider(arguments: arguments, probe: probe))

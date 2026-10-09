@@ -22,6 +22,24 @@ The Members section in both the inspector and new-group sheet provides **New mem
 
 ## Verification
 
+### Direct reaction wiring (October 9)
+
+This increment registers `ReactToMessage` for a bound
+foreground direct turn. Targets come from the original conversation's canonical
+user-message directory, not the selected chat. Account, persona, binding and
+run leases fence the final SQLite mutation; stopping or editing and restoring
+the admitted reasoning setting cannot revive an old request. Successful
+reaction-only turns remove their empty assistant placeholder, while failed or
+other tool activity remains visible. A durable reaction receipt survives a
+subsequent quota-ledger failure without applying the toggle twice.
+
+Reaction pills display the original native author's public name, or a localized
+fallback for an unknown historical author. Only the local user's pill is
+removable by that user. Seven-language native rendering, quota/fence cases,
+the full regression, native Debug build and a fresh standalone Debug package
+have passed their checks. This does not establish background-host or release parity; see
+`Parity-completion-audit.md` for the exact gates, retained failure evidence and remaining gaps.
+
 ### Group collaboration (September 18 correction)
 
 The reference `grok-bot-0.18-reconstructed` has bounded multi-round collaboration,

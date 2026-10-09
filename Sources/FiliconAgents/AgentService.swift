@@ -112,6 +112,10 @@ public actor AgentService {
         return try scope.capture()
     }
 
+    public func captureDirectTurnIdentity(_ profile: AgentProfile) throws -> AgentWorkflowExecutionScope.Lease {
+        try captureGroupMemberTurnIdentity(profile)
+    }
+
     private static func memberTurnIdentity(_ profile: AgentProfile) -> DirectAgentExecutionIdentity? {
         var currentPromptIdentity = profile
         currentPromptIdentity.name = "native-group-member"

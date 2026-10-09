@@ -1521,14 +1521,9 @@ struct TranscriptMessageView: View {
                 }
                 messageBubble
                 if !message.reactions.isEmpty {
-                    HStack(spacing: 5) {
-                        ForEach(groupedReactions, id: \.emoji) { group in
-                            Button("\(group.emoji) \(group.count)") {
-                                model.toggleReaction(messageID: message.id, emoji: group.emoji)
-                            }
-                            .buttonStyle(.bordered)
-                            .controlSize(.mini)
-                        }
+                    DirectReactionPills(reactions: message.reactions, authors: Dictionary(
+                        model.agents.map { ("agent:\($0.id.uuidString)", $0.name) }, uniquingKeysWith: { first, _ in first })) { emoji in
+                        model.toggleReaction(conversationID: conversation.id, messageID: message.id, emoji: emoji)
                     }
                 }
                 messageActions
@@ -1738,10 +1733,38 @@ struct TranscriptMessageView: View {
         }
     }
     private var statusColor: Color { message.deliveryStatus == .failed ? .red : .secondary }
-    private var groupedReactions: [(emoji: String, count: Int)] {
-        Dictionary(grouping: message.reactions, by: \.emoji)
-            .map { (emoji: $0.key, count: $0.value.count) }
-            .sorted { $0.emoji < $1.emoji }
+}
+
+struct DirectReactionPills: View {
+    let reactions: [ChatReaction]
+    let authors: [String: String]
+    var onRemove: ((String) -> Void)?
+
+    var body: some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 100, maximum: 200), alignment: .leading)], alignment: .leading, spacing: 4) {
+            ForEach(Array(Set(reactions)).sorted { ($0.actorID, $0.emoji) < ($1.actorID, $1.emoji) }, id: \.self) { reaction in
+                let human = reaction.actorID == "local-user"
+                let author = human ? l10n("You") : authors[reaction.actorID] ?? l10n("Agent")
+                Group {
+                    if human, let onRemove {
+                        Button { onRemove(reaction.emoji) } label: { pill(reaction.emoji, author: author) }
+                            .buttonStyle(.plain)
+                    } else { pill(reaction.emoji, author: author) }
+                }
+                .accessibilityLabel(l10n("Reaction") + ": " + reaction.emoji + " · " + author)
+                .accessibilityIdentifier("direct-reaction-\(reaction.actorID)-\(reaction.emoji)")
+            }
+        }
+    }
+
+    private func pill(_ emoji: String, author: String) -> some View {
+        HStack(spacing: 4) {
+            Text(verbatim: emoji)
+            Text(verbatim: author).lineLimit(2)
+        }
+        .font(.system(size: 11)).foregroundStyle(FiliconTheme.textSecondary)
+        .padding(.horizontal, 7).padding(.vertical, 4)
+        .background(FiliconTheme.input, in: Capsule())
     }
 }
 
