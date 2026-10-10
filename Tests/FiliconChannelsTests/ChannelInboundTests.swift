@@ -28,7 +28,7 @@ struct ChannelInboundTests {
         let envelope: ChannelEnvelope
         var file: URL { root.appending(path: "channels.json") }
     }
-    private func fixture() async throws -> Fixture {
+    private func fixture(withImage: Bool = false) async throws -> Fixture {
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-inbound-admission-\(UUID())")
         let service = try ChannelService(storeURL: root.appending(path: "channels.json"))
         let connection = ChannelConnection(id: inboundID(1), connectorID: "slack", displayName: "Original owner",
@@ -36,7 +36,9 @@ struct ChannelInboundTests {
         try await service.saveConnection(connection); await service.register(InboundOfflineConnector())
         let envelope = ChannelEnvelope(connectionID: connection.id, externalEventID: "exact-event",
             address: .init(platform: "slack", channelID: "C_EXACT", threadID: "T_EXACT"),
-            senderID: "U_EXACT", senderDisplayName: "Remote human", text: "Remote untrusted request", timestamp: date)
+            senderID: "U_EXACT", senderDisplayName: "Remote human", text: "Remote untrusted request", timestamp: date,
+            attachments: withImage ? [.init(blobID: String(repeating: "a", count: 64), filename: "remote-image",
+                mimeType: "image/png", byteCount: 128)] : [])
         try #require(await service.ingest(envelope))
         return .init(root: root, service: service, connection: connection, envelope: envelope)
     }
@@ -48,9 +50,9 @@ struct ChannelInboundTests {
             senderID: f.envelope.senderID, senderDisplayName: f.envelope.senderDisplayName,
             text: "Another remote request", timestamp: date.addingTimeInterval(1))
     }
-    @Test(arguments: [ChannelInboundRun.Status.completed, .cancelled, .failed, .interrupted])
-    func cardSourceResolutionIsReadOnlyAndRequiresCompletedOwnReceipt(status: ChannelInboundRun.Status) async throws {
-        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+    @Test(arguments: [ChannelInboundRun.Status.completed, .cancelled, .failed, .interrupted], [false, true])
+    func cardSourceResolutionIsReadOnlyAndRequiresCompletedOwnReceipt(status: ChannelInboundRun.Status, withImage: Bool) async throws {
+        let f = try await fixture(withImage: withImage); defer { try? FileManager.default.removeItem(at: f.root) }
         let admission = try await f.service.prepareInbound(f.envelope, accountID: "fixture", invalidate: {})
         let run = try await claim(f, admission)
         await #expect(throws: CancellationError.self) {

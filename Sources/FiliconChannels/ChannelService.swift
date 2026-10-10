@@ -440,7 +440,7 @@ public actor ChannelService {
               run.conversationID == conversationID, run.receipt.accountID == accountID,
               run.receipt.agentID == agentID, inboundReceiptIsCurrent(run.receipt),
               let envelope = state.inbound.first(where: { $0.id == run.receipt.envelopeID }),
-              run.receipt.isConsistent(with: envelope), envelope.attachments.isEmpty else {
+              run.receipt.isConsistent(with: envelope) else {
             throw CancellationError()
         }
         return envelope

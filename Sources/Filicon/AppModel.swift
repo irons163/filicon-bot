@@ -498,6 +498,7 @@ final class AppModel: ObservableObject {
     private let store: ConversationStore
     private let attachmentStore: AttachmentStore
     private let channelAttachmentStore: AttachmentStore
+    private let channelInboundImageReader: ChannelInboundImageInput.Read
     private let agentImageStore: AgentImageStore
     private let attachmentLifecycle: AttachmentLifecycle?
     private let attachmentPreviewMaterializer = AttachmentPreviewMaterializer()
@@ -789,6 +790,7 @@ final class AppModel: ObservableObject {
         let admission: ChannelInboundAdmission
         let run: ChannelInboundRun
         let message: ChatMessage
+        let imageInput: ChannelInboundImageInput
         let bindingLease: ConversationBindingLease
         let identity: DirectAgentExecutionIdentity
         let providerID: ProviderID
@@ -802,10 +804,15 @@ final class AppModel: ObservableObject {
         private var reviewActions: Set<UUID> = []
         private var waiters: [CheckedContinuation<Void, Never>] = []
         init(admission: ChannelInboundAdmission, run: ChannelInboundRun, message: ChatMessage,
+             imageInput: ChannelInboundImageInput,
              bindingLease: ConversationBindingLease, identity: DirectAgentExecutionIdentity,
              conversation: Conversation, generation: UInt64, accountLease: AgentWorkflowExecutionScope.Lease,
              scope: AgentWorkflowExecutionScope) throws {
-            self.admission = admission; self.run = run; self.message = message; self.bindingLease = bindingLease
+            guard run.receipt == admission.receipt, run.messageID == message.id,
+                  run.conversationID == conversation.id, message.externalChannelSource?.conversationID == conversation.id,
+                  message.externalChannelSource?.owner == bindingLease.binding,
+                  imageInput.matches(message) else { throw CancellationError() }
+            self.admission = admission; self.run = run; self.message = message; self.imageInput = imageInput; self.bindingLease = bindingLease
             self.identity = identity; providerID = conversation.providerID; modelID = conversation.modelID
             reasoningEffort = conversation.reasoningEffort; self.generation = generation
             self.accountLease = accountLease; self.scope = scope; lease = try scope.capture(inheriting: accountLease)
@@ -1268,6 +1275,7 @@ final class AppModel: ObservableObject {
         quotaFaultInjector: @escaping StorageQuotaLedger.FaultInjector = { _ in },
         channelService: ChannelService? = nil,
         channelConnectors: [any ChannelConnector]? = nil,
+        channelInboundImageReader: ChannelInboundImageInput.Read? = nil,
         channelDeliveryTick: @escaping @Sendable () async throws -> Void = { try await Task.sleep(for: .seconds(2)) }
     ) {
         let context: AppStartupContext = (try? .isolated(root: applicationSupportRoot, reason: .isolatedUserData))
@@ -1281,6 +1289,7 @@ final class AppModel: ObservableObject {
             quotaFaultInjector: quotaFaultInjector,
             channelService: channelService,
             channelConnectors: channelConnectors,
+            channelInboundImageReader: channelInboundImageReader,
             channelDeliveryTick: channelDeliveryTick
         )
     }
@@ -1294,6 +1303,7 @@ final class AppModel: ObservableObject {
         quotaFaultInjector: @escaping StorageQuotaLedger.FaultInjector = { _ in },
         channelService: ChannelService? = nil,
         channelConnectors: [any ChannelConnector]? = nil,
+        channelInboundImageReader: ChannelInboundImageInput.Read? = nil,
         channelDeliveryTick: @escaping @Sendable () async throws -> Void = { try await Task.sleep(for: .seconds(2)) }
     ) {
         let root = startupContext.root
@@ -1307,6 +1317,9 @@ final class AppModel: ObservableObject {
         quotaWriter = liveQuota.map(AppQuotaWriter.init)
         attachmentStore = AttachmentStore(rootURL: root.appending(path: "attachments", directoryHint: .isDirectory))
         channelAttachmentStore = AttachmentStore(rootURL: root.appending(path: "channel-attachments", directoryHint: .isDirectory))
+        self.channelInboundImageReader = channelInboundImageReader ?? { [channelAttachmentStore] metadata in
+            try await channelAttachmentStore.channelPublicationData(for: metadata)
+        }
         agentImageStore = AgentImageStore(rootURL: root.appending(path: "agent-message-images", directoryHint: .isDirectory))
         attachmentLifecycle = try? AttachmentLifecycle.live(
             applicationSupportDirectory: root,
@@ -2275,6 +2288,7 @@ final class AppModel: ObservableObject {
         guard directChannelCardScopes[value.conversationID] === value, value.generation == autoReviewAccountGeneration,
               let source = channelCardSource(origin: value.origin, conversationID: value.conversationID),
               source.externalChannelSource == value.source.externalChannelSource, source.text == value.source.text,
+              source.attachments == value.source.attachments,
               let owner = source.externalChannelSource?.owner,
               let chat = conversations.first(where: { $0.id == value.conversationID }),
               chat.providerID == value.providerID, chat.modelID == value.modelID, chat.reasoningEffort == value.reasoningEffort,
@@ -2291,7 +2305,8 @@ final class AppModel: ObservableObject {
               canonical.hiddenAt == nil, canonical.providerID == value.providerID, canonical.modelID == value.modelID,
               canonical.reasoningEffort == value.reasoningEffort,
               canonical.messages.contains(where: { $0.id == value.origin.messageID && $0.hasValidExternalChannelSource
-                  && $0.externalChannelSource == value.source.externalChannelSource && $0.text == value.source.text }),
+                  && $0.externalChannelSource == value.source.externalChannelSource && $0.text == value.source.text
+                  && $0.attachments == value.source.attachments }),
               Self.channelSenderIdentity(await agentService?.profile(id: owner.agentID), owner: owner) == value.identity else { throw CancellationError() }
         let envelope = try await service.inboundCardEnvelope(runID: value.origin.runID, messageID: value.origin.messageID,
             conversationID: value.conversationID, accountID: owner.accountID, agentID: owner.agentID)
@@ -2299,6 +2314,7 @@ final class AppModel: ObservableObject {
             owner: owner, conversationID: value.conversationID, platform: envelope.address.platform, channelID: envelope.address.channelID,
             threadID: envelope.address.threadID, senderID: envelope.senderID, senderName: envelope.senderDisplayName, receivedAt: envelope.timestamp)
         guard source == value.source.externalChannelSource, envelope.text == value.source.text,
+              try ChannelInboundImageInput.metadata(for: envelope) == value.source.attachments,
               value.envelope == nil || value.envelope == envelope else { throw CancellationError() }
         value.envelope = envelope
         try checkDirectChannelCardContinuation(value)
@@ -3420,17 +3436,27 @@ final class AppModel: ObservableObject {
                 let addresses = Dictionary(current.messages.map { ($0.id, $0.shortAddress) }, uniquingKeysWith: { _, _ in nil })
                 // Host activity cards/receipts are transcript bookkeeping, not
                 // synthetic human prompts or instructions to run/edit routines.
+                let incomingTransport = try routine?.channelInbound.map {
+                    try $0.imageInput.inferenceMessage(for: $0.message, at: $0.run.startedAt)
+                }
                 let requestMessages = try withoutBookkeeping.map { message in
                     var value = message
-                    if routine != nil { value.attachments = []; value.remoteAttachment = nil; value.remoteImages = nil; value.imageGalleryLayout = nil }
                     value.shortAddress = addresses[message.id] ?? nil
+                    if let incomingTransport, message.id == incomingTransport.id {
+                        guard message == incomingTransport else { throw CancellationError() }
+                        return value
+                    }
                     if let source = value.externalChannelSource {
                         guard source.owner.accountID == accountScope, source.owner == agentBinding,
                               source.conversationID == id, value.hasValidExternalChannelSource else { throw CancellationError() }
                         value.text = try ChannelInboundPrompt.prompt(for: value)
                         value.role = .assistant
                         value.externalChannelSource = nil
+                        // Durable remote images are display data. Only this
+                        // turn's separately admitted byte capture is model input.
+                        value.attachments = []
                     }
+                    if routine != nil { value.attachments = []; value.remoteAttachment = nil; value.remoteImages = nil; value.imageGalleryLayout = nil }
                     if let source = value.agentMessageSource {
                         guard source.accountID == accountScope,
                               source.recipientAgentID == agentBinding?.agentID else { throw CancellationError() }
@@ -3446,6 +3472,12 @@ final class AppModel: ObservableObject {
                 }
                 var attachmentsByMessageID: [UUID: [InferenceAttachment]] = [:]
                 for message in requestMessages where !message.attachments.isEmpty {
+                    if let routine, let incoming = routine.channelInbound, message.id == incoming.imageInput.transportMessageID {
+                        try await validateBackgroundDirectExecution(routine)
+                        guard message.attachments == incoming.imageInput.images.map(\.metadata) else { throw CancellationError() }
+                        attachmentsByMessageID[message.id] = incoming.imageInput.images
+                        continue
+                    }
                     var values: [InferenceAttachment] = []
                     for metadata in message.attachments {
                         let owner = AttachmentReferenceOwner(conversationID: id, messageID: message.id)
@@ -10248,9 +10280,9 @@ final class AppModel: ObservableObject {
         for envelope in envelopes {
             guard generation == autoReviewAccountGeneration, account == (settings.accountScope ?? "local"),
                   !agentMessagingAccountTransition, !Task.isCancelled else { return }
-            // Received files/images need a separate captured-source admission.
-            // Do not silently read/download them or treat them as local input.
-            guard envelope.attachments.isEmpty, preparingChannelInbound[envelope.id] == nil,
+            // A remote attachment needs an exact native admission and bounded
+            // immutable byte capture, never a URL or general local-file grant.
+            guard preparingChannelInbound[envelope.id] == nil,
                   let connection = channelConnections.first(where: { $0.id == envelope.connectionID && $0.enabled
                       && $0.authorizationAccountID == account }), let agentID = connection.agentID else { continue }
             let owner = DirectConversationAgentBinding(accountID: account, agentID: agentID)
@@ -10291,6 +10323,14 @@ final class AppModel: ObservableObject {
                       let profile = await agentService.profile(id: owner.agentID), profile.archivedAt == nil,
                       ChannelFailureContext.identity(profile, owner: owner) == identity,
                       let provider = await registry.provider(id: profile.providerID), provider.descriptor.supportsToolCalling else { continue }
+                try lease.check(); try accepted.check()
+                let images = try ChannelInboundImageInput.metadata(for: envelope)
+                if !images.isEmpty {
+                    try await GroupConversationResponder.validateImageInput(agent: profile, registry: registry)
+                    try lease.check(); try accepted.check()
+                }
+                let imageInput = try await ChannelInboundImageInput.capture(admission: accepted,
+                    read: channelInboundImageReader, validate: { try lease.check() })
                 try lease.check(); try accepted.check()
                 let canonical: Conversation
                 if let existing = try await store.uniqueBoundConversation(accountID: account, agentID: owner.agentID) {
@@ -10338,8 +10378,9 @@ final class AppModel: ObservableObject {
                     threadID: envelope.address.threadID, senderID: envelope.senderID, senderName: envelope.senderDisplayName,
                     receivedAt: envelope.timestamp)
                 let message = redrive?.context.message
-                    ?? ChatMessage(role: .user, text: envelope.text, createdAt: source.receivedAt, externalChannelSource: source)
-                guard message.hasValidExternalChannelSource else { continue }
+                    ?? ChatMessage(role: .user, text: envelope.text, createdAt: source.receivedAt,
+                        attachments: imageInput.images.map(\.metadata), externalChannelSource: source)
+                guard message.hasValidExternalChannelSource, imageInput.matches(message) else { continue }
                 let run: ChannelInboundRun
                 if let redrive, let ticket = redrive.redrive {
                     guard acceptsChannelInboundHumanTurn(redrive), message.externalChannelSource == source else { throw CancellationError() }
@@ -10353,6 +10394,7 @@ final class AppModel: ObservableObject {
                 }
                 claim = run
                 let value = try ChannelInboundContext(admission: accepted, run: run, message: message,
+                    imageInput: imageInput,
                     bindingLease: bound, identity: identity, conversation: canonical, generation: generation,
                     accountLease: accountLease, scope: scope)
                 let execution = try BackgroundDirectExecution(channelInbound: value)
@@ -10367,6 +10409,7 @@ final class AppModel: ObservableObject {
                     }
                     do {
                         try value.lease.check(); guard acceptsChannelInbound(value) else { throw CancellationError() }
+                        if redrive == nil { try await installChannelInboundImages(value) }
                         let data = try JSONEncoder().encode(message)
                         let saved = try await quotaWrite(scope: "conversation", key: id.uuidString, data: data) { [store] in
                             try await store.receiveExternalChannel(message, bindingLease: bound, activityAt: run.startedAt,
@@ -10380,7 +10423,7 @@ final class AppModel: ObservableObject {
                         conversations[ci].messages.append(.init(id: run.id, role: .assistant, text: "", createdAt: run.startedAt, deliveryStatus: .streaming))
                         loadedMessageIDs[id, default: []].insert(run.id)
                         let turn = startTurn(conversationID: id, assistantID: run.id,
-                            requestMessages: history + [.init(role: .user, text: try ChannelInboundPrompt.prompt(for: message), createdAt: run.startedAt)],
+                            requestMessages: history + [try imageInput.inferenceMessage(for: message, at: run.startedAt)],
                             modelID: value.modelID, providerID: value.providerID, reasoningEffort: value.reasoningEffort, routine: execution)
                         await withTaskCancellationHandler { await turn.value } onCancel: { turn.cancel() }
                         switch execution.outcome {
@@ -10394,6 +10437,7 @@ final class AppModel: ObservableObject {
                             errorMessage = FiliconLocalization.message(error.localizedDescription)
                         }
                     }
+                    if status != .completed { await retireUnpublishedChannelInboundImages(value) }
                     do { try await channelService.finishInbound(run, status: status, at: Date()) }
                     catch { if generation == autoReviewAccountGeneration { errorMessage = error.localizedDescription } }
                 }
@@ -10405,6 +10449,57 @@ final class AppModel: ObservableObject {
                 }
             }
         }
+    }
+
+    private func validateChannelInboundImageInstallation(_ value: ChannelInboundContext) async throws {
+        try value.lease.check(); try value.admission.check(); try value.bindingLease.withValidBinding {}
+        guard acceptsChannelInbound(value), let channelService,
+              await channelService.isInboundCurrent(value.admission, run: value.run) else { throw CancellationError() }
+        try value.lease.check(); try value.admission.check(); try value.bindingLease.withValidBinding {}
+        guard acceptsChannelInbound(value) else { throw CancellationError() }
+    }
+
+    /// The canonical row uses the same normal CAS/index as human-selected
+    /// attachments, but installing it grants no model/publication capability.
+    /// Inference uses the immutable capture, never a second read of this copy.
+    private func installChannelInboundImages(_ value: ChannelInboundContext) async throws {
+        guard !value.imageInput.images.isEmpty else { return }
+        guard quotaWriter != nil else { throw StorageQuotaError.corruptLedger }
+        guard let attachmentLifecycle else { throw AgentImageError.unavailable }
+        let owner = AttachmentReferenceOwner(conversationID: value.run.conversationID, messageID: value.message.id)
+        var uploads: [StagedAttachment] = []
+        do {
+            for image in value.imageInput.images {
+                try await validateChannelInboundImageInstallation(value)
+                let prepared = try PreparedAgentPublicationFile(bytes: image.data, filename: image.metadata.filename)
+                let upload = try await quotaWrite(scope: "attachment-blob", key: prepared.digest, data: prepared.bytes) {
+                    try await attachmentLifecycle.stage(prepared: prepared, verifiedImageMIMEType: image.metadata.mimeType)
+                }
+                uploads.append(upload)
+                try await validateChannelInboundImageInstallation(value)
+                let saved = try await attachmentLifecycle.commit(upload, to: owner)
+                guard saved.id == image.metadata.id, saved.filename == image.metadata.filename,
+                      saved.mimeType == image.metadata.mimeType, saved.byteCount == image.metadata.byteCount,
+                      saved.kind == image.metadata.kind else { throw AgentImageError.invalid }
+                try await validateChannelInboundImageInstallation(value)
+            }
+        } catch {
+            await retireUnpublishedChannelInboundImages(value)
+            for upload in uploads { try? await attachmentLifecycle.abort(upload) }
+            throw error
+        }
+    }
+
+    private func retireUnpublishedChannelInboundImages(_ value: ChannelInboundContext) async {
+        guard !value.imageInput.images.isEmpty else { return }
+        do {
+            // A post-commit quota/projection failure is not proof that the
+            // canonical source failed. Keep its exact references on uncertainty.
+            let canonical = try await store.conversation(id: value.run.conversationID)
+            guard canonical?.messages.contains(where: { $0.id == value.message.id }) != true else { return }
+            try await attachmentLifecycle?.removeReferences(owner: .init(
+                conversationID: value.run.conversationID, messageID: value.message.id))
+        } catch { /* Normal reconciliation repairs uncertain staged state. */ }
     }
 
     private func observeChannelDeliveries() {
@@ -11127,8 +11222,8 @@ final class AppModel: ObservableObject {
                   execution.matchesIdentity(conversation: current, profile: profile, accountID: execution.accountID),
                   execution.matchesIdentity(conversation: canonical, profile: profile, accountID: execution.accountID),
                   canonical.messages.contains(where: { $0.id == value.message.id
-                      && $0.externalChannelSource == value.message.externalChannelSource && $0.text == value.message.text
-                      && $0.hasValidExternalChannelSource }),
+                      && $0.externalChannelSource == value.message.externalChannelSource
+                      && value.imageInput.matches($0) }),
                   await channelService.isInboundCurrent(value.admission, run: value.run) else { throw CancellationError() }
         }
         try execution.lease.check()

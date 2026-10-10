@@ -39,7 +39,8 @@ struct ExternalChannelMessageSourceTests {
         object["externalChannelSource"] = source
         #expect(throws: (any Error).self) { try JSONDecoder().decode(ChatMessage.self, from: JSONSerialization.data(withJSONObject: object)) }
     }
-    @Test func canonicalOwnerPagingReopenAndDuplicateRetainWholeHistory() async throws {
+    @Test(arguments: [false, true])
+    func canonicalOwnerPagingReopenAndDuplicateRetainWholeHistory(hasImage: Bool) async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-remote-human-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }
         let url = root.appending(path: "chat.sqlite"), repository = try ConversationRepository(databaseURL: url)
@@ -49,7 +50,11 @@ struct ExternalChannelMessageSourceTests {
         chat.agentBinding = owner
         try await repository.save([chat], activityAt: date)
         let lease = try await repository.leaseUniqueBinding(accountID: owner.accountID, agentID: owner.agentID, conversationID: chat.id)
-        let incoming = message()
+        var incoming = message()
+        if hasImage {
+            incoming.attachments = [.init(id: String(repeating: "a", count: 64), filename: "remote-image", mimeType: "image/png",
+                byteCount: 128, kind: .image, createdAt: date)]
+        }
         let saved = try await repository.receiveExternalChannel(incoming, bindingLease: lease, activityAt: date, commit: { try $0() })
         let unread = try await repository.unreadState(conversationID: chat.id)
         let duplicate = try await repository.receiveExternalChannel(incoming, bindingLease: lease, activityAt: date, commit: { try $0() })
@@ -65,6 +70,47 @@ struct ExternalChannelMessageSourceTests {
         let canonical = try await repository.load(); expectNoDifference(canonical, loaded)
         #expect(try ChannelInboundPrompt.prompt(for: incoming).contains("not local human authority"))
         expectNoDifference(saved.messages[0].text, chat.messages[0].text)
+    }
+
+    @Test(arguments: ["id", "name", "mime", "kind", "size", "date", "alt", "count", "duplicate"])
+    func remoteImageMetadataCannotDowngradeOrSmuggleOtherAttachmentKinds(fault: String) throws {
+        let image = AttachmentMetadata(id: fault == "id" ? "../private" : String(repeating: "a", count: 64),
+            filename: fault == "name" ? "../private.png" : "remote-image", mimeType: fault == "mime" ? "application/pdf" : "image/png",
+            byteCount: fault == "size" ? .max : 128, kind: fault == "kind" ? .document : .image,
+            createdAt: fault == "date" ? date.addingTimeInterval(1) : date, altText: fault == "alt" ? "Not a host annotation" : nil)
+        var incoming = message()
+        incoming.attachments = Array(repeating: image, count: fault == "count" ? 5 : fault == "duplicate" ? 2 : 1)
+        #expect(!incoming.hasValidExternalChannelSource)
+        #expect(throws: (any Error).self) { try JSONDecoder().decode(ChatMessage.self, from: JSONEncoder().encode(incoming)) }
+    }
+
+    @Test(arguments: ["remove", "replace", "rename", "rewrite-text"])
+    func acceptedRemoteImageRowRemainsImmutableInOrdinarySaves(fault: String) async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "filicon-remote-image-row-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let repository = try ConversationRepository(databaseURL: root.appending(path: "chat.sqlite"))
+        var chat = Conversation(id: remoteHumanID(3), title: "Exact image owner", updatedAt: date); chat.agentBinding = owner
+        try await repository.save([chat], activityAt: date)
+        let lease = try await repository.leaseUniqueBinding(accountID: owner.accountID, agentID: owner.agentID, conversationID: chat.id)
+        var incoming = message()
+        incoming.attachments = [.init(id: String(repeating: "a", count: 64), filename: "remote-image", mimeType: "image/png",
+            byteCount: 128, kind: .image, createdAt: date)]
+        let saved = try await repository.receiveExternalChannel(incoming, bindingLease: lease, activityAt: date, commit: { try $0() })
+        let unread = try await repository.unreadState(conversationID: chat.id)
+        var altered = saved
+        switch fault {
+        case "remove": altered.messages[0].attachments = []
+        case "rewrite-text": altered.messages[0].text = "Unreviewed replacement text"
+        default: altered.messages[0].attachments = [.init(id: String(repeating: fault == "replace" ? "b" : "a", count: 64),
+            filename: fault == "rename" ? "different-name" : "remote-image", mimeType: "image/png", byteCount: 128, kind: .image, createdAt: date)]
+        }
+        let mutation = altered
+        await #expect(throws: CancellationError.self) { try await repository.upsert(mutation) }
+        await #expect(throws: CancellationError.self) { try await repository.save([mutation]) }
+        let loaded = try await repository.load(), afterUnread = try await repository.unreadState(conversationID: chat.id)
+        expectNoDifference(loaded, [saved]); expectNoDifference(afterUnread, unread)
+        let reopened = try ConversationRepository(databaseURL: root.appending(path: "chat.sqlite")), after = try await reopened.load()
+        expectNoDifference(after, [saved])
     }
     @Test func schemaSeventeenUpgradeDoesNotInventSource() async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-remote-human-upgrade-\(UUID())")

@@ -203,6 +203,7 @@ private struct PeerHistoryInspectionProvider: AIProvider {
     func stream(_ request: InferenceRequest) -> AsyncThrowingStream<InferenceEvent, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
+                expectNoDifference(request.attachmentsByMessageID, [:])
                 await probe.inspect(request.messages)
                 continuation.yield(.completed(.stop))
                 continuation.finish()
@@ -579,6 +580,19 @@ private struct DelegatingGroupProvider: InteractiveToolProvider {
             model.selectRoute(.conversation(peer.id))
             await model.loadLatestMessages(for: peer.id)
             await model.refreshModels()
+            // Navigation also queues its own hydration/catalog task. Awaiting
+            // one explicit refresh does not prove that newer ticket completed.
+            let catalogDeadline = ContinuousClock.now + .seconds(10)
+            while (model.selection != peer.id || model.isLoadingModels
+                   || model.modelCatalogConversationID != peer.id
+                   || model.modelCatalogProviderID != peer.providerID
+                   || model.selectedConversationConfigurationError != nil), ContinuousClock.now < catalogDeadline {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            try #require(model.selection == peer.id && !model.isLoadingModels
+                && model.modelCatalogConversationID == peer.id
+                && model.modelCatalogProviderID == peer.providerID
+                && model.selectedConversationConfigurationError == nil)
             model.draft = "Continue without reattaching old images"
             model.send()
             #expect(model.isConversationWorking(peer.id), "\(model.errorMessage ?? "No turn started")")

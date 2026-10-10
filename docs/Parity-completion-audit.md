@@ -1,5 +1,9 @@
 # 完成驗收入口（2026-09-27）
 
+## Incoming 頻道圖片（2026-10-10，本批必要 gates 通過）
+
+基線 `f3a050b` 後補當次 PNG／JPEG 的原生 admission／bounded capture／model capability check、原 owner own-DM 推論、正常 CAS／quota／reference 保存與預覽。後續文字或 question／secret callback 不重播舊圖片，也不取得圖片轉寄／對外送件權限。真實 listener 紅燈與 JSON 重建順序問題已重現、修正；先前完整 v1 的 peer image fixture 就緒競爭及原失敗日誌亦保留。最後相關 v5 共 90 methods／9 suites 通過；重新建置、無 filter 串行 full v2 terminal exit 0：2,282 Swift Testing methods／268 suites＋135 XCTest／0 failures（各 17 bundles；App 848／105、553.534 秒）。兩項 opt-in live skipped，不算外部服務成功。同一最後產品 source 的隔離 arm64 native Debug build／獨立 verify、全新 standalone Debug package／獨立 verify、七語各 1,817 keys／0 missing 與 diff check 均通過，精確日誌／失敗歷史／邊界見 [Channel-inbound-image-validation.md](Channel-inbound-image-validation.md)。僅關閉本批有界 incoming 圖片入口缺口；48 分類與整體 partial 不變，不借前批成功稱全部 parity。未 push／launch／重啟 App／Xcode／改真實資料，隨本批提交；下列為先前已提交增量紀錄。
+
 ## Mailbox 模型反應 App 接線（2026-10-10，本批必要 gates 通過）
 
 本批原生 destination／canonical commit／admitted history 隔離與回歸過程見 [Mailbox-reaction-validation.md](Mailbox-reaction-validation.md)。最後相關回歸為核心 52 methods／3 suites、App／routine 56 methods／2 suites 通過，保留先前真正隱私與投影紅燈及其修正紀錄。解鎖後完整無 filter 串行回歸 exit 0：2,271 Swift Testing methods／267 suites、135 XCTest、零失敗，兩項 opt-in live skipped；原生與獨立封裝 Debug build／verify、七語言每語 1,817 keys 零缺漏、diff check 通過。使用者本次明確要求 commit 後 push，僅本次取代原不 push 限制。全產品 parity 仍未完成，外部帳號、其他 host 與 runtime 差異不因本批關閉；未 launch／重啟使用者 App 或 Xcode、未改真實資料。

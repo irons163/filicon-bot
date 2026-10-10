@@ -36,13 +36,39 @@ public struct ExternalChannelMessageSource: Codable, Hashable, Sendable {
     }
 }
 
+/// Display metadata for a bounded, current remote image batch. Passing this
+/// shape check does not admit a blob read, an inference or a publication.
+public enum ExternalChannelImagePolicy {
+    public static let maximumCount = 4
+    public static let maximumBytes: Int64 = 5 * 1_024 * 1_024
+    public static let maximumTotalBytes: Int64 = 12 * 1_024 * 1_024
+
+    public static func accepts(_ images: [AttachmentMetadata], receivedAt: Date) -> Bool {
+        guard images.count <= maximumCount, Set(images.map(\.id)).count == images.count else { return false }
+        var remaining = maximumTotalBytes
+        for image in images {
+            guard image.id.utf8.count == 64,
+                  image.id.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }),
+                  image.kind == .image, ["image/png", "image/jpeg"].contains(image.mimeType),
+                  image.byteCount > 0, image.byteCount <= maximumBytes, image.byteCount <= remaining,
+                  image.createdAt == receivedAt, image.altText == nil,
+                  !image.filename.isEmpty, image.filename != ".", image.filename != "..",
+                  image.filename.utf8.count <= 255, !image.filename.contains("/"), !image.filename.contains("\\"),
+                  !image.filename.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else { return false }
+            remaining -= image.byteCount
+        }
+        return true
+    }
+}
+
 extension ChatMessage {
     /// Stored provenance must not be downgraded into a local human instruction.
     public var hasValidExternalChannelSource: Bool {
         guard let source = externalChannelSource else { return true }
         return source.isValid && role == .user && agentMessageSource == nil
             && createdAt == source.receivedAt && deliveryStatus == .succeeded && deliveryError == nil
-            && text.count <= 8_000 && attachments.isEmpty && toolActivities.isEmpty && transcriptCards.isEmpty
+            && text.count <= 8_000 && ExternalChannelImagePolicy.accepts(attachments, receivedAt: source.receivedAt)
+            && toolActivities.isEmpty && transcriptCards.isEmpty
             && reasoningText.isEmpty && remoteAttachment == nil && remoteImages == nil && imageGalleryLayout == nil
     }
 }
