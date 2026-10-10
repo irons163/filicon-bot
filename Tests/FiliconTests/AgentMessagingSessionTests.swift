@@ -132,7 +132,7 @@ struct AgentMessagingSessionTests {
         let directory = DirectReactionDirectory(conversation: chat, historyComplete: true)
         let session = AgentMessagingSession(originConversationID: f.origin, agents: f.agents,
             messenger: f.messenger, registry: f.registry, coordinator: f.coordinator,
-            mailboxReactionFactory: { incoming, profile, context, lifetime in
+            mailboxReactionFactory: { incoming, profile, context, _, lifetime in
                 expectNoDifference(incoming.recipientID, f.recipient.id)
                 expectNoDifference(profile.id, f.recipient.id)
                 expectNoDifference(context.conversationID, f.origin)

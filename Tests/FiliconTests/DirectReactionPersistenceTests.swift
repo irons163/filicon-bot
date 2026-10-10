@@ -107,6 +107,21 @@ struct DirectReactionPersistenceTests {
         expectNoDifference(value, before)
     }
 
+    @Test
+    func admittedHistoryRestrictionNeverExportsPrivateRowsOrHidesCollisions() {
+        var value = chat()
+        let target = value.messages[0]
+        let denied = DirectReactionDirectory(conversation: value, historyComplete: true, admittedMessageIDs: [])
+        expectNoDifference(denied.entries, [])
+        let allowed = DirectReactionDirectory(conversation: value, historyComplete: true, admittedMessageIDs: [target.id])
+        #expect(allowed.contains(target.id))
+        var duplicate = ChatMessage(id: directReactionID(99), role: .user, text: target.text, createdAt: target.createdAt)
+        duplicate.shortAddress = target.shortAddress
+        value.messages.append(duplicate)
+        let ambiguous = DirectReactionDirectory(conversation: value, historyComplete: true, admittedMessageIDs: [target.id])
+        expectNoDifference(ambiguous.entries, [])
+    }
+
     @Test(arguments: [false, true])
     func collisionsAndDeletedAliasesOutsideFortyRowsStillRejectTheRecentTarget(reservation: Bool) {
         var value = chat()

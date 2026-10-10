@@ -19,7 +19,7 @@ public struct DirectReactionDirectory: Sendable {
     public let conversationID: UUID
     public let entries: [Entry]
 
-    public init(conversation: Conversation, historyComplete: Bool) {
+    public init(conversation: Conversation, historyComplete: Bool, admittedMessageIDs: Set<UUID>? = nil) {
         conversationID = conversation.id
         let history = historyComplete ? conversation.messages : []
         let idCounts = Dictionary(grouping: history, by: \.id).mapValues(\.count)
@@ -27,7 +27,8 @@ public struct DirectReactionDirectory: Sendable {
         let reservations = conversation.messageAddressReservations
         let owners = Dictionary(grouping: reservations, by: \.value).mapValues { $0.map(\.key) }
         entries = history.suffix(40).compactMap { message in
-            guard message.role == .user, message.deliveryStatus == .succeeded,
+            guard admittedMessageIDs?.contains(message.id) != false,
+                  message.role == .user, message.deliveryStatus == .succeeded,
                   message.agentMessageSource == nil, message.transcriptCards.isEmpty,
                   message.toolActivities.isEmpty, message.reasoningText.isEmpty,
                   idCounts[message.id] == 1, let address = message.shortAddress,

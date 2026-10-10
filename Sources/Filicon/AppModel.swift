@@ -3693,6 +3693,8 @@ final class AppModel: ObservableObject {
                         mailboxChannelPublisherFactory: makeMailboxChannelPublisherFactory(originID: id,
                             generation: publicationGeneration, binding: agentBinding,
                             inheritedExecutionLease: routine?.lease ?? humanTurn?.lease),
+                        mailboxReactionFactory: makeMailboxReactionFactory(originID: id, generation: publicationGeneration,
+                            binding: agentBinding, inheritedExecutionLease: routine?.lease ?? humanTurn?.lease),
                         authorize: { [weak self] sender, recipient, text, call, context in
                             guard let self else { throw CancellationError() }
                             try await self.validateDirectDelegation(conversationID: id, binding: agentBinding,
@@ -6723,6 +6725,7 @@ final class AppModel: ObservableObject {
                 mailboxGallery: makeMailboxGalleryFactory(originID: originID, generation: generation),
                 mailboxChannelPublisherFactory: makeMailboxChannelPublisherFactory(originID: originID,
                     generation: generation, binding: directBinding),
+                mailboxReactionFactory: makeMailboxReactionFactory(originID: originID, generation: generation, binding: directBinding),
                 authorize: { [weak self] sender, recipient, text, call, context in
                     guard let self else { throw CancellationError() }
                     try await MainActor.run {
@@ -6784,6 +6787,8 @@ final class AppModel: ObservableObject {
             mailboxChannelPublisherFactory: (allowsGroupMailboxChannels || manualOrigin != nil) ? makeMailboxChannelPublisherFactory(originID: originID,
                 generation: generation, binding: nil, manualOrigin: manualOrigin,
                 inheritedExecutionLease: mailboxExecutionLease) : nil,
+            mailboxReactionFactory: makeMailboxReactionFactory(originID: originID, generation: generation,
+                binding: nil, manualOrigin: manualOrigin, inheritedExecutionLease: mailboxExecutionLease),
             authorize: { [weak self] sender, recipient, text, call, context in
                 guard let self else { throw CancellationError() }
                 try await self.authorizeAgentDelegation(sender: sender, recipient: recipient, text: text, call: call, context: context)
@@ -6883,6 +6888,116 @@ final class AppModel: ObservableObject {
                 generation: generation, binding: binding, originGroup: originGroup, manualOrigin: manualOrigin,
                 inheritedExecutionLease: inheritedExecutionLease, parent: parent)
         }
+    }
+
+    private func makeMailboxReactionFactory(originID: UUID, generation: UInt64,
+        binding: DirectConversationAgentBinding?, manualOrigin: ManualMailboxOrigin? = nil,
+        inheritedExecutionLease: AgentWorkflowExecutionScope.Lease? = nil) -> AgentMessagingSession.MailboxReactionFactory? {
+        let originGroup = binding == nil && manualOrigin == nil ? groups.first { $0.id == originID } : nil
+        guard binding != nil || originGroup != nil || manualOrigin != nil else { return nil }
+        return { [weak self] incoming, sender, context, admittedHistory, parent in
+            guard let self else { throw CancellationError() }
+            return try await self.makeMailboxReaction(incoming, sender: sender, context: context, admittedHistory: admittedHistory,
+                originID: originID, generation: generation, binding: binding, originGroup: originGroup,
+                manualOrigin: manualOrigin, inheritedExecutionLease: inheritedExecutionLease, parent: parent)
+        }
+    }
+
+    private func makeMailboxReaction(_ incoming: AgentMessage, sender: AgentProfile, context: ToolContext, admittedHistory: [ChatMessage],
+        originID: UUID, generation: UInt64, binding: DirectConversationAgentBinding?, originGroup: AgentGroup?,
+        manualOrigin: ManualMailboxOrigin?, inheritedExecutionLease: AgentWorkflowExecutionScope.Lease?,
+        parent: AgentPublicationLifetime) async throws -> AgentMessageReactionTool? {
+        try parent.check()
+        // Do not acquire a publication scope merely to expose an empty tool:
+        // doing so can opt a private wake into incoming transcript projection.
+        guard admittedHistory.contains(where: { $0.role == .user && $0.agentMessageSource == nil }) else { return nil }
+        guard context.conversationID == originID, let agentService else { throw CancellationError() }
+        let scope = try await acquireMailboxPublicationScope(incoming, sender: sender, originID: originID,
+            generation: generation, binding: binding, originGroup: originGroup, manualOrigin: manualOrigin,
+            inheritedExecutionLease: inheritedExecutionLease, parent: ChannelPublicationLifetime())
+        let persona = try await agentService.captureDirectTurnIdentity(sender)
+        let lease = try scope.executionLease.inheriting(persona)
+        let destination = scope.destinationID
+        let canonical = try await store.load().first { $0.id == destination }
+        try parent.check(); try lease.check()
+        guard mailboxChannelScopeIsCurrent(scope) else { throw CancellationError() }
+        if let canonical {
+            guard canonical.hiddenAt == nil,
+                  canonical.agentBinding == .init(accountID: scope.account, agentID: sender.id) else { throw CancellationError() }
+        }
+        // New own chats have no human targets. Never invent one from a peer
+        // envelope, host seed, or image transport user-role block.
+        // A visible own-DM projection is not permission to read its private history.
+        // Match native admitted human rows, never provider image transport blocks.
+        let admittedIDs = Set((canonical?.messages ?? []).filter { target in
+            admittedHistory.contains { admitted in
+                admitted.role == .user && admitted.id == target.id
+                    && admitted.text == target.text && admitted.createdAt == target.createdAt
+                    && admitted.attachments == target.attachments
+                    && admitted.agentMessageSource == nil
+            }
+        }.map(\.id))
+        let directory = DirectReactionDirectory(conversation: canonical ?? Conversation(id: destination, title: ""),
+            historyComplete: true, admittedMessageIDs: admittedIDs)
+        let targets = Dictionary((canonical?.messages ?? []).map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let validate: @Sendable () async throws -> Void = { [weak self] in
+            try parent.check(); try lease.check()
+            guard let self else { throw CancellationError() }
+            try await self.validateMailboxChannelScope(incoming.id)
+            try parent.check(); try lease.check()
+        }
+        return AgentMessageReactionTool(context: context, directory: directory, destinationConversationID: destination,
+            validate: validate, react: { [weak self] id, emoji in
+                try await validate()
+                guard let self, let target = targets[id] else { throw CancellationError() }
+                return try await self.commitMailboxReaction(target: target, emoji: emoji, deliveryID: incoming.id,
+                    parent: parent, lease: lease)
+            })
+    }
+
+    private func commitMailboxReaction(target: ChatMessage, emoji: String, deliveryID: UUID,
+        parent: AgentPublicationLifetime, lease: AgentWorkflowExecutionScope.Lease) async throws -> Bool {
+        try await validateMailboxChannelScope(deliveryID)
+        guard let scope = mailboxChannelScopes[deliveryID],
+              var canonical = try await store.conversation(id: scope.destinationID),
+              let index = canonical.messages.firstIndex(where: { $0.id == target.id }) else { throw CancellationError() }
+        let bindingLease = try await store.leaseUniqueBinding(accountID: scope.account,
+            agentID: scope.incoming.recipientID, conversationID: scope.destinationID)
+        defer { bindingLease.close() }
+        try await validateMailboxChannelScope(deliveryID)
+        try parent.check(); try lease.check()
+        let destination = scope.destinationID, account = scope.account, generation = scope.generation
+        let bindings = scope.bindings, membership = scope.membership
+        _ = canonical.messages[index].toggleReaction(emoji: emoji, actorID: "agent:\(scope.incoming.recipientID.uuidString)")
+        let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .secondsSince1970
+        let committed = DirectReactionCommitReceipt()
+        let receipt: DirectReactionMutation
+        do {
+            receipt = try await quotaWrite(scope: "conversation", key: destination.uuidString, data: encoder.encode(canonical)) { [store] in
+                let result = try await store.toggleModelReaction(expectedMessage: target, emoji: emoji, bindingLease: bindingLease,
+                    commit: { operation in
+                        try lease.commit {
+                            try parent.withValidPublication {
+                                if let membership { return try membership.withValidMembership { try bindings.withValid(operation) } }
+                                return try bindings.withValid(operation)
+                            }
+                        }
+                    })
+                await committed.record(result)
+                return result
+            }
+        } catch {
+            guard let saved = await committed.value else { throw error }
+            receipt = saved
+            if generation == autoReviewAccountGeneration, account == (settings.accountScope ?? "local") { errorMessage = Self.quotaMessage(error) }
+        }
+        if generation == autoReviewAccountGeneration, account == (settings.accountScope ?? "local"),
+           !agentMessagingAccountTransition,
+           let ci = conversations.firstIndex(where: { $0.id == destination && $0.agentBinding == bindingLease.binding }),
+           let mi = conversations[ci].messages.firstIndex(where: { $0.id == target.id }) {
+            conversations[ci].messages[mi].reactions = receipt.message.reactions
+        }
+        return receipt.applied
     }
 
     /// Shared native destination admission, independent of any connector.

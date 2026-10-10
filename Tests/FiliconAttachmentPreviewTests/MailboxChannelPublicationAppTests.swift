@@ -115,6 +115,7 @@ private struct AppMailboxChannelProvider: InteractiveToolProvider {
     var broadcastOrigin: UUID? = nil
     var broadcastTarget: UUID? = nil
     var silentPersona: String? = nil
+    var reacts = false
     func models() async throws -> [AIModel] { [.init(id: "fixture")] }
     func stream(_ request: InferenceRequest) -> AsyncThrowingStream<InferenceEvent, Error> {
         guard let plainResponse else { return AsyncThrowingStream { $0.finish(throwing: ProviderError.invalidResponse) } }
@@ -172,6 +173,26 @@ private struct AppMailboxChannelProvider: InteractiveToolProvider {
                         $0.text.contains("human answers or dismisses your saved mailbox question")
                             || $0.text.contains("host-recorded human credential response")) }
                     let incoming = request.messages.last?.text.hasPrefix("Incoming peer message") == true || humanResponse
+                    let returnsBeforeReacting = returnToOwnerID != nil && request.messages.contains {
+                        $0.role == .system && $0.text.contains("agent:\(peerID.uuidString)")
+                    }
+                    if incoming, reacts, !returnsBeforeReacting {
+                        expectNoDifference(request.tools.contains { $0.name == "ReactToMessage" },
+                            request.messages.contains { $0.role == .user && $0.agentMessageSource == nil })
+                        guard request.tools.contains(where: { $0.name == "ReactToMessage" }) else {
+                            continuation.yield(.textDelta("PASS"))
+                            continuation.yield(.completed(.stop)); continuation.finish()
+                            return
+                        }
+                        await latePeerGate?.wait()
+                        await probe.attemptedLatePeerPublication()
+                        let result = try await executeTool(.init(id: "peer-reaction", name: "ReactToMessage",
+                            argumentsJSON: Data(#"{"message_address":"t0u","emoji":"👍"}"#.utf8)))
+                        await probe.result(result)
+                        continuation.yield(.textDelta("PRIVATE_REACTION_DRAFT"))
+                        continuation.yield(.completed(.stop)); continuation.finish()
+                        return
+                    }
                     let promptedInput: String?
                     if !humanResponse { promptedInput = savedInput }
                     else if let followUpInput, await probe.claimFollowUpInput() { promptedInput = followUpInput }
@@ -257,7 +278,7 @@ private struct AppMailboxChannelProvider: InteractiveToolProvider {
                          groupOrigin: Bool = false, queuesSibling: Bool = false,
                          latePeerGate: AppMailboxChannelFailureGate? = nil,
                          manual: Bool = false, existingPeer: Bool = false, savedInput: String? = nil,
-                         followUpInput: String? = nil) async throws -> Fixture {
+                         followUpInput: String? = nil, reacts: Bool = false, configuredChannels: Bool = true) async throws -> Fixture {
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-app-mailbox-channel-\(UUID())")
         let profiles = try AgentService(storeURL: root.appending(path: "agents.json"))
         let owner = try await profiles.create(name: "Origin owner", instructions: "OWNER_PRIVATE_PERSONA",
@@ -274,6 +295,10 @@ private struct AppMailboxChannelProvider: InteractiveToolProvider {
             providerID: peer.providerID, modelID: peer.modelID,
             messages: [.init(role: .user, text: "EXISTING_PEER_PRIVATE_HISTORY", createdAt: date)], updatedAt: date)
         peerChat.agentBinding = .init(accountID: "local", agentID: peer.id)
+        if reacts {
+            DirectMessageAddressing.assignMissing(in: &origin)
+            DirectMessageAddressing.assignMissing(in: &peerChat)
+        }
         try await ConversationStore(fileURL: root.appending(path: "conversations.json")).save(
             ((groupOrigin || manual) ? [other] : [origin, other]) + (existingPeer ? [peerChat] : []))
         let group: AgentGroup?
@@ -289,7 +314,9 @@ private struct AppMailboxChannelProvider: InteractiveToolProvider {
             secretReference: usesSecret ? "keychain://channels/39000000-0000-0000-0000-000000000004"
                 : "keychain://channels/TEST-peer-never-read", agentID: peer.id,
             authKind: usesSecret ? .botToken : nil, ownerAccountID: "local")
-        try await channels.saveConnection(ownerConnection); try await channels.saveConnection(peerConnection)
+        if configuredChannels {
+            try await channels.saveConnection(ownerConnection); try await channels.saveConnection(peerConnection)
+        }
         let runtime: LocalToolRuntime?, source: URL?
         if localFile {
             let workspace = root.appending(path: "workspace")
@@ -314,7 +341,7 @@ private struct AppMailboxChannelProvider: InteractiveToolProvider {
                 ?? arguments ?? ["type": "text", "channel": "slack:C_PEER", "content": "EXACT_PEER_EXTERNAL_RESULT"],
             returnToOwnerID: returnToOwner ? owner.id : nil, failureGate: failureGate,
             triesExternalFailureRetry: triesExternalFailureRetry, queuesSibling: queuesSibling,
-            latePeerGate: latePeerGate, savedInput: savedInput, followUpInput: followUpInput))
+            latePeerGate: latePeerGate, savedInput: savedInput, followUpInput: followUpInput, reacts: reacts))
         await model.bootstrap()
         await model.setAutomationRuntimeActive(false); model.setWorkflowRuntimeActive(false)
         await model.setAutoReviewEnabled(automatic)
@@ -375,6 +402,113 @@ private struct AppMailboxChannelProvider: InteractiveToolProvider {
         let encoder = JSONEncoder(), decoder = JSONDecoder()
         encoder.dateEncodingStrategy = .secondsSince1970; decoder.dateDecodingStrategy = .secondsSince1970
         return try decoder.decode([Conversation].self, from: encoder.encode(values))
+    }
+
+    @Test(arguments: [false, true], [false, true])
+    func mailboxReactionRejectsUnadmittedPrivateHumanTarget(existing: Bool, configuredChannels: Bool) async throws {
+        let f = try await fixture(automatic: true, existingPeer: existing, reacts: true, configuredChannels: configuredChannels)
+        defer { f.model.cancel(); try? FileManager.default.removeItem(at: f.root) }
+        let store = ConversationStore(fileURL: f.root.appending(path: "conversations.json"))
+        let before = try await store.load()
+        f.model.send()
+        try await eventually {
+            if let pending = f.model.pendingAutoReviewApprovals.first(where: { $0.action.context.metadata["tool"] == "SendToAgent" }) {
+                await f.model.resolveGroupApproval(pending, groupID: originID, approve: true)
+            }
+            return await f.probe.requests.count >= 2 && !f.model.running.contains(originID)
+                && f.model.runningAgentMessageScopes.isEmpty
+        }
+        let results = await f.probe.results
+        #expect(results.first { $0.callID == "peer-reaction" } == nil)
+        let requests = await f.probe.requests
+        let peerRequest = try #require(requests.first { $0.messages.last?.text.hasPrefix("Incoming peer message") == true })
+        let context = peerRequest.messages.map(\.text).joined(separator: "\n")
+        #expect(!context.contains("OWNER_PRIVATE_HISTORY"))
+        #expect(!context.contains("UNRELATED_PRIVATE_HISTORY"))
+        #expect(!context.contains("EXISTING_PEER_PRIVATE_HISTORY"))
+        let chats = try await store.load()
+        if let original = f.existingPeer?.messages.first {
+            let saved = try #require(chats.first { $0.agentBinding?.agentID == f.peer.id })
+            expectNoDifference(saved.messages.first { $0.id == original.id }, original)
+        }
+        for chat in chats {
+            #expect(!chat.messages.contains { $0.text.contains("PRIVATE_REACTION_DRAFT") })
+            if chat.agentBinding?.agentID != f.peer.id {
+                for row in chat.messages { expectNoDifference(row.reactions, []) }
+            }
+        }
+        let unrelated = try #require(before.first { $0.id == otherID })
+        expectNoDifference(chats.first { $0.id == otherID }, unrelated)
+        let sent = await f.probe.sent, queue = await f.channels.deliveries()
+        expectNoDifference(sent, []); expectNoDifference(queue, [])
+    }
+
+    @Test
+    func returnedMailboxReactionCanUseAdmittedOwnersHumanHistory() async throws {
+        let f = try await fixture(automatic: true, returnToOwner: true, existingPeer: true, reacts: true, configuredChannels: false)
+        defer { f.model.cancel(); try? FileManager.default.removeItem(at: f.root) }
+        let store = ConversationStore(fileURL: f.root.appending(path: "conversations.json"))
+        let original = try #require(try await store.load().first { $0.id == originID }?.messages.first)
+        f.model.send()
+        try await eventually {
+            if let pending = f.model.pendingAutoReviewApprovals.first(where: { $0.action.context.metadata["tool"] == "SendToAgent" }) {
+                await f.model.resolveGroupApproval(pending, groupID: originID, approve: true)
+            }
+            return await f.probe.requests.count >= 3 && !f.model.running.contains(originID)
+                && f.model.runningAgentMessageScopes.isEmpty
+        }
+        let reaction = try #require(await f.probe.results.first { $0.callID == "peer-reaction" })
+        expectNoDifference(reaction.isError, false)
+        let saved = try #require(try await store.load().first { $0.id == originID })
+        var expected = original
+        expected.reactions = [.init(emoji: "👍", actorID: "agent:\(f.owner.id.uuidString)")]
+        expectNoDifference(saved.messages.first { $0.id == original.id }, expected)
+    }
+
+    @Test(arguments: ["stop", "binding", "persona", "account", "reasoning", "hidden"])
+    func lateMailboxReactionCannotReviveAfterNativeAuthorityChanges(change: String) async throws {
+        let gate = AppMailboxChannelFailureGate()
+        let f = try await fixture(automatic: true, returnToOwner: true, latePeerGate: gate, existingPeer: true, reacts: true, configuredChannels: false)
+        defer { f.model.cancel(); try? FileManager.default.removeItem(at: f.root) }
+        let store = ConversationStore(fileURL: f.root.appending(path: "conversations.json"))
+        let original = try #require(try await store.load().first { $0.id == originID }?.messages.first)
+        f.model.send()
+        try await eventually {
+            if let pending = f.model.pendingAutoReviewApprovals.first(where: { $0.action.context.metadata["tool"] == "SendToAgent" }) {
+                await f.model.resolveGroupApproval(pending, groupID: originID, approve: true)
+            }
+            return await gate.isWaiting
+        }
+        let index = try #require(f.model.conversations.firstIndex { $0.agentBinding?.agentID == f.owner.id })
+        switch change {
+        case "stop": f.model.cancel()
+        case "account": await f.model.cancelAutoReviewApprovals(nextAccountID: "another-account")
+        case "binding":
+            let binding = f.model.conversations[index].agentBinding
+            f.model.conversations[index].agentBinding = nil
+            f.model.conversations[index].agentBinding = binding
+        case "persona":
+            var edited = f.owner; edited.instructions = "REVOKED_OWNER_PERSONA"
+            #expect(await f.model.updateAgent(edited))
+            #expect(await f.model.updateAgent(f.owner))
+        case "hidden":
+            f.model.conversations[index].hiddenAt = date
+            f.model.conversations[index].hiddenAt = nil
+        default:
+            let effort = f.model.conversations[index].reasoningEffort
+            f.model.conversations[index].reasoningEffort = effort == .high ? .low : .high
+            f.model.conversations[index].reasoningEffort = effort
+        }
+        await gate.open()
+        try await eventually { await f.probe.latePeerAttempts == 1 && !f.model.running.contains(originID)
+            && f.model.runningAgentMessageScopes.isEmpty }
+        let saved = try #require(try await store.load().first { $0.agentBinding?.agentID == f.owner.id })
+        expectNoDifference(saved.messages.first { $0.id == original.id }, original)
+        for chat in try await store.load() {
+            for message in chat.messages { expectNoDifference(message.reactions, []) }
+        }
+        let sent = await f.probe.sent, queue = await f.channels.deliveries()
+        expectNoDifference(sent, []); expectNoDifference(queue, [])
     }
 
     @Test(arguments: [false, true], [false, true])

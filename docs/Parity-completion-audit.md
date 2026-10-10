@@ -1,5 +1,9 @@
 # 完成驗收入口（2026-09-27）
 
+## Mailbox 模型反應 App 接線（2026-10-10，本批必要 gates 通過）
+
+本批原生 destination／canonical commit／admitted history 隔離與回歸過程見 [Mailbox-reaction-validation.md](Mailbox-reaction-validation.md)。最後相關回歸為核心 52 methods／3 suites、App／routine 56 methods／2 suites 通過，保留先前真正隱私與投影紅燈及其修正紀錄。解鎖後完整無 filter 串行回歸 exit 0：2,271 Swift Testing methods／267 suites、135 XCTest、零失敗，兩項 opt-in live skipped；原生與獨立封裝 Debug build／verify、七語言每語 1,817 keys 零缺漏、diff check 通過。使用者本次明確要求 commit 後 push，僅本次取代原不 push 限制。全產品 parity 仍未完成，外部帳號、其他 host 與 runtime 差異不因本批關閉；未 launch／重啟使用者 App 或 Xcode、未改真實資料。
+
 ## Routine own-DM manual 模型反應驗收（2026-10-09，隨本批提交）
 
 010d092 後補 routine manual／scheduled × Stop、binding edit-and-restore、private persona edit-and-restore、reasoning edit-and-restore 共八 cases。provider gate 允許測試刻意忽略 cancellation，再以原 canonical shortAddress 真正呼叫 reaction executor；最後比對完整原人類 target 未改動、所有保存聊天無反應、running 已清理。focused v5 exit 0（32 methods／1 suite，6.434 秒）；其後新增每案真實 reactionAttempts 恰好一次，排除 provider 根本没呼叫工具的假綠。fresh focused v6 重編譯、terminal exit 0（32 methods／1 suite，6.314 秒），八 cases 與既有整個 routine suite 通過。本批只改 tests／文件，沒有產品 source／新的全套與封裝聲稱；account／hide／definition／target mutation／quota 與其他 host 尚待，不宣稱全部 parity。未 push／重啟 App／Xcode／改真實資料。

@@ -1,0 +1,33 @@
+# Mailbox reaction integration — 2026-10-10
+
+This increment is not a claim of complete reconstructed runtime parity.
+
+## Final validation
+
+The fresh unlocked serial full run completed with exit 0 (`mailbox-reaction-full-v2.log`): 2,271 Swift Testing methods across 267 suites and 135 XCTest tests, zero failures. Two opt-in installed-Codex live tests were skipped. Together with the related regression, seven-language audit, native Debug build/verification and standalone Debug package/independent verification below, the required gates for this increment passed. No runtime/UI source changed after these gates. Earlier pending and failed stages are retained below as history, not the final status.
+
+The user explicitly requested commit and push after validation on 2026-10-10, authorizing this push instead of the standing no-push goal constraint for this request. It does not authorize restarting the user's App/Xcode, modifying real account/group/chat data, or declaring overall parity complete. Broader parity and external/live acceptance gaps remain open.
+
+Read-only reference recheck: reconstructed HEAD remains `a9f633e09d49a85829b8236331b9e21f7e612634`. `source/host/extensions/transcript/turn-runtime.ts:803–825` resolves reactions against the actual run session (including an off-page session) and requires a user entry; `source/host/runner/tools/sand-reaction-tool.ts` specifies sparse user-only toggles, not a substitute for requested work. The native implementation must preserve that admitted-run boundary rather than equate a visible own-DM projection with the private inference session. Native bounded directories and durable receipts are adaptations, not byte-for-byte runtime equivalence.
+
+The App factory binds reactions to the native delivery recipient's canonical own conversation, using the existing mailbox publication scope, account/generation, persona identity, binding leases and publication lifetime. Storage receipts describe the actual canonical mutation; no external channel connection is needed.
+
+Private own-DM projection history is not automatically admitted inference history. The session supplies its native message history before provider image transport conversion. Only matching admitted human rows may appear in the reaction directory. Full canonical history still determines duplicate IDs, addresses and deleted-address reservations before the admission filter; filtering must not hide ambiguity. Peer envelopes and image transport blocks never become human targets.
+
+The first broad integration run exposed a genuine privacy regression: directory excerpts disclosed private recipient history. Original privacy assertions were retained. After restricting the directory, four private-history rejection cases and the original 16 routine privacy cases passed. The admitted owner return-path success case also passed. Logs are under `.build/validation/mailbox-reaction-private-history-v1.log`, `mailbox-reaction-privacy-regression-v3.log` and `mailbox-reaction-admitted-owner-v1.log`.
+
+The first directory regression compilation failed because a fixture attempted to mutate an immutable message ID; the fixture now constructs a distinct message. The corrected directory suite passed nine tests. This was a test-source error, not an environment limitation.
+
+The next broad run found a separate projection regression: acquiring an otherwise empty reaction scope opted private routine wakes into incoming transcript projection. The factory now returns no tool before acquiring a scope when native history has no human rows. The existing 144 saved-question/credential continuation cases, the admitted owner success case, and six late-callback authority cases against that valid owner target then passed (`mailbox-reaction-projection-regression-v1.log`). The no-target fixture now expects tool absence rather than calling an unadvertised tool and expecting a result; the earlier optional-tool run failed that obsolete fixture expectation, not the privacy assertion.
+
+Final related regression passed: 52 core tests in three suites and 56 App/routine tests in two suites, including parameterized cases (`mailbox-reaction-app-regression-v3.log`). Seven languages each contain 1,817 keys with none missing (`mailbox-reaction-localization-v1.log`).
+
+Native arm64 Debug build and independent package verification passed (`mailbox-reaction-native-v1.log`, `mailbox-reaction-native-verify-v1.log`). The verifier checked all four executables, bundled resources, app/XPC entitlements and deep strict codesign. The fresh derived-data path is `.build/validation/MailboxReactionNativeV1`; no existing app bundle was overwritten or launched. Debug ad-hoc signing is not release signing or notarization.
+
+Pending: full suite, standalone package gates and further parity audit. No live account validation or human App restart performed. No real chat/group data changed.
+
+The first full run is not green: while it was still running, gallery fixtures began failing to reopen protected temporary `agents.json` files with Cocoa 257 / POSIX EPERM. A contemporaneous read-only IOConsoleUsers check reported `CGSSessionScreenIsLocked=Yes`; AgentService and agent persistent state use `completeFileProtectionUnlessOpen`. This is evidence of a locked-machine prerequisite failure, not proof that every later failure has the same cause. Preserve the log, await its terminal status, and rerun required gates after unlock without weakening file protection or tests. Standalone packaging uses the previously nonexistent `.build/validation/MailboxReactionPackageV1/Filicon.app`; no launch is authorized.
+
+After repeated locked-state checks and hundreds of recorded failures, the agent sent SIGINT only to its verified `swift-test` PID 67987. The full-run handle terminated with exit 130; this is an interrupted failed run, not a completed gate. No surviving attachment test process was found by the subsequent check. The waiting standalone package then completed with exit 0 and its built-in verification passed. The script's printed launch-smoke suggestion was not executed. Unlock and a fresh complete run remain required before committing this increment.
+
+The user confirmed unlock. A fresh IOConsoleUsers check contains no lock flag, and the complete serial suite was restarted as `mailbox-reaction-full-v2.log`; its result is pending. The preceding blocked status was recorded just as the lock flag disappeared, so it must not be treated as evidence of a continuing lock. Independent standalone verification also passed (`mailbox-reaction-package-verify-v1.log`). No product source changed between the green related/native/package gates and this fresh full run.

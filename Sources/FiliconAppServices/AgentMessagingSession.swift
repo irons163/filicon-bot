@@ -107,7 +107,7 @@ public actor AgentMessagingSession {
     /// A fresh native executor for one admitted delivery. The host must acquire
     /// its recipient destination/binding and fence commits with this lifetime;
     /// absence never falls back to the origin or selected conversation.
-    public typealias MailboxReactionFactory = @Sendable (AgentMessage, AgentProfile, ToolContext, AgentPublicationLifetime) async throws -> AgentMessageReactionTool?
+    public typealias MailboxReactionFactory = @Sendable (AgentMessage, AgentProfile, ToolContext, [ChatMessage], AgentPublicationLifetime) async throws -> AgentMessageReactionTool?
     private let mailboxReactionFactory: MailboxReactionFactory?
     private let publicationLifetime = AgentPublicationLifetime()
     private let onChange: @Sendable () async -> Void
@@ -1205,7 +1205,7 @@ public actor AgentMessagingSession {
                 let toolContext = ToolContext(conversationID: originConversationID)
                 if capability, let mailboxReactionFactory {
                     try checkOpen()
-                    activeReaction = try await mailboxReactionFactory(inbound, agent, toolContext, publicationLifetime)
+                    activeReaction = try await mailboxReactionFactory(inbound, agent, toolContext, messages, publicationLifetime)
                     try checkOpen()
                 }
                 var additionalTools: [any ToolExecutor] = [tool, publisher]
