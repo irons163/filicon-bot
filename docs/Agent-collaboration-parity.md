@@ -1,5 +1,7 @@
 # 協作能力核對紀錄（更新至 2026-10-10）
 
+本批必要 gates 通過：`5edeee9` 後補 channel 當次 PNG／JPEG 的單一 peer 委派。原 native capture 安裝到既有 reviewed image transport，仍須 exact recipient／text／image preview 人類核准；不借 private history、舊 envelope 或任意 locator。真正 listener／direct 漏圖片預覽已補接線，窄版標題改完整換行；解鎖後最後 focused v8 六 methods／30 cases、28 張七語明暗寬窄畫面、related v2 共 149 methods／8 suites，以及重新建置無 filter full v2 的 2,288 Swift Testing methods／268 suites＋135 XCTest／0 failures 全數通過；兩項 opt-in live skipped。同一產品 source 的 native v3／standalone v2 Debug build／獨立 verify、七語各 1,817 keys／0 missing 與最後 source hashes／diff check 通過，隨本批提交，未 push。原鎖定、UI 測試失敗與 full v1 中止／4x OCR 重驗保留，見 [頻道圖片委派驗收](Channel-image-peer-validation.md)。下段是前批已提交成果，不作本批 green；48 分類／整體 partial 不變。
+
 最新狀態：`f3a050b` 的 mailbox reaction 已依原 native destination 及真正 admitted human history 接線並通過該批 gates；本頁下方「尚未接線」是保留的歷史，不是現在狀態。本批已補 incoming channel 的圖片入口：當次 PNG／JPEG 的有界 immutable capture 進原 owner own-DM，正常保存／預覽；後續文字與卡片 fresh callback 不讀／重播舊圖片，不借用其他聊天或放寬轉寄、核准、記憶權限。最後相關 v5 共 90 methods／9 suites、重新建置無 filter full v2 的 2,282 Swift Testing methods／268 suites＋135 XCTest／0 failures、native／standalone Debug build／獨立 verify、七語各 1,817 keys／0 missing 與 diff check 通過，隨本批提交；兩項 opt-in live skipped。原失敗歷史及精確邊界見 [Channel-inbound-image-validation.md](Channel-inbound-image-validation.md)。僅關閉本批有界入口，不稱全產品 parity 完成；外部服務／其他 host／private DM sharing／unified runtime／非 PNG-JPEG 附件與轉寄等缺口仍保留，48 分類／整體 partial 不變，未 push／launch／重啟 App／Xcode／改真實資料。
 
 ## Direct 反應入口與下一步 host 驗收

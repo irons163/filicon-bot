@@ -3642,11 +3642,13 @@ final class AppModel: ObservableObject {
                     tools.append(tool)
                 }
                 if publisher != nil, let agentIdentity, let agentService, let agentMessenger, let agentConversations {
-                    // A routine wake is ephemeral host data, not a durable
-                    // human request or an implicit image-publication grant.
+                    // Background images come only from this exact incoming
+                    // admission, never its historical transcript or wake text.
+                    // Exposing IDs does not bypass the separate preview review.
                     let directImageSource = routine == nil ? requestMessages.last.flatMap {
                         $0.role == .user && $0.replyToMessageID == nil ? $0 : nil
                     } : nil
+                    let hasChannelImageInput = routine?.channelInbound != nil
                     let session = AgentMessagingSession(originConversationID: id, agents: agentService,
                         messenger: agentMessenger, registry: registry, coordinator: coordinator,
                         conversations: agentConversations, accountID: accountScope,
@@ -3656,6 +3658,9 @@ final class AppModel: ObservableObject {
                         directOriginBinding: agentBinding,
                         directRequestImages: { [weak self] in
                             guard let self else { throw CancellationError() }
+                            if let routine, hasChannelImageInput {
+                                return try await self.prepareChannelInboundDelegationImages(execution: routine)
+                            }
                             guard let directImageSource else { return [] }
                             return try await self.prepareDirectDelegationImages(source: directImageSource,
                                 conversationID: id, account: accountScope, generation: publicationGeneration)
@@ -4122,6 +4127,29 @@ final class AppModel: ObservableObject {
             }
         }
         conversations[ci].messages[mi].consume(event)
+    }
+
+    /// Import immutable, currently admitted bytes into the existing reviewed
+    /// single-peer transport. Durable source rows/IDs alone cannot enter here.
+    private func prepareChannelInboundDelegationImages(execution: BackgroundDirectExecution) async throws -> [AttachmentMetadata] {
+        try await validateBackgroundDirectExecution(execution)
+        guard let incoming = execution.channelInbound else { throw AgentImageError.unavailable }
+        for image in incoming.imageInput.images {
+            try await validateBackgroundDirectExecution(execution)
+            let prepared = try PreparedAgentGalleryImage(bytes: image.data, filename: image.metadata.filename, altText: image.metadata.altText)
+            guard prepared.mimeType == image.metadata.mimeType,
+                  prepared.file.digest == image.metadata.id,
+                  prepared.file.bytes.count == image.metadata.byteCount else { throw AgentImageError.invalid }
+            let saved = try await importAgentGalleryImage(prepared)
+            guard saved.id == image.metadata.id, saved.filename == image.metadata.filename,
+                  saved.mimeType == image.metadata.mimeType, saved.byteCount == image.metadata.byteCount,
+                  saved.kind == image.metadata.kind, saved.altText == image.metadata.altText else { throw AgentImageError.invalid }
+            try await validateBackgroundDirectExecution(execution)
+        }
+        try await validateBackgroundDirectExecution(execution)
+        // Keep remote receipt metadata; local installation time is not its
+        // received time. The model still selects only these exact current IDs.
+        return incoming.imageInput.images.map(\.metadata)
     }
 
     private func prepareDirectDelegationImages(source: ChatMessage, conversationID: UUID,
@@ -13450,6 +13478,33 @@ final class AppModel: ObservableObject {
               pending.action.context.conversationID == conversationID,
               ["CreateAgent", "UpdateAgent", "update_state"].contains(pending.action.context.metadata["tool"] ?? "") else { return nil }
         return pending
+    }
+
+    func directImageDelegationApproval(card: TranscriptCard, conversationID: UUID) -> [AttachmentMetadata]? {
+        // Saved or model-authored card metadata is not an image directory.
+        // Show only the unique card for this account's still-live native review.
+        guard card.lifecycle == .waiting, case .autoReview(let value) = card.payload,
+              directMessagingScopes.contains(conversationID), isAgentMessagingScopeActive(conversationID),
+              let pending = pendingAutoReviewByID[value.reviewID],
+              pending.action.context.conversationID == conversationID,
+              pending.action.context.metadata["tool"] == "SendToAgent",
+              pending.fence.accountID == (settings.accountScope ?? "local"),
+              pending.fence.generation == autoReviewAccountGeneration,
+              pending.expiresAt > Date(), directPublicationIDs[pending.fence.runID] != nil,
+              let conversation = conversations.first(where: { $0.id == conversationID }) else { return nil }
+        if let execution = backgroundDirectExecutions[conversationID] {
+            guard execution.runID == pending.fence.runID, (try? execution.lease.check()) != nil else { return nil }
+        }
+        let matches = conversation.messages.flatMap(\.transcriptCards).filter {
+            guard case .autoReview(let review) = $0.payload else { return false }
+            return review.reviewID == pending.id
+        }
+        guard matches.count == 1, matches.first == card,
+              let raw = pending.action.context.metadata["agentImages"],
+              let images = try? JSONDecoder().decode([AttachmentMetadata].self, from: Data(raw.utf8)),
+              !images.isEmpty, images.count <= 4, Set(images.map(\.id)).count == images.count,
+              (try? AgentImageStore.validatePublishedGalleryMetadata(images)) != nil else { return nil }
+        return images
     }
 
     func resolveGroupApproval(_ pending: PendingApproval, groupID: UUID, approve: Bool) async {

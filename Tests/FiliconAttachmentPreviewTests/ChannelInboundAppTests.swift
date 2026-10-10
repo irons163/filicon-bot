@@ -1,6 +1,9 @@
 import Foundation
+import AppKit
+import SwiftUI
 import CoreGraphics
 import ImageIO
+import Vision
 import Testing
 import CustomDump
 import FiliconAgents
@@ -317,6 +320,7 @@ private struct AppInboundProvider: InteractiveToolProvider {
     var passBarrier: AppInboundPassBarrier?
     var priorityGate: AppInboundPriorityGate?
     var supportsImages = false
+    var requestedImageIDs: [String]?
     func models() async throws -> [AIModel] {
         [.init(id: "fixture", capabilities: .init(inputModalities: supportsImages ? [.text, .image] : [.text]))]
     }
@@ -344,7 +348,7 @@ private struct AppInboundProvider: InteractiveToolProvider {
                         return
                     }
                     let reminded = request.messages.contains { $0.role == .system && $0.text.contains("host-bound reply reminder for this incoming channel turn") }
-                    if reminded, ["peer", "silent"].contains(mode) {
+                    if reminded, ["peer", "image-peer", "silent"].contains(mode) {
                         continuation.yield(.textDelta("PRIVATE_INCOMING_DRAFT_MUST_NOT_AUTOSEND"))
                         continuation.yield(.completed(.stop)); continuation.finish()
                         return
@@ -428,6 +432,21 @@ private struct AppInboundProvider: InteractiveToolProvider {
                         continuation.yield(.completed(.stop)); continuation.finish()
                         return
                     }
+                    if mode == "image-peer" {
+                        let peer = request.messages.contains { $0.role == .system && $0.text.contains("INBOUND_PEER_PERSONA") }
+                        if peer {
+                            await probe.result(try await executeTool(.init(id: "incoming-image-peer-report", name: "SendMessage",
+                                argumentsJSON: JSONEncoder().encode(["type": "text", "content": "EXACT_IMAGE_PEER_REPORT"]))))
+                        } else if requestedImageIDs != nil || !request.attachmentsByMessageID.isEmpty {
+                            let imageIDs = requestedImageIDs ?? request.attachmentsByMessageID.values.flatMap { $0.map(\.metadata.id) }.sorted()
+                            await probe.result(try await executeTool(.init(id: "incoming-image-peer-delegation", name: "SendToAgent",
+                                argumentsJSON: JSONSerialization.data(withJSONObject: ["recipientID": peerID.uuidString,
+                                    "message": "EXACT_CURRENT_IMAGE_PEER_TASK", "images": imageIDs], options: .sortedKeys))))
+                        }
+                        continuation.yield(.textDelta("PRIVATE_IMAGE_PEER_DRAFT"))
+                        continuation.yield(.completed(.stop)); continuation.finish()
+                        return
+                    }
                     if mode != "silent" {
                         let peer = request.messages.contains { $0.role == .system && $0.text.contains("INBOUND_PEER_PERSONA") }
                         let call: NormalizedToolCall
@@ -456,6 +475,19 @@ private struct AppInboundProvider: InteractiveToolProvider {
             }
             continuation.onTermination = { _ in task.cancel() }
         }
+    }
+}
+
+private struct AppInboundTextPeerProvider: InteractiveToolProvider {
+    let descriptor = ProviderDescriptor(id: "app-inbound-text-peer", displayName: "Offline text-only peer", requiresAPIKey: false)
+    func models() async throws -> [AIModel] { [.init(id: "fixture", capabilities: .init(inputModalities: [.text]))] }
+    func stream(_ request: InferenceRequest) -> AsyncThrowingStream<InferenceEvent, Error> {
+        Issue.record("An unsupported peer must never receive an image inference request")
+        return .init { $0.finish(throwing: ProviderError.invalidResponse) }
+    }
+    func stream(_ request: InferenceRequest,
+        executeTool: @escaping @Sendable (NormalizedToolCall) async throws -> NormalizedToolResult) -> AsyncThrowingStream<InferenceEvent, Error> {
+        stream(request)
     }
 }
 
@@ -555,6 +587,375 @@ private struct AppInboundProvider: InteractiveToolProvider {
             senderID: "U_REMOTE", senderDisplayName: "Remote human", text: text,
             timestamp: date, attachments: [.init(blobID: saved.id, filename: saved.filename,
                 mimeType: mime, byteCount: Int64(data.count))]), .init(metadata: expected, data: data))
+    }
+
+    @Test(arguments: ["public.png", "public.jpeg"])
+    func incomingImageDelegationRequiresExactPreviewAndFeedsOnlyTheReviewedPeer(type: String) async throws {
+        let f = try await fixture(mode: "image-peer", existingPeer: true, supportsImages: true)
+        defer { f.feed.finish(); try? FileManager.default.removeItem(at: f.root) }
+        await f.model.setAutoReviewEnabled(true)
+        let (envelope, image) = try await incomingImage(f, type: type)
+        f.feed.emit(envelope)
+        let pending = try await review(f)
+        expectNoDifference(pending.action.context.conversationID, chatID)
+        expectNoDifference(pending.action.context.metadata["tool"], "SendToAgent")
+        expectNoDifference(pending.action.context.metadata["agentMessage"], "EXACT_CURRENT_IMAGE_PEER_TASK")
+        expectNoDifference(pending.action.target, .recipient(identifier: f.peer.id.uuidString))
+        let encoded = try #require(pending.action.context.metadata["agentImages"])
+        expectNoDifference(try JSONDecoder().decode([AttachmentMetadata].self, from: Data(encoded.utf8)), [image.metadata])
+        let canonical = try await storedPendingCard(pending, in: ConversationStore(fileURL: f.root.appending(path: "conversations.json")))
+        let card = try #require(canonical.messages.flatMap(\.transcriptCards).first {
+            guard case .autoReview(let value) = $0.payload else { return false }
+            return value.reviewID == pending.id
+        })
+        expectNoDifference(f.model.directImageDelegationApproval(card: card, conversationID: chatID), [image.metadata])
+        expectNoDifference(f.model.directImageDelegationApproval(card: card, conversationID: otherID), nil)
+        var forgedCard = card; forgedCard.id = UUID()
+        expectNoDifference(f.model.directImageDelegationApproval(card: forgedCard, conversationID: chatID), nil)
+        let before = await f.probe.requests
+        expectNoDifference(before.count, 1); expectNoDifference(f.model.agentMessages, [])
+        let mailboxBytes = try await AgentImageStore(rootURL: f.root.appending(path: "agent-message-images")).load([image.metadata])
+        expectNoDifference(mailboxBytes, [image])
+        f.model.openAgentMessageImage(image.metadata, gallery: [image.metadata], selectedIndex: 0)
+        try await eventually { f.model.attachmentPreview != nil }
+        let preview = try #require(f.model.attachmentPreview), file = try #require(preview.files.first)
+        expectNoDifference(preview.files.count, 1); expectNoDifference(file.metadata, image.metadata)
+        expectNoDifference(try Data(contentsOf: file.fileURL), image.data)
+        f.model.dismissAttachmentPreview()
+        f.model.selectRoute(.conversation(chatID))
+        f.model.handleTranscriptCardIntent(.approveReview(reviewID: pending.id))
+        let run = try await settle(f)
+        expectNoDifference(run.status, .completed)
+        expectNoDifference(f.model.directImageDelegationApproval(card: card, conversationID: chatID), nil)
+        let requests = await f.probe.requests
+        let peerRequests = requests.filter { $0.messages.contains { $0.role == .system && $0.text.contains("INBOUND_PEER_PERSONA") } }
+        expectNoDifference(peerRequests.count, 1)
+        let peerRequest = try #require(peerRequests.first)
+        let transport = try #require(peerRequest.messages.first { !$0.attachments.isEmpty })
+        expectNoDifference(transport.attachments, [image.metadata])
+        expectNoDifference(peerRequest.attachmentsByMessageID, [transport.id: [image]])
+        let peerText = peerRequest.messages.map(\.text).joined(separator: "\n")
+        #expect(peerText.contains("EXACT_CURRENT_IMAGE_PEER_TASK") && !peerText.contains("REMOTE_IMAGE_DATA")
+            && !peerText.contains("OWN_LOCAL_HISTORY") && !peerText.contains("NEVER_BORROW_PEER_PRIVATE_HISTORY")
+            && !peerText.contains("NEVER_LEAK_UNRELATED_HISTORY"))
+        let incoming = try #require(f.model.agentMessages.first { $0.recipientID == f.peer.id })
+        expectNoDifference(incoming.senderID, f.owner.id); expectNoDifference(incoming.images, [image.metadata])
+        expectNoDifference(incoming.text, "EXACT_CURRENT_IMAGE_PEER_TASK")
+        let store = ConversationStore(fileURL: f.root.appending(path: "conversations.json"))
+        let canonicalPeer = try #require(try await store.conversation(id: peerChatID))
+        let saved = try #require(canonicalPeer.messages.first { $0.id == incoming.id })
+        expectNoDifference(saved.attachments, [image.metadata])
+        #expect(saved.agentMessageSource?.recipientAgentID == f.peer.id)
+        expectNoDifference(canonicalPeer.messages.first?.text, "NEVER_BORROW_PEER_PRIVATE_HISTORY")
+        #expect(canonicalPeer.messages.contains { $0.text == "EXACT_IMAGE_PEER_REPORT" })
+        let ordinaryBytes = try await AttachmentStore(rootURL: f.root.appending(path: "attachments")).data(for: image.metadata)
+        expectNoDifference(ordinaryBytes, image.data)
+        let deliveries = await f.service.deliveries(), sent = await f.probe.sent
+        expectNoDifference(deliveries, []); expectNoDifference(sent, [])
+        expectNoDifference(f.model.pendingAutoReviewApprovals, [])
+        try await assertUnrelatedUntouched(f)
+    }
+
+    @Test(arguments: ["deny", "stop", "account", "connection-ABA", "binding-ABA", "persona-ABA", "native-persona-ABA",
+        "hidden-ABA", "model-ABA", "reasoning-ABA", "peer-archive", "mailbox-corrupt", "mailbox-link"])
+    func incomingImageDelegationCannotBorrowConsentOrReviveAfterIdentityChanges(action: String) async throws {
+        let f = try await fixture(mode: "image-peer", existingPeer: true, supportsImages: true)
+        defer { f.feed.finish(); try? FileManager.default.removeItem(at: f.root) }
+        await f.model.setAutoReviewEnabled(true)
+        await f.model.setAutoReviewRules(allow: ["SendToAgent"], ask: [])
+        let (envelope, image) = try await incomingImage(f, type: "public.png")
+        let store = ConversationStore(fileURL: f.root.appending(path: "conversations.json"))
+        let peerBefore = try await store.conversation(id: peerChatID)
+        f.feed.emit(envelope)
+        let pending = try await review(f)
+        let encoded = try #require(pending.action.context.metadata["agentImages"])
+        expectNoDifference(try JSONDecoder().decode([AttachmentMetadata].self, from: Data(encoded.utf8)), [image.metadata])
+        expectNoDifference(pending.action.target, .recipient(identifier: f.peer.id.uuidString))
+        let before = await f.probe.requests
+        expectNoDifference(before.count, 1); expectNoDifference(f.model.agentMessages, [])
+        f.model.selectRoute(.conversation(chatID))
+        let ci = try #require(f.model.conversations.firstIndex { $0.id == chatID })
+        let original = f.model.conversations[ci]
+        let marker = f.root.appending(path: "do-not-overwrite-image-marker")
+        let markerBytes = Data("Not a captured image; must never be overwritten".utf8)
+        if action.hasPrefix("mailbox-") {
+            let blob = f.root.appending(path: "agent-message-images").appending(path: String(image.metadata.id.prefix(2)))
+                .appending(path: image.metadata.id)
+            if action == "mailbox-corrupt" { try Data(repeating: 0, count: image.data.count).write(to: blob) }
+            else {
+                try markerBytes.write(to: marker)
+                try FileManager.default.moveItem(at: blob, to: f.root.appending(path: "original-mailbox-image"))
+                try FileManager.default.createSymbolicLink(at: blob, withDestinationURL: marker)
+            }
+        }
+        switch action {
+        case "stop": f.model.cancel()
+        case "account": await f.model.cancelAutoReviewApprovals(nextAccountID: "other")
+        case "connection-ABA":
+            try await f.service.setConnectionEnabled(id: f.connection.id, enabled: false)
+            try await f.service.setConnectionEnabled(id: f.connection.id, enabled: true)
+            await f.model.reconcileChannelInbound()
+        case "binding-ABA":
+            f.model.conversations[ci].agentBinding = nil; f.model.conversations[ci].agentBinding = original.agentBinding
+        case "persona-ABA":
+            let ai = try #require(f.model.agents.firstIndex { $0.id == f.owner.id })
+            f.model.agents[ai].instructions = "Retired incoming image owner"
+            f.model.agents[ai].instructions = f.owner.instructions
+        case "native-persona-ABA":
+            var changed = f.owner; changed.instructions = "Retired native incoming image owner"
+            #expect(await f.model.updateAgent(changed)); #expect(await f.model.updateAgent(f.owner))
+        case "hidden-ABA":
+            f.model.conversations[ci].hiddenAt = date; f.model.conversations[ci].hiddenAt = original.hiddenAt
+        case "model-ABA":
+            f.model.conversations[ci].modelID = "different-image-model"; f.model.conversations[ci].modelID = original.modelID
+        case "reasoning-ABA":
+            f.model.conversations[ci].reasoningEffort = original.reasoningEffort == .high ? .low : .high
+            f.model.conversations[ci].reasoningEffort = original.reasoningEffort
+        case "peer-archive": await f.model.archiveAgent(id: f.peer.id)
+        default: break
+        }
+        f.model.handleTranscriptCardIntent(action == "deny" ? .rejectReview(reviewID: pending.id) : .approveReview(reviewID: pending.id))
+        _ = try await settle(f)
+        let requests = await f.probe.requests
+        #expect(!requests.contains { $0.messages.contains { $0.role == .system && $0.text.contains("INBOUND_PEER_PERSONA") } })
+        expectNoDifference(f.model.agentMessages, [])
+        let canonicalPeer = try await store.conversation(id: peerChatID)
+        if action != "peer-archive" { expectNoDifference(canonicalPeer, peerBefore) }
+        else { expectNoDifference(canonicalPeer?.messages, peerBefore?.messages) }
+        let deliveries = await f.service.deliveries(), sent = await f.probe.sent
+        expectNoDifference(deliveries, []); expectNoDifference(sent, [])
+        expectNoDifference(f.model.pendingAutoReviewApprovals, [])
+        if action == "mailbox-link" { expectNoDifference(try Data(contentsOf: marker), markerBytes) }
+        try await assertUnrelatedUntouched(f)
+    }
+
+    @Test
+    func incomingImageDelegationUsesCapturedBytesAndNeverReusesAnOlderEnvelope() async throws {
+        let gate = AppInboundImageReadGate()
+        let f = try await fixture(mode: "image-peer", existingPeer: true, supportsImages: true,
+            imageReader: { await gate.read($0) })
+        defer { gate.open(Data()); f.feed.finish(); try? FileManager.default.removeItem(at: f.root) }
+        let (envelope, image) = try await incomingImage(f, type: "public.png")
+        gate.open(image.data); f.feed.emit(envelope)
+        let pending = try await review(f)
+        expectNoDifference(gate.reads, [image.metadata])
+        // The channel CAS may change after native capture. The approved peer
+        // must still receive the exact original bytes, not a reopened path.
+        let blob = f.root.appending(path: "channel-attachments").appending(path: String(image.metadata.id.prefix(2)))
+            .appending(path: image.metadata.id)
+        try Data(repeating: 0, count: image.data.count).write(to: blob)
+        // The native card router refuses a click from an unrelated visible
+        // conversation. Select the actual owner before its real human action.
+        expectNoDifference(f.model.selection, otherID)
+        f.model.handleTranscriptCardIntent(.approveReview(reviewID: pending.id))
+        expectNoDifference(f.model.pendingAutoReviewApprovals, [pending]); expectNoDifference(f.model.agentMessages, [])
+        f.model.selectRoute(.conversation(chatID))
+        f.model.handleTranscriptCardIntent(.approveReview(reviewID: pending.id))
+        let first = try await settle(f); expectNoDifference(first.status, .completed)
+        let requests = await f.probe.requests, messages = f.model.agentMessages
+        let peer = try #require(requests.first { $0.messages.contains { $0.role == .system && $0.text.contains("INBOUND_PEER_PERSONA") } })
+        let transport = try #require(peer.messages.first { !$0.attachments.isEmpty })
+        expectNoDifference(peer.attachmentsByMessageID, [transport.id: [image]])
+        let store = ConversationStore(fileURL: f.root.appending(path: "conversations.json"))
+        let originalPeer = try await store.conversation(id: peerChatID)
+        // A fresh text-only envelope deliberately guesses the saved image ID.
+        // Transcript metadata and an earlier review are not current capability.
+        await f.model.registry.register(AppInboundProvider(probe: f.probe, peerID: f.peer.id, mode: "image-peer",
+            supportsImages: true, requestedImageIDs: [image.metadata.id]))
+        f.feed.emit(event(f, id: "fresh-image-id-guess"))
+        try await eventually {
+            let runs = await f.service.inboundRuns()
+            return runs.count == 2 && runs.allSatisfy { $0.status == .completed } && !f.model.isConversationWorking(chatID)
+        }
+        let subsequent = await f.probe.requests, results = await f.probe.results
+        expectNoDifference(subsequent.count, requests.count + 2)
+        for request in subsequent.suffix(2) {
+            expectNoDifference(request.attachmentsByMessageID, [:])
+            #expect(request.messages.allSatisfy { $0.attachments.isEmpty })
+        }
+        let rejected = try #require(results.last { $0.callID == "incoming-image-peer-delegation" })
+        expectNoDifference(rejected, .init(callID: "incoming-image-peer-delegation", content: [.text(AgentImageError.unavailable.rawValue)], isError: true))
+        expectNoDifference(gate.reads, [image.metadata]); expectNoDifference(f.model.agentMessages, messages)
+        let unchangedPeer = try await store.conversation(id: peerChatID)
+        expectNoDifference(unchangedPeer, originalPeer)
+        let sent = await f.probe.sent, deliveries = await f.service.deliveries()
+        expectNoDifference(sent, []); expectNoDifference(deliveries, [])
+        expectNoDifference(f.model.pendingAutoReviewApprovals, [])
+        try await assertUnrelatedUntouched(f)
+    }
+
+    @Test
+    func incomingImageDelegationDoesNotDowngradeAnUnsupportedPeerModel() async throws {
+        let f = try await fixture(mode: "image-peer", supportsImages: true)
+        defer { f.feed.finish(); try? FileManager.default.removeItem(at: f.root) }
+        await f.model.registry.register(AppInboundTextPeerProvider())
+        var peer = f.peer; peer.providerID = "app-inbound-text-peer"
+        #expect(await f.model.updateAgent(peer))
+        let (envelope, image) = try await incomingImage(f, type: "public.jpeg")
+        f.feed.emit(envelope)
+        let pending = try await review(f)
+        expectNoDifference(pending.action.target, .recipient(identifier: peer.id.uuidString))
+        f.model.selectRoute(.conversation(chatID))
+        f.model.handleTranscriptCardIntent(.approveReview(reviewID: pending.id))
+        _ = try await settle(f)
+        let delivery = try #require(f.model.agentMessages.first { $0.recipientID == peer.id })
+        expectNoDifference(delivery.images, [image.metadata])
+        expectNoDifference(delivery.delivery?.state, .failed)
+        expectNoDifference(delivery.delivery?.response, AgentImageError.unsupported.rawValue)
+        let requests = await f.probe.requests
+        expectNoDifference(requests.count, 2)
+        #expect(requests.allSatisfy { $0.messages.contains { $0.role == .system && $0.text.contains("INBOUND_OWNER_PERSONA") } })
+        let sent = await f.probe.sent, deliveries = await f.service.deliveries()
+        expectNoDifference(sent, []); expectNoDifference(deliveries, [])
+        expectNoDifference(f.model.pendingAutoReviewApprovals, [])
+        try await assertUnrelatedUntouched(f)
+    }
+
+    @Test(arguments: ["self", "group", "unknown", "other-image", "file-path", "remote-url"])
+    func incomingImageDelegationRejectsUnadmittedImagesAndNonPeerTargets(kind: String) async throws {
+        let f = try await fixture(mode: "image-peer", existingPeer: true, supportsImages: true)
+        defer { f.feed.finish(); try? FileManager.default.removeItem(at: f.root) }
+        let store = ConversationStore(fileURL: f.root.appending(path: "conversations.json"))
+        let peerBefore = try await store.conversation(id: peerChatID)
+        let target = kind == "self" ? f.owner.id : kind == "group" ? f.group.id : kind == "unknown" ? UUID() : f.peer.id
+        let ids: [String]? = kind == "other-image" ? [String(repeating: "a", count: 64)]
+            : kind == "file-path" ? ["file:///private/unadmitted.png"]
+            : kind == "remote-url" ? ["https://unadmitted.invalid/private.png"] : nil
+        await f.model.registry.register(AppInboundProvider(probe: f.probe, peerID: target, mode: "image-peer",
+            supportsImages: true, requestedImageIDs: ids))
+        let (envelope, _) = try await incomingImage(f, type: "public.png")
+        f.feed.emit(envelope)
+        let run = try await settle(f); expectNoDifference(run.status, .completed)
+        let requests = await f.probe.requests, results = await f.probe.results
+        expectNoDifference(requests.count, 2)
+        #expect(requests.allSatisfy { $0.messages.contains { $0.role == .system && $0.text.contains("INBOUND_OWNER_PERSONA") } })
+        let rejected = try #require(results.first { $0.callID == "incoming-image-peer-delegation" })
+        #expect(rejected.isError)
+        expectNoDifference(f.model.agentMessages, []); expectNoDifference(f.model.pendingAutoReviewApprovals, [])
+        let unchanged = try await store.conversation(id: peerChatID)
+        expectNoDifference(unchanged, peerBefore)
+        let sent = await f.probe.sent, deliveries = await f.service.deliveries()
+        expectNoDifference(sent, []); expectNoDifference(deliveries, [])
+        try await assertUnrelatedUntouched(f)
+    }
+
+    @Test(arguments: ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"])
+    func incomingImageReviewRendersActualPreviewInTheNativeDirectTranscript(language: String) async throws {
+        let f = try await fixture(mode: "image-peer", supportsImages: true)
+        defer { f.feed.finish(); try? FileManager.default.removeItem(at: f.root) }
+        let (envelope, image) = try await incomingImage(f, type: "public.png")
+        let source = try #require(CGImageSourceCreateWithData(image.data as CFData, nil))
+        let original = try #require(CGImageSourceCreateImageAtIndex(source, 0, nil))
+        f.feed.emit(envelope)
+        let pending = try await review(f)
+        f.model.selectRoute(.conversation(chatID))
+        let store = ConversationStore(fileURL: f.root.appending(path: "conversations.json"))
+        let before = try await storedPendingCard(pending, in: store)
+        let message = try #require(before.messages.first { message in message.transcriptCards.contains { card in
+            guard case .autoReview(let review) = card.payload else { return false }
+            return review.reviewID == pending.id
+        } })
+        let output = ProcessInfo.processInfo.environment["FILICON_UI_REVIEW_OUTPUT"].map { URL(fileURLWithPath: $0) }
+        do {
+            for dark in [false, true] {
+                for width in [320.0, 560.0] {
+                    try await withUIAsyncRenderTurn(language: language) {
+                        let host = NSHostingView(rootView: TranscriptMessageView(message: message, conversation: before,
+                            onJumpToMessage: { _ in Issue.record("Image review rendering must not navigate") })
+                            .padding(16).frame(width: width).background(FiliconTheme.canvas)
+                            .environmentObject(f.model).environment(\.locale, Locale(identifier: language))
+                            .environment(\.colorScheme, dark ? .dark : .light))
+                        host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+                        let window = NSWindow(contentRect: .init(x: 0, y: 0, width: width, height: 800),
+                            styleMask: [], backing: .buffered, defer: false)
+                        window.isReleasedWhenClosed = false
+                        defer { window.contentView = nil; window.close() }
+                        // Native window caching and ImageRenderer use different
+                        // color-managed outputs. Calibrate against the original
+                        // bytes through the same native window, then replace the
+                        // swatch with the actual async CAS-backed transcript.
+                        let swatch = NSHostingView(rootView: Image(decorative: original, scale: 1)
+                            .resizable().frame(width: 16, height: 16))
+                        swatch.appearance = host.appearance; window.contentView = swatch
+                        swatch.frame = .init(x: 0, y: 0, width: 16, height: 16)
+                        swatch.layoutSubtreeIfNeeded()
+                        let palette = try captureImageReview(swatch)
+                        let expected = try #require(palette.colorAt(x: palette.pixelsWide / 2,
+                            y: palette.pixelsHigh / 2)?.usingColorSpace(.sRGB))
+                        #expect(expected.redComponent - expected.greenComponent > 0.4)
+                        window.contentView = host
+                        var captured: NSBitmapImageRep?, imagePixels = 0, text = "", searchable = ""
+                        for _ in 0..<200 {
+                            let size = host.fittingSize
+                            expectNoDifference(size.width, width)
+                            #expect(size.height > 100 && size.height < 2_000)
+                            host.frame = .init(origin: .zero, size: size); host.layoutSubtreeIfNeeded()
+                            let bitmap = try captureImageReview(host)
+                            imagePixels = 0
+                            for y in stride(from: 0, to: bitmap.pixelsHigh, by: 8) {
+                                for x in stride(from: 0, to: bitmap.pixelsWide, by: 8) {
+                                    if let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB),
+                                       abs(color.redComponent - expected.redComponent) < 0.02,
+                                       abs(color.greenComponent - expected.greenComponent) < 0.02,
+                                       abs(color.blueComponent - expected.blueComponent) < 0.02 { imagePixels += 1 }
+                                }
+                            }
+                            captured = bitmap
+                            if imagePixels > 100 {
+                                // Async image arrival changes the bubble's
+                                // fitting size. Require the actual text pixels
+                                // too, not the first transient layout frame.
+                                let recognition = VNRecognizeTextRequest(); recognition.recognitionLevel = .accurate
+                                try VNImageRequestHandler(cgImage: try #require(bitmap.cgImage)).perform([recognition])
+                                text = recognition.results?.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ") ?? ""
+                                searchable = text.filter { $0.isLetter || $0.isNumber }.lowercased()
+                                if searchable.contains("remotedesign"), searchable.contains("exactcurrentimagepeertask"),
+                                   language != "en" || searchable.contains("forwardtheseimagestotherecipientmodel") { break }
+                            }
+                            try await Task.sleep(for: .milliseconds(5))
+                        }
+                        #expect(!window.isVisible)
+                        #expect(imagePixels > 100, "The actual magenta image, not just metadata or a spinner, must be visible")
+                        let bitmap = try #require(captured)
+                        if language == "en" {
+                            #expect(searchable.contains("forwardtheseimagestotherecipientmodel"), "The review heading must wrap, not truncate: \(text)")
+                        }
+                        #expect(searchable.contains("remotedesign"), "The reviewed filename must be visible: \(text)")
+                        #expect(searchable.contains("exactcurrentimagepeertask"), "The exact reviewed text must remain visible: \(text)")
+                        if let output {
+                            try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+                            try #require(bitmap.representation(using: .png, properties: [:]))
+                                .write(to: output.appending(path: "incoming-image-review-\(language)-\(dark ? "dark" : "light")-\(Int(width)).png"))
+                        }
+                    }
+                }
+            }
+            let after = try await store.conversation(id: chatID)
+            expectNoDifference(after, before); expectNoDifference(f.model.agentMessages, [])
+            expectNoDifference(f.model.pendingAutoReviewApprovals, [pending])
+            let sent = await f.probe.sent, deliveries = await f.service.deliveries()
+            expectNoDifference(sent, []); expectNoDifference(deliveries, [])
+        } catch {
+            f.model.selectRoute(.conversation(chatID)); f.model.cancel()
+            _ = try? await settle(f)
+            throw error
+        }
+        f.model.handleTranscriptCardIntent(.rejectReview(reviewID: pending.id))
+        _ = try await settle(f)
+        try await assertUnrelatedUntouched(f)
+    }
+
+    private func captureImageReview(_ host: NSView) throws -> NSBitmapImageRep {
+        // Draw the real view at 4x, rather than upscaling a display-resolution
+        // screenshot. OCR must distinguish every letter in the exact task even
+        // beside CJK labels; fuzzy matches/custom expected words are not used.
+        let bitmap = try #require(NSBitmapImageRep(bitmapDataPlanes: nil,
+            pixelsWide: Int(ceil(host.bounds.width * 4)), pixelsHigh: Int(ceil(host.bounds.height * 4)),
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+        bitmap.size = host.bounds.size
+        host.appearance?.performAsCurrentDrawingAppearance { host.cacheDisplay(in: host.bounds, to: bitmap) }
+        return bitmap
     }
 
     @Test(arguments: [true, false], ["public.png", "public.jpeg"])
@@ -772,8 +1173,16 @@ private struct AppInboundProvider: InteractiveToolProvider {
         await f.model.sendButtonTapped()
     }
     private func review(_ f: Fixture, after id: String? = nil) async throws -> PendingApproval {
-        try await eventually {
-            f.model.pendingAutoReviewApprovals.contains { $0.id != id } || !f.model.pendingWorkspaceFolders.isEmpty
+        do {
+            try await eventually {
+                f.model.pendingAutoReviewApprovals.contains { $0.id != id } || !f.model.pendingWorkspaceFolders.isEmpty
+            }
+        } catch {
+            let runs = await f.service.inboundRuns(), results = await f.probe.results
+            Issue.record("The isolated incoming review was not reached. Runs: \(String(customDumping: runs)); tool results: \(String(customDumping: results)); app error: \(f.model.errorMessage ?? "none")")
+            do { _ = try AgentService(storeURL: f.root.appending(path: "agents.json")) }
+            catch { Issue.record("Reopening the isolated fixture's protected agent store failed: \(error)") }
+            throw error
         }
         if let folder = f.model.pendingWorkspaceFolders.first {
             // Simulate the native human selecting only this isolated fixture.

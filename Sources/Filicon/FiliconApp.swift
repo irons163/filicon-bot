@@ -1616,6 +1616,17 @@ struct TranscriptMessageView: View {
                             .padding(14).frame(maxWidth: .infinity, alignment: .leading)
                             .background(FiliconTheme.input, in: RoundedRectangle(cornerRadius: 12))
                     }
+                    if let images = model.directImageDelegationApproval(card: card, conversationID: conversation.id) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(l10n("Forward these images to the recipient model?"))
+                                .font(.callout.weight(.semibold))
+                                .fixedSize(horizontal: false, vertical: true)
+                            AgentMessageImagePreviews(images: images)
+                        }
+                        .padding(14).frame(maxWidth: .infinity, alignment: .leading)
+                        .background(FiliconTheme.input, in: RoundedRectangle(cornerRadius: 12))
+                        .accessibilityIdentifier("direct-agent-image-review")
+                    }
                     TranscriptCardRow(card: card, onPreviewExternalAttachment: message.externalChannelPublication.flatMap {
                         model.externalChannelAttachmentPreviewAction(for: $0, at: .direct(conversationID: conversation.id, messageID: message.id))
                     }) { model.handleTranscriptCardIntent($0) }

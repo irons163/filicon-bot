@@ -1,5 +1,7 @@
 # Incoming 頻道圖片驗收（2026-10-10）
 
+後續增量：`5edeee9` 後補當次 capture 的獨立預覽核准／單一 peer 委派與 direct 圖片預覽／窄版標題換行；解鎖後最後 focused v8 六 methods／30 cases、28 張七語明暗寬窄畫面、related v2 共 149 methods／8 suites、重新建置無 filter full v2 的 2,288 Swift Testing methods／268 suites＋135 XCTest／0 failures，以及 native／standalone Debug build／獨立 verify／七語檢查／source hashes／diff check 均通過；兩項 opt-in live skipped，隨本批提交，未 push。原失敗與 full v1 中止／4x OCR 重驗保留，見 [頻道圖片委派驗收](Channel-image-peer-validation.md)。以下保留原 incoming 推論／保存增量的範圍與證據，不代表轉寄自動獲得許可。
+
 ## 本批範圍
 
 基線 `f3a050b`。重新唯讀核對 reconstructed HEAD
