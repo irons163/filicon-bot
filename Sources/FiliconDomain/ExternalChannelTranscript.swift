@@ -7,9 +7,28 @@ public struct ExternalChannelTranscriptPublication: Codable, Hashable, Sendable 
     public enum Kind: String, Codable, Hashable, Sendable { case text, attachment }
     public enum Status: String, Codable, Hashable, Sendable { case queued, sending, retrying, delivered, deadLetter }
     public struct Source: Codable, Hashable, Sendable {
-        public let url: String
+        public let url: String?
+        /// Display-only identity of an image captured in the original native
+        /// inbound execution. This is neither a URL nor a capability to reuse it.
+        public let imageID: String?
         public let alt: String?
-        public init(url: String, alt: String?) { self.url = url; self.alt = alt }
+        public init(url: String, alt: String? = nil) { self.url = url; imageID = nil; self.alt = alt }
+        public init(imageID: String, alt: String? = nil) { url = nil; self.imageID = imageID; self.alt = alt }
+        public var encodedByteCount: Int { (url?.utf8.count ?? 0) + (imageID?.utf8.count ?? 0) + (alt?.utf8.count ?? 0) }
+        public var isValid: Bool {
+            guard alt.map({ ExternalChannelTranscriptPublication.label($0, limit: 2_000) && $0.count <= 500 }) ?? true else { return false }
+            if let url {
+                return imageID == nil && ExternalChannelTranscriptPublication.label(url, limit: 16_384)
+                    && ["file", "https"].contains(URLComponents(string: url)?.scheme?.lowercased() ?? "")
+            }
+            return imageID.map(Self.isDigest) ?? false
+        }
+        public func matchesCapturedFile(digest: String, mimeType: String) -> Bool {
+            imageID.map { $0 == digest && ["image/png", "image/jpeg"].contains(mimeType) } ?? true
+        }
+        private static func isDigest(_ value: String) -> Bool {
+            value.utf8.count == 64 && value.utf8.allSatisfy { (48...57).contains($0) || (97...102).contains($0) }
+        }
     }
     public struct File: Codable, Hashable, Sendable {
         public let digest: String
@@ -72,17 +91,16 @@ public struct ExternalChannelTranscriptPublication: Codable, Hashable, Sendable 
               Self.label(platform, limit: 512), Self.label(channelID, limit: 512),
               threadID.map({ Self.label($0, limit: 512) }) ?? true,
               replyToMessageID != deliveryID, text.count <= 8_000, sources.count <= 64,
-              sources.reduce(0, { $0 + $1.url.utf8.count + ($1.alt?.utf8.count ?? 0) }) <= 64_000,
+              sources.reduce(0, { $0 + $1.encodedByteCount }) <= 64_000,
               files.count == (sources.isEmpty ? 0 : 1), kind != .attachment || sources.count == 1,
               kind != .text || !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               delivery.attemptCount >= 0,
               (delivery.status == .delivered) == (delivery.deliveredAt != nil),
               delivery.deliveredAt.map({ $0.timeIntervalSince1970.isFinite && $0 >= queuedAt }) ?? true else { return false }
-        return sources.allSatisfy { source in
-            Self.label(source.url, limit: 16_384)
-                && ["file", "https"].contains(URLComponents(string: source.url)?.scheme?.lowercased() ?? "")
-                && (source.alt.map { Self.label($0, limit: 2_000) && $0.count <= 500 } ?? true)
-        } && files.allSatisfy { file in
+        guard sources.allSatisfy(\.isValid) else { return false }
+        if let source = sources.first, let file = files.first,
+           !source.matchesCapturedFile(digest: file.digest, mimeType: file.mimeType) { return false }
+        return files.allSatisfy { file in
             file.digest.utf8.count == 64 && file.digest.utf8.allSatisfy { (48...57).contains($0) || (97...102).contains($0) }
                 && Self.label(file.filename, limit: 255) && ![".", ".."].contains(file.filename)
                 && !file.filename.contains("/") && !file.filename.contains("\\")

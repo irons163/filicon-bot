@@ -16,7 +16,7 @@ public enum ChannelTranscriptProjection {
             conversationID: origin.conversationID, senderID: origin.senderID, senderName: origin.senderName,
             runID: origin.runID, callID: origin.callID, replyToMessageID: origin.replyToMessageID,
             queuedAt: delivery.createdAt, kind: kind, text: origin.intent.text,
-            sources: origin.intent.sources.map { .init(url: $0.url, alt: $0.alt) },
+            sources: origin.intent.sources,
             files: delivery.outbound.attachments.map { .init(digest: $0.blobID, filename: $0.filename,
                 mimeType: $0.mimeType, byteCount: Int64($0.byteCount)) }, platform: delivery.address.platform,
             channelID: delivery.address.channelID, threadID: delivery.address.threadID,

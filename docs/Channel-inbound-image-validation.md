@@ -1,5 +1,7 @@
 # Incoming 頻道圖片驗收（2026-10-10）
 
+2026-10-11 後續外部回覆必要 gates 通過：`a7d9378` 後補當次 PNG／JPEG 的 SendMessage directory 與獨立 native 圖片／目的地／全文核准，仍只傳首張。最後 focused v5 的 11 methods／95 cases、無 filter full v3 的 2,298 Swift Testing methods／268 suites＋135 XCTest／0 failures（包含原完整 related 範圍）、相關 112 張七語 native 核准 PNG、同一產品 source 的 native／standalone Debug build 與獨立 verify 通過，隨本批本機提交，未 push。兩項 opt-in live skipped，full v1 的 16 issues 與 full v2 四個 UI deadline issues 後中止 exit 130 原樣保留。詳見 [頻道圖片對外回覆驗收](Channel-image-publication-validation.md)；以下原 incoming 與 peer 證據不代替本輪驗收，也不擴張到其他 host／格式或真實外部帳號。
+
 後續增量：`5edeee9` 後補當次 capture 的獨立預覽核准／單一 peer 委派與 direct 圖片預覽／窄版標題換行；解鎖後最後 focused v8 六 methods／30 cases、28 張七語明暗寬窄畫面、related v2 共 149 methods／8 suites、重新建置無 filter full v2 的 2,288 Swift Testing methods／268 suites＋135 XCTest／0 failures，以及 native／standalone Debug build／獨立 verify／七語檢查／source hashes／diff check 均通過；兩項 opt-in live skipped，隨本批提交，未 push。原失敗與 full v1 中止／4x OCR 重驗保留，見 [頻道圖片委派驗收](Channel-image-peer-validation.md)。以下保留原 incoming 推論／保存增量的範圍與證據，不代表轉寄自動獲得許可。
 
 ## 本批範圍

@@ -1,5 +1,9 @@
 # 完成驗收入口（2026-09-27）
 
+## 當次頻道圖片的外部回覆（2026-10-11，本批必要 gates 通過）
+
+接續 `a7d9378`，只補當次 native admitted PNG／JPEG 取得 fresh 圖片／目的地／全文人類核准後的外部 channel queue。首張才傳送，其餘明示不送；typed image ID 歷史不取得讀取／轉寄能力。最後 focused v5 重編譯、11 methods／95 cases（新十 methods／67 cases及既有 peer UI 28 cases）通過；最後 source 的無 filter full v3 terminal exit 0：2,298 Swift Testing methods／268 suites＋135 XCTest／0 failures（各 17 runners；App 861／105、1,256.634 秒），包含原完整 related 範圍；兩項 opt-in live skipped。相關 112 張七語 native 核准 PNG、同一產品 source 的隔離 arm64 native／全新 standalone Debug build 及各自獨立 verify、七語各 1,817 keys／0 missing、最後 source hashes／diff check 已通過，隨本批本機提交，未 push。full v1 exit 1 的 16 issues 與 full v2 四個 UI deadline issues 後主動中止 exit 130 的歷史保留；只修送件 fixture 時鐘及 UI case 邊界，不放寬原斷言／時限／畫面覆蓋。詳細證據見 [頻道圖片對外回覆驗收](Channel-image-publication-validation.md)。其他 host／格式、private context sharing、真人／外部帳號／Release／公證仍待，整體 partial 不變；不 launch／重啟 App 或 Xcode／改真實資料。
+
 ## 頻道圖片委派單一成員（2026-10-10，本批必要 gates 通過）
 
 接續 `5edeee9`，補當次 native capture 的 peer image directory 與獨立人類預覽核准，並修 direct transcript 漏圖片預覽及窄版標題省略；沒有從保存歷史或 remote locator 建立新許可。解鎖後最後 focused v8 六 methods／30 cases、七語 × 明暗 × 兩寬度的 28 張真正聊天畫面、related v2 共 149 methods／8 suites，以及重新建置無 filter full v2 的 2,288 Swift Testing methods／268 suites＋135 XCTest／0 failures 全數通過；兩項 opt-in live skipped。同一產品 source 的隔離 native Debug v3／全新 standalone Debug v2 與各自獨立 verify、七語各 1,817 keys／0 missing、最後 source hashes／diff check 亦通過，隨本批提交，未 push。鎖定 store 拒讀、色彩管理、transient layout 與 full v1 中止後修正低解析 OCR 的歷史均保留，沒有削弱保護或斷言。精確日誌見 [頻道圖片委派驗收](Channel-image-peer-validation.md)。整體 partial 不變，不啟動或重啟 App／Xcode、不改真實資料；下節為前一批已提交證據。

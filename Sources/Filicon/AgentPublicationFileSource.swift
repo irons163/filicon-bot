@@ -47,11 +47,13 @@ struct AgentPublicationFileSource: Sendable {
 /// host decisions. This adapter neither installs a blob nor queues a message.
 struct AgentChannelAttachmentSource: Sendable {
     typealias PrepareLocal = @Sendable (String, NormalizedToolCall, ToolContext) async throws -> PreparedAgentPublicationFile
+    typealias PrepareHostImage = @Sendable (String, NormalizedToolCall, ToolContext) async throws -> PreparedAgentPublicationFile
     typealias AuthorizeDownload = @Sendable (RemoteAttachmentReference, RemoteAttachmentReference?, NormalizedToolCall, ToolContext) async throws -> Void
     let prepareLocal: PrepareLocal
     let downloader: any RemoteAttachmentDownloading
     let validateScope: @Sendable () async throws -> Void
     let authorizeDownload: AuthorizeDownload
+    var prepareHostImage: PrepareHostImage? = nil
     // Preserve the app-wide quota ceiling; the connector's 25 MiB limit is not
     // permission to exceed the host's 8 MiB per-record storage budget.
     static let maximumBytes = 8 * 1_024 * 1_024
@@ -61,7 +63,10 @@ struct AgentChannelAttachmentSource: Sendable {
         try await checkScope()
         let file: PreparedAgentPublicationFile
         switch input.source {
-        case .hostImage: throw AgentImageError.unavailable
+        case .hostImage(let id):
+            guard isImage, let prepareHostImage else { throw AgentImageError.unavailable }
+            file = try await prepareHostImage(id, call, context)
+            guard file.digest == id else { throw AgentImageError.invalid }
         case .localFile(let url):
             file = try await prepareLocal(url, call, context)
         case .remote(let reference):

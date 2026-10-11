@@ -1,4 +1,5 @@
 import Foundation
+import FiliconDomain
 
 /// Credential-free provenance saved with the queue entry, not a permission or
 /// proof that a local transcript entry or remote delivery exists. A projector
@@ -9,11 +10,7 @@ public struct ChannelDeliveryOrigin: Codable, Hashable, Sendable {
     }
     public struct Intent: Codable, Hashable, Sendable {
         public enum Kind: String, Codable, Hashable, Sendable { case text, attachment }
-        public struct Source: Codable, Hashable, Sendable {
-            public let url: String
-            public let alt: String?
-            public init(url: String, alt: String? = nil) { self.url = url; self.alt = alt }
-        }
+        public typealias Source = ExternalChannelTranscriptPublication.Source
         public let kind: Kind
         public let text: String
         /// All submitted locators, in order, including those not sent by the
@@ -51,14 +48,12 @@ public struct ChannelDeliveryOrigin: Codable, Hashable, Sendable {
               outbound.attachments.count == (intent.sources.isEmpty ? 0 : 1),
               intent.kind != .attachment || intent.sources.count == 1,
               intent.kind != .text || !intent.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              intent.sources.reduce(0, { $0 + $1.url.utf8.count + ($1.alt?.utf8.count ?? 0) }) <= 64_000 else { return false }
-        return intent.sources.allSatisfy { source in
-            guard !source.url.isEmpty, source.url.utf8.count <= 16_384,
-                  !source.url.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }),
-                  let scheme = URLComponents(string: source.url)?.scheme?.lowercased(),
-                  scheme == "file" || scheme == "https" else { return false }
-            return source.alt.map { Self.boundedLabel($0, maximumBytes: 2_000) && $0.count <= 500 } ?? true
+              intent.sources.reduce(0, { $0 + $1.encodedByteCount }) <= 64_000,
+              intent.sources.allSatisfy(\.isValid) else { return false }
+        if let source = intent.sources.first, let file = outbound.attachments.first {
+            return source.matchesCapturedFile(digest: file.blobID, mimeType: file.mimeType)
         }
+        return true
     }
 
     private static func boundedLabel(_ value: String, maximumBytes: Int) -> Bool {

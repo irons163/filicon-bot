@@ -119,6 +119,31 @@ struct AgentChannelAttachmentSourceTests {
         expectNoDifference(events, ["read:file:///approved/\(filename)"])
     }
 
+    @Test(arguments: ["approve", "retired-after-capture", "substitute", "not-image"])
+    func nativeCapturedImageSourceNeverFallsBackToAFileOrNetwork(mode: String) async throws {
+        let probe = ChannelSourceProbe(), bytes = try LocalGalleryFormatFixture.bytes(type: "public.png")
+        let file = try PreparedAgentPublicationFile(bytes: bytes, filename: "native.png")
+        let input = try AgentMessageImageInput(entry: ["image_id": mode == "substitute" ? String(repeating: "b", count: 64) : file.digest])
+        let adapter = AgentChannelAttachmentSource(prepareLocal: { _, _, _ in
+            Issue.record("Captured IDs must not read paths"); throw AgentImageError.unavailable
+        }, downloader: ChannelSourceDownloader(probe: probe, data: Data()),
+            validateScope: { try await probe.validate() }, authorizeDownload: { _, _, _, _ in Issue.record("Captured IDs must not download") },
+            prepareHostImage: { _, _, _ in
+                await probe.record("capture")
+                if mode == "retired-after-capture" { await probe.close() }
+                return file
+            })
+        if mode == "approve" {
+            let captured = try await adapter.prepare(input, isImage: true, call: call, context: context)
+            expectNoDifference(captured, try PreparedAgentChannelAttachment(file: file, mimeType: "image/png"))
+        } else {
+            await #expect(throws: (any Error).self) {
+                _ = try await adapter.prepare(input, isImage: mode != "not-image", call: call, context: context)
+            }
+        }
+        let events = await probe.events; expectNoDifference(events, mode == "not-image" ? [] : ["capture"])
+    }
+
     @Test(arguments: ["host-id", "invalid-basename", "retired"])
     func unavailableOrInvalidSourceDoesNotAskOrRead(mode: String) async throws {
         let probe = ChannelSourceProbe()

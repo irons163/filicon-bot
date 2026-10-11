@@ -84,6 +84,25 @@ struct AgentUserChannelPublicationTests {
         return try #require(schema["properties"] as? [String: Any])
     }
 
+    @Test(arguments: ["string", "object", "discarded-unknown", "unknown", "ambiguous", "standalone"])
+    func capturedImageParsingNeedsAnExplicitCurrentNativeDirectory(kind: String) throws {
+        let id = String(repeating: "a", count: 64)
+        var fields: [String: Any] = ["type": "text", "content": "Exact image caption", "channel": "slack:C_SAFE",
+            "images": kind == "object" ? [["image_id": id, "alt": "Current image"]] : [id]]
+        if kind == "discarded-unknown" { fields["images"] = [id, String(repeating: "b", count: 64)] }
+        if kind == "unknown" { fields["images"] = [String(repeating: "b", count: 64)] }
+        if kind == "ambiguous" { fields["images"] = [["image_id": id, "url": "https://never-fetch.invalid/image.png"]] }
+        if kind == "standalone" { fields = ["type": "attachment", "channel": "slack:C_SAFE", "image_id": id] }
+        #expect(throws: (any Error).self) { _ = try AgentChannelMessage.parse(fields) }
+        if ["string", "object"].contains(kind) {
+            let parsed = try AgentChannelMessage.parse(fields, currentImageIDs: [id])
+            expectNoDifference(parsed.images, [try AgentMessageImageInput(entry: kind == "object"
+                ? ["image_id": id, "alt": "Current image"] : ["image_id": id])])
+        } else {
+            #expect(throws: (any Error).self) { _ = try AgentChannelMessage.parse(fields, currentImageIDs: [id]) }
+        }
+    }
+
     @Test func boundTextToolReviewsAndQueuesWithoutLocalOrNetworkSend() async throws {
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
         let tool = tool(f, transaction: transaction(f))

@@ -113,7 +113,9 @@ private struct AttachmentFixtureProvider: AIProvider {
         let bytes = Data("Exact captured group attachment".utf8), url = "https://source.example/group-report.txt?signature=original"
         let probe = ChannelAttachmentProbe(), channels = try ChannelService(storeURL: root.appending(path: "channels.json"))
         let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false,
-            channelService: channels, channelConnectors: [AttachmentFixtureConnector(probe: probe)])
+            channelService: channels, channelConnectors: [AttachmentFixtureConnector(probe: probe)],
+            // Only the delivery-progress case may advance the real worker.
+            channelDeliveryTick: { throw CancellationError() })
         defer { model.dismissAttachmentPreview() }
         model.remoteAttachmentDownloader = AttachmentFixtureDownloader(probe: probe)
         await model.bootstrap(); await probe.replacePayload(bytes)
@@ -270,7 +272,9 @@ private struct AttachmentFixtureProvider: AIProvider {
         let probe = ChannelAttachmentProbe(), channels = try ChannelService(storeURL: root.appending(path: "channels.json"))
         let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false, localToolRuntime: runtime,
             quotaFaultInjector: { try fault.inject($0) },
-            channelService: channels, channelConnectors: [AttachmentFixtureConnector(probe: probe)])
+            channelService: channels, channelConnectors: [AttachmentFixtureConnector(probe: probe)],
+            // Canonical assertions below compare the exact queued receipt.
+            channelDeliveryTick: { throw CancellationError() })
         await model.bootstrap()
         await model.registry.register(AttachmentFixtureProvider(arguments: try JSONEncoder().encode([
             "type": "attachment", "url": source.absoluteString, "alt": "Reviewed report", "channel": "slack:C_FILES"
@@ -381,7 +385,8 @@ private struct AttachmentFixtureProvider: AIProvider {
         let bytes = mode == "first-image" ? try LocalGalleryFormatFixture.bytes(type: "png") : Data("Captured HTTPS report".utf8)
         await probe.replacePayload(bytes)
         let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false,
-            channelService: channels, channelConnectors: [AttachmentFixtureConnector(probe: probe)])
+            channelService: channels, channelConnectors: [AttachmentFixtureConnector(probe: probe)],
+            channelDeliveryTick: { throw CancellationError() })
         model.remoteAttachmentDownloader = AttachmentFixtureDownloader(probe: probe, redirect: mode.hasPrefix("redirect"))
         await model.bootstrap()
         let sourceURL = "https://source.example/\(image ? "first.png" : "report.txt")?signature=a%2Bb"
@@ -518,8 +523,13 @@ private struct AttachmentFixtureProvider: AIProvider {
         #expect(row.images == nil && row.files == nil && row.remoteAttachment == nil && row.remoteImages == nil)
     }
 
-    @Test(arguments: ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"], [340.0, 620.0])
-    func realSourceAndSendCardsKeepWholeIntent(language: String, width: Double) async throws {
+    // Each appearance owns a fresh live review and its existing one-minute
+    // deadline. Keep all 56 source/send renders and exact OCR assertions,
+    // without making one case perform four large native drawings in sequence.
+    @Test(arguments: ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"],
+        [(340.0, false), (340.0, true), (620.0, false), (620.0, true)])
+    func realSourceAndSendCardsKeepWholeIntent(language: String, appearance: (Double, Bool)) async throws {
+        let (width, dark) = appearance
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-channel-attachment-card-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }
         try await FiliconLocalization.$languageOverride.withValue(language) {
@@ -547,11 +557,9 @@ private struct AttachmentFixtureProvider: AIProvider {
             defer { run.cancel() }
             try await eventually { !model.pendingAutoReviewApprovals.isEmpty || finished }
             let source = try #require(model.pendingAutoReviewApprovals.first)
-            for dark in [false, true] {
-                try await renderCard(model: model, groupID: group.id, approval: source, language: language, width: width, dark: dark,
-                    stage: "source", markers: ["MARKER_SOURCE_report", "signature=", "%2Bb"],
-                    notices: ["Download this attachment source?", "Downloading does not authorize sending the file to a channel."])
-            }
+            try await renderCard(model: model, groupID: group.id, approval: source, language: language, width: width, dark: dark,
+                stage: "source", markers: ["MARKER_SOURCE_report", "signature=", "%2Bb"],
+                notices: ["Download this attachment source?", "Downloading does not authorize sending the file to a channel."])
             await model.resolveGroupApproval(source, groupID: group.id, approve: true)
             try await eventually { !model.pendingAutoReviewApprovals.isEmpty || finished }
             let send = try #require(model.pendingAutoReviewApprovals.first)
@@ -567,11 +575,9 @@ private struct AttachmentFixtureProvider: AIProvider {
                 expectNoDifference(FiliconLocalization.string("Type"), "유형")
                 #expect(details.contains("\n유형: image/png\n"))
             }
-            for dark in [false, true] {
-                try await renderCard(model: model, groupID: group.id, approval: send, language: language, width: width, dark: dark,
-                    stage: "send", markers: ["BEGIN CAPTION", "END CAPTION", "C_FILES", "MARKER_SOURCE_report", "SHA-256", "EXCLUDED_IMAGE", "EXCLUDED ALT"],
-                    notices: ["Queue this message to an external channel?", "Only the first image is sent to the channel. The remaining images are not sent.", "Queued is not delivered. Stop does not recall a queued message."])
-            }
+            try await renderCard(model: model, groupID: group.id, approval: send, language: language, width: width, dark: dark,
+                stage: "send", markers: ["BEGIN CAPTION", "END CAPTION", "C_FILES", "MARKER_SOURCE_report", "SHA-256", "EXCLUDED_IMAGE", "EXCLUDED ALT"],
+                notices: ["Queue this message to an external channel?", "Only the first image is sent to the channel. The remaining images are not sent.", "Queued is not delivered. Stop does not recall a queued message."])
             await model.resolveGroupApproval(send, groupID: group.id, approve: false)
             await run.value
             let queued = await channels.deliveries(), sent = await probe.sent, fetched = await probe.downloads
@@ -602,8 +608,15 @@ private struct AttachmentFixtureProvider: AIProvider {
             #expect(size.height > 200 && size.height < 5_000)
             host.frame = .init(origin: .zero, size: size)
             host.layoutSubtreeIfNeeded()
-            let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
-            host.cacheDisplay(in: host.bounds, to: bitmap)
+            // Render native glyphs at 4x so exact source identifiers remain
+            // distinguishable to OCR. Do not substitute expected words or
+            // accept fuzzy matches when a translated card wraps a URL.
+            let bitmap = try #require(NSBitmapImageRep(bitmapDataPlanes: nil,
+                pixelsWide: Int(ceil(host.bounds.width * 4)), pixelsHigh: Int(ceil(host.bounds.height * 4)),
+                bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+            bitmap.size = host.bounds.size
+            host.appearance?.performAsCurrentDrawingAppearance { host.cacheDisplay(in: host.bounds, to: bitmap) }
             let recognition = VNRecognizeTextRequest()
             recognition.recognitionLevel = .accurate
             recognition.recognitionLanguages = ["en-US"]

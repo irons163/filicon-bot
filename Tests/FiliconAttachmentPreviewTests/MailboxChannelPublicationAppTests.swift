@@ -334,7 +334,10 @@ private struct AppMailboxChannelProvider: InteractiveToolProvider {
             source = file
         } else { runtime = nil; source = nil }
         let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false, localToolRuntime: runtime,
-            channelService: channels, channelConnectors: [AppMailboxChannelConnector(probe: probe, fails: failsDelivery)])
+            channelService: channels, channelConnectors: [AppMailboxChannelConnector(probe: probe, fails: failsDelivery)],
+            // This fixture asserts the durable queued receipt. Delivery and
+            // failure follow-up cases advance the real worker explicitly.
+            channelDeliveryTick: { throw CancellationError() })
         model.remoteAttachmentDownloader = AppMailboxChannelDownloader(probe: probe)
         await model.registry.register(AppMailboxChannelProvider(probe: probe, peerID: peer.id,
             channelArguments: source.map { ["type": "attachment", "channel": "slack:C_PEER", "url": $0.absoluteString, "alt": "Reviewed peer file"] }
@@ -1018,7 +1021,8 @@ private struct AppMailboxChannelProvider: InteractiveToolProvider {
         expectNoDifference(queuedBefore, [])
         if mode == "reopen" {
             let model = AppModel(applicationSupportRoot: f.root, bootstrapImmediately: false, channelService: f.channels,
-                channelConnectors: [AppMailboxChannelConnector(probe: f.probe)])
+                channelConnectors: [AppMailboxChannelConnector(probe: f.probe)],
+                channelDeliveryTick: { throw CancellationError() })
             model.secretCredentialWriter = writer.write
             await model.registry.register(AppMailboxChannelProvider(probe: f.probe, peerID: f.peer.id,
                 channelArguments: ["type": "text", "channel": "slack:C_PEER", "content": "EXACT_PEER_EXTERNAL_RESULT"], savedInput: input))
@@ -1991,7 +1995,8 @@ private struct AppMailboxChannelProvider: InteractiveToolProvider {
         expectNoDifference(restored, saved)
         let restoredChannels = try ChannelService(storeURL: f.root.appending(path: "channels.json"))
         let restarted = AppModel(applicationSupportRoot: f.root, bootstrapImmediately: false,
-            channelService: restoredChannels, channelConnectors: [AppMailboxChannelConnector(probe: f.probe, fails: true)])
+            channelService: restoredChannels, channelConnectors: [AppMailboxChannelConnector(probe: f.probe, fails: true)],
+            channelDeliveryTick: { throw CancellationError() })
         defer { restarted.selectRoute(.conversation(target)); restarted.cancel() }
         await restarted.registry.register(AppMailboxChannelProvider(probe: f.probe, peerID: f.peer.id,
             channelArguments: ["type": "text", "channel": "slack:C_PEER", "content": "FORBIDDEN_REOPEN_SEND"],

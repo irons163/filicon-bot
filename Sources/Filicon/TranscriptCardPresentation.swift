@@ -322,7 +322,7 @@ struct ExternalChannelPublicationCard: View {
                         .accessibilityIdentifier("external-channel-file-\(publication.deliveryID)-\(file.digest)")
                 }
                 ForEach(Array(publication.sources.enumerated()), id: \.offset) { _, source in
-                    Text(source.url).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                    Text(verbatim: source.url ?? source.imageID ?? "").textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
                     if let alt = source.alt { Text(alt).textSelection(.enabled).fixedSize(horizontal: false, vertical: true) }
                 }
                 if publication.sources.count > 1 {

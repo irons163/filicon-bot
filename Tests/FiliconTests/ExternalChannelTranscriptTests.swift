@@ -385,6 +385,50 @@ struct ExternalChannelTranscriptTests {
         #expect(ChannelTranscriptProjection.publication(for: legacy) == nil)
     }
 
+    @Test func capturedImageEvidenceIsTypedDigestBoundAndBackwardCompatible() throws {
+        let id = String(repeating: "a", count: 64), other = String(repeating: "b", count: 64)
+        let sources: [ExternalChannelTranscriptPublication.Source] = [.init(imageID: id, alt: "Current image"), .init(imageID: other)]
+        let file = ExternalChannelTranscriptPublication.File(digest: id, filename: "current.png", mimeType: "image/png", byteCount: 100)
+        let value = publication(sources: sources, files: [file])
+        #expect(value.isValid)
+        expectNoDifference(try JSONDecoder().decode(ChatMessage.self, from: JSONEncoder().encode(value.directMessage)), value.directMessage)
+        expectNoDifference(value.directMessage.attachments, []); expectNoDifference(value.transcriptCard.actions, [])
+        expectNoDifference(value.sources.first?.url, nil)
+        #expect(!publication(sources: sources, files: [.init(digest: other, filename: file.filename, mimeType: file.mimeType, byteCount: file.byteCount)]).isValid)
+        #expect(!publication(sources: sources, files: [.init(digest: id, filename: file.filename, mimeType: "text/plain", byteCount: file.byteCount)]).isValid)
+        let origin = ChannelDeliveryOrigin(route: .directConversation, conversationID: externalID(2), senderID: externalID(2),
+            senderName: "Original member", runID: externalID(5), callID: "original-call", intent: .init(kind: .text, text: value.text, sources: sources))
+        #expect(origin.isConsistent(agentID: owner.agentID, outbound: .init(text: value.text,
+            attachments: [.init(blobID: id, filename: file.filename, mimeType: file.mimeType, byteCount: file.byteCount)])))
+        #expect(!origin.isConsistent(agentID: owner.agentID, outbound: .init(text: value.text,
+            attachments: [.init(blobID: other, filename: file.filename, mimeType: file.mimeType, byteCount: file.byteCount)])))
+        let legacy = try JSONDecoder().decode(ExternalChannelTranscriptPublication.Source.self,
+            from: Data(#"{"url":"file:///legacy/report.png","alt":"Original description"}"#.utf8))
+        expectNoDifference(legacy, .init(url: "file:///legacy/report.png", alt: "Original description"))
+        #expect(legacy.isValid)
+        let encoded = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(legacy)) as? [String: String])
+        expectNoDifference(encoded, ["url": "file:///legacy/report.png", "alt": "Original description"])
+    }
+
+    @Test(arguments: ["both", "neither", "uppercase", "url-as-id", "short-id", "bad-alt"])
+    func decodedCapturedImageEvidenceCannotMixLocatorsOrRelaxValidation(kind: String) throws {
+        var fields: [String: Any] = ["imageID": String(repeating: "a", count: 64)]
+        switch kind {
+        case "both": fields["url"] = "https://never-fetch.invalid/image.png"
+        case "neither": fields = [:]
+        case "uppercase": fields["imageID"] = String(repeating: "A", count: 64)
+        case "url-as-id": fields["imageID"] = "file:///never-read/image.png"
+        case "short-id": fields["imageID"] = "abcd"
+        case "bad-alt": fields["alt"] = "private\ncommand"
+        default: break
+        }
+        let source = try JSONDecoder().decode(ExternalChannelTranscriptPublication.Source.self,
+            from: JSONSerialization.data(withJSONObject: fields, options: .sortedKeys))
+        #expect(!source.isValid)
+        #expect(!publication(sources: [source], files: [.init(digest: String(repeating: "a", count: 64),
+            filename: "image.png", mimeType: "image/png", byteCount: 100)]).isValid)
+    }
+
     @Test func allSourceLocatorsAndUnsentImagesRemainExactAndInert() throws {
         let sources: [ExternalChannelTranscriptPublication.Source] = [
             .init(url: "https://source.invalid/image.png?signature=a%2Bb&literal={0}", alt: "First original description"),

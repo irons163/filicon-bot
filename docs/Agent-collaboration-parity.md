@@ -1,4 +1,6 @@
-# 協作能力核對紀錄（更新至 2026-10-10）
+# 協作能力核對紀錄（更新至 2026-10-11）
+
+2026-10-11 外部圖片回覆本批必要 gates 通過：`a7d9378` 後新增當次 channel capture 的 SendMessage directory／fresh native 圖片、目的地及全文核准，僅首張排入 owner 自己的 channel，不擴張到 peer 私人 history、舊圖片或群組廣播。最後 focused v5 的 11 methods／95 cases、無 filter full v3 的 2,298 Swift Testing methods／268 suites＋135 XCTest／0 failures（各 17 runners；App 861／105、1,256.634 秒）、相關 112 張七語 native 核准 PNG、同一產品 source 的 native／standalone Debug build 及各自獨立 verify、七語各 1,817 keys／0 missing、最後 hashes／diff check 通過，隨本批本機提交。兩項 opt-in live skipped；full v1 的 16 issues、full v2 四個 UI deadline issues 後中止 exit 130 均保留，只修測試時鐘及 UI case 邊界，原時限／斷言／renders 不變。精確依據／失敗歷史／剩餘範圍見 [頻道圖片對外回覆驗收](Channel-image-publication-validation.md)；48 分類與整體 partial 不變，未 push／launch／改真實資料。
 
 本批必要 gates 通過：`5edeee9` 後補 channel 當次 PNG／JPEG 的單一 peer 委派。原 native capture 安裝到既有 reviewed image transport，仍須 exact recipient／text／image preview 人類核准；不借 private history、舊 envelope 或任意 locator。真正 listener／direct 漏圖片預覽已補接線，窄版標題改完整換行；解鎖後最後 focused v8 六 methods／30 cases、28 張七語明暗寬窄畫面、related v2 共 149 methods／8 suites，以及重新建置無 filter full v2 的 2,288 Swift Testing methods／268 suites＋135 XCTest／0 failures 全數通過；兩項 opt-in live skipped。同一產品 source 的 native v3／standalone v2 Debug build／獨立 verify、七語各 1,817 keys／0 missing 與最後 source hashes／diff check 通過，隨本批提交，未 push。原鎖定、UI 測試失敗與 full v1 中止／4x OCR 重驗保留，見 [頻道圖片委派驗收](Channel-image-peer-validation.md)。下段是前批已提交成果，不作本批 green；48 分類／整體 partial 不變。
 

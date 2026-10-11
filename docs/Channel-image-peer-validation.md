@@ -1,5 +1,7 @@
 # 頻道圖片的單一成員委派（2026-10-10）
 
+2026-10-11 後續增量必要 gates 通過：當次 capture 的外部 SendMessage 圖片回覆經獨立圖片／目的地／全文人類核准；最後 focused v5 的 11 methods／95 cases、無 filter full v3 的 2,298 Swift Testing methods／268 suites＋135 XCTest／0 failures、相關 112 張七語 native 核准 PNG及同一產品 source 的 native／standalone gates 通過，隨本批本機提交，未 push。兩項 opt-in live skipped，full v1 失敗與 full v2 四個 UI deadline issues 後中止 exit 130 原樣保留，見 [頻道圖片對外回覆驗收](Channel-image-publication-validation.md)。本頁保留 peer 增量的原 scope／gates；下方「對外 publication 尚待」是當時狀態，不把 peer 核准當作對外送件核准，也不宣稱所有 host／格式或真人外部服務驗收已完成。
+
 ## 本批範圍與原始依據
 
 基線 `5edeee9` 已讓當次 incoming PNG／JPEG 進入原 owner own-DM 推論、保存及預覽，

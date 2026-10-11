@@ -1616,6 +1616,17 @@ struct TranscriptMessageView: View {
                             .padding(14).frame(maxWidth: .infinity, alignment: .leading)
                             .background(FiliconTheme.input, in: RoundedRectangle(cornerRadius: 12))
                     }
+                    if let image = model.directChannelImageApproval(card: card, conversationID: conversation.id) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(l10n("Queue this message to an external channel?"))
+                                .font(.callout.weight(.semibold))
+                                .fixedSize(horizontal: false, vertical: true)
+                            AgentMessageImagePreviewContent(image: image.metadata, preview: NSImage(data: image.data), expanded: true)
+                        }
+                        .padding(14).frame(maxWidth: .infinity, alignment: .leading)
+                        .background(FiliconTheme.input, in: RoundedRectangle(cornerRadius: 12))
+                        .accessibilityIdentifier("direct-channel-image-review")
+                    }
                     if let images = model.directImageDelegationApproval(card: card, conversationID: conversation.id) {
                         VStack(alignment: .leading, spacing: 8) {
                             Text(l10n("Forward these images to the recipient model?"))

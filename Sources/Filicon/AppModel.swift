@@ -1203,6 +1203,7 @@ final class AppModel: ObservableObject {
     private struct ChannelReviewScope {
         let lifetime: ChannelPublicationLifetime
         let validate: @Sendable () async throws -> Void
+        let image: InferenceAttachment?
     }
     private var channelReviewScopes: [String: ChannelReviewScope] = [:]
     private var draftSaveTask: Task<Void, Never>?
@@ -7481,11 +7482,27 @@ final class AppModel: ObservableObject {
         try await validate()
         guard let sender = await agentService?.profile(id: identity.agentID) else { throw CancellationError() }
         try await validate()
+        let capturedImages = execution?.channelInbound?.imageInput.images ?? []
+        let prepareHostImage: AgentChannelAttachmentSource.PrepareHostImage?
+        if capturedImages.isEmpty { prepareHostImage = nil }
+        else {
+            prepareHostImage = { imageID, call, context in
+                guard call.name == "SendMessage", context.conversationID == id, context.runID == assistantID else { throw CancellationError() }
+                try await validate()
+                guard let image = capturedImages.first(where: { $0.metadata.id == imageID }) else { throw AgentImageError.unavailable }
+                let file = try PreparedAgentPublicationFile(bytes: image.data, filename: image.metadata.filename)
+                guard file.digest == imageID, image.data.count == image.metadata.byteCount,
+                      try AgentImageStore.validate(image.data) == image.metadata.mimeType else { throw AgentImageError.invalid }
+                try await validate()
+                return file
+            }
+        }
         // Direct transcript receipt identity is the chat, while channel
         // connection ownership is the actual bound agent, never the chat UUID.
         return makeAgentChannelPublication(conversationID: id, senderID: id, agentID: identity.agentID,
             senderName: sender.name, route: .directConversation, account: account, generation: generation, lifetime: lifetime,
             inboundReplyAddress: execution?.channelInbound?.admission.envelope.address ?? cardContinuation?.envelope?.address,
+            availableHostImages: capturedImages.map(\.metadata), prepareHostImage: prepareHostImage,
             validateScope: validate, publishTranscript: { [weak self] publication in
                 try await validate()
                 guard let self else { throw CancellationError() }
@@ -7542,6 +7559,8 @@ final class AppModel: ObservableObject {
         transcriptDestination: AgentChannelPublicationTransaction.TranscriptSource.Destination? = nil,
         replyDirectoryConversationID: UUID? = nil,
         inboundReplyAddress: ChannelAddress? = nil,
+        availableHostImages: [AttachmentMetadata] = [],
+        prepareHostImage: AgentChannelAttachmentSource.PrepareHostImage? = nil,
         validateScope: @escaping @Sendable () async throws -> Void,
         publishTranscript: @escaping AgentChannelPublicationTransaction.PublishTranscript,
         prepareLocal: @escaping AgentChannelAttachmentSource.PrepareLocal) -> AgentChannelPublicationTransaction? {
@@ -7566,7 +7585,7 @@ final class AppModel: ObservableObject {
                         try await self.authorizeChannelSourceDownload(reference, redirectSource: redirectSource,
                             conversationID: id, senderName: senderName, call: call, context: context,
                             account: account, generation: generation, lifetime: lifetime, validateScope: check)
-                    })
+                    }, prepareHostImage: prepareHostImage)
                 return try await reader.prepare(source, isImage: isImage, call: call, context: context)
             }
             install = { [weak self] attachment in
@@ -7582,6 +7601,7 @@ final class AppModel: ObservableObject {
                     agentID: agentID, senderName: senderName, call: call, context: context, account: account,
                     generation: generation, lifetime: lifetime, validateScope: check)
             }, prepare: prepare, install: install, supportsRemoteSources: attachmentsAvailable,
+            availableHostImages: prepareHostImage == nil ? [] : availableHostImages,
             transcriptSource: .init(route: route, senderName: senderName, destination: transcriptDestination,
                 replyDirectoryConversationID: replyDirectoryConversationID), publishTranscript: publishTranscript,
             inboundReplyAddress: inboundReplyAddress)
@@ -7594,7 +7614,7 @@ final class AppModel: ObservableObject {
     }
 
     private func registerChannelApproval(_ pending: PendingApproval, lifetime: ChannelPublicationLifetime,
-        validateScope: @escaping @Sendable () async throws -> Void) async {
+        image: InferenceAttachment? = nil, validateScope: @escaping @Sendable () async throws -> Void) async {
         do {
             try lifetime.check()
             try checkChannelAccount(pending.fence.accountID, generation: pending.fence.generation)
@@ -7602,7 +7622,7 @@ final class AppModel: ObservableObject {
             await autoReviewBroker.cancel(reviewID: pending.id, fence: pending.fence)
             return
         }
-        channelReviewScopes[pending.id] = .init(lifetime: lifetime, validate: validateScope)
+        channelReviewScopes[pending.id] = .init(lifetime: lifetime, validate: validateScope, image: image)
         await registerAutoReviewApproval(pending)
     }
 
@@ -7689,7 +7709,13 @@ final class AppModel: ObservableObject {
                 + "\n\(l10n("Type")): \(attachment.mimeType)"
                 + "\n\(l10n("Size")): \(FiliconLocalization.byteCount(Int64(attachment.file.bytes.count)))"
                 + "\nSHA-256: \(attachment.file.digest)"
-            if let source = review.message.source { details += "\n\(l10n("Source address")): \(Self.channelSourceAddress(source))" }
+            if let source = review.message.source {
+                let label: String
+                if case .hostImage = source.source { label = l10n("Image") }
+                else { label = l10n("Source address") }
+                details += "\n\(label): \(Self.channelSourceAddress(source))"
+                if let alt = source.alt { details += "\n\(l10n("Description")): \(alt)" }
+            }
         }
         if review.message.discardedImageCount > 0 {
             details += "\n\n" + l10n("Only the first image is sent to the channel. The remaining images are not sent.")
@@ -7707,12 +7733,17 @@ final class AppModel: ObservableObject {
                 metadata: ["tool": "SendMessage", "agentChannelPublication": "true", "agentMessage": details]))
         let pending = PendingApproval(action: action, reason: "Approval required", expiresAt: Date().addingTimeInterval(300))
         // No generic auto-allow rule can substitute for this publication review.
+        let image = review.message.isImage ? try review.attachment.map { attachment in
+            let metadata = try AttachmentStore.publicationMetadata(for: attachment.file, createdAt: pending.createdAt,
+                verifiedImageMIMEType: attachment.mimeType)
+            return InferenceAttachment(metadata: metadata, data: attachment.file.bytes)
+        } : nil
         defer { channelReviewScopes.removeValue(forKey: pending.id) }
         try await autoReviewBroker.waitForApprovalToExecute(pending) { [weak self] pending in
             guard let self else { return }
             do {
                 try await validateScope()
-                await self.registerChannelApproval(pending, lifetime: lifetime, validateScope: validateScope)
+                await self.registerChannelApproval(pending, lifetime: lifetime, image: image, validateScope: validateScope)
             } catch { await self.autoReviewBroker.cancel(reviewID: pending.id, fence: pending.fence) }
         }
         try await validateScope()
@@ -7722,7 +7753,7 @@ final class AppModel: ObservableObject {
         switch input.source {
         case .localFile(let url): url
         case .remote(let reference): reference.url
-        case .hostImage: ""
+        case .hostImage(let id): id
         }
     }
 
@@ -13478,6 +13509,27 @@ final class AppModel: ObservableObject {
               pending.action.context.conversationID == conversationID,
               ["CreateAgent", "UpdateAgent", "update_state"].contains(pending.action.context.metadata["tool"] ?? "") else { return nil }
         return pending
+    }
+
+    func directChannelImageApproval(card: TranscriptCard, conversationID: UUID) -> InferenceAttachment? {
+        // Bytes live only alongside the native pending waiter. A restored card
+        // or a model-supplied digest can never reopen a source or recreate it.
+        guard card.lifecycle == .waiting, case .autoReview(let value) = card.payload,
+              directMessagingScopes.contains(conversationID), isAgentMessagingScopeActive(conversationID),
+              let pending = pendingAutoReviewByID[value.reviewID],
+              pending.action.context.conversationID == conversationID,
+              pending.action.context.metadata["agentChannelPublication"] == "true",
+              pending.fence.accountID == (settings.accountScope ?? "local"),
+              pending.fence.generation == autoReviewAccountGeneration, pending.expiresAt > Date(),
+              directPublicationIDs[pending.fence.runID] != nil,
+              let scope = channelReviewScopes[pending.id], (try? scope.lifetime.check()) != nil,
+              let conversation = conversations.first(where: { $0.id == conversationID }) else { return nil }
+        let matches = conversation.messages.flatMap(\.transcriptCards).filter {
+            guard case .autoReview(let review) = $0.payload else { return false }
+            return review.reviewID == pending.id
+        }
+        guard matches.count == 1, matches.first == card else { return nil }
+        return scope.image
     }
 
     func directImageDelegationApproval(card: TranscriptCard, conversationID: UUID) -> [AttachmentMetadata]? {

@@ -4,7 +4,7 @@ import FiliconChannels
 import FiliconDomain
 
 /// Parsed model intent, not a connection, account, source-access grant or consent.
-/// The reference channel contract sends only the first URL image with the text
+/// The reference channel contract sends only the first image with the text
 /// as its caption. The complete intent is retained for review and call replay.
 public struct AgentChannelMessage: Sendable, Equatable {
     public let address: ChannelAddress
@@ -15,7 +15,7 @@ public struct AgentChannelMessage: Sendable, Equatable {
     public var discardedImageCount: Int { max(0, images.count - 1) }
     public var isImage: Bool { attachment == nil && !images.isEmpty }
 
-    public static func parse(_ object: [String: Any]) throws -> Self {
+    public static func parse(_ object: [String: Any], currentImageIDs: Set<String> = []) throws -> Self {
         guard let channel = object["channel"] as? String, channel.utf8.count <= 1_024,
               let separator = channel.firstIndex(of: ":"),
               let type = object["type"] as? String, ["text", "attachment"].contains(type) else {
@@ -43,11 +43,14 @@ public struct AgentChannelMessage: Sendable, Equatable {
         }
         let images: [AgentMessageImageInput]
         if let raw = object["images"] {
-            guard let entries = raw as? [[String: Any]], entries.count <= 64 else { throw ChannelPublicationError.invalid }
+            guard let entries = raw as? [Any], entries.count <= 64 else { throw ChannelPublicationError.invalid }
             images = try entries.map { entry in
+                // The default host still rejects IDs. Even discarded images
+                // must belong to this execution's separately supplied directory.
+                if entry is String, currentImageIDs.isEmpty { throw ChannelPublicationError.invalid }
                 let input = try AgentMessageImageInput(entry: entry)
-                guard case .hostImage = input.source else { return input }
-                throw ChannelPublicationError.invalid
+                if case .hostImage(let id) = input.source, !currentImageIDs.contains(id) { throw ChannelPublicationError.invalid }
+                return input
             }
         } else { images = [] }
         return .init(address: address, text: content.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -141,6 +144,8 @@ public actor AgentChannelPublicationTransaction {
     public nonisolated let transcriptRoute: ChannelDeliveryOrigin.Route?
     public nonisolated let supportsAttachments: Bool
     public nonisolated let supportsRemoteSources: Bool
+    /// Native capture metadata only, never reconstructed from saved history.
+    public nonisolated let availableHostImages: [AttachmentMetadata]
     private nonisolated let lifetime: ChannelPublicationLifetime
     public nonisolated let accountID: String
     private let channels: ChannelService
@@ -172,6 +177,7 @@ public actor AgentChannelPublicationTransaction {
                 validateScope: @escaping @Sendable () async throws -> Void,
                 authorize: @escaping Authorize, prepare: Prepare? = nil, install: Install? = nil,
                 supportsRemoteSources: Bool = false,
+                availableHostImages: [AttachmentMetadata] = [],
                 transcriptSource: TranscriptSource? = nil,
                 publishTranscript: PublishTranscript? = nil,
                 inboundReplyAddress: ChannelAddress? = nil,
@@ -186,6 +192,10 @@ public actor AgentChannelPublicationTransaction {
         self.validateScope = validateScope; self.authorize = authorize
         supportsAttachments = prepare != nil && install != nil
         self.supportsRemoteSources = supportsAttachments && supportsRemoteSources
+        self.availableHostImages = supportsAttachments && !availableHostImages.isEmpty
+            && availableHostImages.count <= 4 && Set(availableHostImages.map(\.id)).count == availableHostImages.count
+            && availableHostImages.allSatisfy({ ["image/png", "image/jpeg"].contains($0.mimeType) })
+            && (try? AgentImageStore.validatePublishedGalleryMetadata(availableHostImages)) != nil ? availableHostImages : []
         self.prepare = supportsAttachments ? prepare : nil; self.install = supportsAttachments ? install : nil
         self.makeID = makeID; self.now = now
         self.transcriptSource = transcriptSource
@@ -199,6 +209,11 @@ public actor AgentChannelPublicationTransaction {
     public func publish(_ message: AgentChannelMessage, replyTo: UUID?, call: NormalizedToolCall,
                         context: ToolContext) async throws -> Receipt {
         guard call.name == "SendMessage", context.conversationID == conversationID else { throw Failure.unavailable }
+        for image in message.images {
+            if case .hostImage(let id) = image.source, !availableHostImages.contains(where: { $0.id == id }) {
+                throw Failure.unavailable
+            }
+        }
         let key = Key(run: context.runID, call: call.id), input = Input(message: message, replyTo: replyTo)
         if let previous = completed[key] {
             guard previous.input == input else { throw Failure.duplicateCall }
@@ -234,6 +249,7 @@ public actor AgentChannelPublicationTransaction {
             guard let prepare, install != nil else { throw Failure.unavailable }
             if case .remote = source.source { guard supportsRemoteSources else { throw Failure.unavailable } }
             attachment = try await prepare(source, message.isImage, call, context)
+            if case .hostImage(let id) = source.source, attachment?.file.digest != id { throw Failure.invalidAttachment }
             if message.isImage, let attachment {
                 guard try AgentImageStore.validatePublishedImage(attachment.file.bytes) == attachment.mimeType else {
                     throw Failure.invalidAttachment
@@ -285,7 +301,9 @@ public actor AgentChannelPublicationTransaction {
             switch input.source {
             case .localFile(let url): return .init(url: url, alt: input.alt)
             case .remote(let reference): return .init(url: reference.url, alt: input.alt)
-            case .hostImage: throw ChannelPublicationError.invalid
+            case .hostImage(let id):
+                guard availableHostImages.contains(where: { $0.id == id }) else { throw ChannelPublicationError.invalid }
+                return .init(imageID: id, alt: input.alt)
             }
         }
         return .init(route: transcriptSource.route, conversationID: destinationConversationID, senderID: destinationSenderID,

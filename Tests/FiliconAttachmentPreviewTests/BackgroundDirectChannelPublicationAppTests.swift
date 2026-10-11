@@ -135,7 +135,10 @@ private struct BackgroundChannelProvider: InteractiveToolProvider {
             secretReference: "keychain://channels/TEST-only-never-read", agentID: owner.id, ownerAccountID: "local")
         try await channels.saveConnection(connection)
         let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false,
-            channelService: channels, channelConnectors: [BackgroundChannelConnector(supportsAttachments: supportsAttachments, fails: fails, probe: probe)])
+            channelService: channels, channelConnectors: [BackgroundChannelConnector(supportsAttachments: supportsAttachments, fails: fails, probe: probe)],
+            // Queued receipts remain fixed until a delivery/failure case
+            // explicitly advances the real worker below.
+            channelDeliveryTick: { throw CancellationError() })
         model.remoteAttachmentDownloader = BackgroundChannelDownloader(probe: probe)
         await model.registry.register(BackgroundChannelProvider(probe: probe, arguments: arguments, numbered: twoSteps))
         await model.bootstrap()
@@ -193,7 +196,8 @@ private struct BackgroundChannelProvider: InteractiveToolProvider {
         await f.model.setWorkflowEnabled(id: f.workflow.id, enabled: false)
         let channels = try ChannelService(storeURL: f.root.appending(path: "channels.json"))
         let reopened = AppModel(applicationSupportRoot: f.root, bootstrapImmediately: false,
-            channelService: channels, channelConnectors: [BackgroundChannelConnector(probe: f.probe)])
+            channelService: channels, channelConnectors: [BackgroundChannelConnector(probe: f.probe)],
+            channelDeliveryTick: { throw CancellationError() })
         await reopened.registry.register(BackgroundChannelProvider(probe: f.probe))
         await reopened.bootstrap()
         await reopened.setAutomationRuntimeActive(false)

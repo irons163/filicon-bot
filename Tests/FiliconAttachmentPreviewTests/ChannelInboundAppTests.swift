@@ -321,6 +321,7 @@ private struct AppInboundProvider: InteractiveToolProvider {
     var priorityGate: AppInboundPriorityGate?
     var supportsImages = false
     var requestedImageIDs: [String]?
+    var requestedImageAlt: String?
     func models() async throws -> [AIModel] {
         [.init(id: "fixture", capabilities: .init(inputModalities: supportsImages ? [.text, .image] : [.text]))]
     }
@@ -429,6 +430,21 @@ private struct AppInboundProvider: InteractiveToolProvider {
                             await probe.result(try await executeTool(call))
                         }
                         if mode != "failure-silent" { continuation.yield(.textDelta("PRIVATE_INBOUND_FAILURE_DRAFT")) }
+                        continuation.yield(.completed(.stop)); continuation.finish()
+                        return
+                    }
+                    if mode == "image-channel" {
+                        let imageIDs = requestedImageIDs ?? request.attachmentsByMessageID.values.flatMap { $0.map(\.metadata.id) }.sorted()
+                        if !imageIDs.isEmpty {
+                            let images: [Any] = imageIDs.map { id in
+                                if let requestedImageAlt { return ["image_id": id, "alt": requestedImageAlt] }
+                                return id
+                            }
+                            await probe.result(try await executeTool(.init(id: "incoming-image-channel-reply", name: "SendMessage",
+                                argumentsJSON: JSONSerialization.data(withJSONObject: ["type": "text",
+                                    "content": "EXACT_CURRENT_IMAGE_CHANNEL_REPLY", "channel": "slack:C_REMOTE:T_REMOTE",
+                                    "images": images], options: .sortedKeys))))
+                        }
                         continuation.yield(.completed(.stop)); continuation.finish()
                         return
                     }
@@ -587,6 +603,203 @@ private struct AppInboundTextPeerProvider: InteractiveToolProvider {
             senderID: "U_REMOTE", senderDisplayName: "Remote human", text: text,
             timestamp: date, attachments: [.init(blobID: saved.id, filename: saved.filename,
                 mimeType: mime, byteCount: Int64(data.count))]), .init(metadata: expected, data: data))
+    }
+
+    @Test(arguments: ["public.png", "public.jpeg"], [false, true])
+    func incomingImageChannelReplyRequiresItsOwnReviewAndQueuesExactBytes(type: String, described: Bool) async throws {
+        let f = try await fixture(mode: "image-channel", supportsImages: true)
+        defer { f.feed.finish(); try? FileManager.default.removeItem(at: f.root) }
+        await f.model.setAutoReviewEnabled(true)
+        let (envelope, image) = try await incomingImage(f, type: type)
+        let alt = described ? "Exact reviewed image description" : nil
+        await f.model.registry.register(AppInboundProvider(probe: f.probe, peerID: f.peer.id, mode: "image-channel",
+            supportsImages: true, requestedImageAlt: alt))
+        f.feed.emit(envelope)
+        let pending = try await review(f)
+        expectNoDifference(pending.action.context.metadata["agentChannelPublication"], "true")
+        let before = await f.service.deliveries(), network = await f.probe.sent
+        expectNoDifference(before, []); expectNoDifference(network, [])
+        let canonical = try await storedPendingCard(pending, in: ConversationStore(fileURL: f.root.appending(path: "conversations.json")))
+        let card = try #require(canonical.messages.flatMap(\.transcriptCards).first { card in
+            guard case .autoReview(let value) = card.payload else { return false }
+            return value.reviewID == pending.id
+        })
+        let preview = try #require(f.model.directChannelImageApproval(card: card, conversationID: chatID))
+        expectNoDifference(preview.data, image.data)
+        expectNoDifference(preview.metadata.id, image.metadata.id)
+        expectNoDifference(preview.metadata.filename, image.metadata.filename)
+        expectNoDifference(f.model.directChannelImageApproval(card: card, conversationID: otherID), nil)
+        var forged = card; forged.id = UUID()
+        expectNoDifference(f.model.directChannelImageApproval(card: forged, conversationID: chatID), nil)
+        let details = try #require(pending.action.context.metadata["agentMessage"])
+        #expect(details.contains(image.metadata.id) && details.contains(image.metadata.filename)
+            && details.contains("EXACT_CURRENT_IMAGE_CHANNEL_REPLY") && details.contains("slack:C_REMOTE:T_REMOTE"))
+        #expect(details.contains("\(l10n("Image")): \(image.metadata.id)"))
+        if let alt { #expect(details.contains("\(l10n("Description")): \(alt)")) }
+        f.model.handleTranscriptCardIntent(.approveReview(reviewID: pending.id))
+        expectNoDifference(f.model.pendingAutoReviewApprovals, [pending])
+        f.model.selectRoute(.conversation(chatID))
+        f.model.handleTranscriptCardIntent(.approveReview(reviewID: pending.id))
+        let run = try await settle(f); expectNoDifference(run.status, .completed)
+        let deliveries = await f.service.deliveries(), sent = await f.probe.sent
+        expectNoDifference(deliveries.count, 1); expectNoDifference(sent, [])
+        let delivery = try #require(deliveries.first)
+        expectNoDifference(delivery.address, envelope.address)
+        expectNoDifference(delivery.outbound, .init(text: "EXACT_CURRENT_IMAGE_CHANNEL_REPLY", attachments: envelope.attachments))
+        expectNoDifference(delivery.authorization?.agentID, f.owner.id)
+        expectNoDifference(delivery.origin?.runID, run.id)
+        expectNoDifference(delivery.origin?.intent.sources, [.init(imageID: image.metadata.id, alt: alt)])
+        let bytes = try await AttachmentStore(rootURL: f.root.appending(path: "channel-attachments")).data(for: image.metadata)
+        expectNoDifference(bytes, image.data)
+        let saved = try #require(try await ConversationStore(fileURL: f.root.appending(path: "conversations.json")).conversation(id: chatID))
+        let publication = try #require(saved.messages.first { $0.id == delivery.id }?.externalChannelPublication)
+        #expect(publication.isValid)
+        expectNoDifference(publication.sources, [.init(imageID: image.metadata.id, alt: alt)])
+        expectNoDifference(publication.files, [.init(digest: image.metadata.id, filename: image.metadata.filename,
+            mimeType: image.metadata.mimeType, byteCount: image.metadata.byteCount)])
+        expectNoDifference(f.model.agentMessages, []); expectNoDifference(f.model.pendingAutoReviewApprovals, [])
+        expectNoDifference(f.model.directChannelImageApproval(card: card, conversationID: chatID), nil)
+        // Only an explicit offline transport tick sends the durable queue.
+        await f.service.flush(now: delivery.nextAttemptAt.addingTimeInterval(1))
+        let delivered = try #require(await f.service.delivery(id: delivery.id)), outbound = await f.probe.sent
+        expectNoDifference(delivered.status, .delivered); expectNoDifference(outbound, [delivery.outbound])
+        await f.model.reconcileChannelPublications()
+        let projected = try #require(try await ConversationStore(fileURL: f.root.appending(path: "conversations.json")).conversation(id: chatID))
+        let final = try #require(projected.messages.first { $0.id == delivery.id }?.externalChannelPublication)
+        #expect(final.samePublication(as: publication)); expectNoDifference(final.delivery.status, .delivered)
+        try await assertUnrelatedUntouched(f)
+    }
+
+    @Test(arguments: ["deny", "stop", "account", "connection-ABA", "binding-ABA", "persona-ABA",
+        "native-persona-ABA", "hidden-ABA", "model-ABA", "reasoning-ABA", "blob-corrupt", "blob-link"])
+    func incomingImageChannelReviewCannotReviveOrSubstituteCapturedBytes(action: String) async throws {
+        let f = try await fixture(mode: "image-channel", supportsImages: true)
+        defer { f.feed.finish(); try? FileManager.default.removeItem(at: f.root) }
+        await f.model.setAutoReviewEnabled(true)
+        await f.model.setAutoReviewRules(allow: ["SendMessage"], ask: [])
+        let (envelope, image) = try await incomingImage(f, type: "public.png")
+        f.feed.emit(envelope)
+        let pending = try await review(f)
+        f.model.selectRoute(.conversation(chatID))
+        let ci = try #require(f.model.conversations.firstIndex { $0.id == chatID }), original = f.model.conversations[ci]
+        let marker = f.root.appending(path: "unrelated-channel-image-marker"), markerBytes = Data("Do not replace this unrelated file".utf8)
+        if action.hasPrefix("blob-") {
+            let blob = f.root.appending(path: "channel-attachments").appending(path: String(image.metadata.id.prefix(2))).appending(path: image.metadata.id)
+            if action == "blob-corrupt" { try Data(repeating: 0, count: image.data.count).write(to: blob) }
+            else {
+                try markerBytes.write(to: marker)
+                try FileManager.default.moveItem(at: blob, to: f.root.appending(path: "original-channel-image"))
+                try FileManager.default.createSymbolicLink(at: blob, withDestinationURL: marker)
+            }
+        }
+        switch action {
+        case "stop": f.model.cancel()
+        case "account": await f.model.cancelAutoReviewApprovals(nextAccountID: "other")
+        case "connection-ABA":
+            try await f.service.setConnectionEnabled(id: f.connection.id, enabled: false)
+            try await f.service.setConnectionEnabled(id: f.connection.id, enabled: true)
+            await f.model.reconcileChannelInbound()
+        case "binding-ABA":
+            f.model.conversations[ci].agentBinding = nil; f.model.conversations[ci].agentBinding = original.agentBinding
+        case "persona-ABA":
+            let ai = try #require(f.model.agents.firstIndex { $0.id == f.owner.id })
+            f.model.agents[ai].instructions = "Retired channel image owner"; f.model.agents[ai].instructions = f.owner.instructions
+        case "native-persona-ABA":
+            var changed = f.owner; changed.instructions = "Retired native channel image owner"
+            #expect(await f.model.updateAgent(changed)); #expect(await f.model.updateAgent(f.owner))
+        case "hidden-ABA": f.model.conversations[ci].hiddenAt = date; f.model.conversations[ci].hiddenAt = original.hiddenAt
+        case "model-ABA": f.model.conversations[ci].modelID = "other-channel-image-model"; f.model.conversations[ci].modelID = original.modelID
+        case "reasoning-ABA":
+            f.model.conversations[ci].reasoningEffort = original.reasoningEffort == .high ? .low : .high
+            f.model.conversations[ci].reasoningEffort = original.reasoningEffort
+        default: break
+        }
+        f.model.handleTranscriptCardIntent(action == "deny" ? .rejectReview(reviewID: pending.id) : .approveReview(reviewID: pending.id))
+        _ = try await settle(f)
+        let queue = await f.service.deliveries(), sent = await f.probe.sent
+        expectNoDifference(queue, []); expectNoDifference(sent, [])
+        expectNoDifference(f.model.pendingAutoReviewApprovals, []); expectNoDifference(f.model.agentMessages, [])
+        if action == "blob-link" { expectNoDifference(try Data(contentsOf: marker), markerBytes) }
+        try await assertUnrelatedUntouched(f)
+    }
+
+    @Test
+    func incomingImageChannelReplyUsesCaptureAndRejectsTheSameIDInALaterEnvelope() async throws {
+        let gate = AppInboundImageReadGate()
+        let f = try await fixture(mode: "image-channel", supportsImages: true, imageReader: { await gate.read($0) })
+        defer { gate.open(Data()); f.feed.finish(); try? FileManager.default.removeItem(at: f.root) }
+        let (envelope, image) = try await incomingImage(f, type: "public.png")
+        gate.open(image.data); f.feed.emit(envelope)
+        let pending = try await review(f)
+        let blob = f.root.appending(path: "channel-attachments").appending(path: String(image.metadata.id.prefix(2))).appending(path: image.metadata.id)
+        try FileManager.default.moveItem(at: blob, to: f.root.appending(path: "original-captured-image"))
+        f.model.selectRoute(.conversation(chatID)); f.model.handleTranscriptCardIntent(.approveReview(reviewID: pending.id))
+        _ = try await settle(f)
+        let original = await f.service.deliveries(); expectNoDifference(original.count, 1)
+        expectNoDifference(try Data(contentsOf: blob), image.data); expectNoDifference(gate.reads, [image.metadata])
+        await f.model.registry.register(AppInboundProvider(probe: f.probe, peerID: f.peer.id, mode: "image-channel",
+            supportsImages: true, requestedImageIDs: [image.metadata.id]))
+        f.feed.emit(event(f, id: "later-image-channel-id-guess"))
+        try await eventually {
+            let runs = await f.service.inboundRuns()
+            return runs.count == 2 && runs.allSatisfy { $0.status == .completed } && !f.model.isConversationWorking(chatID)
+        }
+        let results = await f.probe.results, deliveries = await f.service.deliveries(), sent = await f.probe.sent
+        #expect(try #require(results.last { $0.callID == "incoming-image-channel-reply" }).isError)
+        expectNoDifference(deliveries, original); expectNoDifference(sent, [])
+        expectNoDifference(f.model.pendingAutoReviewApprovals, []); expectNoDifference(gate.reads, [image.metadata])
+        try await assertUnrelatedUntouched(f)
+    }
+
+    @Test
+    func incomingImageChannelReviewDisclosesUnsentImagesAndQueuesOnlyTheFirst() async throws {
+        let f = try await fixture(mode: "image-channel", supportsImages: true)
+        defer { f.feed.finish(); try? FileManager.default.removeItem(at: f.root) }
+        let (pngEnvelope, png) = try await incomingImage(f, type: "public.png")
+        let (_, jpeg) = try await incomingImage(f, type: "public.jpeg")
+        let images = [png, jpeg].sorted { $0.metadata.id < $1.metadata.id }
+        let envelope = ChannelEnvelope(connectionID: f.connection.id, externalEventID: "two-current-images",
+            address: pngEnvelope.address, senderID: pngEnvelope.senderID, senderDisplayName: pngEnvelope.senderDisplayName,
+            text: "Two untrusted current images",
+            timestamp: date, attachments: [pngEnvelope.attachments[0], .init(blobID: jpeg.metadata.id,
+                filename: jpeg.metadata.filename, mimeType: jpeg.metadata.mimeType, byteCount: jpeg.metadata.byteCount)])
+        f.feed.emit(envelope)
+        let pending = try await review(f)
+        let details = try #require(pending.action.context.metadata["agentMessage"])
+        #expect(details.contains(images[0].metadata.id) && details.contains(images[1].metadata.id))
+        #expect(details.contains(l10n("Only the first image is sent to the channel. The remaining images are not sent.")))
+        let before = try await storedPendingCard(pending, in: ConversationStore(fileURL: f.root.appending(path: "conversations.json")))
+        let card = try #require(before.messages.flatMap(\.transcriptCards).first {
+            guard case .autoReview(let value) = $0.payload else { return false }; return value.reviewID == pending.id
+        })
+        let preview = try #require(f.model.directChannelImageApproval(card: card, conversationID: chatID))
+        expectNoDifference(preview.data, images[0].data)
+        f.model.selectRoute(.conversation(chatID)); f.model.handleTranscriptCardIntent(.approveReview(reviewID: pending.id))
+        _ = try await settle(f)
+        let queue = await f.service.deliveries(), sent = await f.probe.sent
+        expectNoDifference(queue.count, 1); expectNoDifference(sent, [])
+        let delivery = try #require(queue.first)
+        expectNoDifference(delivery.outbound.attachments, [.init(blobID: images[0].metadata.id, filename: images[0].metadata.filename,
+            mimeType: images[0].metadata.mimeType, byteCount: images[0].metadata.byteCount)])
+        expectNoDifference(delivery.origin?.intent.sources, images.map { .init(imageID: $0.metadata.id) })
+        try await assertUnrelatedUntouched(f)
+    }
+
+    @Test(arguments: ["guessed", "file-path", "remote-url", "discarded-guessed"])
+    func incomingImageChannelReplyRejectsEveryUnadmittedIDBeforeReview(kind: String) async throws {
+        let f = try await fixture(mode: "image-channel", supportsImages: true)
+        defer { f.feed.finish(); try? FileManager.default.removeItem(at: f.root) }
+        let (envelope, image) = try await incomingImage(f, type: "public.png")
+        let invalid = kind == "file-path" ? "file:///never-read/private.png"
+            : kind == "remote-url" ? "https://never-fetch.invalid/private.png" : String(repeating: "a", count: 64)
+        await f.model.registry.register(AppInboundProvider(probe: f.probe, peerID: f.peer.id, mode: "image-channel",
+            supportsImages: true, requestedImageIDs: kind == "discarded-guessed" ? [image.metadata.id, invalid] : [invalid]))
+        f.feed.emit(envelope); _ = try await settle(f)
+        let results = await f.probe.results, queue = await f.service.deliveries(), sent = await f.probe.sent
+        #expect(try #require(results.first { $0.callID == "incoming-image-channel-reply" }).isError)
+        expectNoDifference(queue, []); expectNoDifference(sent, [])
+        expectNoDifference(f.model.pendingAutoReviewApprovals, [])
+        try await assertUnrelatedUntouched(f)
     }
 
     @Test(arguments: ["public.png", "public.jpeg"])
@@ -839,15 +1052,42 @@ private struct AppInboundTextPeerProvider: InteractiveToolProvider {
         try await assertUnrelatedUntouched(f)
     }
 
-    @Test(arguments: ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"])
-    func incomingImageReviewRendersActualPreviewInTheNativeDirectTranscript(language: String) async throws {
-        let f = try await fixture(mode: "image-peer", supportsImages: true)
+    // Each appearance retains its own live review and original one-minute
+    // deadline. All 28 native renders and exact pixel/OCR checks remain.
+    @Test(arguments: ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"],
+        [(320.0, false), (320.0, true), (560.0, false), (560.0, true)])
+    func incomingImageReviewRendersActualPreviewInTheNativeDirectTranscript(language: String, appearance: (Double, Bool)) async throws {
+        try await renderIncomingImageReview(language: language, channel: false, appearance: appearance)
+    }
+
+    @Test(arguments: ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"],
+        [(320.0, false), (320.0, true), (560.0, false), (560.0, true)])
+    func incomingChannelImageReviewRendersActualCapturedBytesAndDestination(language: String, appearance: (Double, Bool)) async throws {
+        try await renderIncomingImageReview(language: language, channel: true, appearance: appearance)
+    }
+
+    private func renderIncomingImageReview(language: String, channel: Bool, appearance: (Double, Bool)) async throws {
+        // The native proposal must be created in the selected language too;
+        // changing only the renderer would leave persisted review copy untested.
+        try await FiliconLocalization.$languageOverride.withValue(language) {
+            try await renderIncomingImageReviewFixture(language: language, channel: channel, appearance: appearance)
+        }
+    }
+
+    private func renderIncomingImageReviewFixture(language: String, channel: Bool, appearance: (Double, Bool)) async throws {
+        let (width, dark) = appearance
+        let f = try await fixture(mode: channel ? "image-channel" : "image-peer", supportsImages: true)
         defer { f.feed.finish(); try? FileManager.default.removeItem(at: f.root) }
+        let exactText = channel ? "exactcurrentimagechannelreply" : "exactcurrentimagepeertask"
+        let heading = channel ? "queuethismessagetoanexternalchannel" : "forwardtheseimagestotherecipientmodel"
         let (envelope, image) = try await incomingImage(f, type: "public.png")
         let source = try #require(CGImageSourceCreateWithData(image.data as CFData, nil))
         let original = try #require(CGImageSourceCreateImageAtIndex(source, 0, nil))
         f.feed.emit(envelope)
         let pending = try await review(f)
+        if channel {
+            #expect(pending.action.context.metadata["agentMessage"]?.contains(l10n("Queue this message to an external channel?")) == true)
+        }
         f.model.selectRoute(.conversation(chatID))
         let store = ConversationStore(fileURL: f.root.appending(path: "conversations.json"))
         let before = try await storedPendingCard(pending, in: store)
@@ -857,77 +1097,74 @@ private struct AppInboundTextPeerProvider: InteractiveToolProvider {
         } })
         let output = ProcessInfo.processInfo.environment["FILICON_UI_REVIEW_OUTPUT"].map { URL(fileURLWithPath: $0) }
         do {
-            for dark in [false, true] {
-                for width in [320.0, 560.0] {
-                    try await withUIAsyncRenderTurn(language: language) {
-                        let host = NSHostingView(rootView: TranscriptMessageView(message: message, conversation: before,
-                            onJumpToMessage: { _ in Issue.record("Image review rendering must not navigate") })
-                            .padding(16).frame(width: width).background(FiliconTheme.canvas)
-                            .environmentObject(f.model).environment(\.locale, Locale(identifier: language))
-                            .environment(\.colorScheme, dark ? .dark : .light))
-                        host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
-                        let window = NSWindow(contentRect: .init(x: 0, y: 0, width: width, height: 800),
-                            styleMask: [], backing: .buffered, defer: false)
-                        window.isReleasedWhenClosed = false
-                        defer { window.contentView = nil; window.close() }
-                        // Native window caching and ImageRenderer use different
-                        // color-managed outputs. Calibrate against the original
-                        // bytes through the same native window, then replace the
-                        // swatch with the actual async CAS-backed transcript.
-                        let swatch = NSHostingView(rootView: Image(decorative: original, scale: 1)
-                            .resizable().frame(width: 16, height: 16))
-                        swatch.appearance = host.appearance; window.contentView = swatch
-                        swatch.frame = .init(x: 0, y: 0, width: 16, height: 16)
-                        swatch.layoutSubtreeIfNeeded()
-                        let palette = try captureImageReview(swatch)
-                        let expected = try #require(palette.colorAt(x: palette.pixelsWide / 2,
-                            y: palette.pixelsHigh / 2)?.usingColorSpace(.sRGB))
-                        #expect(expected.redComponent - expected.greenComponent > 0.4)
-                        window.contentView = host
-                        var captured: NSBitmapImageRep?, imagePixels = 0, text = "", searchable = ""
-                        for _ in 0..<200 {
-                            let size = host.fittingSize
-                            expectNoDifference(size.width, width)
-                            #expect(size.height > 100 && size.height < 2_000)
-                            host.frame = .init(origin: .zero, size: size); host.layoutSubtreeIfNeeded()
-                            let bitmap = try captureImageReview(host)
-                            imagePixels = 0
-                            for y in stride(from: 0, to: bitmap.pixelsHigh, by: 8) {
-                                for x in stride(from: 0, to: bitmap.pixelsWide, by: 8) {
-                                    if let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB),
-                                       abs(color.redComponent - expected.redComponent) < 0.02,
-                                       abs(color.greenComponent - expected.greenComponent) < 0.02,
-                                       abs(color.blueComponent - expected.blueComponent) < 0.02 { imagePixels += 1 }
-                                }
-                            }
-                            captured = bitmap
-                            if imagePixels > 100 {
-                                // Async image arrival changes the bubble's
-                                // fitting size. Require the actual text pixels
-                                // too, not the first transient layout frame.
-                                let recognition = VNRecognizeTextRequest(); recognition.recognitionLevel = .accurate
-                                try VNImageRequestHandler(cgImage: try #require(bitmap.cgImage)).perform([recognition])
-                                text = recognition.results?.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ") ?? ""
-                                searchable = text.filter { $0.isLetter || $0.isNumber }.lowercased()
-                                if searchable.contains("remotedesign"), searchable.contains("exactcurrentimagepeertask"),
-                                   language != "en" || searchable.contains("forwardtheseimagestotherecipientmodel") { break }
-                            }
-                            try await Task.sleep(for: .milliseconds(5))
-                        }
-                        #expect(!window.isVisible)
-                        #expect(imagePixels > 100, "The actual magenta image, not just metadata or a spinner, must be visible")
-                        let bitmap = try #require(captured)
-                        if language == "en" {
-                            #expect(searchable.contains("forwardtheseimagestotherecipientmodel"), "The review heading must wrap, not truncate: \(text)")
-                        }
-                        #expect(searchable.contains("remotedesign"), "The reviewed filename must be visible: \(text)")
-                        #expect(searchable.contains("exactcurrentimagepeertask"), "The exact reviewed text must remain visible: \(text)")
-                        if let output {
-                            try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
-                            try #require(bitmap.representation(using: .png, properties: [:]))
-                                .write(to: output.appending(path: "incoming-image-review-\(language)-\(dark ? "dark" : "light")-\(Int(width)).png"))
+            try await withUIAsyncRenderTurn(language: language) {
+                let host = NSHostingView(rootView: TranscriptMessageView(message: message, conversation: before,
+                    onJumpToMessage: { _ in Issue.record("Image review rendering must not navigate") })
+                    .padding(16).frame(width: width).background(FiliconTheme.canvas)
+                    .environmentObject(f.model).environment(\.locale, Locale(identifier: language))
+                    .environment(\.colorScheme, dark ? .dark : .light))
+                host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+                let window = NSWindow(contentRect: .init(x: 0, y: 0, width: width, height: 800),
+                    styleMask: [], backing: .buffered, defer: false)
+                window.isReleasedWhenClosed = false
+                defer { window.contentView = nil; window.close() }
+                // Native window caching and ImageRenderer use different
+                // color-managed outputs. Calibrate against the original
+                // bytes through the same native window, then replace the
+                // swatch with the actual native transcript preview.
+                let swatch = NSHostingView(rootView: Image(decorative: original, scale: 1)
+                    .resizable().frame(width: 16, height: 16))
+                swatch.appearance = host.appearance; window.contentView = swatch
+                swatch.frame = .init(x: 0, y: 0, width: 16, height: 16)
+                swatch.layoutSubtreeIfNeeded()
+                let palette = try captureImageReview(swatch)
+                let expected = try #require(palette.colorAt(x: palette.pixelsWide / 2,
+                    y: palette.pixelsHigh / 2)?.usingColorSpace(.sRGB))
+                #expect(expected.redComponent - expected.greenComponent > 0.4)
+                window.contentView = host
+                var captured: NSBitmapImageRep?, imagePixels = 0, text = "", searchable = ""
+                for _ in 0..<200 {
+                    let size = host.fittingSize
+                    expectNoDifference(size.width, width)
+                    #expect(size.height > 100 && size.height < 2_000)
+                    host.frame = .init(origin: .zero, size: size); host.layoutSubtreeIfNeeded()
+                    let bitmap = try captureImageReview(host)
+                    imagePixels = 0
+                    for y in stride(from: 0, to: bitmap.pixelsHigh, by: 8) {
+                        for x in stride(from: 0, to: bitmap.pixelsWide, by: 8) {
+                            if let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB),
+                               abs(color.redComponent - expected.redComponent) < 0.02,
+                               abs(color.greenComponent - expected.greenComponent) < 0.02,
+                               abs(color.blueComponent - expected.blueComponent) < 0.02 { imagePixels += 1 }
                         }
                     }
+                    captured = bitmap
+                    if imagePixels > 100 {
+                        // Async image arrival changes the bubble's
+                        // fitting size. Require the actual text pixels
+                        // too, not the first transient layout frame.
+                        let recognition = VNRecognizeTextRequest(); recognition.recognitionLevel = .accurate
+                        try VNImageRequestHandler(cgImage: try #require(bitmap.cgImage)).perform([recognition])
+                        text = recognition.results?.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ") ?? ""
+                        searchable = text.filter { $0.isLetter || $0.isNumber }.lowercased()
+                        if searchable.contains("remotedesign"), searchable.contains(exactText),
+                           language != "en" || searchable.contains(heading) { break }
+                    }
+                    try await Task.sleep(for: .milliseconds(5))
+                }
+                #expect(!window.isVisible)
+                #expect(imagePixels > 100, "The actual magenta image, not just metadata or a spinner, must be visible")
+                let bitmap = try #require(captured)
+                if language == "en" {
+                    #expect(searchable.contains(heading), "The review heading must wrap, not truncate: \(text)")
+                }
+                #expect(searchable.contains("remotedesign"), "The reviewed filename must be visible: \(text)")
+                #expect(searchable.contains(exactText), "The exact reviewed text must remain visible: \(text)")
+                if channel { #expect(searchable.contains("slackcremotetremote"), "The full external destination must remain visible: \(text)") }
+                if let output {
+                    try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+                    try #require(bitmap.representation(using: .png, properties: [:]))
+                        .write(to: output.appending(path: "incoming-\(channel ? "channel-" : "")image-review-\(language)-\(dark ? "dark" : "light")-\(Int(width)).png"))
                 }
             }
             let after = try await store.conversation(id: chatID)
