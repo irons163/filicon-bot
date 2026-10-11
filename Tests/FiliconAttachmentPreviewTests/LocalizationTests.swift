@@ -3,11 +3,23 @@ import Foundation
 import SwiftUI
 import CustomDump
 import FiliconAutomations
+import FiliconAppServices
 import Testing
 @testable import Filicon
 
 @Suite("UI localization")
 struct LocalizationTests {
+    @Test(arguments: ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"])
+    func singleFrameGIFInputLimitsAndFailureAreLocalized(language: String) {
+        let hint = "PNG/JPEG or single-frame GIF · up to 4 images · 5 MB each · 12 MB total"
+        for key in [hint, AgentImageError.invalid.rawValue] {
+            let localized = FiliconLocalization.string(key, language: language)
+            expectNoDifference(localized == key, language == "en")
+            for format in ["PNG", "JPEG", "GIF"] { #expect(localized.contains(format)) }
+        }
+        let localized = FiliconLocalization.string(hint, language: language)
+        for limit in ["4", "5", "12"] { #expect(localized.contains(limit)) }
+    }
     @Test func agentModelSyncIsLocalized() {
         let labels = ["en": "Sync agent model", "zh-Hant": "同步代理人模型", "zh-Hans": "同步代理人模型",
             "fr": "Synchroniser le modèle de l’agent", "es": "Sincronizar el modelo del agente",

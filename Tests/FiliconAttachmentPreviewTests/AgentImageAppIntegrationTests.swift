@@ -35,7 +35,7 @@ private actor AppImageProbe {
 
 @Suite("Peer image app integration", .timeLimit(.minutes(1)))
 @MainActor struct AgentImageAppIntegrationTests {
-    private func imageData() throws -> Data {
+    private func imageData(gif: Bool = false) throws -> Data {
         let bitmap = try #require(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 240, pixelsHigh: 120,
             bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
             bytesPerRow: 0, bitsPerPixel: 0))
@@ -45,7 +45,7 @@ private actor AppImageProbe {
         for y in 0..<120 { for x in 0..<240 {
             bitmap.setColor(x < 80 ? blue : x < 160 ? yellow : teal, atX: x, y: y)
         } }
-        return try #require(bitmap.representation(using: .png, properties: [:]))
+        return try #require(bitmap.representation(using: gif ? .gif : .png, properties: [:]))
     }
     private func waitUntil(_ predicate: @MainActor () -> Bool) async throws {
         let deadline = ContinuousClock.now.advanced(by: .seconds(8))
@@ -485,9 +485,10 @@ private actor AppImageProbe {
         }
     }
 
-    @Test func actualImagePreviewAndDisclosureRenderInSevenLanguages() async throws {
-        let bytes = try imageData(), preview = try #require(NSImage(data: bytes))
-        let image = AttachmentMetadata(id: String(repeating: "abcd", count: 16), filename: "review-layout.png", mimeType: "image/png", byteCount: Int64(bytes.count), kind: .image)
+    @Test(arguments: [false, true])
+    func actualImagePreviewAndDisclosureRenderInSevenLanguages(gif: Bool) async throws {
+        let bytes = try imageData(gif: gif), preview = try #require(NSImage(data: bytes))
+        let image = AttachmentMetadata(id: String(repeating: "abcd", count: 16), filename: gif ? "review-layout.gif" : "review-layout.png", mimeType: gif ? "image/gif" : "image/png", byteCount: Int64(bytes.count), kind: .image)
         let output = ProcessInfo.processInfo.environment["FILICON_UI_REVIEW_OUTPUT"].map { URL(fileURLWithPath: $0) }
         let title = "Forward these images to the recipient model?"
         for language in ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"] {
@@ -498,7 +499,8 @@ private actor AppImageProbe {
                     Text("Reviewer → Designer").font(.callout)
                     Text(FiliconLocalization.string("Images will be sent to the selected recipient's configured model.")).font(.caption)
                     AgentMessageImagePreviewContent(image: image, preview: preview)
-                    Text(FiliconLocalization.string("PNG/JPEG only · up to 4 images · 5 MB each · 12 MB total")).font(.caption)
+                    Text(FiliconLocalization.string("PNG/JPEG or single-frame GIF · up to 4 images · 5 MB each · 12 MB total"))
+                        .font(.caption).fixedSize(horizontal: false, vertical: true)
                 }.padding(20).frame(width: 360).background(FiliconTheme.canvas)
                     .environment(\.locale, Locale(identifier: language)).environment(\.colorScheme, .light))
                 host.appearance = NSAppearance(named: .aqua)
@@ -510,7 +512,7 @@ private actor AppImageProbe {
                 let data = try #require(bitmap.representation(using: .png, properties: [:]))
                 if let output {
                     try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
-                    try data.write(to: output.appending(path: "peer-image-\(language).png"))
+                    try data.write(to: output.appending(path: "peer-image-\(language)\(gif ? "-gif" : "").png"))
                 }
             }
         }

@@ -303,8 +303,13 @@ private struct RecordedGroupChannelProvider: AIProvider {
         #expect(model.groupMessages[group.id, default: []].filter { $0.senderID != nil }.allSatisfy { $0.text.isEmpty })
     }
 
-    @Test(arguments: ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"], [340.0, 620.0])
-    func approvalCardRetainsWholePayload(language: String, width: Double) async throws {
+    // Keep the same 28 native renders and 60-second case limit, but give each
+    // appearance its own case: two long OCR passes can exhaust one case's
+    // deadline before MainActor cancellation gets a turn.
+    @Test(arguments: ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"],
+        [(340.0, false), (340.0, true), (620.0, false), (620.0, true)])
+    func approvalCardRetainsWholePayload(language: String, appearance: (Double, Bool)) async throws {
+        let (width, dark) = appearance
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-channel-card-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }
         let content = "BEGIN OUTGOING\n" + String(repeating: "Reviewed outgoing payload. ", count: 110) + "\nEND OUTGOING"
@@ -326,46 +331,44 @@ private struct RecordedGroupChannelProvider: AIProvider {
             let approval = try await pending(model)
             let details = try #require(approval.action.context.metadata["agentMessage"])
             #expect(details.contains(content))
-            for dark in [false, true] {
-                try await withUIRenderTurn(language: language) {
-                    let heading = l10n("Queue this message to an external channel?")
-                    let notice = l10n("Queued is not delivered. Stop does not recall a queued message.")
-                    if language != "en" {
-                        #expect(heading != "Queue this message to an external channel?")
-                        #expect(notice != "Queued is not delivered. Stop does not recall a queued message.")
-                    }
-                    #expect(details.contains(heading))
-                    #expect(details.contains(notice))
-                    #expect(!l10n("Channel").trimmingCharacters(in: .whitespaces).hasSuffix(":"))
-                    let host = NSHostingView(rootView: GroupToolApprovalPanel(groupID: groupID)
-                        .environmentObject(model).foregroundStyle(FiliconTheme.textPrimary).padding(16)
-                        .frame(width: width).background(FiliconTheme.canvas)
-                        .environment(\.locale, Locale(identifier: language))
-                        .environment(\.colorScheme, dark ? .dark : .light))
-                    host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
-                    let size = host.fittingSize
-                    // AppKit's fitting calculation can retain a subpixel
-                    // rounding residue even for a fixed-width SwiftUI frame.
-                    #expect(abs(size.width - CGFloat(width)) < 0.5)
-                    #expect(size.height > 400 && size.height < 5_000)
-                    host.frame = .init(origin: .zero, size: size)
-                    host.layoutSubtreeIfNeeded()
-                    let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
-                    host.cacheDisplay(in: host.bounds, to: bitmap)
-                    let recognition = VNRecognizeTextRequest()
-                    recognition.recognitionLevel = .accurate
-                    recognition.recognitionLanguages = ["en-US"]
-                    try VNImageRequestHandler(cgImage: try #require(bitmap.cgImage)).perform([recognition])
-                    let visible = (recognition.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
-                    #expect(visible.contains("BEGIN OUTGOING"))
-                    #expect(visible.contains("END OUTGOING"))
-                    #expect(visible.contains("C_FIXTURE"))
-                    if let path = ProcessInfo.processInfo.environment["FILICON_UI_REVIEW_OUTPUT"] {
-                        let directory = URL(fileURLWithPath: path)
-                        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-                        try #require(bitmap.representation(using: .png, properties: [:]))
-                            .write(to: directory.appending(path: "channel-message-\(language)-\(Int(width))-\(dark ? "dark" : "light").png"))
-                    }
+            try await withUIRenderTurn(language: language) {
+                let heading = l10n("Queue this message to an external channel?")
+                let notice = l10n("Queued is not delivered. Stop does not recall a queued message.")
+                if language != "en" {
+                    #expect(heading != "Queue this message to an external channel?")
+                    #expect(notice != "Queued is not delivered. Stop does not recall a queued message.")
+                }
+                #expect(details.contains(heading))
+                #expect(details.contains(notice))
+                #expect(!l10n("Channel").trimmingCharacters(in: .whitespaces).hasSuffix(":"))
+                let host = NSHostingView(rootView: GroupToolApprovalPanel(groupID: groupID)
+                    .environmentObject(model).foregroundStyle(FiliconTheme.textPrimary).padding(16)
+                    .frame(width: width).background(FiliconTheme.canvas)
+                    .environment(\.locale, Locale(identifier: language))
+                    .environment(\.colorScheme, dark ? .dark : .light))
+                host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+                let size = host.fittingSize
+                // AppKit's fitting calculation can retain a subpixel
+                // rounding residue even for a fixed-width SwiftUI frame.
+                #expect(abs(size.width - CGFloat(width)) < 0.5)
+                #expect(size.height > 400 && size.height < 5_000)
+                host.frame = .init(origin: .zero, size: size)
+                host.layoutSubtreeIfNeeded()
+                let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                host.cacheDisplay(in: host.bounds, to: bitmap)
+                let recognition = VNRecognizeTextRequest()
+                recognition.recognitionLevel = .accurate
+                recognition.recognitionLanguages = ["en-US"]
+                try VNImageRequestHandler(cgImage: try #require(bitmap.cgImage)).perform([recognition])
+                let visible = (recognition.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
+                #expect(visible.contains("BEGIN OUTGOING"))
+                #expect(visible.contains("END OUTGOING"))
+                #expect(visible.contains("C_FIXTURE"))
+                if let path = ProcessInfo.processInfo.environment["FILICON_UI_REVIEW_OUTPUT"] {
+                    let directory = URL(fileURLWithPath: path)
+                    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                    try #require(bitmap.representation(using: .png, properties: [:]))
+                        .write(to: directory.appending(path: "channel-message-\(language)-\(Int(width))-\(dark ? "dark" : "light").png"))
                 }
             }
             await model.resolveGroupApproval(approval, groupID: groupID, approve: false)

@@ -213,7 +213,8 @@ This remains narrower than the reference's full background session runtime:
 contexts are origin-isolated, not a unified personal DM/group memory service.
 Generic direct chats are not bound to agent profiles and retain conversation-only
 serialization. There is no cross-process coordination. Peer images follow the
-narrower rules below; group and SendMessage image payloads remain unsupported.
+narrower rules below; current-image group and SendMessage flows use their own
+fresh preview reviews, not a broader image broadcast grant.
 Group targets and priority interruption follow the narrower rules above.
 An uncooperative operation keeps its lane
 until it unwinds; this is not a promise of immediate remote backend cancellation.
@@ -222,7 +223,7 @@ See [the itemized audit](Agent-collaboration-parity.md).
 
 ### Bounded peer image messages
 
-Agents → Messages → Attach images imports user-selected, single-frame PNG/JPEG
+Agents → Messages → Attach images imports user-selected, single-frame PNG/JPEG/GIF
 files and shows the exact previews before Send. Limits are four images, 5 MiB per
 image, 12 MiB total, 8,192 pixels per dimension and 16 million pixels per image.
 The UI uses familiar MB labels for these binary limits. Bytes are decoded,
@@ -245,8 +246,19 @@ continue the send. Reused call IDs and changed image lists cannot send twice.
 Arbitrary file paths, remote URLs, base64 and old/private-message IDs are rejected.
 No URLs are fetched. Durable mailboxes retain metadata/bytes across restart,
 without restarting unfinished work or replaying image bytes into later history.
-Group targets and `SendMessage` reject image fields instead of dropping them.
+Group-target image broadcasts remain unsupported. `SendMessage` can publish the
+current incoming image IDs after a separate exact destination/text/image review.
 This is partial parity, not the reference's broader image source/publishing API.
+
+Current admitted channel GIFs also use the existing immutable owner-only input,
+single-peer delegation and reviewed channel reply paths. Animated GIFs are
+rejected by these bounded inputs. GIF logical-screen dimensions and decoded
+frame dimensions are both bounded before full decode; ImageIO can otherwise
+report only a smaller frame for an oversized screen. Gemini alone converts its
+transient GIF inference bytes to PNG, preserving the canonical original and all
+publication/consent identities. Other provider wire shapes are unchanged.
+See [the scoped GIF validation](Static-GIF-input-validation.md); actual remote
+accounts/models and other media formats or hosts are separate acceptance work.
 
 Group turns and manual/peer mailbox wakes now also receive scoped `CreateAgent`,
 `UpdateAgent` and `update_state` profile tools. Every change requires explicit approval of the complete

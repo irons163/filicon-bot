@@ -3512,7 +3512,7 @@ final class AppModel: ObservableObject {
                     directPublicationIDs[assistantID] = []
                     let imageSource = routine == nil ? requestMessages.last(where: { $0.role == .user }) : nil
                     let images = imageSource?.attachments.filter {
-                        $0.kind == .image && ["image/png", "image/jpeg"].contains($0.mimeType)
+                        $0.kind == .image && ExternalChannelImagePolicy.supportedMIMETypes.contains($0.mimeType)
                     } ?? []
                     // Ephemeral host wakes are inference data, not saved
                     // reference targets. In particular, a failure notice may
@@ -4155,7 +4155,9 @@ final class AppModel: ObservableObject {
 
     private func prepareDirectDelegationImages(source: ChatMessage, conversationID: UUID,
                                                account: String, generation: UInt64) async throws -> [AttachmentMetadata] {
-        let images = source.attachments.filter { $0.kind == .image && ["image/png", "image/jpeg"].contains($0.mimeType) }
+        let images = source.attachments.filter {
+            $0.kind == .image && ExternalChannelImagePolicy.supportedMIMETypes.contains($0.mimeType)
+        }
         try await validateDirectPublicationImages(images, source: source, conversationID: conversationID,
             account: account, generation: generation)
         let owner = AttachmentReferenceOwner(conversationID: conversationID, messageID: source.id)

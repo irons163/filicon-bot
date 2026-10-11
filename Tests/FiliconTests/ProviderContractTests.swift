@@ -1,4 +1,6 @@
 import Foundation
+import CoreGraphics
+import ImageIO
 import Testing
 import CustomDump
 @testable import FiliconDomain
@@ -29,6 +31,29 @@ private func contractSession() -> URLSession {
     let configuration = URLSessionConfiguration.ephemeral
     configuration.protocolClasses = [ContractURLProtocol.self]
     return URLSession(configuration: configuration)
+}
+
+private func contractImageBytes(type: String, frames: Int = 1) throws -> Data {
+    let context = try #require(CGContext(data: nil, width: 2, height: 2, bitsPerComponent: 8,
+        bytesPerRow: 8, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue))
+    let bytes = NSMutableData()
+    let destination = try #require(CGImageDestinationCreateWithData(bytes, type as CFString, frames, nil))
+    for i in 0..<frames {
+        context.setFillColor(CGColor(red: 1, green: i == 0 ? 0 : 1, blue: 0.5, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: 2, height: 2))
+        CGImageDestinationAddImage(destination, try #require(context.makeImage()), nil)
+    }
+    try #require(CGImageDestinationFinalize(destination))
+    return bytes as Data
+}
+
+private func contractImagePixels(_ bytes: Data) throws -> Data {
+    let source = try #require(CGImageSourceCreateWithData(bytes as CFData, nil))
+    let image = try #require(CGImageSourceCreateImageAtIndex(source, 0, nil))
+    let context = try #require(CGContext(data: nil, width: image.width, height: image.height, bitsPerComponent: 8,
+        bytesPerRow: image.width * 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue))
+    context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+    return Data(bytes: try #require(context.data), count: image.width * image.height * 4)
 }
 
 private func jsonBody(_ request: URLRequest) throws -> [String: Any] {
@@ -220,19 +245,25 @@ struct ProviderContractTests {
         #expect(try await collect(OllamaProvider(session: contractSession()), messages: [system, user]).contains(.completed(.stop)))
     }
 
-    @Test func imageAttachmentsUseEachProvidersNativeWireShape() async throws {
-        let metadata = AttachmentMetadata(id: String(repeating: "a", count: 64), filename: "pixel.png", mimeType: "image/png", byteCount: 3, kind: .image)
-        let message = ChatMessage(role: .user, text: "inspect", attachments: [metadata])
+    @Test(arguments: ["public.png", "public.jpeg", "com.compuserve.gif"])
+    func imageAttachmentsUseEachProvidersNativeWireShape(type: String) async throws {
+        let bytes = try contractImageBytes(type: type), mime = try AgentImageStore.validate(bytes)
+        let file = try PreparedAgentPublicationFile(bytes: bytes, filename: "pixel.bin")
+        let date = Date(timeIntervalSince1970: 0)
+        let metadata = AttachmentMetadata(id: file.digest, filename: file.filename, mimeType: mime,
+            byteCount: Int64(bytes.count), kind: .image, createdAt: date)
+        let message = ChatMessage(id: UUID(uuidString: "47000000-0000-0000-0000-000000000001")!,
+            role: .user, text: "inspect", createdAt: date, attachments: [metadata])
         let request = InferenceRequest(
-            conversationID: UUID(), modelID: "fixture", messages: [message],
-            attachmentsByMessageID: [message.id: [.init(metadata: metadata, data: Data([1, 2, 3]))]]
+            conversationID: UUID(uuidString: "47000000-0000-0000-0000-000000000002")!, modelID: "fixture", messages: [message],
+            attachmentsByMessageID: [message.id: [.init(metadata: metadata, data: bytes)]]
         )
-        let encoded = Data([1, 2, 3]).base64EncodedString()
+        let encoded = bytes.base64EncodedString(), dataURL = "data:\(mime);base64,\(encoded)"
 
         ContractURLProtocol.handler = { request in
             let body = try jsonBody(request), input = try #require(body["input"] as? [[String: Any]])
             let content = try #require(input[0]["content"] as? [[String: Any]])
-            #expect(content.contains { $0["type"] as? String == "input_image" && ($0["image_url"] as? String)?.hasSuffix(encoded) == true })
+            #expect(content.contains { $0["type"] as? String == "input_image" && $0["image_url"] as? String == dataURL })
             return (200, Data("data: {\"type\":\"response.completed\",\"response\":{\"usage\":{}}}\n\ndata: [DONE]\n\n".utf8))
         }
         _ = try await collect(OpenAIProvider(credential: { "key" }, session: contractSession()), request: request)
@@ -242,6 +273,7 @@ struct ProviderContractTests {
             let content = try #require(messages[0]["content"] as? [[String: Any]])
             let image = try #require(content.first { $0["type"] as? String == "image" })
             #expect((image["source"] as? [String: Any])?["data"] as? String == encoded)
+            #expect((image["source"] as? [String: Any])?["media_type"] as? String == mime)
             return (200, Data("data: {\"type\":\"message_stop\"}\n\n".utf8))
         }
         _ = try await collect(AnthropicProvider(credential: { "key" }, session: contractSession()), request: request)
@@ -249,7 +281,14 @@ struct ProviderContractTests {
         ContractURLProtocol.handler = { request in
             let body = try jsonBody(request), contents = try #require(body["contents"] as? [[String: Any]])
             let parts = try #require(contents[0]["parts"] as? [[String: Any]])
-            #expect((parts.last?["inlineData"] as? [String: Any])?["data"] as? String == encoded)
+            let inline = try #require(parts.last?["inlineData"] as? [String: Any])
+            let encodedImage = try #require(inline["data"] as? String)
+            let sent = try #require(Data(base64Encoded: encodedImage))
+            expectNoDifference(inline["mimeType"] as? String, mime == "image/gif" ? "image/png" : mime)
+            if mime == "image/gif" {
+                expectNoDifference(try AgentImageStore.validate(sent), "image/png")
+                expectNoDifference(try contractImagePixels(sent), try contractImagePixels(bytes))
+            } else { expectNoDifference(sent, bytes) }
             return (200, Data("data: {\"candidates\":[{\"finishReason\":\"STOP\"}]}\n\n".utf8))
         }
         _ = try await collect(GeminiProvider(credential: { "key" }, session: contractSession()), request: request)
@@ -265,10 +304,52 @@ struct ProviderContractTests {
             let body = try jsonBody(request), messages = try #require(body["messages"] as? [[String: Any]])
             let content = try #require(messages[0]["content"] as? [[String: Any]])
             let image = try #require(content.first { $0["type"] as? String == "image_url" })
-            #expect(((image["image_url"] as? [String: Any])?["url"] as? String)?.hasSuffix(encoded) == true)
+            #expect((image["image_url"] as? [String: Any])?["url"] as? String == dataURL)
             return (200, Data("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n".utf8))
         }
         _ = try await collect(OpenRouterProvider(credential: { "key" }, session: contractSession()), request: request)
+        expectNoDifference(request.messages, [message])
+        expectNoDifference(request.attachmentsByMessageID, [message.id: [.init(metadata: metadata, data: bytes)]])
+    }
+
+    @Test(arguments: ["animated", "truncated", "wrong-type", "size", "wide", "tall", "pixels", "zero-width", "zero-height", "aggregate"])
+    func geminiGIFConversionFailsBeforeInferenceHTTPForInvalidOrOverBudgetImages(fault: String) async throws {
+        var bytes = try contractImageBytes(type: fault == "wrong-type" ? "public.png" : "com.compuserve.gif",
+            frames: fault == "animated" ? 2 : 1)
+        switch fault {
+        case "truncated": bytes = Data(bytes.prefix(30))
+        case "wide": bytes.replaceSubrange(6..<8, with: [0x01, 0x20])
+        case "tall": bytes.replaceSubrange(8..<10, with: [0x01, 0x20])
+        case "pixels": bytes.replaceSubrange(6..<10, with: [0xa1, 0x0f, 0xa0, 0x0f])
+        case "zero-width": bytes.replaceSubrange(6..<8, with: [0, 0])
+        case "zero-height": bytes.replaceSubrange(8..<10, with: [0, 0])
+        default: break
+        }
+        let date = Date(timeIntervalSince1970: 0)
+        let metadata = AttachmentMetadata(id: String(repeating: "a", count: 64), filename: "invalid.gif", mimeType: "image/gif",
+            byteCount: Int64(bytes.count) + (fault == "size" ? 1 : 0), kind: .image, createdAt: date)
+        var images: [InferenceAttachment] = [.init(metadata: metadata, data: bytes)]
+        if fault == "aggregate" {
+            images.insert(contentsOf: (0..<3).map { i in
+                .init(metadata: .init(id: String(repeating: String(i), count: 64), filename: "large-\(i).png", mimeType: "image/png",
+                    byteCount: 4 * 1_024 * 1_024, kind: .image, createdAt: date), data: Data(count: 4 * 1_024 * 1_024))
+            }, at: 0)
+        }
+        let message = ChatMessage(id: UUID(uuidString: "47000000-0000-0000-0000-000000000003")!,
+            role: .user, text: "inspect", createdAt: date, attachments: images.map(\.metadata))
+        let request = InferenceRequest(conversationID: UUID(uuidString: "47000000-0000-0000-0000-000000000002")!,
+            modelID: "fixture", messages: [message], attachmentsByMessageID: [message.id: images])
+        ContractURLProtocol.handler = { request in
+            if request.httpMethod == "GET" {
+                expectNoDifference(request.url?.path, "/v1beta/models")
+                return (503, Data()) // Offline catalog fallback, never an image inference.
+            }
+            Issue.record("Invalid GIF must not start a provider inference HTTP request")
+            throw ProviderError.invalidResponse
+        }
+        await #expect(throws: ProviderError.unsupportedAttachment(metadata.filename)) {
+            _ = try await collect(GeminiProvider(credential: { "fixture-key" }, session: contractSession()), request: request)
+        }
     }
 
     @Test func geminiMapsLengthRefusalAndTruncatedEOF() async throws {

@@ -60,14 +60,28 @@ private struct DirectImageProvider: AIProvider {
 @MainActor struct DirectImagePublicationTests {
     @Test(arguments: ["approve", "deny", "corrupt", "unknown", "stop", "account", "save-temp", "save-reserve", "save-commit"], [false, true])
     func publicationRequiresCurrentImageApprovalAndDurableReachability(mode: String, standalone: Bool) async throws {
+        try await assertPublication(mode: mode, standalone: standalone, gif: false)
+    }
+
+    @Test(arguments: ["approve", "deny", "corrupt", "unknown", "stop", "account", "save-temp", "save-reserve", "save-commit"], [false, true])
+    func singleFrameGIFDirectPublicationRequiresCurrentApprovalAndDurableReachability(mode: String, standalone: Bool) async throws {
+        try await assertPublication(mode: mode, standalone: standalone, gif: true)
+    }
+
+    private func assertPublication(mode: String, standalone: Bool, gif: Bool) async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-direct-image-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
         let bitmap = try #require(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 2, pixelsHigh: 2,
             bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
             bytesPerRow: 0, bitsPerPixel: 0))
-        let bytes = try #require(bitmap.representation(using: .png, properties: [:]))
+        for y in 0..<2 { for x in 0..<2 {
+            bitmap.setColor(x == y ? NSColor(deviceRed: 0.2, green: 0.4, blue: 0.8, alpha: 1)
+                : NSColor(deviceRed: 1, green: 0.5, blue: 0, alpha: 1), atX: x, y: y)
+        } }
+        let bytes = try #require(bitmap.representation(using: gif ? .gif : .png, properties: [:]))
+        let filename = gif ? "sample.gif" : "sample.png"
         let storage = AttachmentStore(rootURL: root.appending(path: "attachments"))
-        let image = try await storage.ingest(data: bytes, filename: "sample.png", declaredMIMEType: "image/png")
+        let image = try await storage.ingest(data: bytes, filename: filename, declaredMIMEType: gif ? "image/gif" : "image/png")
         let point: StorageQuotaFaultPoint? = mode == "save-temp" ? .afterTemporaryWriteBeforeRename : mode == "save-reserve" ? .afterReservationPersist : mode == "save-commit" ? .afterCommitPersist : nil
         let fault = point.map(DirectImageSaveFault.init)
         let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false, quotaFaultInjector: { try fault?.inject($0) })
@@ -91,7 +105,7 @@ private struct DirectImageProvider: AIProvider {
             let visibleApproval = try #require(model.conversations[ci].messages.flatMap(\.transcriptCards).compactMap { card -> AutoReviewTranscriptCard? in
                 if case .autoReview(let value) = card.payload { return value }; return nil
             }.last)
-            #expect(visibleApproval.findings.contains("sample.png — Selected image"))
+            #expect(visibleApproval.findings.contains("\(filename) — Selected image"))
             if !standalone { #expect(visibleApproval.findings.contains("Here it is")) }
             #expect(model.conversations[ci].messages.allSatisfy { $0.role != .assistant || $0.attachments.isEmpty })
             if mode == "corrupt" {

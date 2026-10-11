@@ -194,7 +194,7 @@ public actor AgentChannelPublicationTransaction {
         self.supportsRemoteSources = supportsAttachments && supportsRemoteSources
         self.availableHostImages = supportsAttachments && !availableHostImages.isEmpty
             && availableHostImages.count <= 4 && Set(availableHostImages.map(\.id)).count == availableHostImages.count
-            && availableHostImages.allSatisfy({ ["image/png", "image/jpeg"].contains($0.mimeType) })
+            && availableHostImages.allSatisfy({ ExternalChannelImagePolicy.supportedMIMETypes.contains($0.mimeType) })
             && (try? AgentImageStore.validatePublishedGalleryMetadata(availableHostImages)) != nil ? availableHostImages : []
         self.prepare = supportsAttachments ? prepare : nil; self.install = supportsAttachments ? install : nil
         self.makeID = makeID; self.now = now

@@ -33,14 +33,14 @@ quote styling is a native approximation, not a pixel-identical web renderer.
 
 Agent collaboration is still partial parity with the unofficial reconstruction;
 see [the itemized audit](docs/Agent-collaboration-parity.md). **Agents → Messages →
-Attach images…** sends user-selected PNG/JPEG images to a single agent whose
+Attach images…** sends user-selected PNG/JPEG or single-frame GIF images to a single agent whose
 configured model supports image input. Agents may forward only images from the
 current incoming peer message, after a new preview approval. `SendMessage` can
 publish those same incoming image IDs and a text report to the user after a
 separate preview approval. Published images remain visible in the mailbox after
 Stop, failure, or restart; this does not message another agent.
 
-The **group composer → Attach images…** also accepts PNG/JPEG (up to four,
+The **group composer → Attach images…** also accepts PNG/JPEG or single-frame GIF (up to four,
 5 MB each, 12 MB total), with removable previews. Images are saved in that group
 and sent to the configured models of this turn's responding members; `@mentions`
 limit the recipients. Every addressed model must support images before the user
@@ -58,6 +58,13 @@ reply survives Stop, later inference failure and restart; it does not add
 responders or automatically resend images to other models. Group-target image
 broadcasts, arbitrary paths, URLs and generated images remain unsupported.
 Imported blobs are not yet automatically cleaned up when removed from a draft.
+
+These bounded image inputs reject animated GIFs. Gemini converts only its
+transient GIF inference payload to PNG; saved images, previews and reviewed
+peer/channel publications retain the original bytes. Current admitted channel
+GIFs use the same owner-only input and fresh forwarding/publication reviews as
+PNG/JPEG. See [the scoped format validation](docs/Static-GIF-input-validation.md);
+offline contract checks do not establish live model or external-account compatibility.
 
 In **normal group chats**, `SendMessage(type:"widget", widget:...)` can now ask
 one choice question with 1–6 options, optional help/option descriptions, and an

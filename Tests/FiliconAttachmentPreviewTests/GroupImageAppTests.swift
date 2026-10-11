@@ -57,7 +57,7 @@ private struct GroupImageProvider: AIProvider {
         let bytes: Data
         let probe: GroupImageProbe
     }
-    private func fixture(textOnlyDesigner: Bool = false, gate: GroupImageGate? = nil) async throws -> Fixture {
+    private func fixture(textOnlyDesigner: Bool = false, gate: GroupImageGate? = nil, gif: Bool = false) async throws -> Fixture {
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-group-image-\(UUID())")
         let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false)
         let engineer = try #require(await model.createAgent(name: "Engineer", summary: "", instructions: "", providerID: "group-image-fixture", modelID: "vision"))
@@ -70,8 +70,8 @@ private struct GroupImageProvider: AIProvider {
         let blue = NSColor(deviceRed: 0.2, green: 0.45, blue: 0.85, alpha: 1)
         let yellow = NSColor(deviceRed: 0.95, green: 0.78, blue: 0.3, alpha: 1)
         for y in 0..<12 { for x in 0..<24 { bitmap.setColor(x < 12 ? blue : yellow, atX: x, y: y) } }
-        let bytes = try #require(bitmap.representation(using: .png, properties: [:]))
-        let file = root.appending(path: "layout.png")
+        let bytes = try #require(bitmap.representation(using: gif ? .gif : .png, properties: [:]))
+        let file = root.appending(path: gif ? "layout.gif" : "layout.png")
         try bytes.write(to: file)
         let images = try await model.importAgentMessageImages([file])
         let probe = GroupImageProbe()
@@ -79,9 +79,9 @@ private struct GroupImageProvider: AIProvider {
         return .init(root: root, model: model, group: group, engineer: engineer, designer: designer, images: images, bytes: bytes, probe: probe)
     }
 
-    @Test(arguments: ["", "Review this layout", "@Engineer review", "@everyone review"])
-    func sendsActualBytesToRequestedMembersAndPersists(text: String) async throws {
-        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+    @Test(arguments: ["", "Review this layout", "@Engineer review", "@everyone review"], [false, true])
+    func sendsActualBytesToRequestedMembersAndPersists(text: String, gif: Bool) async throws {
+        let f = try await fixture(gif: gif); defer { try? FileManager.default.removeItem(at: f.root) }
         var posted = 0
         await f.model.sendGroupMessage(groupID: f.group.id, text: text, images: f.images) { posted += 1 }
         expectNoDifference(posted, 1)

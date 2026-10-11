@@ -4,7 +4,7 @@ import Darwin
 import FiliconDomain
 
 public enum AgentImageError: String, LocalizedError, Sendable {
-    case invalid = "Choose a valid, single-frame PNG or JPEG image."
+    case invalid = "Choose a valid, single-frame PNG, JPEG or GIF image."
     case limit = "Use at most 4 images, 5 MB each and 12 MB total."
     case galleryLimit = "Use images up to 5 MB each and 12 MB total."
     case galleryInvalid = "Choose a valid PNG, JPEG, GIF, WebP, TIFF, BMP, AVIF, ICO, HEIC, HEIF or supported self-contained SVG image within the decoding limits."
@@ -144,13 +144,19 @@ public actor AgentImageStore {
     public static func validate(_ data: Data) throws -> String {
         guard !data.isEmpty, data.count <= maximumBytes else { throw AgentImageError.limit }
         guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              CGImageSourceGetStatus(source) == .statusComplete,
               CGImageSourceGetCount(source) == 1,
-              let type = CGImageSourceGetType(source) as String?, ["public.png", "public.jpeg"].contains(type),
+              let type = CGImageSourceGetType(source) as String?,
+              let mime = ["public.png": "image/png", "public.jpeg": "image/jpeg", "com.compuserve.gif": "image/gif"][type],
+              type != "com.compuserve.gif" || ExternalChannelImagePolicy.hasBoundedGIFLogicalScreen(data),
               let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
               let width = (properties[kCGImagePropertyPixelWidth] as? NSNumber)?.intValue,
               let height = (properties[kCGImagePropertyPixelHeight] as? NSNumber)?.intValue,
-              width > 0, height > 0, width <= 8_192, height <= 8_192, width * height <= 16_000_000,
-              CGImageSourceCreateImageAtIndex(source, 0, nil) != nil else { throw AgentImageError.invalid }
-        return type == "public.png" ? "image/png" : "image/jpeg"
+              width > 0, height > 0, width <= ExternalChannelImagePolicy.maximumImageDimension,
+              height <= ExternalChannelImagePolicy.maximumImageDimension,
+              width * height <= ExternalChannelImagePolicy.maximumImagePixels,
+              CGImageSourceCreateImageAtIndex(source, 0, nil) != nil,
+              CGImageSourceGetStatusAtIndex(source, 0) == .statusComplete else { throw AgentImageError.invalid }
+        return mime
     }
 }

@@ -24,7 +24,7 @@ public struct ExternalChannelTranscriptPublication: Codable, Hashable, Sendable 
             return imageID.map(Self.isDigest) ?? false
         }
         public func matchesCapturedFile(digest: String, mimeType: String) -> Bool {
-            imageID.map { $0 == digest && ["image/png", "image/jpeg"].contains(mimeType) } ?? true
+            imageID.map { $0 == digest && ExternalChannelImagePolicy.supportedMIMETypes.contains(mimeType) } ?? true
         }
         private static func isDigest(_ value: String) -> Bool {
             value.utf8.count == 64 && value.utf8.allSatisfy { (48...57).contains($0) || (97...102).contains($0) }

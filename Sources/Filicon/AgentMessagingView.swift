@@ -152,8 +152,9 @@ struct AgentMessagingView: View {
                 Button(l10n("Attach images…"), systemImage: "photo.on.rectangle") { Task { await attachImagesButtonTapped() } }
                     .disabled(importing || sending)
                 if importing { ProgressView().controlSize(.small) }
-                Text(l10n("PNG/JPEG only · up to 4 images · 5 MB each · 12 MB total"))
+                Text(l10n("PNG/JPEG or single-frame GIF · up to 4 images · 5 MB each · 12 MB total"))
                     .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             if !images.isEmpty {
                 Text(l10n("Images will be sent to the selected recipient's configured model."))
@@ -340,7 +341,7 @@ struct AgentMessagingView: View {
         defer { importing = false }
         let accountScope = model.settings.accountScope
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.png, .jpeg]
+        panel.allowedContentTypes = [.png, .jpeg, .gif]
         panel.allowsMultipleSelection = true; panel.canChooseDirectories = false
         guard await panel.begin() == .OK, accountScope == model.settings.accountScope else { return }
         do { images = try await model.importAgentMessageImages(panel.urls); feedback = nil }

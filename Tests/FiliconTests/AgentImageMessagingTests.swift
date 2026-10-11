@@ -1346,14 +1346,15 @@ struct AgentImageMessagingTests {
         expectNoDifference(restored, room)
     }
 
-    @Test(arguments: ["public.png", "public.jpeg"])
+    @Test(arguments: ["public.png", "public.jpeg", "com.compuserve.gif"])
     func bytesNotExtensionDetermineImageTypeAndSurviveRestart(type: String) async throws {
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
         let bytes = try peerImageBytes(type: type)
         let file = f.root.appending(path: "not-an-image.txt")
         try bytes.write(to: file)
         let metadata = try await f.store.importImage(fileURL: file)
-        expectNoDifference(metadata.mimeType, type == "public.png" ? "image/png" : "image/jpeg")
+        expectNoDifference(metadata.mimeType,
+            try #require(["public.png": "image/png", "public.jpeg": "image/jpeg", "com.compuserve.gif": "image/gif"][type]))
         let restored = AgentImageStore(rootURL: f.root.appending(path: "images"))
         let loaded = try await restored.load([metadata])
         expectNoDifference(loaded.map(\.data), [bytes])

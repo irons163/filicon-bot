@@ -70,9 +70,10 @@ struct ChannelInboundImageInputTests {
                 channelID: "C_IMAGE", threadID: "T_IMAGE", senderID: "U_REMOTE", senderName: "Remote human", receivedAt: date))
     }
 
-    @Test(arguments: ["public.png", "public.jpeg"], ["", "Remote image data"])
+    @Test(arguments: ["public.png", "public.jpeg", "com.compuserve.gif"], ["", "Remote image data"])
     func admittedCaptureHasExactBytesAndSeparateUntrustedTransport(type: String, text: String) async throws {
-        let bytes = try image(type: type), mime = type == "public.png" ? "image/png" : "image/jpeg"
+        let bytes = try image(type: type)
+        let mime = try #require(["public.png": "image/png", "public.jpeg": "image/jpeg", "com.compuserve.gif": "image/gif"][type])
         let attachment = try metadata(bytes, mime: mime), envelope = envelope([attachment], text: text)
         let admission = try await admission(envelope), probe = InboundImageReadProbe()
         let capture = try await ChannelInboundImageInput.capture(admission: admission, transportMessageID: transportID,
@@ -94,12 +95,12 @@ struct ChannelInboundImageInputTests {
         #expect(throws: CancellationError.self) { _ = try capture.inferenceMessage(for: forged, at: date) }
     }
 
-    @Test(arguments: ["count", "duplicate", "nonimage", "animated-type", "uppercase", "bad-id", "name", "zero", "negative", "individual", "total", "overflow"])
+    @Test(arguments: ["count", "duplicate", "nonimage", "unsupported-type", "uppercase", "bad-id", "name", "zero", "negative", "individual", "total", "overflow"])
     func malformedBatchFailsBeforeAnyBlobRead(fault: String) async throws {
         let bytes = try image(), original = try metadata(bytes)
         let altered = ChannelAttachment(blobID: fault == "uppercase" ? original.blobID.uppercased() : fault == "bad-id" ? "../private" : original.blobID,
             filename: fault == "name" ? "../private.png" : original.filename,
-            mimeType: fault == "nonimage" ? "application/pdf" : fault == "animated-type" ? "image/gif" : original.mimeType,
+            mimeType: fault == "nonimage" ? "application/pdf" : fault == "unsupported-type" ? "image/webp" : original.mimeType,
             byteCount: fault == "zero" ? 0 : fault == "negative" ? -1 : fault == "individual" ? ExternalChannelImagePolicy.maximumBytes + 1
                 : fault == "overflow" ? .max : original.byteCount)
         let attachments: [ChannelAttachment]
@@ -117,19 +118,36 @@ struct ChannelInboundImageInputTests {
         let reads = await probe.reads; expectNoDifference(reads, [])
     }
 
-    @Test(arguments: ["hash", "size", "mime", "truncated", "animated"])
+    @Test(arguments: ["hash", "size", "mime", "gif-mime", "truncated", "truncated-gif", "animated"])
     func capturedBytesMustMatchMetadataAndFullyDecode(fault: String) async throws {
         let bytes = try image()
         let returned = fault == "hash" ? Data(repeating: 120, count: bytes.count)
             : fault == "size" ? bytes + Data([0])
             : fault == "truncated" ? Data(bytes.prefix(20))
+            : fault == "truncated-gif" ? Data(try image(type: "com.compuserve.gif").prefix(30))
             : fault == "animated" ? try image(type: "com.compuserve.gif", frames: 2) : bytes
-        let declared = fault == "truncated" || fault == "animated" ? try metadata(returned)
-            : try metadata(bytes, mime: fault == "mime" ? "image/jpeg" : "image/png")
+        let declared = fault == "truncated" || fault == "truncated-gif" || fault == "animated"
+            ? try metadata(returned, mime: fault == "truncated" ? "image/png" : "image/gif")
+            : try metadata(bytes, mime: fault == "mime" ? "image/jpeg" : fault == "gif-mime" ? "image/gif" : "image/png")
         let admission = try await admission(envelope([declared]))
         await #expect(throws: (any Error).self) {
             _ = try await ChannelInboundImageInput.capture(admission: admission, read: { _ in returned }, validate: {})
         }
+    }
+
+    @Test(arguments: ["animated", "truncated", "wide", "tall", "pixels", "zero-width", "zero-height"])
+    func gifInputRejectsMultipleFramesIncompleteDataAndOversizedCanvas(fault: String) throws {
+        var bytes = try image(type: "com.compuserve.gif", frames: fault == "animated" ? 2 : 1)
+        switch fault {
+        case "truncated": bytes = Data(bytes.prefix(30))
+        case "wide": bytes.replaceSubrange(6..<8, with: [0x01, 0x20]) // 8,193
+        case "tall": bytes.replaceSubrange(8..<10, with: [0x01, 0x20])
+        case "pixels": bytes.replaceSubrange(6..<10, with: [0xa1, 0x0f, 0xa0, 0x0f]) // 4,001 × 4,000
+        case "zero-width": bytes.replaceSubrange(6..<8, with: [0, 0])
+        case "zero-height": bytes.replaceSubrange(8..<10, with: [0, 0])
+        default: break
+        }
+        #expect(throws: AgentImageError.invalid) { _ = try AgentImageStore.validate(bytes) }
     }
 
     @Test(arguments: [true, false])

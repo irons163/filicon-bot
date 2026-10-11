@@ -1,5 +1,9 @@
 # 完成驗收入口（2026-09-27）
 
+## 單幀 GIF 輸入（2026-10-11，本批必要 gates 通過）
+
+基線 `3c69fd6` 後補當次 admitted GIF 的 owner own-DM、單一 peer 委派與 fresh human review 外部回覆，並補 foreground direct 的 publication／委派 allowlist、選檔器及七語提示。只接受單幀，Gemini 推論暫時轉 PNG，原圖／CAS／核准／外部送件不轉換。focused v2 抓到 ImageIO 對超寬／超高 logical screen 的較小 frame 回報，已補原始 header 邊界；最後 focused v4 共 33 methods／296 cases、七語各 1,819 keys／0 missing、兩種同一產品 source Debug build／獨立 verify 通過。最後 v4 source 的 fresh 無 filter full v3 terminal exit 0：2,303 Swift Testing methods／268 suites＋135 XCTest／0 failures（各 17 runners；App 864／105、1,077.679 秒），兩項 opt-in live skipped。原 Mailbox suite、28 個長全文核准畫面 cases 與先前失敗 suites 保留並通過，最後 source hashes／diff check 通過，隨本批本機提交，未 push。保留 full v1 exit 1 及 full v2 明確鎖定／protected EPERM 後主動中止 exit 130 的歷史，不降低保護／斷言、不重啟使用者 App／Xcode、不改真實資料。詳細原版依據、供應商差異、scope 與全部 logs 見 [單幀 GIF 輸入驗收](Static-GIF-input-validation.md)。48 分類與整體 partial 不變；其他格式／host／真人／外部服務／Release／公證仍保留。
+
 ## 當次頻道圖片的外部回覆（2026-10-11，本批必要 gates 通過）
 
 接續 `a7d9378`，只補當次 native admitted PNG／JPEG 取得 fresh 圖片／目的地／全文人類核准後的外部 channel queue。首張才傳送，其餘明示不送；typed image ID 歷史不取得讀取／轉寄能力。最後 focused v5 重編譯、11 methods／95 cases（新十 methods／67 cases及既有 peer UI 28 cases）通過；最後 source 的無 filter full v3 terminal exit 0：2,298 Swift Testing methods／268 suites＋135 XCTest／0 failures（各 17 runners；App 861／105、1,256.634 秒），包含原完整 related 範圍；兩項 opt-in live skipped。相關 112 張七語 native 核准 PNG、同一產品 source 的隔離 arm64 native／全新 standalone Debug build 及各自獨立 verify、七語各 1,817 keys／0 missing、最後 source hashes／diff check 已通過，隨本批本機提交，未 push。full v1 exit 1 的 16 issues 與 full v2 四個 UI deadline issues 後主動中止 exit 130 的歷史保留；只修送件 fixture 時鐘及 UI case 邊界，不放寬原斷言／時限／畫面覆蓋。詳細證據見 [頻道圖片對外回覆驗收](Channel-image-publication-validation.md)。其他 host／格式、private context sharing、真人／外部帳號／Release／公證仍待，整體 partial 不變；不 launch／重啟 App 或 Xcode／改真實資料。

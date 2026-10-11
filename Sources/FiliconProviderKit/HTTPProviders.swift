@@ -1,4 +1,5 @@
 import Foundation
+import ImageIO
 import FiliconDomain
 
 public typealias CredentialResolver = @Sendable () async throws -> String
@@ -253,11 +254,27 @@ private struct HTTPStreamingProvider: AIProvider {
         return rows
     }
     private func geminiContents(_ input: InferenceRequest) throws -> [[String: Any]] {
+        // Gemini does not list GIF as an image input format. Convert only its
+        // transient model payload; canonical metadata, previews and reviewed
+        // channel/peer publications retain the exact original GIF bytes.
+        let convertsGIF = input.attachmentsByMessageID.values.joined().contains {
+            $0.metadata.kind == .image && $0.metadata.mimeType == "image/gif"
+        }
+        var remainingImageBytes = ExternalChannelImagePolicy.maximumTotalBytes
         var rows = try input.messages.filter { $0.role != .system }.map { message -> [String: Any] in
             var parts: [[String: Any]] = message.text.isEmpty ? [] : [["text": message.text]]
             for attachment in input.attachmentsByMessageID[message.id] ?? [] {
                 switch attachment.metadata.kind {
-                case .image, .audio, .video, .document:
+                case .image:
+                    let image = try geminiImage(attachment)
+                    if convertsGIF {
+                        guard Int64(image.data.count) <= remainingImageBytes else {
+                            throw ProviderError.unsupportedAttachment(attachment.metadata.filename)
+                        }
+                        remainingImageBytes -= Int64(image.data.count)
+                    }
+                    parts.append(["inlineData": ["mimeType": image.mime, "data": image.data.base64EncodedString()]])
+                case .audio, .video, .document:
                     parts.append(["inlineData": ["mimeType": attachment.metadata.mimeType, "data": attachment.data.base64EncodedString()]])
                 case .other: throw ProviderError.unsupportedAttachment(attachment.metadata.filename)
                 }
@@ -273,6 +290,39 @@ private struct HTTPStreamingProvider: AIProvider {
             }]) }
         }
         return rows
+    }
+
+    private func geminiImage(_ attachment: InferenceAttachment) throws -> (mime: String, data: Data) {
+        guard attachment.metadata.mimeType == "image/gif" else { return (attachment.metadata.mimeType, attachment.data) }
+        try Task.checkCancellation()
+        let bytes = attachment.data
+        guard !bytes.isEmpty, bytes.count <= ExternalChannelImagePolicy.maximumBytes,
+              attachment.metadata.byteCount == bytes.count,
+              ExternalChannelImagePolicy.hasBoundedGIFLogicalScreen(bytes),
+              let source = CGImageSourceCreateWithData(bytes as CFData, nil),
+              CGImageSourceGetType(source) as String? == "com.compuserve.gif",
+              CGImageSourceGetStatus(source) == .statusComplete, CGImageSourceGetCount(source) == 1,
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = (properties[kCGImagePropertyPixelWidth] as? NSNumber)?.intValue,
+              let height = (properties[kCGImagePropertyPixelHeight] as? NSNumber)?.intValue,
+              width > 0, height > 0, width <= ExternalChannelImagePolicy.maximumImageDimension,
+              height <= ExternalChannelImagePolicy.maximumImageDimension,
+              width * height <= ExternalChannelImagePolicy.maximumImagePixels,
+              let image = CGImageSourceCreateImageAtIndex(source, 0, nil),
+              CGImageSourceGetStatusAtIndex(source, 0) == .statusComplete else {
+            throw ProviderError.unsupportedAttachment(attachment.metadata.filename)
+        }
+        let png = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(png, "public.png" as CFString, 1, nil) else {
+            throw ProviderError.unsupportedAttachment(attachment.metadata.filename)
+        }
+        CGImageDestinationAddImage(destination, image, nil)
+        guard CGImageDestinationFinalize(destination), png.length > 0,
+              png.length <= ExternalChannelImagePolicy.maximumBytes else {
+            throw ProviderError.unsupportedAttachment(attachment.metadata.filename)
+        }
+        try Task.checkCancellation()
+        return ("image/png", png as Data)
     }
 
     private func ollamaMessages(_ input: InferenceRequest) throws -> [[String: Any]] {

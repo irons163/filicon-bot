@@ -39,9 +39,26 @@ public struct ExternalChannelMessageSource: Codable, Hashable, Sendable {
 /// Display metadata for a bounded, current remote image batch. Passing this
 /// shape check does not admit a blob read, an inference or a publication.
 public enum ExternalChannelImagePolicy {
+    public static let supportedMIMETypes: Set<String> = ["image/png", "image/jpeg", "image/gif"]
     public static let maximumCount = 4
     public static let maximumBytes: Int64 = 5 * 1_024 * 1_024
     public static let maximumTotalBytes: Int64 = 12 * 1_024 * 1_024
+    public static let maximumImageDimension = 8_192
+    public static let maximumImagePixels = 16_000_000
+
+    /// A header bound, not image validation. ImageIO can report the smaller
+    /// frame size for an oversized GIF logical screen, so check both before
+    /// decoding. Callers must still fully decode and reject multiple frames.
+    public static func hasBoundedGIFLogicalScreen(_ data: Data) -> Bool {
+        let header = [UInt8](data.prefix(10))
+        guard header.count == 10,
+              header.prefix(6).elementsEqual("GIF87a".utf8)
+                || header.prefix(6).elementsEqual("GIF89a".utf8) else { return false }
+        let width = Int(header[6]) | Int(header[7]) << 8
+        let height = Int(header[8]) | Int(header[9]) << 8
+        return width > 0 && height > 0 && width <= maximumImageDimension
+            && height <= maximumImageDimension && width * height <= maximumImagePixels
+    }
 
     public static func accepts(_ images: [AttachmentMetadata], receivedAt: Date) -> Bool {
         guard images.count <= maximumCount, Set(images.map(\.id)).count == images.count else { return false }
@@ -49,7 +66,7 @@ public enum ExternalChannelImagePolicy {
         for image in images {
             guard image.id.utf8.count == 64,
                   image.id.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }),
-                  image.kind == .image, ["image/png", "image/jpeg"].contains(image.mimeType),
+                  image.kind == .image, supportedMIMETypes.contains(image.mimeType),
                   image.byteCount > 0, image.byteCount <= maximumBytes, image.byteCount <= remaining,
                   image.createdAt == receivedAt, image.altText == nil,
                   !image.filename.isEmpty, image.filename != ".", image.filename != "..",
