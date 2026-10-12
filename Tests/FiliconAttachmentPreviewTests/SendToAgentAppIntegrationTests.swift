@@ -454,8 +454,9 @@ private struct DelegatingGroupProvider: InteractiveToolProvider {
         } else { expectNoDifference(wakes, []) }
     }
 
-    @Test(arguments: ["approve", "deny", "stop", "account", "recover", "restart", "write-failure", "missing-blob", "corrupt-blob", "metadata-conflict"], [false, true])
-    func directPeerImagesAreApprovedPersistedAndRecoverable(mode: String, gif: Bool) async throws {
+    @Test(arguments: ["approve", "deny", "stop", "account", "recover", "restart", "write-failure", "missing-blob", "corrupt-blob", "metadata-conflict"], ["png", "gif", "webp"])
+    func directPeerImagesAreApprovedPersistedAndRecoverable(mode: String, format: String) async throws {
+        let gif = format == "gif", webP = format == "webp"
         let (root, initialModel, _, sender, recipient, probe) = try await fixture()
         var model = initialModel
         defer { try? FileManager.default.removeItem(at: root) }
@@ -467,9 +468,9 @@ private struct DelegatingGroupProvider: InteractiveToolProvider {
             bitmap.setColor(x == y ? NSColor(deviceRed: 0.2, green: 0.4, blue: 0.8, alpha: 1)
                 : NSColor(deviceRed: 1, green: 0.5, blue: 0, alpha: 1), atX: x, y: y)
         } }
-        let bytes = try #require(bitmap.representation(using: gif ? .gif : .png, properties: [:]))
+        let bytes = webP ? StaticWebPFixture.stripes : try #require(bitmap.representation(using: gif ? .gif : .png, properties: [:]))
         let storage = AttachmentStore(rootURL: root.appending(path: "attachments"))
-        let image = try await storage.ingest(data: bytes, filename: gif ? "layout.gif" : "layout.png", declaredMIMEType: gif ? "image/gif" : "image/png")
+        let image = try await storage.ingest(data: bytes, filename: webP ? "layout.webp" : gif ? "layout.gif" : "layout.png", declaredMIMEType: webP ? "image/webp" : gif ? "image/gif" : "image/png")
         await model.registry.register(PeerImageAppProvider(recipient: recipient, image: image, bytes: bytes, probe: probe))
         let origin = try #require(await model.addConversation(agentID: sender))
         await model.refreshModels()

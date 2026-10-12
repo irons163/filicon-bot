@@ -9,6 +9,7 @@ import FiliconDomain
 import FiliconProviderKit
 
 private func peerImageBytes(type: String = "public.png", shade: CGFloat = 0.25) throws -> Data {
+    if type == "org.webmproject.webp" { return StaticWebPFixture.lossless }
     let context = try #require(CGContext(data: nil, width: 8, height: 8, bitsPerComponent: 8, bytesPerRow: 32,
         space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue))
     context.setFillColor(CGColor(gray: shade, alpha: 1)); context.fill(CGRect(x: 0, y: 0, width: 8, height: 8))
@@ -1346,7 +1347,7 @@ struct AgentImageMessagingTests {
         expectNoDifference(restored, room)
     }
 
-    @Test(arguments: ["public.png", "public.jpeg", "com.compuserve.gif"])
+    @Test(arguments: ["public.png", "public.jpeg", "com.compuserve.gif", "org.webmproject.webp"])
     func bytesNotExtensionDetermineImageTypeAndSurviveRestart(type: String) async throws {
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
         let bytes = try peerImageBytes(type: type)
@@ -1354,7 +1355,7 @@ struct AgentImageMessagingTests {
         try bytes.write(to: file)
         let metadata = try await f.store.importImage(fileURL: file)
         expectNoDifference(metadata.mimeType,
-            try #require(["public.png": "image/png", "public.jpeg": "image/jpeg", "com.compuserve.gif": "image/gif"][type]))
+            try #require(["public.png": "image/png", "public.jpeg": "image/jpeg", "com.compuserve.gif": "image/gif", "org.webmproject.webp": "image/webp"][type]))
         let restored = AgentImageStore(rootURL: f.root.appending(path: "images"))
         let loaded = try await restored.load([metadata])
         expectNoDifference(loaded.map(\.data), [bytes])

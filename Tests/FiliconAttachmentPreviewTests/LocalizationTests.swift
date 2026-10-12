@@ -10,6 +10,17 @@ import Testing
 @Suite("UI localization")
 struct LocalizationTests {
     @Test(arguments: ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"])
+    func staticWebPInputLimitsAndFailureAreLocalized(language: String) {
+        let hint = "Single-frame PNG/JPEG/GIF/WebP · up to 4 images · 5 MB each · 12 MB total"
+        for key in [hint, AgentImageError.invalid.rawValue] {
+            let localized = FiliconLocalization.string(key, language: language)
+            expectNoDifference(localized == key, language == "en")
+            for format in ["PNG", "JPEG", "GIF", "WebP"] { #expect(localized.contains(format)) }
+        }
+        let localized = FiliconLocalization.string(hint, language: language)
+        for limit in ["4", "5", "12"] { #expect(localized.contains(limit)) }
+    }
+    @Test(arguments: ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"])
     func singleFrameGIFInputLimitsAndFailureAreLocalized(language: String) {
         let hint = "PNG/JPEG or single-frame GIF · up to 4 images · 5 MB each · 12 MB total"
         for key in [hint, AgentImageError.invalid.rawValue] {

@@ -223,7 +223,7 @@ See [the itemized audit](Agent-collaboration-parity.md).
 
 ### Bounded peer image messages
 
-Agents → Messages → Attach images imports user-selected, single-frame PNG/JPEG/GIF
+Agents → Messages → Attach images imports user-selected, single-frame PNG/JPEG/GIF/WebP
 files and shows the exact previews before Send. Limits are four images, 5 MiB per
 image, 12 MiB total, 8,192 pixels per dimension and 16 million pixels per image.
 The UI uses familiar MB labels for these binary limits. Bytes are decoded,
@@ -250,14 +250,18 @@ Group-target image broadcasts remain unsupported. `SendMessage` can publish the
 current incoming image IDs after a separate exact destination/text/image review.
 This is partial parity, not the reference's broader image source/publishing API.
 
-Current admitted channel GIFs also use the existing immutable owner-only input,
-single-peer delegation and reviewed channel reply paths. Animated GIFs are
+Current admitted channel GIFs and static WebP also use the existing immutable owner-only input,
+single-peer delegation and reviewed channel reply paths. Animated GIF/WebP images are
 rejected by these bounded inputs. GIF logical-screen dimensions and decoded
 frame dimensions are both bounded before full decode; ImageIO can otherwise
 report only a smaller frame for an oversized screen. Gemini alone converts its
 transient GIF inference bytes to PNG, preserving the canonical original and all
-publication/consent identities. Other provider wire shapes are unchanged.
-See [the scoped GIF validation](Static-GIF-input-validation.md); actual remote
+publication/consent identities. WebP preserves original bytes in every provider
+wire shape. Its RIFF length/chunks, animation markers, canvas and frame bounds
+are checked before complete single-image decoding; Slack/Discord MIME sniffing
+does not trust the advertised MIME, HTTP header or filename.
+See [GIF validation](Static-GIF-input-validation.md) and
+[WebP validation](Static-WebP-input-validation.md); actual remote
 accounts/models and other media formats or hosts are separate acceptance work.
 
 Group turns and manual/peer mailbox wakes now also receive scoped `CreateAgent`,

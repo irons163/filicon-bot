@@ -1,6 +1,7 @@
 import Foundation
 import CryptoKit
 import Testing
+import CustomDump
 @testable import FiliconChannels
 
 private enum ConnectorFailure: Error { case transient }
@@ -112,6 +113,73 @@ private struct ProbeConnector: ChannelConnector {
 
 @Suite("External channels", .serialized)
 struct ChannelTests {
+    @Test(arguments: ["slack", "discord"])
+    func webPDownloadUsesCapturedBytesNotTheAdvertisedMIMEOrFilename(platform: String) async throws {
+        let bytes = try #require(Data(base64Encoded: "UklGRhwAAABXRUJQVlA4TBAAAAAvF8ACAAcQ/S9g/wMR0f8A"))
+        let capture = RequestCapture()
+        let session = mockedChannelSession { request in
+            capture.append(request)
+            if request.url?.host == "files.slack.com" || request.url?.host == "cdn.discordapp.com" {
+                return channelDataResponse(request, headers: ["Content-Type": "text/html"], data: bytes)
+            }
+            switch request.url?.path {
+            case "/api/auth.test":
+                return try channelResponse(request, json: ["ok": true, "user_id": "SELF", "team_id": "T1"])
+            case "/api/conversations.history":
+                return try channelResponse(request, json: ["ok": true, "messages": [[
+                    "ts": "1725000000.000100", "user": "REMOTE", "text": "Current image",
+                    "files": [["name": "misleading.txt", "mimetype": "text/html", "size": bytes.count,
+                        "url_private_download": "https://files.slack.com/files-pri/T1-F1/misleading.txt"]]
+                ]]])
+            case "/api/v10/users/@me":
+                return try channelResponse(request, json: ["id": "SELF", "username": "Offline", "bot": true])
+            case "/api/v10/channels/C1/messages":
+                return try channelResponse(request, json: [[
+                    "id": "1200000000000000001", "content": "Current image", "timestamp": "2026-08-28T00:00:00Z",
+                    "author": ["id": "REMOTE", "username": "Remote human"],
+                    "attachments": [["id": "A1", "filename": "misleading.txt", "content_type": "text/html",
+                        "size": bytes.count, "url": "https://cdn.discordapp.com/attachments/C1/A1/misleading.txt"]]
+                ]])
+            default: throw URLError(.unsupportedURL)
+            }
+        }
+        let ingest: ChannelBlobIngestor = { data, filename, mime in
+            expectNoDifference(data, bytes)
+            expectNoDifference(filename, "misleading.txt")
+            expectNoDifference(mime, "image/webp")
+            return casAttachment(data, filename: filename, mimeType: mime)
+        }
+        let connector: any ChannelConnector
+        if platform == "slack" {
+            connector = SlackChannelConnector(session: session, pollingInterval: .seconds(60),
+                resolveSecret: { _ in "offline-fixture-token" }, ingestBlob: ingest)
+        } else {
+            connector = DiscordChannelConnector(session: session, pollingInterval: .seconds(60),
+                resolveSecret: { _ in "offline-fixture-token" }, ingestBlob: ingest)
+        }
+        let connection = ChannelConnection(connectorID: platform, displayName: "Offline", accountLabel: "C1",
+            secretReference: "keychain://channels/offline-fixture")
+        var iterator = connector.inbound(connection: connection).makeAsyncIterator()
+        let envelope = try #require(try await iterator.next())
+        expectNoDifference(envelope.attachments, [casAttachment(bytes, filename: "misleading.txt", mimeType: "image/webp")])
+        #expect(capture.requests.allSatisfy { $0.method == "GET" })
+        let download = try #require(capture.requests.first { ["files.slack.com", "cdn.discordapp.com"].contains($0.url?.host ?? "") })
+        expectNoDifference(download.header("Authorization"), platform == "slack" ? "Bearer offline-fixture-token" : nil)
+    }
+
+    @Test(arguments: ["audio", "wrong-riff", "wrong-webp", "short"])
+    func webPSniffingDoesNotPromoteOtherRIFFOrTruncatedHeaders(fault: String) throws {
+        var bytes = try #require(Data(base64Encoded: "UklGRhwAAABXRUJQVlA4TBAAAAAvF8ACAAcQ/S9g/wMR0f8A"))
+        switch fault {
+        case "audio": bytes.replaceSubrange(8..<12, with: "WAVE".utf8)
+        case "wrong-riff": bytes[0] = 0
+        case "wrong-webp": bytes[8] = 0
+        case "short": bytes = Data(bytes.prefix(11))
+        default: break
+        }
+        #expect(ChannelAttachmentPolicy.detectedMIMEType(bytes) != "image/webp")
+    }
+
     private func sandbox() throws -> (URL, ChannelService, ChannelConnection, ConnectorProbe) {
         let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

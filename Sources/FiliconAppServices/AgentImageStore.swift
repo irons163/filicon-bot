@@ -4,7 +4,7 @@ import Darwin
 import FiliconDomain
 
 public enum AgentImageError: String, LocalizedError, Sendable {
-    case invalid = "Choose a valid, single-frame PNG, JPEG or GIF image."
+    case invalid = "Choose a valid, single-frame PNG, JPEG, GIF or WebP image."
     case limit = "Use at most 4 images, 5 MB each and 12 MB total."
     case galleryLimit = "Use images up to 5 MB each and 12 MB total."
     case galleryInvalid = "Choose a valid PNG, JPEG, GIF, WebP, TIFF, BMP, AVIF, ICO, HEIC, HEIF or supported self-contained SVG image within the decoding limits."
@@ -147,8 +147,9 @@ public actor AgentImageStore {
               CGImageSourceGetStatus(source) == .statusComplete,
               CGImageSourceGetCount(source) == 1,
               let type = CGImageSourceGetType(source) as String?,
-              let mime = ["public.png": "image/png", "public.jpeg": "image/jpeg", "com.compuserve.gif": "image/gif"][type],
+              let mime = ["public.png": "image/png", "public.jpeg": "image/jpeg", "com.compuserve.gif": "image/gif", "org.webmproject.webp": "image/webp"][type],
               type != "com.compuserve.gif" || ExternalChannelImagePolicy.hasBoundedGIFLogicalScreen(data),
+              type != "org.webmproject.webp" || ExternalChannelImagePolicy.hasBoundedStaticWebP(data),
               let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
               let width = (properties[kCGImagePropertyPixelWidth] as? NSNumber)?.intValue,
               let height = (properties[kCGImagePropertyPixelHeight] as? NSNumber)?.intValue,

@@ -68,7 +68,12 @@ private struct DirectImageProvider: AIProvider {
         try await assertPublication(mode: mode, standalone: standalone, gif: true)
     }
 
-    private func assertPublication(mode: String, standalone: Bool, gif: Bool) async throws {
+    @Test(arguments: ["approve", "deny", "corrupt", "unknown", "stop", "account", "save-temp", "save-reserve", "save-commit"], [false, true])
+    func staticWebPDirectPublicationRequiresCurrentApprovalAndDurableReachability(mode: String, standalone: Bool) async throws {
+        try await assertPublication(mode: mode, standalone: standalone, gif: false, webP: true)
+    }
+
+    private func assertPublication(mode: String, standalone: Bool, gif: Bool, webP: Bool = false) async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "filicon-direct-image-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
         let bitmap = try #require(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 2, pixelsHigh: 2,
@@ -78,10 +83,10 @@ private struct DirectImageProvider: AIProvider {
             bitmap.setColor(x == y ? NSColor(deviceRed: 0.2, green: 0.4, blue: 0.8, alpha: 1)
                 : NSColor(deviceRed: 1, green: 0.5, blue: 0, alpha: 1), atX: x, y: y)
         } }
-        let bytes = try #require(bitmap.representation(using: gif ? .gif : .png, properties: [:]))
-        let filename = gif ? "sample.gif" : "sample.png"
+        let bytes = webP ? StaticWebPFixture.stripes : try #require(bitmap.representation(using: gif ? .gif : .png, properties: [:]))
+        let filename = webP ? "sample.webp" : gif ? "sample.gif" : "sample.png"
         let storage = AttachmentStore(rootURL: root.appending(path: "attachments"))
-        let image = try await storage.ingest(data: bytes, filename: filename, declaredMIMEType: gif ? "image/gif" : "image/png")
+        let image = try await storage.ingest(data: bytes, filename: filename, declaredMIMEType: webP ? "image/webp" : gif ? "image/gif" : "image/png")
         let point: StorageQuotaFaultPoint? = mode == "save-temp" ? .afterTemporaryWriteBeforeRename : mode == "save-reserve" ? .afterReservationPersist : mode == "save-commit" ? .afterCommitPersist : nil
         let fault = point.map(DirectImageSaveFault.init)
         let model = AppModel(applicationSupportRoot: root, bootstrapImmediately: false, quotaFaultInjector: { try fault?.inject($0) })

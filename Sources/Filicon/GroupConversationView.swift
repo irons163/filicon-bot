@@ -455,7 +455,7 @@ struct GroupConversationView: View {
         defer { importingImages = false }
         let account = model.settings.accountScope
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.png, .jpeg, .gif]
+        panel.allowedContentTypes = [.png, .jpeg, .gif, .webP]
         panel.allowsMultipleSelection = true
         panel.canChooseDirectories = false
         guard await panel.begin() == .OK, account == model.settings.accountScope else { return }

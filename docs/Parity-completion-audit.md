@@ -1,5 +1,9 @@
 # 完成驗收入口（2026-09-27）
 
+## 靜態 WebP 輸入（2026-10-12，本批必要 gates 通過）
+
+基線 `e1707b7`，擴充手動 mailbox／群組、foreground direct publication／單一 peer 與當次 admitted channel 的有界圖片；WebP 在 provider wire／CAS／核准／外部首張回覆保留原始 bytes，拒絕動畫、損壞與超限 container／frame。真正 Slack／Discord 下載分類漏點亦已紅燈重現並修正，不信副檔名或遠端 MIME。最後 focused v2 的 57 methods／10 suites／425 cases、七語各 1,821 keys／0 missing、同一產品 source 的兩種隔離 Debug build／獨立 verify 通過；fresh 無 filter full v1 terminal exit 0：2,311 Swift Testing methods／268 suites＋135 XCTest／0 failures（各 17 runners；App 867／105、1,012.309 秒）。兩項 opt-in live skipped，原完整測試範圍與真正紅燈歷史保留；七語 peer 說明及兩張明暗／寬窄核准畫面已目視。最後 source hashes／diff check 通過，隨本批本機提交，未 push；完整證據見 [靜態 WebP 輸入驗收](Static-WebP-input-validation.md)。不借本批成功稱其他格式／host／真人／外部服務／Release／公證完成，48 分類及整體 partial 保留；未 launch／重啟使用者 App 或 Xcode／改真實資料。
+
 ## 單幀 GIF 輸入（2026-10-11，本批必要 gates 通過）
 
 基線 `3c69fd6` 後補當次 admitted GIF 的 owner own-DM、單一 peer 委派與 fresh human review 外部回覆，並補 foreground direct 的 publication／委派 allowlist、選檔器及七語提示。只接受單幀，Gemini 推論暫時轉 PNG，原圖／CAS／核准／外部送件不轉換。focused v2 抓到 ImageIO 對超寬／超高 logical screen 的較小 frame 回報，已補原始 header 邊界；最後 focused v4 共 33 methods／296 cases、七語各 1,819 keys／0 missing、兩種同一產品 source Debug build／獨立 verify 通過。最後 v4 source 的 fresh 無 filter full v3 terminal exit 0：2,303 Swift Testing methods／268 suites＋135 XCTest／0 failures（各 17 runners；App 864／105、1,077.679 秒），兩項 opt-in live skipped。原 Mailbox suite、28 個長全文核准畫面 cases 與先前失敗 suites 保留並通過，最後 source hashes／diff check 通過，隨本批本機提交，未 push。保留 full v1 exit 1 及 full v2 明確鎖定／protected EPERM 後主動中止 exit 130 的歷史，不降低保護／斷言、不重啟使用者 App／Xcode、不改真實資料。詳細原版依據、供應商差異、scope 與全部 logs 見 [單幀 GIF 輸入驗收](Static-GIF-input-validation.md)。48 分類與整體 partial 不變；其他格式／host／真人／外部服務／Release／公證仍保留。

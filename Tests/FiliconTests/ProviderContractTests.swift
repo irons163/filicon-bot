@@ -34,6 +34,7 @@ private func contractSession() -> URLSession {
 }
 
 private func contractImageBytes(type: String, frames: Int = 1) throws -> Data {
+    if type == "org.webmproject.webp" { return StaticWebPFixture.lossless }
     let context = try #require(CGContext(data: nil, width: 2, height: 2, bitsPerComponent: 8,
         bytesPerRow: 8, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue))
     let bytes = NSMutableData()
@@ -245,7 +246,7 @@ struct ProviderContractTests {
         #expect(try await collect(OllamaProvider(session: contractSession()), messages: [system, user]).contains(.completed(.stop)))
     }
 
-    @Test(arguments: ["public.png", "public.jpeg", "com.compuserve.gif"])
+    @Test(arguments: ["public.png", "public.jpeg", "com.compuserve.gif", "org.webmproject.webp"])
     func imageAttachmentsUseEachProvidersNativeWireShape(type: String) async throws {
         let bytes = try contractImageBytes(type: type), mime = try AgentImageStore.validate(bytes)
         let file = try PreparedAgentPublicationFile(bytes: bytes, filename: "pixel.bin")

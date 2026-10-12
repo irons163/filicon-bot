@@ -591,15 +591,19 @@ private struct AppInboundTextPeerProvider: InteractiveToolProvider {
         context.setFillColor(CGColor(red: 1, green: 0, blue: 0.5, alpha: 1))
         context.fill(CGRect(x: 0, y: 0, width: 2, height: 2))
         let bytes = NSMutableData()
-        let destination = try #require(CGImageDestinationCreateWithData(bytes, type as CFString, frames, nil))
-        for i in 0..<frames {
-            context.setFillColor(CGColor(red: 1, green: i == 0 ? 0 : 1, blue: 0.5, alpha: 1))
-            context.fill(CGRect(x: 0, y: 0, width: 2, height: 2))
-            CGImageDestinationAddImage(destination, try #require(context.makeImage()), nil)
+        if type == "org.webmproject.webp" {
+            bytes.append(frames == 1 ? StaticWebPFixture.magenta : StaticWebPFixture.animated)
+        } else {
+            let destination = try #require(CGImageDestinationCreateWithData(bytes, type as CFString, frames, nil))
+            for i in 0..<frames {
+                context.setFillColor(CGColor(red: 1, green: i == 0 ? 0 : 1, blue: 0.5, alpha: 1))
+                context.fill(CGRect(x: 0, y: 0, width: 2, height: 2))
+                CGImageDestinationAddImage(destination, try #require(context.makeImage()), nil)
+            }
+            try #require(CGImageDestinationFinalize(destination))
         }
-        try #require(CGImageDestinationFinalize(destination))
         let data = complete ? bytes as Data : Data((bytes as Data).prefix(30))
-        let mime = try #require(["public.png": "image/png", "public.jpeg": "image/jpeg", "com.compuserve.gif": "image/gif"][type])
+        let mime = try #require(["public.png": "image/png", "public.jpeg": "image/jpeg", "com.compuserve.gif": "image/gif", "org.webmproject.webp": "image/webp"][type])
         let store = AttachmentStore(rootURL: f.root.appending(path: "channel-attachments"))
         let saved = try await store.ingest(data: data, filename: "remote-design", declaredMIMEType: mime)
         let expected = AttachmentMetadata(id: saved.id, filename: saved.filename, mimeType: mime,
@@ -611,7 +615,7 @@ private struct AppInboundTextPeerProvider: InteractiveToolProvider {
                 mimeType: mime, byteCount: Int64(data.count))]), .init(metadata: expected, data: data))
     }
 
-    @Test(arguments: ["public.png", "public.jpeg", "com.compuserve.gif"], [false, true])
+    @Test(arguments: ["public.png", "public.jpeg", "com.compuserve.gif", "org.webmproject.webp"], [false, true])
     func incomingImageChannelReplyRequiresItsOwnReviewAndQueuesExactBytes(type: String, described: Bool) async throws {
         let f = try await fixture(mode: "image-channel", supportsImages: true)
         defer { f.feed.finish(); try? FileManager.default.removeItem(at: f.root) }
@@ -678,7 +682,7 @@ private struct AppInboundTextPeerProvider: InteractiveToolProvider {
 
     @Test(arguments: ["deny", "stop", "account", "connection-ABA", "binding-ABA", "persona-ABA",
         "native-persona-ABA", "hidden-ABA", "model-ABA", "reasoning-ABA", "blob-corrupt", "blob-link"],
-        ["public.png", "com.compuserve.gif"])
+        ["public.png", "com.compuserve.gif", "org.webmproject.webp"])
     func incomingImageChannelReviewCannotReviveOrSubstituteCapturedBytes(action: String, type: String) async throws {
         let f = try await fixture(mode: "image-channel", supportsImages: true)
         defer { f.feed.finish(); try? FileManager.default.removeItem(at: f.root) }
@@ -730,7 +734,7 @@ private struct AppInboundTextPeerProvider: InteractiveToolProvider {
         try await assertUnrelatedUntouched(f)
     }
 
-    @Test(arguments: ["public.png", "com.compuserve.gif"])
+    @Test(arguments: ["public.png", "com.compuserve.gif", "org.webmproject.webp"])
     func incomingImageChannelReplyUsesCaptureAndRejectsTheSameIDInALaterEnvelope(type: String) async throws {
         let gate = AppInboundImageReadGate()
         let f = try await fixture(mode: "image-channel", supportsImages: true, imageReader: { await gate.read($0) })
@@ -809,7 +813,7 @@ private struct AppInboundTextPeerProvider: InteractiveToolProvider {
         try await assertUnrelatedUntouched(f)
     }
 
-    @Test(arguments: ["public.png", "public.jpeg", "com.compuserve.gif"])
+    @Test(arguments: ["public.png", "public.jpeg", "com.compuserve.gif", "org.webmproject.webp"])
     func incomingImageDelegationRequiresExactPreviewAndFeedsOnlyTheReviewedPeer(type: String) async throws {
         let f = try await fixture(mode: "image-peer", existingPeer: true, supportsImages: true)
         defer { f.feed.finish(); try? FileManager.default.removeItem(at: f.root) }
@@ -878,7 +882,7 @@ private struct AppInboundTextPeerProvider: InteractiveToolProvider {
 
     @Test(arguments: ["deny", "stop", "account", "connection-ABA", "binding-ABA", "persona-ABA", "native-persona-ABA",
         "hidden-ABA", "model-ABA", "reasoning-ABA", "peer-archive", "mailbox-corrupt", "mailbox-link"],
-        ["public.png", "com.compuserve.gif"])
+        ["public.png", "com.compuserve.gif", "org.webmproject.webp"])
     func incomingImageDelegationCannotBorrowConsentOrReviveAfterIdentityChanges(action: String, type: String) async throws {
         let f = try await fixture(mode: "image-peer", existingPeer: true, supportsImages: true)
         defer { f.feed.finish(); try? FileManager.default.removeItem(at: f.root) }
@@ -950,7 +954,7 @@ private struct AppInboundTextPeerProvider: InteractiveToolProvider {
         try await assertUnrelatedUntouched(f)
     }
 
-    @Test(arguments: ["public.png", "com.compuserve.gif"])
+    @Test(arguments: ["public.png", "com.compuserve.gif", "org.webmproject.webp"])
     func incomingImageDelegationUsesCapturedBytesAndNeverReusesAnOlderEnvelope(type: String) async throws {
         let gate = AppInboundImageReadGate()
         let f = try await fixture(mode: "image-peer", existingPeer: true, supportsImages: true,
@@ -1079,6 +1083,11 @@ private struct AppInboundTextPeerProvider: InteractiveToolProvider {
         try await renderIncomingImageReview(language: "en", channel: channel, appearance: appearance, type: "com.compuserve.gif")
     }
 
+    @Test(arguments: [false, true], [(320.0, false), (320.0, true), (560.0, false), (560.0, true)])
+    func staticWebPReviewRendersActualImageAndExactHumanDecision(channel: Bool, appearance: (Double, Bool)) async throws {
+        try await renderIncomingImageReview(language: "en", channel: channel, appearance: appearance, type: "org.webmproject.webp")
+    }
+
     private func renderIncomingImageReview(language: String, channel: Bool, appearance: (Double, Bool), type: String = "public.png") async throws {
         // The native proposal must be created in the selected language too;
         // changing only the renderer would leave persisted review copy untested.
@@ -1177,7 +1186,7 @@ private struct AppInboundTextPeerProvider: InteractiveToolProvider {
                 if let output {
                     try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
                     try #require(bitmap.representation(using: .png, properties: [:]))
-                        .write(to: output.appending(path: "incoming-\(channel ? "channel-" : "")image-review-\(language)-\(dark ? "dark" : "light")-\(Int(width))\(type == "com.compuserve.gif" ? "-gif" : "").png"))
+                        .write(to: output.appending(path: "incoming-\(channel ? "channel-" : "")image-review-\(language)-\(dark ? "dark" : "light")-\(Int(width))\(type == "org.webmproject.webp" ? "-webp" : type == "com.compuserve.gif" ? "-gif" : "").png"))
                 }
             }
             let after = try await store.conversation(id: chatID)
@@ -1208,7 +1217,7 @@ private struct AppInboundTextPeerProvider: InteractiveToolProvider {
         return bitmap
     }
 
-    @Test(arguments: [true, false], ["public.png", "public.jpeg", "com.compuserve.gif"])
+    @Test(arguments: [true, false], ["public.png", "public.jpeg", "com.compuserve.gif", "org.webmproject.webp"])
     func incomingImageUsesOnlyCurrentCapturedBytesAndNeverReplaysInTextWake(existing: Bool, type: String) async throws {
         let f = try await fixture(existing: existing, mode: "silent", supportsImages: true)
         defer { f.feed.finish(); f.model.setWorkflowRuntimeActive(false) }
@@ -1271,7 +1280,7 @@ private struct AppInboundTextPeerProvider: InteractiveToolProvider {
     }
 
     @Test(arguments: ["stop", "account", "connection-ABA", "binding-ABA", "persona-ABA", "native-persona-ABA", "hidden-ABA", "model-ABA", "reasoning-ABA"],
-        ["public.png", "com.compuserve.gif"])
+        ["public.png", "com.compuserve.gif", "org.webmproject.webp"])
     func incomingImageLateReadCannotReviveRetiredNativePreparation(kind: String, type: String) async throws {
         let gate = AppInboundImageReadGate()
         let f = try await fixture(mode: "silent", supportsImages: true, imageReader: { await gate.read($0) })
@@ -1315,23 +1324,24 @@ private struct AppInboundTextPeerProvider: InteractiveToolProvider {
         try await assertUnrelatedUntouched(f)
     }
 
-    @Test(arguments: ["unsupported-model", "malformed-id", "wrong-mime", "wrong-gif-mime", "corrupt-blob", "missing-blob", "animated-gif", "truncated-gif"])
+    @Test(arguments: ["unsupported-model", "malformed-id", "wrong-mime", "wrong-gif-mime", "wrong-webp-mime", "corrupt-blob", "missing-blob", "animated-gif", "truncated-gif", "animated-webp", "truncated-webp"])
     func incomingImagesFailClosedWithoutTextDowngradeOrCanonicalMutation(fault: String) async throws {
         let gate = AppInboundImageReadGate()
-        let useNativeRead = ["corrupt-blob", "missing-blob", "animated-gif", "truncated-gif"].contains(fault)
+        let useNativeRead = ["corrupt-blob", "missing-blob", "animated-gif", "truncated-gif", "animated-webp", "truncated-webp"].contains(fault)
         let reader: ChannelInboundImageInput.Read?
         if useNativeRead { reader = nil } else { reader = { await gate.read($0) } }
         let f = try await fixture(mode: "silent", supportsImages: fault != "unsupported-model",
             imageReader: reader)
         let (originalEnvelope, image) = try await incomingImage(f,
-            type: ["animated-gif", "truncated-gif"].contains(fault) ? "com.compuserve.gif" : "public.png",
-            frames: fault == "animated-gif" ? 2 : 1, complete: fault != "truncated-gif")
+            type: ["animated-webp", "truncated-webp"].contains(fault) ? "org.webmproject.webp"
+                : ["animated-gif", "truncated-gif"].contains(fault) ? "com.compuserve.gif" : "public.png",
+            frames: fault.hasPrefix("animated-") ? 2 : 1, complete: !fault.hasPrefix("truncated-"))
         defer { gate.open(image.data); f.feed.finish(); try? FileManager.default.removeItem(at: f.root) }
         let attachments = fault == "malformed-id"
             ? [ChannelAttachment(blobID: "../private", filename: image.metadata.filename, mimeType: "image/png", byteCount: image.metadata.byteCount)]
-            : fault == "wrong-mime" || fault == "wrong-gif-mime"
+            : ["wrong-mime", "wrong-gif-mime", "wrong-webp-mime"].contains(fault)
                 ? [ChannelAttachment(blobID: image.metadata.id, filename: image.metadata.filename,
-                    mimeType: fault == "wrong-mime" ? "image/jpeg" : "image/gif", byteCount: image.metadata.byteCount)]
+                    mimeType: fault == "wrong-webp-mime" ? "image/webp" : fault == "wrong-mime" ? "image/jpeg" : "image/gif", byteCount: image.metadata.byteCount)]
                 : originalEnvelope.attachments
         let envelope = ChannelEnvelope(connectionID: originalEnvelope.connectionID, externalEventID: originalEnvelope.externalEventID,
             address: originalEnvelope.address, senderID: originalEnvelope.senderID, senderDisplayName: originalEnvelope.senderDisplayName,
@@ -1346,7 +1356,7 @@ private struct AppInboundTextPeerProvider: InteractiveToolProvider {
         await f.model.reconcileChannelInbound()
         let after = try await store.load(), runs = await f.service.inboundRuns(), requests = await f.probe.requests
         expectNoDifference(after, before); expectNoDifference(runs, []); #expect(diff(requests, [InferenceRequest]()) == nil)
-        expectNoDifference(gate.reads.count, fault == "wrong-mime" || fault == "wrong-gif-mime" ? 1 : 0)
+        expectNoDifference(gate.reads.count, ["wrong-mime", "wrong-gif-mime", "wrong-webp-mime"].contains(fault) ? 1 : 0)
         #expect(f.model.errorMessage != nil)
         expectNoDifference(f.model.pendingAutoReviewApprovals, []); expectNoDifference(f.model.running, [])
         try await assertUnrelatedUntouched(f)

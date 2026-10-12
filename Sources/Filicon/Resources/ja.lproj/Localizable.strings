@@ -51,12 +51,14 @@
 "Attach images…" = "画像を添付…";
 "PNG/JPEG only · up to 4 images · 5 MB each · 12 MB total" = "PNG/JPEG のみ · 最大4枚 · 1枚5 MB · 合計12 MB";
 "PNG/JPEG or single-frame GIF · up to 4 images · 5 MB each · 12 MB total" = "PNG/JPEG または単一フレーム GIF · 最大4枚 · 1枚5 MB · 合計12 MB";
+"Single-frame PNG/JPEG/GIF/WebP · up to 4 images · 5 MB each · 12 MB total" = "単一フレーム PNG/JPEG/GIF/WebP · 最大4枚 · 1枚5 MB · 合計12 MB";
 "Remove images" = "画像を削除";
 "Image preview unavailable" = "画像をプレビューできません";
 "Forward these images to the recipient model?" = "これらの画像を宛先のモデルに転送しますか？";
 "Images will be sent to the selected recipient's configured model." = "画像は、選択した宛先のエージェントに設定されているモデルに送信されます。";
 "Choose a valid, single-frame PNG or JPEG image." = "有効な単一フレームの PNG または JPEG 画像を選択してください。";
 "Choose a valid, single-frame PNG, JPEG or GIF image." = "有効な単一フレームの PNG、JPEG または GIF 画像を選択してください。";
+"Choose a valid, single-frame PNG, JPEG, GIF or WebP image." = "有効な単一フレームの PNG、JPEG、GIF または WebP 画像を選択してください。";
 "Use at most 4 images, 5 MB each and 12 MB total." = "画像は最大4枚、1枚5 MB、合計12 MBまでです。";
 "Use images up to 5 MB each and 12 MB total." = "画像は1枚5 MB、合計12 MBまでです。";
 "Choose a valid PNG, JPEG, GIF, WebP, TIFF, BMP, AVIF, ICO, HEIC, HEIF or supported self-contained SVG image within the decoding limits." = "デコード制限内の有効な PNG、JPEG、GIF、WebP、TIFF、BMP、AVIF、ICO、HEIC、HEIF または対応する自己完結型 SVG 画像を選択してください。";

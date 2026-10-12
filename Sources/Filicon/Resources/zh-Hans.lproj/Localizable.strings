@@ -51,12 +51,14 @@
 "Attach images…" = "附加图片…";
 "PNG/JPEG only · up to 4 images · 5 MB each · 12 MB total" = "仅限 PNG/JPEG · 最多 4 张 · 每张 5 MB · 总计 12 MB";
 "PNG/JPEG or single-frame GIF · up to 4 images · 5 MB each · 12 MB total" = "PNG/JPEG 或单帧 GIF · 最多 4 张 · 每张 5 MB · 总计 12 MB";
+"Single-frame PNG/JPEG/GIF/WebP · up to 4 images · 5 MB each · 12 MB total" = "单帧 PNG/JPEG/GIF/WebP · 最多 4 张 · 每张 5 MB · 总计 12 MB";
 "Remove images" = "移除图片";
 "Image preview unavailable" = "无法显示图片预览";
 "Forward these images to the recipient model?" = "要将这些图片转交给接收代理的模型吗？";
 "Images will be sent to the selected recipient's configured model." = "图片将发送至所选接收代理配置的模型。";
 "Choose a valid, single-frame PNG or JPEG image." = "请选择有效的单帧 PNG 或 JPEG 图片。";
 "Choose a valid, single-frame PNG, JPEG or GIF image." = "请选择有效的单帧 PNG、JPEG 或 GIF 图片。";
+"Choose a valid, single-frame PNG, JPEG, GIF or WebP image." = "请选择有效的单帧 PNG、JPEG、GIF 或 WebP 图片。";
 "Use at most 4 images, 5 MB each and 12 MB total." = "最多 4 张图片，每张 5 MB，总计 12 MB。";
 "Use images up to 5 MB each and 12 MB total." = "图片每张最多 5 MB，总计最多 12 MB。";
 "Choose a valid PNG, JPEG, GIF, WebP, TIFF, BMP, AVIF, ICO, HEIC, HEIF or supported self-contained SVG image within the decoding limits." = "请选择有效且符合解码限制的 PNG、JPEG、GIF、WebP、TIFF、BMP、AVIF、ICO、HEIC、HEIF 或受支持的自包含 SVG 图片。";

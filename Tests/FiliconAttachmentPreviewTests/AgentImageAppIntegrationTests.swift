@@ -485,10 +485,11 @@ private actor AppImageProbe {
         }
     }
 
-    @Test(arguments: [false, true])
-    func actualImagePreviewAndDisclosureRenderInSevenLanguages(gif: Bool) async throws {
-        let bytes = try imageData(gif: gif), preview = try #require(NSImage(data: bytes))
-        let image = AttachmentMetadata(id: String(repeating: "abcd", count: 16), filename: gif ? "review-layout.gif" : "review-layout.png", mimeType: gif ? "image/gif" : "image/png", byteCount: Int64(bytes.count), kind: .image)
+    @Test(arguments: ["png", "gif", "webp"])
+    func actualImagePreviewAndDisclosureRenderInSevenLanguages(format: String) async throws {
+        let bytes = format == "webp" ? StaticWebPFixture.stripes : try imageData(gif: format == "gif")
+        let preview = try #require(NSImage(data: bytes))
+        let image = AttachmentMetadata(id: String(repeating: "abcd", count: 16), filename: "review-layout.\(format)", mimeType: "image/\(format)", byteCount: Int64(bytes.count), kind: .image)
         let output = ProcessInfo.processInfo.environment["FILICON_UI_REVIEW_OUTPUT"].map { URL(fileURLWithPath: $0) }
         let title = "Forward these images to the recipient model?"
         for language in ["en", "zh-Hant", "zh-Hans", "fr", "es", "ja", "ko"] {
@@ -499,7 +500,7 @@ private actor AppImageProbe {
                     Text("Reviewer → Designer").font(.callout)
                     Text(FiliconLocalization.string("Images will be sent to the selected recipient's configured model.")).font(.caption)
                     AgentMessageImagePreviewContent(image: image, preview: preview)
-                    Text(FiliconLocalization.string("PNG/JPEG or single-frame GIF · up to 4 images · 5 MB each · 12 MB total"))
+                    Text(FiliconLocalization.string("Single-frame PNG/JPEG/GIF/WebP · up to 4 images · 5 MB each · 12 MB total"))
                         .font(.caption).fixedSize(horizontal: false, vertical: true)
                 }.padding(20).frame(width: 360).background(FiliconTheme.canvas)
                     .environment(\.locale, Locale(identifier: language)).environment(\.colorScheme, .light))
@@ -512,7 +513,7 @@ private actor AppImageProbe {
                 let data = try #require(bitmap.representation(using: .png, properties: [:]))
                 if let output {
                     try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
-                    try data.write(to: output.appending(path: "peer-image-\(language)\(gif ? "-gif" : "").png"))
+                    try data.write(to: output.appending(path: "peer-image-\(language)\(format == "png" ? "" : "-" + format).png"))
                 }
             }
         }

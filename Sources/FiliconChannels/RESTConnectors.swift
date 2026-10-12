@@ -59,6 +59,8 @@ enum ChannelAttachmentPolicy {
         if bytes.starts(with: [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]) { return "image/png" }
         if bytes.starts(with: [0xff, 0xd8, 0xff]) { return "image/jpeg" }
         if bytes.starts(with: Array("GIF8".utf8)) { return "image/gif" }
+        if bytes.count >= 12, bytes.prefix(4).elementsEqual("RIFF".utf8),
+           bytes[8..<12].elementsEqual("WEBP".utf8) { return "image/webp" }
         if bytes.starts(with: Array("%PDF-".utf8)) { return "application/pdf" }
         if bytes.starts(with: [0x50, 0x4b, 0x03, 0x04]) { return "application/zip" }
         if let string = String(data: data.prefix(4_096), encoding: .utf8) {
